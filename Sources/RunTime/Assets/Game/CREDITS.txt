@@ -5,7 +5,7 @@ http://creativecommons.org/publicdomain/zero/1.0/
   spikes.png tile_0068, mushroom.png tile_0128, cactus.png tile_0127, tree.png tile_0126,
   coin_0.png tile_0151, coin_1.png tile_0152,
   crab_0~1.png Characters/tile_0018~0019, drill_0~2.png Characters/tile_0015~0017, bat_0~2.png Characters/tile_0024~0026
-  동료: buddy_0000~0014.png Characters/tile_0000~0007, tile_0009~0014 (이름 그대로)
+  spikeball.png Characters/tile_0008, crusher_0~1.png Characters/tile_0021~0022, crusher_fall.png Characters/tile_0023
 
 입자 그림: Particle Pack (https://kenney.nl/assets/particle-pack), PNG (Transparent)를 64px로 줄였다.
   fx_smoke_04, fx_star_06, fx_spark_05, fx_flame_03, fx_light_01, fx_twirl_02, fx_circle_05 (원본 이름 앞에 fx_)
@@ -20,4 +20,4 @@ http://creativecommons.org/publicdomain/zero/1.0/
   한글·영문·기호만 남기고 줄였다 (pyftsubset).
 
 3D 그림: Microsoft Fluent Emoji (https://github.com/microsoft/fluentui-emoji), MIT License (Assets/Fluent/LICENSE.txt).
-  Assets/Fluent의 3D PNG를 96px로 줄였다. 펫, 모자, 얼굴 꾸미기, 그림 입자, 퀘스트·상점 아이콘에 쓴다.
+  Assets/Fluent의 3D PNG를 96px로 줄였다. 모자, 얼굴, 등 꾸미기, 그림 입자, 퀘스트·상점 아이콘에 쓴다.

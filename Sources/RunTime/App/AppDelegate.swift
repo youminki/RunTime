@@ -245,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.contentViewController = NSHostingController(
             rootView: PopoverView(engine: engine, settings: engine.settings,
                                   openSettings: { [weak self] in self?.openSettings() },
-                                  openRunnerSettings: { [weak self] in self?.openSettings(tab: .runner) },
+                                  importRunner: { [weak self] in self?.importRunner() },
                                   openDailyDetail: { [weak self] in self?.openDailyDetail() },
                                   openLeaderboard: { [weak self] in self?.openLeaderboard() },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))
@@ -312,6 +312,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         settingsWindow = showWindow(settingsWindow, title: "RunTime 설정",
                                     style: [.titled, .closable, .resizable]) {   // 세로 드래그로 크기 조절
             SettingsView(settings: engine.settings, engine: engine, tab: settingsTab)
+        }
+    }
+
+    /// 팝오버에서 누른 그림 불러오기. 팝오버를 닫은 뒤 파일 창을 띄우고, 결과는 알림 창으로 알린다.
+    private func importRunner() {
+        popover?.performClose(nil)
+        DispatchQueue.main.async { [engine] in
+            NSApp.activate(ignoringOtherApps: true)
+            RunnerImport.choose(settings: engine.settings) { message, isError in
+                guard isError else { return }
+                let alert = NSAlert()
+                alert.messageText = "러너를 만들지 못했습니다"
+                alert.informativeText = message
+                alert.runModal()
+            }
         }
     }
 

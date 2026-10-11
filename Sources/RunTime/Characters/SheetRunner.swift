@@ -99,6 +99,7 @@ enum SheetFrames {
             }
             let loaded = Row(images: images, content: content.isNull ? CGRect(x: 0, y: 0, width: 1, height: 1) : content)
             cache[key] = loaded
+            ImageEyes.register(images)
             if !images.isEmpty { return (row, loaded) }
         }
         return nil
@@ -130,7 +131,10 @@ enum SheetFrames {
     /// 폴더를 지우거나 다시 받을 때 캐시도 비운다.
     static func forget(_ folder: URL) {
         metas[folder] = nil
-        for row in rows { cache["\(folder.path)/\(row)"] = nil }
+        for row in rows {
+            if let images = cache["\(folder.path)/\(row)"]?.images { ImageEyes.forget(images) }
+            cache["\(folder.path)/\(row)"] = nil
+        }
     }
 }
 

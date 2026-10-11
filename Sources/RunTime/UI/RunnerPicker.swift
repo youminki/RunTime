@@ -6,11 +6,10 @@ import UsageCore
 /// 'Petdex'는 petdex.dev에서 골라 받은 펫, 맨 아래 '내 러너'는 사용자가 불러온 GIF·PNG로 만든 러너다.
 struct RunnerPicker: View {
     @ObservedObject var settings: AppSettings
-    /// 팝오버 안처럼 시트나 파일 창을 띄우면 닫혀 버리는 곳에서는, 받기·불러오기를 이 동작(설정 창 열기)으로 넘긴다.
-    var openFullPicker: (() -> Void)?
+    /// 팝오버처럼 파일 창을 띄우면 닫혀 버리는 곳에서는 그림 불러오기를 이 동작(팝오버를 닫고 파일 창 열기)으로 넘긴다.
+    var importInPlace: (() -> Void)?
     @ObservedObject private var store = CustomRunnerStore.shared
     @ObservedObject private var petdex = PetdexStore.shared
-    @StateObject private var petdexSheet = SheetFlag()
     @StateObject private var hover = HoveredRunner()
     @StateObject private var importState = ImportState()
     @StateObject private var filter = RunnerFilter()
@@ -83,7 +82,7 @@ struct RunnerPicker: View {
                         .help("오른쪽 클릭: Petdex에서 보기, 삭제")
                     }
                 }
-                Button { if let openFullPicker { openFullPicker() } else { petdexSheet.isPresented = true } } label: {
+                Button { PetdexWindow.shared.show(settings: settings) } label: {
                     actionTile(icon: "magnifyingglass", title: "Petdex에서 찾기")
                 }
                 .buttonStyle(.plain)
@@ -102,7 +101,9 @@ struct RunnerPicker: View {
                     .contextMenu { customMenu(custom) }
                     .help("오른쪽 클릭: 이름 바꾸기, 실루엣, 삭제")
                 }
-                Button { if let openFullPicker { openFullPicker() } else { importRunner() } } label: {
+                Button {
+                    if let importInPlace { importInPlace() } else { RunnerImport.choose(settings: settings, report: importState.show) }
+                } label: {
                     actionTile(icon: "plus", title: "그림 불러오기")
                 }
                     .buttonStyle(.plain)
@@ -111,9 +112,6 @@ struct RunnerPicker: View {
             if let message = importState.message {
                 Text(message).font(.caption).foregroundStyle(importState.isError ? .orange : .secondary)
             }
-        }
-        .sheet(isPresented: $petdexSheet.isPresented) {
-            PetdexBrowser(settings: settings) { petdexSheet.isPresented = false }
         }
     }
 
@@ -179,25 +177,6 @@ struct RunnerPicker: View {
         Button("삭제") {
             if settings.customRunnerID == custom.id { settings.customRunnerID = nil }
             store.delete(custom)
-        }
-    }
-
-    private func importRunner() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.gif, .png, .jpeg, .heic, .webP, .image]
-        panel.allowsMultipleSelection = true
-        panel.message = "움직이는 GIF 하나, 또는 프레임 PNG 여러 장을 고르세요"
-        panel.prompt = "불러오기"
-        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
-        importState.show("그림을 불러오는 중…", error: false)
-        store.importImages(from: panel.urls) { [settings, importState] result in
-            switch result {
-            case .success(let custom):
-                settings.select(custom)
-                importState.show("'\(custom.name)' 러너를 만들었습니다 (\(custom.frameCount)프레임).", error: false)
-            case .failure(let error):
-                importState.show(error.localizedDescription, error: true)
-            }
         }
     }
 
@@ -285,5 +264,28 @@ final class ImportState: ObservableObject {
     func show(_ message: String, error: Bool) {
         self.message = message
         isError = error
+    }
+}
+
+/// 그림 파일을 골라 내 러너를 만든다. 만든 러너는 바로 고른다.
+enum RunnerImport {
+    @MainActor
+    static func choose(settings: AppSettings, report: @escaping (String, Bool) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.gif, .png, .jpeg, .heic, .webP, .image]
+        panel.allowsMultipleSelection = true
+        panel.message = "움직이는 GIF 하나, 또는 프레임 PNG 여러 장을 고르세요"
+        panel.prompt = "불러오기"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        report("그림을 불러오는 중…", false)
+        CustomRunnerStore.shared.importImages(from: panel.urls) { result in
+            switch result {
+            case .success(let custom):
+                settings.select(custom)
+                report("'\(custom.name)' 러너를 만들었습니다 (\(custom.frameCount)프레임).", false)
+            case .failure(let error):
+                report(error.localizedDescription, true)
+            }
+        }
     }
 }

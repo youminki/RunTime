@@ -133,16 +133,6 @@ enum SpriteTheme: String, CaseIterable {
         }
     }
 
-    /// 상점에서 사는 값 (게임 코인). 기본 색은 nil.
-    var price: Int? {
-        switch self {
-        case .ruby, .mint: return 250
-        case .gold: return 400
-        case .aurora: return 800
-        default: return nil
-        }
-    }
-
     /// 단색일 때의 색. 무지개는 진행도에 따라 색상환을 돈다.
     func tint(at phase: CGFloat) -> NSColor {
         switch self {

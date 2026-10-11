@@ -1,9 +1,15 @@
 import SwiftUI
 
-/// Petdex 펫 찾기. 썸네일을 누르면 내려받아 바로 러너로 고른다.
+/// Petdex 펫 찾기. 썸네일을 누르면 내려받아 바로 러너로 고르거나 동료로 데려간다.
 struct PetdexBrowser: View {
+    enum Purpose {
+        case runner, companion
+    }
+
     @ObservedObject var settings: AppSettings
+    var purpose: Purpose = .runner
     var close: () -> Void
+    @ObservedObject private var wallet = GameWallet.shared
     @ObservedObject private var store = PetdexStore.shared
     @StateObject private var form = PetdexSearch()
 
@@ -72,7 +78,8 @@ struct PetdexBrowser: View {
 
     private func tile(_ entry: PetdexStore.Entry) -> some View {
         let installed = store.isInstalled(entry.slug)
-        let selected = settings.customRunnerID == PetdexStore.storageID(entry.slug)
+        let id = PetdexStore.storageID(entry.slug)
+        let selected = purpose == .companion ? wallet.companionID == id : settings.customRunnerID == id
         return VStack(spacing: 4) {
             ZStack(alignment: .topTrailing) {
                 AsyncImage(url: entry.thumbnailURL) { phase in
@@ -109,13 +116,18 @@ struct PetdexBrowser: View {
     private func install(_ entry: PetdexStore.Entry) {
         form.pending = entry.slug
         form.show("\(entry.displayName) 받는 중…", error: false)
-        store.install(entry) { [settings, form] result in
+        store.install(entry) { [settings, form, purpose] result in
             switch result {
             case .success(let pet):
                 // 받는 사이 다른 펫을 눌렀으면 마지막으로 누른 펫을 고른다
                 guard form.pending == pet.slug else { return }
-                settings.customRunnerID = PetdexStore.storageID(pet.slug)
-                form.show("'\(pet.name)'을(를) 러너로 골랐습니다.", error: false)
+                if purpose == .companion {
+                    GameWallet.shared.companionID = PetdexStore.storageID(pet.slug)
+                    form.show("'\(pet.name)'을(를) 동료로 데려갑니다.", error: false)
+                } else {
+                    settings.customRunnerID = PetdexStore.storageID(pet.slug)
+                    form.show("'\(pet.name)'을(를) 러너로 골랐습니다.", error: false)
+                }
             case .failure(PetdexStore.InstallError.inProgress):
                 break
             case .failure(let error):
@@ -140,7 +152,3 @@ final class PetdexSearch: ObservableObject {
     }
 }
 
-/// 시트 표시 여부. `@State`를 못 쓰는 이유는 HoverFlag 참고.
-final class SheetFlag: ObservableObject {
-    @Published var isPresented = false
-}

@@ -33,6 +33,8 @@ public final class RunnerGame {
         case airJumped
         /// 보호막이 부딪힘을 막고 깨졌다.
         case shieldBroke(id: Int)
+        /// 위에서 떨어지는 장애물이 땅에 닿았다.
+        case slammed(id: Int)
         case crashed
     }
 
@@ -50,9 +52,11 @@ public final class RunnerGame {
         public let minGap: Double
         /// 땅보다 빠르게 다가오는 속도(pt/초). 걸어오는 적.
         public let approachSpeed: Double
+        /// 이 높이에 떠 있다가 러너가 다가오면 땅으로 떨어진다 (내리찍는 장애물).
+        public let dropFrom: Double?
 
         public init(id: String, width: Double, height: Double, elevations: [Double] = [], minSpeed: Double = 0,
-                    groupSpeed: Double? = nil, minGap: Double = 120, approachSpeed: Double = 0) {
+                    groupSpeed: Double? = nil, minGap: Double = 120, approachSpeed: Double = 0, dropFrom: Double? = nil) {
             self.id = id
             self.width = width
             self.height = height
@@ -61,6 +65,7 @@ public final class RunnerGame {
             self.groupSpeed = groupSpeed
             self.minGap = minGap
             self.approachSpeed = approachSpeed
+            self.dropFrom = dropFrom
         }
     }
 
@@ -69,8 +74,11 @@ public final class RunnerGame {
         public let kind: ObstacleKind
         /// 왼쪽 끝 (세계 x).
         public internal(set) var x: Double
-        /// 아래끝 높이.
-        public let y: Double
+        /// 아래끝 높이. 내리찍는 장애물만 바뀐다.
+        public internal(set) var y: Double
+        /// 떨어지는 중인 속도 (내리찍는 장애물).
+        public internal(set) var fallSpeed: Double = 0
+        public internal(set) var dropping = false
         /// 붙여 낸 개수.
         public let count: Int
         /// 만들 때의 땅 속도. 속도는 줄지 않으니 이보다 느릴 때 만나는 일은 없다.
@@ -163,21 +171,26 @@ public final class RunnerGame {
         public var reactionTime: Double = 0.28
         public var lateReactionTime: Double = 0.22
         /// 압박이 시작되는 시각과 다 차기까지 걸리는 시간(초).
-        public var pressureStart: Double = 25
-        public var pressureSpan: Double = 95
+        public var pressureStart: Double = 20
+        public var pressureSpan: Double = 90
         /// 압박이 다 찼을 때의 간격 계수. 최소 간격 쪽으로도 더 자주 뽑는다.
         public var lateGapCoefficient: Double = 0.45
         public var lateMaxGapCoefficient: Double = 1.15
         /// 압박이 다 찼을 때 걸어오는 적이 더 빨라지는 비율.
         public var lateApproachBoost: Double = 0.6
         /// 이 속도부터 문(머리 위 박쥐 + 땅 장애물)이 나오고, 압박에 따라 확률이 오른다.
-        public var gateSpeed: Double = 450
-        public var gateChance: Double = 0.12
-        public var lateGateChance: Double = 0.3
+        public var gateSpeed: Double = 420
+        public var gateChance: Double = 0.15
+        public var lateGateChance: Double = 0.35
         /// 숙인 키 (선 키 대비).
         public var duckRatio: Double = 0.55
         /// 판정은 보이는 모습보다 조금 너그럽게 한다.
         public var hitInset: Double = 2.5
+        /// 뛰어넘을 수 있다고 칠 때 사람에게 남겨 두는 누름 시각 여유(초). 이보다 빠듯하면 숙이거나 아래로 지나가야 하는 높이만 쓴다.
+        public var jumpSlack: Double = 0.05
+        /// 내리찍는 장애물이 러너에 닿기 이만큼(초) 전에 떨어지기 시작하고, 이 중력으로 떨어진다.
+        public var dropLead: Double = 0.7
+        public var dropGravity: Double = 4000
         /// 장애물과 위아래로 이보다 가깝게 지나가면 아슬아슬하게 피한 것으로 친다.
         public var nearMissGap: Double = 7
         /// 이단 점프는 처음 점프보다 조금 낮게 뛴다.
@@ -491,6 +504,7 @@ public final class RunnerGame {
         for i in obstacles.indices where obstacles[i].kind.approachSpeed > 0 {
             obstacles[i].x -= obstacles[i].kind.approachSpeed * dt
         }
+        dropObstacles(dt)
 
         // 점프: 착지 직전에 누른 것도, 땅을 막 떠난 뒤에 누른 것도 받아 준다
         coyote = isOnGround ? tuning.coyoteTime : coyote - dt
@@ -549,6 +563,20 @@ public final class RunnerGame {
         }
         trackNearMisses()
         updateScore()
+    }
+
+    /// 내리찍는 장애물: 러너가 닿기 dropLead초 전부터 떨어진다. 러너 자리로 재서 앞뒤로 움직여도 같은 여유가 남는다.
+    private func dropObstacles(_ dt: Double) {
+        let front = runnerBox.maxX
+        for i in obstacles.indices where obstacles[i].kind.dropFrom != nil && obstacles[i].y > 0 {
+            if !obstacles[i].dropping, obstacles[i].x - front < (speed + obstacles[i].kind.approachSpeed) * tuning.dropLead {
+                obstacles[i].dropping = true
+            }
+            guard obstacles[i].dropping else { continue }
+            obstacles[i].fallSpeed += tuning.dropGravity * dt
+            obstacles[i].y = max(0, obstacles[i].y - obstacles[i].fallSpeed * dt)
+            if obstacles[i].y == 0 { events.append(.slammed(id: obstacles[i].id)) }
+        }
     }
 
     /// 공중에서 부딪히면 그 자리에 떠 있지 않고 바닥으로 떨어진다 (판정 없이 모습만).
@@ -663,8 +691,13 @@ public final class RunnerGame {
         let clearance = top - tuning.hitInset
         let disc = v * v - 2 * g * clearance
         guard disc > 0 else { return false }
-        let window = 2 * disc.squareRoot() / g
+        let window = 2 * disc.squareRoot() / g - tuning.jumpSlack
         return window * closingSpeed >= width + runnerWidth - tuning.hitInset * 2 + 6
+    }
+
+    /// 숙여서 그 아래로 지나갈 수 있는지 (낮게 나는 장애물).
+    public func canDuckUnder(_ bottom: Double) -> Bool {
+        bottom + tuning.hitInset >= runnerHeight * tuning.duckRatio + 1
     }
 
     /// 가장 짧은 점프로 머리 위 `ceiling` 아래를 지나며 폭 `width`, 높이 `top` 장애물을 넘을 수 있는지 (문).
@@ -677,7 +710,7 @@ public final class RunnerGame {
             if tuning.shortHop(at: t) > clearance { above += Self.step }
             t += Self.step
         }
-        return above * closingSpeed >= width + runnerWidth - tuning.hitInset * 2 + 6
+        return (above - tuning.jumpSlack) * closingSpeed >= width + runnerWidth - tuning.hitInset * 2 + 6
     }
 
     /// 서서 그 아래로 지나갈 수 있는지 (높이 떠 있는 장애물).
@@ -687,7 +720,7 @@ public final class RunnerGame {
         while nextSpawnX < distance + tuning.lookAhead {
             guard let kind = upcoming ?? pickKind() else { return }
             let closing = speed + kind.approachSpeed
-            let y = pickElevation(kind, closing: closing)
+            let y = kind.dropFrom ?? pickElevation(kind, closing: closing)
             var count = 1
             if let groupSpeed = kind.groupSpeed, speed >= groupSpeed {
                 count = 1 + Int(random.next() % 3)
@@ -728,7 +761,8 @@ public final class RunnerGame {
         guard kind.approachSpeed > 0 else { return kind }
         return ObstacleKind(id: kind.id, width: kind.width, height: kind.height, elevations: kind.elevations,
                             minSpeed: kind.minSpeed, groupSpeed: kind.groupSpeed, minGap: kind.minGap,
-                            approachSpeed: kind.approachSpeed * (1 + tuning.lateApproachBoost * pressure))
+                            approachSpeed: kind.approachSpeed * (1 + tuning.lateApproachBoost * pressure),
+                            dropFrom: kind.dropFrom)
     }
 
     /// 이 땅 장애물 위에 문을 세운다면 쓸 박쥐. 속도·확률이 안 되거나 짧은 점프로 못 넘으면 nil.
@@ -742,10 +776,10 @@ public final class RunnerGame {
         return flyer
     }
 
-    /// 떠 있는 장애물은 서서 지나가거나 뛰어넘을 수 있는 높이만 고른다. 숙이기는 키보드가 있어야 해서 필수로 두지 않는다.
+    /// 떠 있는 장애물은 서서 지나가거나, 숙여서 지나가거나, 여유 있게 뛰어넘을 수 있는 높이만 고른다.
     private func pickElevation(_ kind: ObstacleKind, closing: Double) -> Double {
         let fair = kind.elevations.filter {
-            canPassUnder($0) || canJump(width: kind.width, top: $0 + kind.height, closingSpeed: closing)
+            canPassUnder($0) || canDuckUnder($0) || canJump(width: kind.width, top: $0 + kind.height, closingSpeed: closing)
         }
         guard !fair.isEmpty else { return kind.elevations.max() ?? 0 }
         return fair[Int(random.next() % UInt64(fair.count))]

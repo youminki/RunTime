@@ -46,18 +46,32 @@ extension GameSession {
             let left = screenX(obstacle.x)
             guard left < size.width + 40, left + CGFloat(obstacle.width) > -40 else { continue }
             let content = sprite.content
-            let s = GameSprite.pixelScale
+            let s = sprite.scale
             let frames = sprite.frames
             let phase = time + Double(obstacle.id) * 0.13
             for k in 0..<obstacle.count {
-                guard let image = frames.isEmpty ? nil : sprite.frame(at: phase) else { continue }
+                // 내리찍는 상자는 떠 있는 동안 다리를 접은 모습
+                let airborne = obstacle.kind.dropFrom != nil && obstacle.y > 0
+                guard let image = airborne ? GameAssets.image("crusher_fall") : frames.isEmpty ? nil : sprite.frame(at: phase)
+                else { continue }
                 // 판정 상자(그림 영역)에 맞춰 타일 전체를 놓는다
                 let boxLeft = left + CGFloat(k) * CGFloat(obstacle.kind.width)
                 let boxBottom = ground(obstacle.y)
                 let rect = CGRect(x: boxLeft - content.minX * s,
                                   y: boxBottom - content.maxY * s,
                                   width: CGFloat(image.width) * s, height: CGFloat(image.height) * s)
-                GameAssets.draw(image, in: rect, cg)
+                if sprite == .spikeball {
+                    // 다가오는 만큼 굴러간다 (반지름으로 나눈 이동 거리)
+                    let roll = -CGFloat(game.distance - obstacle.x) / (CGFloat(obstacle.kind.width) / 2)
+                    cg.saveGState()
+                    cg.translateBy(x: rect.midX, y: rect.midY)
+                    cg.rotate(by: roll)
+                    cg.translateBy(x: -rect.midX, y: -rect.midY)
+                    GameAssets.draw(image, in: rect, cg)
+                    cg.restoreGState()
+                } else {
+                    GameAssets.draw(image, in: rect, cg)
+                }
             }
             if obstacle.id == game.crashedInto {
                 cg.setStrokeColor(NSColor.systemRed.withAlphaComponent(0.8).cgColor)
@@ -195,11 +209,16 @@ extension GameSession {
         cg.scaleBy(x: scale, y: scale)
         let look = CharacterLook(rich: true, palette: theme.richPalette(rig.palette, phase: CGFloat(time / 6)),
                                  tint: .white, outline: 0.36)
+        // 모자·안경·등 꾸미기는 내 러너에만 (고스트는 그 판의 모습만 남긴다)
+        let mine = game === self.game
+        let back = mine ? GameWallet.shared.equipped(.back) : nil
+        GameFX.drawBack(back, on: scene, time: time, front: false, cg)
         scene.draw(in: cg, look: look)
-        // 모자·안경은 내 러너에만 (고스트는 그 판의 모습만 남긴다)
-        if game === self.game {
-            GameFX.drawAccessories(hat: GameWallet.shared.equipped(.hat), face: GameWallet.shared.equipped(.face), on: scene, cg)
+        if mine {
+            GameFX.drawAccessories(hat: GameWallet.shared.equipped(.hat), face: GameWallet.shared.equipped(.face), on: scene,
+                                   time: time, cg)
         }
+        GameFX.drawBack(back, on: scene, time: time, front: true, cg)
         for effect in frame.effects { effect.draw(in: cg, around: scene.placedBounds, tint: .white) }
         cg.restoreGState()
     }

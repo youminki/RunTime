@@ -3,31 +3,55 @@ import Combine
 import GameCore
 
 /// 미니게임 러너에 다는 꾸미기. 그림만 바뀌고 판정과 점수는 같다.
-/// 이름·값·등급·색·그림은 아래 `info` 표 한 곳에서 정한다.
+/// 이름·값·등급·색·그림은 아래 `info` 표 한 곳에서 정한다. 동료는 꾸미기가 아니라 Petdex 펫을 데려간다 (`GameWallet.companionID`).
 enum Cosmetic: String, CaseIterable, Identifiable {
     case sparkleTrail, cometTrail, rainbowTrail, fireTrail, noteTrail, heartTrail, magicTrail, smokeTrail, sparkTrail
     case blossomTrail, cloverTrail, mapleTrail, snowTrail, bubbleTrail, candyTrail
     case heartDust, goldDust, starDust, rainbowDust, cloudDust, sparkleDust, noteDust
     case fireworksCrash, heartCrash, coinCrash, magicCrash, flameCrash, boomCrash, confettiCrash, balloonCrash, sweetCrash
-    case greenBuddy, blueBuddy, pinkBuddy, yellowBuddy, beigeBuddy, boxBuddy, tinyBuddy
-    case dogPet, catPet, rabbitPet, foxPet, pandaPet, hamsterPet, chickPet, penguinPet, duckPet, hedgehogPet, koalaPet,
-         tigerPet, otterPet, slothPet, parrotPet, teddyPet, snowmanPet, ghostPet, trexPet, unicornPet, dragonPet
     case crownHat, topHat, capHat, gradHat, helmetHat, sunHat, ribbonHat, headphoneHat, pumpkinHat
-    case sunglassesFace, glassesFace, gogglesFace
+    case militaryHat, mushroomHat, tulipHat, hibiscusHat, sunflowerHat, ladybugHat, chickHat, hamsterHat
+    case cloudHat, rainbowHat, starHat, fireHat
+    case sunglassesFace, glassesFace, gogglesFace, divingFace, bandageFace, heartFace, lollipopFace
+    case backpackBack, shieldBack, guitarBack, balloonBack, kiteBack, butterflyBack, parrotBack, rocketBack, wingBack
 
     enum Slot: CaseIterable {
-        case buddy, hat, face, trail, dust, crash
+        case hat, face, back, trail, dust, crash
 
         var title: String {
             switch self {
-            case .buddy: "동료"
             case .hat: "모자"
             case .face: "얼굴"
+            case .back: "등"
             case .trail: "꼬리"
             case .dust: "발먼지"
             case .crash: "부딪힘"
             }
         }
+    }
+
+    /// 머리·얼굴·등 꾸미기를 몸 어디에 어떻게 붙이는지.
+    enum Fit {
+        /// 머리에 쓴다 (모자). 얼굴은 두 눈에 걸친다 (안경).
+        case worn
+        /// 머리 위에 앉아 통통 튄다 (병아리, 무당벌레).
+        case perched
+        /// 머리 옆에 꽂는다 (꽃).
+        case pin
+        /// 머리 위에 떠서 흔들린다 (구름, 별).
+        case floating
+        /// 볼에 붙인다.
+        case cheek
+        /// 입에 문다.
+        case mouth
+        /// 등에 멘다 (몸 뒤에 그린다).
+        case strapped
+        /// 날개처럼 등 뒤에서 퍼덕인다.
+        case wings
+        /// 줄에 매달려 등 뒤 위로 뜬다 (풍선, 연).
+        case tethered
+        /// 어깨에 앉는다.
+        case shoulder
     }
 
     struct Info {
@@ -37,15 +61,14 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         let rarity: Rarity
         /// 발먼지 색, 꼬리의 바탕색, 미리보기 빛.
         let color: NSColor
-        /// Fluent Emoji 그림 이름 (Assets/Fluent). 동료·모자·얼굴은 그 그림을, 꼬리·발먼지·부딪힘은 입자로 쓴다.
+        /// Fluent Emoji 그림 이름 (Assets/Fluent). 머리·얼굴·등은 그 그림을, 꼬리·발먼지·부딪힘은 입자로 쓴다.
         var art: String? = nil
-        /// Kenney 동료의 두 장 (Characters 타일 번호).
-        var tiles: [Int]? = nil
+        var fit: Fit = .worn
     }
 
     private static func row(_ slot: Slot, _ name: String, _ price: Int, _ rarity: Rarity, _ hex: UInt32,
-                            art: String? = nil, tiles: [Int]? = nil) -> Info {
-        Info(slot: slot, name: name, price: price, rarity: rarity, color: NSColor(hex: hex), art: art, tiles: tiles)
+                            art: String? = nil, fit: Fit = .worn) -> Info {
+        Info(slot: slot, name: name, price: price, rarity: rarity, color: NSColor(hex: hex), art: art, fit: fit)
     }
 
     private static let info: [Cosmetic: Info] = [
@@ -83,50 +106,46 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         .magicCrash: row(.crash, "마법진", 400, .epic, 0xC68CFF),
         .sweetCrash: row(.crash, "간식 비", 450, .epic, 0xFFB0C8, art: "donut"),
         .confettiCrash: row(.crash, "축하 파티", 900, .legendary, 0xFFD45E, art: "confetti"),
-        // Kenney 도트 동료
-        .tinyBuddy: row(.buddy, "꼬마", 220, .common, 0xFF9E3D, tiles: [13, 14]),
-        .greenBuddy: row(.buddy, "초록이", 300, .common, 0x5BD86B, tiles: [0, 1]),
-        .blueBuddy: row(.buddy, "파랑이", 300, .common, 0x6FA8FF, tiles: [2, 3]),
-        .yellowBuddy: row(.buddy, "노랑이", 340, .common, 0xFFC94D, tiles: [6, 7]),
-        .pinkBuddy: row(.buddy, "외눈이", 380, .rare, 0xFF8FB8, tiles: [4, 5]),
-        .beigeBuddy: row(.buddy, "우주인", 450, .rare, 0xE8C8A0, tiles: [9, 10]),
-        .boxBuddy: row(.buddy, "상자", 600, .rare, 0xE0A82E, tiles: [11, 12]),
-        // Fluent 펫
-        .chickPet: row(.buddy, "병아리", 260, .common, 0xFFD45E, art: "chick"),
-        .hamsterPet: row(.buddy, "햄스터", 280, .common, 0xF2B279, art: "hamster"),
-        .duckPet: row(.buddy, "오리", 280, .common, 0x9BD36A, art: "duck"),
-        .rabbitPet: row(.buddy, "토끼", 300, .common, 0xF5D0DA, art: "rabbit"),
-        .dogPet: row(.buddy, "멍멍이", 320, .common, 0xD9A066, art: "dog"),
-        .catPet: row(.buddy, "야옹이", 320, .common, 0xF2B95C, art: "cat"),
-        .hedgehogPet: row(.buddy, "고슴도치", 420, .rare, 0xB08060, art: "hedgehog"),
-        .penguinPet: row(.buddy, "펭귄", 450, .rare, 0x8FB3D9, art: "penguin"),
-        .koalaPet: row(.buddy, "코알라", 450, .rare, 0xA9B4C2, art: "koala"),
-        .foxPet: row(.buddy, "여우", 480, .rare, 0xFF8A3D, art: "fox"),
-        .pandaPet: row(.buddy, "판다", 520, .rare, 0xE8E8E8, art: "panda"),
-        .otterPet: row(.buddy, "수달", 520, .rare, 0xB0805A, art: "otter"),
-        .slothPet: row(.buddy, "나무늘보", 560, .epic, 0xA08870, art: "sloth"),
-        .parrotPet: row(.buddy, "앵무새", 600, .epic, 0x5BD86B, art: "parrot"),
-        .tigerPet: row(.buddy, "호랑이", 650, .epic, 0xFFA040, art: "tiger"),
-        .teddyPet: row(.buddy, "곰인형", 650, .epic, 0xC0885A, art: "teddy"),
-        .snowmanPet: row(.buddy, "눈사람", 700, .epic, 0xDDEEFF, art: "snowman"),
-        .ghostPet: row(.buddy, "유령", 750, .epic, 0xE0E6FF, art: "ghost"),
-        .trexPet: row(.buddy, "티라노", 1200, .legendary, 0x7BD88F, art: "trex"),
-        .unicornPet: row(.buddy, "유니콘", 1400, .legendary, 0xE6B8FF, art: "unicorn"),
-        .dragonPet: row(.buddy, "용", 1600, .legendary, 0x6CD07A, art: "dragon"),
         // 모자
         .capHat: row(.hat, "야구모자", 180, .common, 0x5B8CFF, art: "cap"),
         .ribbonHat: row(.hat, "리본", 200, .common, 0xFF5C8A, art: "ribbon"),
+        .tulipHat: row(.hat, "튤립 핀", 180, .common, 0xFF6F91, art: "tulip", fit: .pin),
+        .mushroomHat: row(.hat, "버섯 모자", 220, .common, 0xE0443E, art: "mushroom"),
+        .ladybugHat: row(.hat, "무당벌레", 240, .common, 0xE0443E, art: "ladybug", fit: .perched),
         .sunHat: row(.hat, "밀짚모자", 260, .rare, 0xF2C46D, art: "sunhat"),
+        .hibiscusHat: row(.hat, "하와이 꽃", 280, .rare, 0xFF5C8A, art: "hibiscus", fit: .pin),
+        .militaryHat: row(.hat, "군용 헬멧", 300, .rare, 0x7A8A4F, art: "militaryhelmet"),
         .headphoneHat: row(.hat, "헤드폰", 320, .rare, 0x8899AA, art: "headphone"),
         .helmetHat: row(.hat, "안전모", 340, .rare, 0xFFC94D, art: "helmet"),
+        .sunflowerHat: row(.hat, "해바라기", 360, .rare, 0xFFC93D, art: "sunflower", fit: .pin),
+        .chickHat: row(.hat, "머리 위 병아리", 420, .epic, 0xFFD45E, art: "chick", fit: .perched),
         .gradHat: row(.hat, "학사모", 420, .epic, 0x445566, art: "gradcap"),
         .pumpkinHat: row(.hat, "호박", 480, .epic, 0xFF8A2F, art: "pumpkin"),
+        .hamsterHat: row(.hat, "머리 위 햄스터", 520, .epic, 0xF2B279, art: "hamster", fit: .perched),
+        .cloudHat: row(.hat, "먹구름", 560, .epic, 0x8FA3B8, art: "raincloud", fit: .floating),
         .topHat: row(.hat, "신사 모자", 650, .epic, 0x333344, art: "tophat"),
+        .rainbowHat: row(.hat, "무지개", 800, .legendary, 0xFF9E3D, art: "rainbow", fit: .floating),
+        .starHat: row(.hat, "떠도는 별", 900, .legendary, 0xFFD45E, art: "glowstar", fit: .floating),
+        .fireHat: row(.hat, "불타는 머리", 1200, .legendary, 0xFF7A2F, art: "fire", fit: .perched),
         .crownHat: row(.hat, "왕관", 1500, .legendary, 0xFFC94D, art: "crown"),
         // 얼굴
+        .bandageFace: row(.face, "반창고", 150, .common, 0xF2C49B, art: "bandage", fit: .cheek),
         .glassesFace: row(.face, "안경", 200, .common, 0x8899AA, art: "glasses"),
+        .heartFace: row(.face, "하트 볼", 240, .common, 0xFF5C8A, art: "heart", fit: .cheek),
         .gogglesFace: row(.face, "물안경", 300, .rare, 0x5BC0FF, art: "goggles"),
+        .lollipopFace: row(.face, "막대사탕", 340, .rare, 0xFF6FA8, art: "lollipop", fit: .mouth),
+        .divingFace: row(.face, "잠수 마스크", 420, .epic, 0x3DA5FF, art: "divingmask"),
         .sunglassesFace: row(.face, "선글라스", 450, .epic, 0x333344, art: "sunglasses"),
+        // 등
+        .shieldBack: row(.back, "방패", 220, .common, 0xA0B4C8, art: "shield", fit: .strapped),
+        .backpackBack: row(.back, "책가방", 260, .common, 0xFF6F5C, art: "backpack", fit: .strapped),
+        .guitarBack: row(.back, "기타", 340, .rare, 0xC0885A, art: "guitar", fit: .strapped),
+        .balloonBack: row(.back, "풍선", 380, .rare, 0xFF5C5C, art: "balloon", fit: .tethered),
+        .kiteBack: row(.back, "연", 450, .rare, 0x5BC0FF, art: "kite", fit: .tethered),
+        .butterflyBack: row(.back, "나비 날개", 520, .epic, 0x6FA8FF, art: "butterfly", fit: .wings),
+        .parrotBack: row(.back, "어깨 앵무새", 600, .epic, 0x5BD86B, art: "parrot", fit: .shoulder),
+        .rocketBack: row(.back, "로켓", 750, .epic, 0xFF7A5C, art: "rocket", fit: .strapped),
+        .wingBack: row(.back, "천사 날개", 1300, .legendary, 0xF5F5FF, art: "wing", fit: .wings),
     ]
 
     var id: String { rawValue }
@@ -137,13 +156,17 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     var rarity: Rarity { details.rarity }
     var color: NSColor { details.color }
     var art: String? { details.art }
+    var fit: Fit { details.fit }
 
-    /// Kenney 동료 그림 두 장. 번갈아 걷는다.
-    var buddyFrames: [String]? { Self.buddyFrameNames[self] }
-
-    private static let buddyFrameNames: [Cosmetic: [String]] = Dictionary(uniqueKeysWithValues: allCases.compactMap { item in
-        item.details.tiles.map { (item, $0.map { String(format: "buddy_%04d", $0) }) }
-    })
+    /// 예전에 팔던 물건(동료, 색)의 값. 상점에서 뺄 때 가지고 있던 만큼 코인으로 보상한다 (상자에서 얻은 것도 같은 값).
+    static let retiredPrices: [String: Int] = [
+        "tinyBuddy": 220, "greenBuddy": 300, "blueBuddy": 300, "yellowBuddy": 340, "pinkBuddy": 380, "beigeBuddy": 450,
+        "boxBuddy": 600, "chickPet": 260, "hamsterPet": 280, "duckPet": 280, "rabbitPet": 300, "dogPet": 320,
+        "catPet": 320, "hedgehogPet": 420, "penguinPet": 450, "koalaPet": 450, "foxPet": 480, "pandaPet": 520,
+        "otterPet": 520, "slothPet": 560, "parrotPet": 600, "tigerPet": 650, "teddyPet": 650, "snowmanPet": 700,
+        "ghostPet": 750, "trexPet": 1200, "unicornPet": 1400, "dragonPet": 1600,
+        "theme:ruby": 250, "theme:mint": 250, "theme:gold": 400, "theme:aurora": 800,
+    ]
 }
 
 extension Rarity {
@@ -222,6 +245,8 @@ final class GameWallet: ObservableObject {
         static let equipped = "gameCosmeticsEquipped"
         static let missions = "gameDailyMissions"
         static let unlocked = "gameUnlocked"
+        static let companion = "gameCompanion"
+        static let retired = "gameRetiredRefunded"
         static let abilityLevels = "gameAbilityLevels"
         static let abilitiesOff = "gameAbilitiesOff"
         static let weekly = "gameWeeklyChallenges"
@@ -268,9 +293,9 @@ final class GameWallet: ObservableObject {
     @Published private(set) var abilitiesOff: Set<String> {
         didSet { defaults.set(Array(abilitiesOff), forKey: Key.abilitiesOff) }
     }
-    /// 산 색("theme:gold").
-    @Published private(set) var unlocked: Set<String> {
-        didSet { defaults.set(Array(unlocked), forKey: Key.unlocked) }
+    /// 게임과 무대에서 러너 뒤를 따라 달리는 Petdex 펫 (`PetdexStore.storageID`). 없으면 nil.
+    @Published var companionID: String? {
+        didSet { defaults.set(companionID, forKey: Key.companion) }
     }
 
     private init() {
@@ -279,7 +304,7 @@ final class GameWallet: ObservableObject {
         let owned = names(Key.owned)
         self.owned = owned
         equipped = names(Key.equipped).intersection(owned)
-        unlocked = Set(defaults.stringArray(forKey: Key.unlocked) ?? [])
+        companionID = defaults.string(forKey: Key.companion)
         abilityLevels = defaults.dictionary(forKey: Key.abilityLevels) as? [String: Int] ?? [:]
         abilitiesOff = Set(defaults.stringArray(forKey: Key.abilitiesOff) ?? [])
         stored = defaults.data(forKey: Key.missions).flatMap { try? JSONDecoder().decode(DailyMissions.self, from: $0) }
@@ -294,6 +319,21 @@ final class GameWallet: ObservableObject {
         attendance = defaults.data(forKey: Key.attendance).flatMap { try? JSONDecoder().decode(Attendance.self, from: $0) }
             ?? Attendance()
         freeBoxes = defaults.integer(forKey: Key.boxes)
+        refundRetired()
+    }
+
+    /// 상점에서 뺀 동료와 색을 가지고 있었으면 그 값을 한 번 보상한다. 색은 이제 누구나 고를 수 있다.
+    private func refundRetired() {
+        guard !defaults.bool(forKey: Key.retired) else { return }
+        let bought = (defaults.stringArray(forKey: Key.owned) ?? []) + (defaults.stringArray(forKey: Key.unlocked) ?? [])
+        coins += bought.compactMap { Cosmetic.retiredPrices[$0] }.reduce(0, +)
+        defaults.removeObject(forKey: Key.unlocked)
+        defaults.set(true, forKey: Key.retired)
+    }
+
+    /// 데려갈 동료 그림. 펫을 지웠으면 nil.
+    var companion: RunnerCharacter? {
+        companionID.flatMap { PetdexStore.shared.pet(storageID: $0) }.flatMap(PetdexStore.shared.character(for:))
     }
 
     /// 날을 이어서 셀 수 있는 번호 (2001년 1월 1일부터 지난 날 수, 이 Mac의 시간대).
@@ -492,17 +532,6 @@ final class GameWallet: ObservableObject {
                              glide: isOn(.glide))
     }
 
-    func owns(_ theme: SpriteTheme) -> Bool { theme.price == nil || unlocked.contains("theme:\(theme.rawValue)") }
-
-    @discardableResult
-    func buy(_ theme: SpriteTheme) -> Bool { unlock("theme:\(theme.rawValue)", price: theme.price) }
-
-    private func unlock(_ key: String, price: Int?) -> Bool {
-        guard let price, !unlocked.contains(key), coins >= price else { return false }
-        coins -= price
-        unlocked.insert(key)
-        return true
-    }
 
     /// 없으면 사서 달고, 있으면 달거나 뗀다. 코인이 모자라면 false.
     @discardableResult
@@ -594,11 +623,4 @@ extension Achievements.Tier {
     static let numerals = ["Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ"]
 
     var title: String { "업적 · \(kind.name) \(Self.numerals[min(level, Self.numerals.count - 1)])" }
-}
-
-extension SpriteTheme {
-    /// 고를 수 있는 색: 기본 색과 산 색. 지금 고른 색은 늘 넣는다.
-    static func owned(current: SpriteTheme) -> [SpriteTheme] {
-        allCases.filter { GameWallet.shared.owns($0) || $0 == current }
-    }
 }

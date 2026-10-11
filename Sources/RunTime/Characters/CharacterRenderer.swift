@@ -39,15 +39,17 @@ struct CharacterScene {
     }
 
     /// 모자·안경을 얹을 자리 (설계 좌표, 변형까지 적용). 앞쪽 눈과 그 눈을 품은 가장 작은 몸 부품을 머리로 본다.
-    /// 눈이 없는 그림 러너(내 그림, Petdex)는 그림 윗부분 앞쪽을 머리로 어림한다.
+    /// 그림 러너(내 그림, Petdex)는 그림에서 눈을 찾고(`ImageEyes`), 못 찾으면 그림 윗부분 앞쪽을 머리로 어림한다.
     struct HeadAnchor {
         let eye: CGPoint
         let top: CGPoint
         let width: CGFloat
         /// 머리 기울기 (라디안).
         let tilt: CGFloat
-        /// 눈 자리를 알고 있는지. 그림 러너는 어림이라 얼굴 꾸미기를 씌우지 않는다.
+        /// 눈 자리를 알고 있는지. 그림에서 눈을 못 찾은 그림 러너는 얼굴 꾸미기를 씌우지 않는다.
         var hasEyes = true
+        /// 그림 러너에서 찾은 두 눈 사이 거리. 있으면 `eye`는 두 눈 가운데다.
+        var eyeSpan: CGFloat?
     }
 
     var headAnchor: HeadAnchor? {
@@ -74,6 +76,13 @@ struct CharacterScene {
                               width: head.width * scale, tilt: tilt)
         }
         // 그림 러너의 맨 위는 귀·머리카락 끝이라 모자를 조금 내려 머리에 얹는다
+        if let part = parts.first(where: { $0.image != nil }), let image = part.image, let found = ImageEyes.find(in: image) {
+            let r = part.imageRect
+            let eye = CGPoint(x: r.minX + found.center.x * r.width, y: r.minY + found.center.y * r.height)
+            let top = CGPoint(x: eye.x, y: bounds.minY + bounds.height * 0.1)
+            return HeadAnchor(eye: eye.applying(t), top: top.applying(t), width: bounds.width * 0.45 * scale, tilt: tilt,
+                              eyeSpan: found.span * r.width * scale)
+        }
         let top = CGPoint(x: bounds.midX + bounds.width * 0.08, y: bounds.minY + bounds.height * 0.1)
         let eye = CGPoint(x: top.x + bounds.width * 0.1, y: bounds.minY + bounds.height * 0.28)
         return HeadAnchor(eye: eye.applying(t), top: top.applying(t), width: bounds.width * 0.45 * scale, tilt: tilt,

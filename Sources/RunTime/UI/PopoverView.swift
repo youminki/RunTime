@@ -7,8 +7,8 @@ struct PopoverView: View {
     @ObservedObject var engine: UsageEngine
     @ObservedObject var settings: AppSettings
     var openSettings: () -> Void = {}
-    /// 설정 창의 러너 구역을 연다 (Petdex 받기·그림 불러오기).
-    var openRunnerSettings: () -> Void = {}
+    /// 팝오버를 닫고 그림 파일을 골라 내 러너를 만든다 (팝오버 안에서는 파일 창을 띄울 수 없어서).
+    var importRunner: () -> Void = {}
     var openDailyDetail: () -> Void = {}
     var openLeaderboard: () -> Void = {}
     /// 무대에서 러너를 누르거나 메뉴에서 동작을 고르면 메뉴바 러너도 같은 동작을 한다.
@@ -174,7 +174,7 @@ struct PopoverView: View {
             ScrollView {
                 Group {
                     switch page.section {
-                    case .runners: RunnerPicker(settings: settings, openFullPicker: openRunnerSettings)
+                    case .runners: RunnerPicker(settings: settings, importInPlace: importRunner)
                     case .shop: GameShopView(settings: settings)
                     case .quests: QuestView()
                     }
@@ -191,7 +191,7 @@ struct PopoverView: View {
                 Spacer()
                 if page.section == .runners {
                     Picker("색상", selection: $settings.spriteTheme) {
-                        ForEach(SpriteTheme.owned(current: settings.spriteTheme), id: \.self) { Text($0.displayName).tag($0) }
+                        ForEach(SpriteTheme.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .pickerStyle(.menu)
                     .fixedSize()

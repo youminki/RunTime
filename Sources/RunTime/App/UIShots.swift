@@ -29,7 +29,7 @@ enum UIShots {
             ("shop-trail", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .trail).padding(14).frame(width: 376).background(Theme.background))),
             ("shop-dust", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .dust).padding(14).frame(width: 376).background(Theme.background))),
             ("shop-crash", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .crash).padding(14).frame(width: 376).background(Theme.background))),
-            ("shop-theme", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .theme).padding(14).frame(width: 376).background(Theme.background))),
+            ("shop-back", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .back).padding(14).frame(width: 376).background(Theme.background))),
             ("welcome", .darkAqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("welcome-light", .aqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("settings-general", .darkAqua, 720, AnyView(SettingsView(settings: engine.settings, engine: engine, tab: SettingsTabState(.general)).background(windowBackground))),

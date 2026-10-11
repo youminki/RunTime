@@ -257,39 +257,145 @@ enum GameFX {
         }
     }
 
-    // MARK: 동료·모자
+    // MARK: 동료·머리·얼굴·등
 
-    /// 동료 한 프레임. `feet`는 발이 닿는 자리. Kenney 도트는 1pt에 원본 1px(`scale`배), Fluent 펫은 키 `24 × scale`pt.
-    static func drawPet(_ item: Cosmetic, feet: CGPoint, step: Double, scale: CGFloat = 1, moving: Bool, _ cg: CGContext) {
-        if let art = item.art {
-            let size = 24 * scale
-            // 통통 튀며 달리고, 서 있을 때는 숨 쉬듯 흔들린다
-            let hop = moving ? CGFloat(abs(sin(step * .pi))) * 3 * scale : CGFloat(sin(step * 2)) * 0.6 * scale
-            let tilt = moving ? CGFloat(sin(step * .pi * 2)) * 0.08 : 0
-            drawArt(art, at: CGPoint(x: feet.x, y: feet.y - size / 2 - hop + 1), size: size, rotation: tilt, cg)
-        } else {
-            drawBuddy(item, feet: feet, step: step, scale: scale, cg)
-        }
+    /// 동료 (Petdex 펫) 한 장면. `feet`는 발이 닿는 자리, `height`는 서 있을 때 키(pt).
+    static func drawCompanion(_ character: RunnerCharacter, feet: CGPoint, height: CGFloat, phase: CGFloat, moving: Bool,
+                              theme: SpriteTheme = .auto, _ cg: CGContext) {
+        let scene = CharacterScene(rig: character.rig, pose: CharacterPose(activity: moving ? .run : .stand, phase: phase))
+        let scale = height / FittedRig.targetHeight
+        cg.saveGState()
+        cg.translateBy(x: feet.x - FittedRig.targetCenterX * scale, y: feet.y - Stage.ground * scale)
+        cg.scaleBy(x: scale, y: scale)
+        let rich = character.theme(theme)
+        scene.draw(in: cg, look: CharacterLook(rich: true, palette: rich.richPalette(character.rig.palette, phase: 0),
+                                               tint: .white, outline: max(0.32, 1.1 / scale)))
+        cg.restoreGState()
     }
 
-    /// 모자와 얼굴 꾸미기. 캐릭터를 그린 설계 좌표 안에서 부른다.
-    static func drawAccessories(hat: Cosmetic?, face: Cosmetic?, on scene: CharacterScene, _ cg: CGContext) {
+    /// 머리·얼굴 꾸미기. 캐릭터를 그린 설계 좌표 안에서, 몸을 그린 뒤에 부른다.
+    static func drawAccessories(hat: Cosmetic?, face: Cosmetic?, on scene: CharacterScene, time: Double = 0,
+                                _ cg: CGContext) {
         // 뒤도는 동안 몸이 옆으로 설 때는 모자만 덩그러니 남지 않게 잠깐 감춘다
         guard hat != nil || face != nil, abs(scene.transform.scaleX) > 0.3, let head = scene.headAnchor else { return }
         let flip = scene.transform.scaleX < 0
+        let dir: CGFloat = flip ? -1 : 1
+        let up = CGPoint(x: sin(head.tilt), y: -cos(head.tilt))
+        let forward = CGPoint(x: cos(head.tilt) * dir, y: sin(head.tilt) * dir)
+        func at(_ p: CGPoint, up u: CGFloat = 0, forward f: CGFloat = 0) -> CGPoint {
+            CGPoint(x: p.x + up.x * u + forward.x * f, y: p.y + up.y * u + forward.y * f)
+        }
         // 고래·슬라임처럼 머리가 곧 몸인 러너는 머리 폭이 커서 몸 높이로 크기를 묶는다
         let limit = max(scene.placedBounds.height * 0.42, 3.5)
         if let face, let art = face.art, head.hasEyes {
-            let size = min(max(head.width * 0.95, 3), limit * 0.85)
-            drawArt(art, at: CGPoint(x: head.eye.x - (flip ? -1 : 1) * size * 0.12, y: head.eye.y + size * 0.02), size: size,
-                    rotation: head.tilt, flip: flip, cg)
+            let glasses = head.eyeSpan.map { min(max($0 * 2.3, 3), limit) } ?? min(max(head.width * 0.95, 3), limit * 0.85)
+            switch face.fit {
+            case .cheek:
+                let size = glasses * 0.42
+                drawArt(art, at: at(head.eye, up: -glasses * 0.32, forward: -glasses * 0.05), size: size,
+                        rotation: head.tilt, flip: flip, cg)
+            case .mouth:
+                let size = glasses * 0.62
+                drawArt(art, at: at(head.eye, up: -glasses * 0.48, forward: glasses * 0.32), size: size,
+                        rotation: head.tilt - dir * 0.6, flip: flip, cg)
+            default:
+                // 그림 러너는 두 눈 가운데를, 그린 러너는 앞눈에서 조금 뒤를 가운데로 잡는다
+                let shift = head.eyeSpan == nil ? -glasses * 0.12 : 0
+                drawArt(art, at: at(head.eye, up: glasses * 0.02, forward: shift), size: glasses, rotation: head.tilt,
+                        flip: flip, cg)
+            }
         }
         if let hat, let art = hat.art {
             let size = min(max(head.width * 1.15, 3.5), limit)
-            // 그림 아래 여백만큼 머리에 살짝 묻는다
-            let up = CGPoint(x: sin(head.tilt) * size * 0.3, y: -cos(head.tilt) * size * 0.3)
-            drawArt(art, at: CGPoint(x: head.top.x + up.x, y: head.top.y + up.y), size: size, rotation: head.tilt,
-                    flip: flip, cg)
+            switch hat.fit {
+            case .perched:
+                let hop = CGFloat(abs(sin(time * 5))) * size * 0.08
+                drawArt(art, at: at(head.top, up: size * 0.36 + hop), size: size * 0.82, rotation: head.tilt, flip: flip, cg)
+            case .pin:
+                drawArt(art, at: at(head.top, up: size * 0.05, forward: -head.width * 0.38), size: size * 0.62,
+                        rotation: head.tilt - dir * 0.35, flip: flip, cg)
+            case .floating:
+                let bob = CGFloat(sin(time * 2.4)) * size * 0.08
+                let center = at(head.top, up: size * 0.95 + bob)
+                if hat == .cloudHat { drawRain(under: center, width: size * 0.6, time: time, cg) }
+                let spin: CGFloat = hat == .starHat ? CGFloat(time * 1.6) : CGFloat(sin(time * 1.7)) * 0.08
+                drawArt(art, at: center, size: size * 0.95, rotation: head.tilt + spin, flip: flip, cg)
+            default:
+                // 그림 아래 여백만큼 머리에 살짝 묻는다
+                drawArt(art, at: at(head.top, up: size * 0.3), size: size, rotation: head.tilt, flip: flip, cg)
+            }
+        }
+    }
+
+    /// 먹구름에서 떨어지는 빗줄기.
+    private static func drawRain(under cloud: CGPoint, width: CGFloat, time: Double, _ cg: CGContext) {
+        cg.saveGState()
+        cg.setStrokeColor(NSColor(hex: 0x8FD3FF).withAlphaComponent(0.85).cgColor)
+        cg.setLineWidth(max(width * 0.05, 0.12))
+        cg.setLineCap(.round)
+        for i in 0..<3 {
+            let t = CGFloat((time * 1.8 + Double(i) * 0.37).truncatingRemainder(dividingBy: 1))
+            let x = cloud.x + (CGFloat(i) - 1) * width * 0.35
+            let y = cloud.y + width * 0.3 + t * width * 0.9
+            cg.move(to: CGPoint(x: x, y: y))
+            cg.addLine(to: CGPoint(x: x - width * 0.04, y: y + width * 0.16))
+        }
+        cg.strokePath()
+        cg.restoreGState()
+    }
+
+    /// 등 꾸미기. 대부분 몸 뒤라 `front`가 false일 때(몸을 그리기 전) 그리고, 어깨에 앉는 것만 몸 앞에 그린다.
+    static func drawBack(_ item: Cosmetic?, on scene: CharacterScene, time: Double = 0, front: Bool, _ cg: CGContext) {
+        guard let item, let art = item.art, abs(scene.transform.scaleX) > 0.3 else { return }
+        let box = scene.placedBounds
+        guard box.height > 0 else { return }
+        // 옆으로 긴 네발 러너는 메는 물건을 등 위에 얹어 몸 앞에 그린다
+        let lying = box.width > box.height * 1.3
+        let inFront = item.fit == .shoulder || (lying && item.fit == .strapped)
+        guard inFront == front else { return }
+        let flip = scene.transform.scaleX < 0
+        let dir: CGFloat = flip ? -1 : 1
+        let size = max(box.height * 0.5, 3)
+        // 옆으로 긴 네발 러너는 등 위에 얹고, 서 있는 러너는 등 뒤 끝에 메어 몸 밖으로 반쯤 보이게 한다
+        let rear = dir > 0 ? box.minX : box.maxX
+        let back = lying ? CGPoint(x: box.midX - dir * box.width * 0.18, y: box.minY + box.height * 0.15)
+            : CGPoint(x: rear + dir * size * 0.12, y: box.minY + box.height * 0.5)
+        switch item.fit {
+        case .wings:
+            let flap = CGFloat(sin(time * (item == .butterflyBack ? 9 : 6)))
+            for layer in 0..<2 {
+                let spread = CGFloat(layer == 0 ? 0.55 : 0.2) + flap * 0.18
+                drawArt(art, at: CGPoint(x: back.x - dir * size * 0.25, y: back.y - size * 0.32), size: size * 1.05,
+                        alpha: layer == 0 ? 0.75 : 1, rotation: -dir * spread, flip: flip, cg)
+            }
+        case .tethered:
+            let sway = CGFloat(sin(time * 1.8))
+            let float = CGPoint(x: back.x - dir * size * (0.7 + 0.08 * sway), y: back.y - size * 1.55)
+            cg.saveGState()
+            cg.setStrokeColor(NSColor.white.withAlphaComponent(0.75).cgColor)
+            cg.setLineWidth(max(size * 0.03, 0.1))
+            cg.move(to: back)
+            cg.addQuadCurve(to: CGPoint(x: float.x, y: float.y + size * 0.4),
+                            control: CGPoint(x: back.x - dir * size * 0.5, y: back.y - size * 0.3))
+            cg.strokePath()
+            cg.restoreGState()
+            drawArt(art, at: float, size: size * 0.9, rotation: sway * 0.12 - dir * 0.1, flip: flip, cg)
+        case .shoulder where lying:
+            drawArt(art, at: CGPoint(x: back.x, y: back.y - size * 0.15), size: size * 0.62, rotation: -dir * 0.1, flip: flip, cg)
+        case .shoulder:
+            guard let head = scene.headAnchor else { return }
+            let hop = CGFloat(abs(sin(time * 4))) * size * 0.05
+            let shoulder = CGPoint(x: head.top.x - dir * head.width * 0.75, y: head.eye.y + head.width * 0.35 - hop)
+            drawArt(art, at: shoulder, size: size * 0.62, rotation: -dir * 0.1, flip: flip, cg)
+        default:
+            if item == .rocketBack {
+                // 분사 불꽃이 깜빡인다
+                let flame = CGPoint(x: back.x - dir * size * 0.35, y: back.y + size * 0.42)
+                draw(.flame, tint: NSColor(hex: 0xFF8A3D), at: flame, size: size * (0.5 + 0.12 * CGFloat(sin(time * 30))),
+                     alpha: 0.9, rotation: .pi, cg)
+            }
+            let tilt: CGFloat = item == .guitarBack ? -dir * 0.7 : item == .rocketBack ? dir * 0.45 : -dir * 0.12
+            drawArt(art, at: back, size: size * (item == .guitarBack ? 0.95 : 0.72), rotation: tilt, flip: flip, cg)
         }
     }
 
@@ -398,19 +504,6 @@ enum GameFX {
             drawParticle(spray.shape, color: spray.colors[i % spray.colors.count], at: CGPoint(x: x, y: y), size: size,
                          alpha: 1 - age / life, progress: age / life, seed: jitter, time: time, cg)
         }
-    }
-
-    // MARK: 동료
-
-    /// 동료 한 프레임. `feet`는 발이 닿는 자리, 1pt에 원본 1px.
-    static func drawBuddy(_ item: Cosmetic, feet: CGPoint, step: Double, scale: CGFloat = 1, _ cg: CGContext) {
-        guard let names = item.buddyFrames else { return }
-        let frames = names.compactMap { image($0) }
-        guard !frames.isEmpty else { return }
-        let image = frames[Int(step) % frames.count]
-        let w = CGFloat(image.width) * scale, h = CGFloat(image.height) * scale
-        // 그림 아래쪽 투명한 줄을 빼고 발을 맞춘다
-        GameAssets.draw(image, in: CGRect(x: feet.x - w / 2, y: feet.y - h + 1 * scale, width: w, height: h), cg)
     }
 }
 

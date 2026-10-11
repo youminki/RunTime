@@ -70,6 +70,8 @@ final class GameSession {
     private(set) var boosted = false
     /// 꼬리를 그릴 지난 자리들 (화면 x, 바닥 위 높이). 땅이 흐르는 만큼 뒤로 민다.
     var trail: [CGPoint] = []
+    /// 점검 도구가 저장하지 않고 데려가 보는 동료.
+    var companionOverride: RunnerCharacter?
     /// 동료가 따라 뛸 러너 높이 (오래된 것부터).
     var buddyHeights: [(time: Double, height: Double)] = []
     /// 점수판으로 날아가는 코인 (화면 좌표).
@@ -179,11 +181,17 @@ final class GameSession {
             guard let self, let window = note.object as? NSWindow, window === self.window() else { return }
             self.releaseAllKeys()
         }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-            guard let self, event.window != nil, event.window === self.window(),
-                  event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                      .subtracting([.function, .numericPad, .capsLock]).isEmpty
-            else { return event }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .rightMouseDown, .rightMouseUp]) {
+            [weak self] event in
+            guard let self, event.window != nil, event.window === self.window() else { return event }
+            // 마우스로만 하는 사람도 낮게 나는 박쥐를 피하게 오른쪽 버튼을 누르는 동안 숙인다
+            if event.type == .rightMouseDown || event.type == .rightMouseUp {
+                guard self.game.phase == .playing || event.type == .rightMouseUp else { return event }
+                self.game.setDuck(event.type == .rightMouseDown)
+                return nil
+            }
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                .subtracting([.function, .numericPad, .capsLock]).isEmpty else { return event }
             let down = event.type == .keyDown
             switch event.keyCode {
             case 49, 126, 13:   // 스페이스, ↑, W
@@ -307,6 +315,12 @@ final class GameSession {
             let feet = CGPoint(runnerLeft + Self.runnerWidth / 2, CGFloat(game.runnerY))
             burst(at: feet, count: 10, colors: [.white, NSColor(hex: 0x8FD3FF)], shape: .spark, speed: 70, life: 0.4,
                   drift: 0.4, spread: 2)
+        case .slammed(let id):
+            shake = max(shake, 0.35)
+            if let o = game.obstacles.first(where: { $0.id == id }) {
+                burst(at: CGPoint(screenX(o.x) + CGFloat(o.width) / 2, 0), count: 10, color: NSColor(white: 0.85, alpha: 1),
+                      speed: 80, life: 0.45, drift: 1)
+            }
         case .shieldBroke:
             play(.shield)
             shake = 0.5

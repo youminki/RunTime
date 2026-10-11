@@ -16,12 +16,12 @@ struct GameShopView: View {
     static let gold = Color(nsColor: NSColor(hex: 0xFFD45E))
 
     enum Tab: String, CaseIterable {
-        case ability = "능력", buddy = "동료", head = "머리", trail = "꼬리", dust = "발먼지", crash = "부딪힘", theme = "색"
+        case ability = "능력", buddy = "동료", head = "머리", back = "등", trail = "꼬리", dust = "발먼지", crash = "부딪힘"
 
         var slots: [Cosmetic.Slot] {
             switch self {
-            case .buddy: [.buddy]
             case .head: [.hat, .face]
+            case .back: [.back]
             case .trail: [.trail]
             case .dust: [.dust]
             case .crash: [.crash]
@@ -34,10 +34,10 @@ struct GameShopView: View {
             case .ability: "bolt.shield.fill"
             case .buddy: "pawprint.fill"
             case .head: "crown.fill"
+            case .back: "backpack.fill"
             case .trail: "wind"
             case .dust: "aqi.medium"
             case .crash: "burst.fill"
-            case .theme: "paintpalette.fill"
             }
         }
     }
@@ -51,8 +51,8 @@ struct GameShopView: View {
             switch state.tab {
             case .ability:
                 VStack(spacing: 6) { ForEach(Ability.allCases) { abilityRow($0) } }
-            case .theme:
-                grid(SpriteTheme.allCases.filter { $0.price != nil }.map(ShopItem.theme))
+            case .buddy:
+                CompanionPicker(settings: settings)
             default:
                 ForEach(state.tab.slots, id: \.self) { slot in
                     if state.tab.slots.count > 1 {
@@ -170,9 +170,9 @@ struct GameShopView: View {
     private var footnote: String {
         switch state.tab {
         case .ability: "능력은 미니게임에서만 쓰고 다음 판부터 적용됩니다. 순위 점수 계산은 같습니다."
-        case .theme: "산 색은 색상 메뉴에 생기고 메뉴바 러너에도 칠해집니다."
-        case .buddy: "동료는 게임과 사용량 창 무대에서 러너 뒤를 따라 달립니다. 판정과 점수는 같습니다."
-        case .head: "모자와 얼굴 꾸미기는 게임과 사용량 창 무대의 러너에 씌웁니다. Petdex·내 그림 러너는 눈 자리를 알 수 없어 모자만 보입니다."
+        case .buddy: "받아 둔 Petdex 펫을 공짜로 데려갑니다. 게임과 사용량 창 무대에서 러너 뒤를 따라 달리고, 판정과 점수는 같습니다."
+        case .head: "모자와 얼굴 꾸미기는 게임과 사용량 창 무대의 러너에 씌웁니다. 그림 러너는 그림에서 눈을 찾지 못하면 얼굴 꾸미기가 보이지 않습니다."
+        case .back: "등 꾸미기는 러너 등 뒤에 메거나 매달립니다. 다시 누르면 뗍니다."
         default: "게임 화면에만 보이고 점수와 판정은 같습니다. 다시 누르면 뗍니다."
         }
     }
@@ -181,7 +181,6 @@ struct GameShopView: View {
 
     enum ShopItem: Hashable {
         case cosmetic(Cosmetic)
-        case theme(SpriteTheme)
     }
 
     private func grid(_ items: [ShopItem]) -> some View {
@@ -189,7 +188,6 @@ struct GameShopView: View {
             ForEach(items, id: \.self) { item in
                 switch item {
                 case .cosmetic(let cosmetic): cosmeticItem(cosmetic)
-                case .theme(let theme): themeItem(theme)
                 }
             }
         }
@@ -202,21 +200,11 @@ struct GameShopView: View {
         if wallet.coins < before { GameSound.shared.play(.purchase) }
     }
 
-    private func themeItem(_ theme: SpriteTheme) -> some View {
-        let owned = wallet.owns(theme)
-        return card(key: "theme:\(theme.rawValue)", name: theme.displayName, price: theme.price ?? 0, rarity: nil,
-                    owned: owned, on: settings.spriteTheme == theme, ownedLabel: "칠하기") {
-            ItemPreview(kind: .theme(theme), character: settings.character)
-        } action: {
-            if owned || wallet.buy(theme) { settings.spriteTheme = theme }
-        }
-    }
-
     private func cosmeticItem(_ cosmetic: Cosmetic) -> some View {
         let owned = wallet.owned.contains(cosmetic)
         let label = switch cosmetic.slot {
-        case .buddy: "데려가기"
         case .hat, .face: "쓰기"
+        case .back: "메기"
         default: "달기"
         }
         return card(key: cosmetic.rawValue, name: cosmetic.name, price: wallet.price(of: cosmetic), rarity: cosmetic.rarity,
@@ -605,7 +593,7 @@ private struct RevealView: View {
                 Text(item.name).font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.primary)
                 HStack(spacing: 8) {
                     Button("닫기", action: close).controlSize(.small)
-                    Button(item.slot == .buddy ? "바로 데려가기" : "바로 쓰기", action: equip)
+                    Button("바로 쓰기", action: equip)
                         .controlSize(.small).keyboardShortcut(.defaultAction)
                 }
             case .refund:
@@ -624,7 +612,6 @@ private struct RevealView: View {
 struct ItemPreview: View {
     enum Kind {
         case cosmetic(Cosmetic)
-        case theme(SpriteTheme)
     }
 
     let kind: Kind
@@ -675,17 +662,15 @@ struct ItemPreview: View {
 
         let runnerX = size.width * 0.66
         switch kind {
-        case .theme(let theme):
-            drawRunner(cg, centerX: size.width / 2, ground: ground, height: 50, theme: theme, time: time)
         case .cosmetic(let item):
             switch item.slot {
-            case .buddy:
-                // 동료만 크게 (도트는 두 배로 또렷하게)
-                GameFX.drawPet(item, feet: CGPoint(x: size.width / 2, y: ground), step: time * 2.4,
-                               scale: item.art == nil ? 2 : 1.75, moving: true, cg)
             case .hat, .face:
-                drawRunner(cg, centerX: size.width / 2, ground: ground, height: 54, theme: .auto, time: time,
-                           activity: .walk, hat: item.slot == .hat ? item : nil, face: item.slot == .face ? item : nil)
+                drawRunner(cg, centerX: size.width / 2, ground: ground, height: item.fit == .floating ? 44 : 54, theme: .auto,
+                           time: time, activity: .walk, hat: item.slot == .hat ? item : nil,
+                           face: item.slot == .face ? item : nil)
+            case .back:
+                drawRunner(cg, centerX: size.width / 2 + 6, ground: ground, height: item.fit == .tethered ? 36 : 48,
+                           theme: .auto, time: time, activity: .walk, back: item)
             case .trail:
                 let base = ground - 18
                 let head = CGPoint(x: runnerX - 8, y: base)
@@ -734,7 +719,8 @@ struct ItemPreview: View {
     }
 
     private func drawRunner(_ cg: CGContext, centerX: CGFloat, ground: CGFloat, height: CGFloat, theme: SpriteTheme,
-                            time: Double, activity: CharacterPose.Activity = .run, hat: Cosmetic? = nil, face: Cosmetic? = nil) {
+                            time: Double, activity: CharacterPose.Activity = .run, hat: Cosmetic? = nil, face: Cosmetic? = nil,
+                            back: Cosmetic? = nil) {
         let cycle: Double = activity == .walk ? 1.25 : 0.72
         let phase = CGFloat(time.truncatingRemainder(dividingBy: cycle * 100) / cycle)
         let scene = CharacterScene(rig: character.rig, pose: CharacterPose(activity: activity, phase: phase))
@@ -746,8 +732,82 @@ struct ItemPreview: View {
         let rich = character.theme(theme)
         let look = CharacterLook(rich: true, palette: rich.richPalette(character.rig.palette, phase: CGFloat(time / 6)),
                                  tint: .white, outline: max(0.32, 1.1 / scale))
+        GameFX.drawBack(back, on: scene, time: time, front: false, cg)
         scene.draw(in: cg, look: look)
-        GameFX.drawAccessories(hat: hat, face: face, on: scene, cg)
+        GameFX.drawAccessories(hat: hat, face: face, on: scene, time: time, cg)
+        GameFX.drawBack(back, on: scene, time: time, front: true, cg)
         cg.restoreGState()
+    }
+}
+
+// MARK: - 동료
+
+/// 동료 고르기. 받아 둔 Petdex 펫 가운데 하나를 공짜로 데려가고, 다시 누르면 혼자 달린다.
+private struct CompanionPicker: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject private var wallet = GameWallet.shared
+    @ObservedObject private var petdex = PetdexStore.shared
+    @StateObject private var hover = HoveredRunner()
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 8) {
+            ForEach(petdex.pets) { pet in
+                if let character = petdex.character(for: pet) {
+                    let id = PetdexStore.storageID(pet.slug)
+                    let on = wallet.companionID == id
+                    Button { wallet.companionID = on ? nil : id } label: {
+                        tile(character, name: pet.name, on: on, live: on || hover.key == id)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hover.update(id, $0) }
+                    .help(on ? "다시 누르면 혼자 달립니다" : "\(pet.name)을(를) 동료로 데려가기")
+                    .accessibilityLabel(pet.name)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            Button { PetdexWindow.shared.show(settings: settings, purpose: .companion) } label: {
+                VStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 15)).frame(height: 54)
+                    Text("Petdex에서 찾기").font(.system(size: 10.5)).lineLimit(1)
+                }
+                .foregroundStyle(Theme.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("petdex.dev에서 펫을 받아 바로 동료로 데려가기")
+        }
+    }
+
+    private func tile(_ character: RunnerCharacter, name: String, on: Bool, live: Bool) -> some View {
+        VStack(spacing: 4) {
+            Group {
+                if live {
+                    TimelineView(.animation(minimumInterval: 1.0 / 20)) { context in
+                        CharacterCanvas(character: character, theme: .auto, date: context.date, activity: .run)
+                    }
+                } else {
+                    CharacterCanvas(character: character, theme: .auto, date: nil, activity: .stand)
+                }
+            }
+            .frame(height: 54)
+            HStack(spacing: 3) {
+                Text(name).font(.system(size: 10.5, weight: on ? .semibold : .regular)).lineLimit(1)
+                if on { Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.accent) }
+            }
+            .foregroundStyle(on ? Theme.primary : Theme.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(on ? Theme.accent.opacity(0.16) : Color.white.opacity(0.05)))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .strokeBorder(on ? Theme.accent.opacity(0.75) : Theme.hairline))
+        .contentShape(Rectangle())
     }
 }

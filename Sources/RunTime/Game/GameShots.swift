@@ -57,15 +57,16 @@ enum GameShots {
             if game.phase == .over { break }
         }
         // 꾸미기를 단 모습 (꼬리 셋, 발먼지)
-        let looks: [(trail: Cosmetic, dust: Cosmetic, buddy: Cosmetic, hat: Cosmetic)] = [
-            (.rainbowTrail, .rainbowDust, .greenBuddy, .crownHat), (.fireTrail, .cloudDust, .foxPet, .topHat),
-            (.noteTrail, .starDust, .unicornPet, .capHat), (.heartTrail, .heartDust, .tinyBuddy, .ribbonHat),
-            (.magicTrail, .starDust, .dragonPet, .gradHat), (.smokeTrail, .cloudDust, .yellowBuddy, .helmetHat),
-            (.sparkTrail, .goldDust, .blueBuddy, .headphoneHat), (.blossomTrail, .sparkleDust, .pandaPet, .sunHat),
-            (.bubbleTrail, .noteDust, .penguinPet, .pumpkinHat),
+        let looks: [(trail: Cosmetic, dust: Cosmetic, back: Cosmetic, hat: Cosmetic)] = [
+            (.rainbowTrail, .rainbowDust, .wingBack, .crownHat), (.fireTrail, .cloudDust, .rocketBack, .topHat),
+            (.noteTrail, .starDust, .guitarBack, .capHat), (.heartTrail, .heartDust, .balloonBack, .ribbonHat),
+            (.magicTrail, .starDust, .butterflyBack, .starHat), (.smokeTrail, .cloudDust, .kiteBack, .cloudHat),
+            (.sparkTrail, .goldDust, .parrotBack, .chickHat), (.blossomTrail, .sparkleDust, .backpackBack, .hibiscusHat),
+            (.bubbleTrail, .noteDust, .shieldBack, .fireHat),
         ]
-        for (item, dust, buddy, hat) in looks where game.phase == .playing {
-            GameWallet.shared.preview = [item, dust, buddy, hat, .sunglassesFace, .confettiCrash]
+        session.companionOverride = PetdexStore.shared.pets.first.flatMap(PetdexStore.shared.character(for:))
+        for (item, dust, back, hat) in looks where game.phase == .playing {
+            GameWallet.shared.preview = [item, dust, back, hat, .sunglassesFace, .confettiCrash]
             step(0.5, autoplay: true)
             try shot("2-play-\(item.rawValue)")
         }
@@ -234,6 +235,7 @@ enum AccessorySheet {
     @MainActor
     /// `set`: 기본 러너(nil), "petdex", "pack". 그림 러너는 본래 색·황금·루비로 그려 색 입히기도 함께 본다.
     static func run(to url: URL, set: String? = nil, hat: Cosmetic = .crownHat, face: Cosmetic = .sunglassesFace) throws {
+        if set == "items" { return try items(to: url) }
         let images = set != nil
         let runners: [RunnerCharacter] = switch set {
         case "petdex": PetdexStore.shared.pets.compactMap(PetdexStore.shared.character(for:))
@@ -268,6 +270,48 @@ enum AccessorySheet {
                                          tint: .white, outline: 0.36)
                 scene.draw(in: cg, look: look)
                 GameFX.drawAccessories(hat: hat, face: face, on: scene, cg)
+                cg.restoreGState()
+            }
+        }
+        guard let image = cg.makeImage() else { return }
+        try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    /// 머리·얼굴·등 꾸미기를 하나씩 여러 러너(기본 러너 몇과 Petdex 펫)에 달아 크게 그린다 (`--accessory-sheet <파일> items`).
+    @MainActor
+    static func items(to url: URL) throws {
+        let items = Cosmetic.allCases.filter { [.hat, .face, .back].contains($0.slot) }
+        let runners = [Runner.cat, .penguin, .dog, .whale, .robot].map(\.character)
+            + PetdexStore.shared.pets.prefix(3).compactMap(PetdexStore.shared.character(for:))
+        let cell = CGSize(width: 110, height: 80)
+        let size = CGSize(width: 90 + cell.width * CGFloat(runners.count), height: cell.height * CGFloat(items.count))
+        guard let cg = CGContext(data: nil, width: Int(size.width * 2), height: Int(size.height * 2), bitsPerComponent: 8,
+                                 bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        cg.translateBy(x: 0, y: size.height * 2)
+        cg.scaleBy(x: 2, y: -2)
+        cg.setFillColor(NSColor(hex: 0x1B2140).cgColor)
+        cg.fill(CGRect(origin: .zero, size: size))
+        for (row, item) in items.enumerated() {
+            let label = NSAttributedString(string: item.name, attributes: [.font: NSFont.systemFont(ofSize: 12),
+                                                                          .foregroundColor: NSColor.white])
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+            label.draw(at: CGPoint(x: 6, y: CGFloat(row) * cell.height + 30))
+            NSGraphicsContext.restoreGraphicsState()
+            for (column, character) in runners.enumerated() {
+                let scene = CharacterScene(rig: character.rig, pose: CharacterPose(activity: .run, phase: 0.3))
+                let scale: CGFloat = 2.6
+                cg.saveGState()
+                cg.translateBy(x: 90 + CGFloat(column) * cell.width + 8, y: CGFloat(row) * cell.height + 18)
+                cg.scaleBy(x: scale, y: scale)
+                let look = CharacterLook(rich: true, palette: character.theme(.auto).richPalette(character.rig.palette, phase: 0),
+                                         tint: .white, outline: 0.36)
+                GameFX.drawBack(item.slot == .back ? item : nil, on: scene, time: 0.3, front: false, cg)
+                scene.draw(in: cg, look: look)
+                GameFX.drawAccessories(hat: item.slot == .hat ? item : nil, face: item.slot == .face ? item : nil, on: scene,
+                                       time: 0.3, cg)
+                GameFX.drawBack(item.slot == .back ? item : nil, on: scene, time: 0.3, front: true, cg)
                 cg.restoreGState()
             }
         }

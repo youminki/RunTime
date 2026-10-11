@@ -11,6 +11,8 @@ private func catalog() -> [RunnerGame.ObstacleKind] {
         .init(id: "crab", width: 30, height: 28, minSpeed: 260, minGap: 140, approachSpeed: 40),
         .init(id: "drill", width: 32, height: 38, minSpeed: 380, minGap: 160, approachSpeed: 70),
         .init(id: "bat", width: 48, height: 34, elevations: [22, 50], minSpeed: 330, minGap: 150),
+        .init(id: "spikeball", width: 36, height: 36, minSpeed: 340, minGap: 150, approachSpeed: 110),
+        .init(id: "crusher", width: 36, height: 33, minSpeed: 300, minGap: 150, dropFrom: 72),
     ]
 }
 
@@ -204,14 +206,15 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
     @Test(arguments: Array(UInt64(1)...UInt64(40)))
     func everyObstacleIsPassable(seed: UInt64) {
         let game = makeGame(seed: seed)
-        let met = meetings(seed: seed, seconds: 60)
-        #expect(met.count > 40)
+        let met = meetings(seed: seed, seconds: 100)
+        #expect(met.count > 70)
         #expect(Set(met.map(\.obstacle.kind.id)).count == catalog().count)
         for (_, o) in met {
             let closing = o.spawnSpeed + o.kind.approachSpeed
             let under = o.y + game.tuning.hitInset >= runnerSize.height + 2
+            let duck = o.y > 0 && game.canDuckUnder(o.y)
             let over = game.canJump(width: o.width, top: o.y + o.height, closingSpeed: closing)
-            #expect(under || over, "seed \(seed) \(o.kind.id) ×\(o.count) at y \(o.y) closing \(closing)")
+            #expect(under || duck || over, "seed \(seed) \(o.kind.id) ×\(o.count) at y \(o.y) closing \(closing)")
         }
     }
 
@@ -251,6 +254,37 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         autoplay(game, seconds: 120)
         let hit = game.obstacles.first { $0.id == game.crashedInto }
         #expect(game.elapsed > 60, "crashed at \(game.elapsed)s speed \(game.speed) into \(hit.map { "\($0.kind.id)×\($0.count) y\($0.y)" } ?? "-") runnerY \(game.runnerY)")
+    }
+
+    /// 내리찍는 상자는 러너가 닿기 전에 땅에 내려와, 내려온 걸 보고 뛸 시간이 남는다.
+    @Test func crusherLandsWellBeforeRunnerArrives() {
+        var landedAhead: [Double] = []
+        for seed in 1...10 as ClosedRange<UInt64> {
+            let game = makeGame(seed: seed)
+            game.ignoresCollisions = true
+            game.press()
+            game.release()
+            var seen = Set<Int>()
+            for _ in 0..<(120 * 90) {
+                game.advance(by: 1.0 / 120)
+                for case .slammed(let id) in game.drainEvents() {
+                    guard let o = game.obstacles.first(where: { $0.id == id }), seen.insert(id).inserted else { continue }
+                    landedAhead.append((o.x - game.runnerBox.maxX) / game.speed)
+                }
+            }
+        }
+        #expect(landedAhead.count > 5)
+        // 떨어지는 데 0.2초쯤 걸리니 닿기 0.45초 넘게 앞서 내려온다
+        #expect(landedAhead.allSatisfy { $0 > 0.45 }, "\(landedAhead)")
+    }
+
+    /// 낮게 나는 박쥐를 뛰어넘을 수 있다고 칠 때는 사람이 누를 시각에 여유가 있어야 한다.
+    @Test func lowFlyerJumpNeedsSlackOtherwiseDuck() {
+        let game = makeGame()
+        let bat = catalog().first { $0.id == "bat" }!
+        #expect(!game.canJump(width: bat.width, top: 22 + bat.height, closingSpeed: 400))
+        #expect(game.canDuckUnder(22))
+        #expect(!game.canDuckUnder(10))
     }
 
     @Test func duckingPassesLowFlyer() {

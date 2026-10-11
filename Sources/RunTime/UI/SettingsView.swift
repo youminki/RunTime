@@ -117,7 +117,7 @@ struct SettingsView: View {
                     segmented("메뉴바 크기", $settings.runnerSize, RunnerSize.allCases) { $0.displayName }
                 }
                 GroupedRow("색상", icon: "paintpalette.fill", tint: Palette.pink) {
-                    menu("색상", $settings.spriteTheme, SpriteTheme.owned(current: settings.spriteTheme)) { $0.displayName }
+                    menu("색상", $settings.spriteTheme, SpriteTheme.allCases) { $0.displayName }
                 }
                 GroupedRow("움직임", icon: "film.stack", tint: Palette.orange) {
                     segmented("움직임", $settings.smoothness, SpriteSmoothness.allCases) { $0.displayName }

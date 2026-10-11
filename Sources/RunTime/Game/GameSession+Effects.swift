@@ -98,9 +98,12 @@ extension GameSession {
 
     // MARK: 동료
 
+    /// 데려간 Petdex 펫. 점검 도구는 저장하지 않고 바꿔 본다.
+    var companion: RunnerCharacter? { companionOverride ?? GameWallet.shared.companion }
+
     /// 동료는 러너 뒤에서 조금 늦게 따라 뛴다. 러너 높이를 0.15초 늦춰 쓴다 (화면 주사율과 상관없이).
     func updateBuddy() {
-        guard GameWallet.shared.equipped(.buddy) != nil else {
+        guard companion != nil else {
             buddyHeights.removeAll()
             return
         }
@@ -111,18 +114,17 @@ extension GameSession {
     static let buddyDelay = 0.15
 
     func drawBuddy(_ cg: CGContext, groundY: CGFloat, time: Double) {
-        guard let item = GameWallet.shared.equipped(.buddy), entrance >= 1 else { return }
+        guard let companion, entrance >= 1 else { return }
         let lift = CGFloat(buddyHeights.first?.height ?? 0)
-        let x = runnerLeft - 18
+        let x = runnerLeft - 20
         // 그림자
-        let shadow = 14 * (1 - min(lift / 120, 0.6))
+        let shadow = 16 * (1 - min(lift / 120, 0.6))
         cg.setFillColor(NSColor.black.withAlphaComponent(0.22 * (1 - min(lift / 90, 0.8))).cgColor)
         cg.fillEllipse(in: CGRect(x: x - shadow / 2, y: groundY - 2, width: shadow, height: 4))
         let running = game.phase == .playing
-        let step = running ? game.distance / 18 : time * 2
-        let bob = running && lift == 0 ? CGFloat(abs(sin(game.distance / 18 * .pi))) * 1.5 : 0
-        GameFX.drawPet(item, feet: CGPoint(x, groundY - lift - (item.art == nil ? bob : 0)), step: step, moving: running && lift == 0,
-                       cg)
+        // 보폭 50pt마다 한 걸음, 서 있으면 숨 쉬기
+        let phase = running ? CGFloat(game.distance / 50) : CGFloat(time / 2.4)
+        GameFX.drawCompanion(companion, feet: CGPoint(x, groundY - lift), height: 24, phase: phase, moving: running, cg)
     }
 
     // MARK: 화면 효과

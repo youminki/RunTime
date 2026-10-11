@@ -71,7 +71,7 @@ struct RunnerStage: View {
             LeaderboardFeed.shared.stageDisappeared()
         }
         .help(model.game == nil ? "러너를 누르면 장난을 쳐요"
-              : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓ 숙이기, ←→ 이동, G·1·2 고스트와 겨루기, esc 나가기")
+              : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓·오른쪽 클릭 숙이기, ←→ 이동, G·1·2 고스트와 겨루기, esc 나가기")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(character.name)
         .accessibilityAddTraits(.isButton)
@@ -450,15 +450,14 @@ final class StageModel: ObservableObject {
         cg.fillEllipse(in: CGRect(x: origin.x + bounds.midX * scale - shadowW / 2, y: groundY - 2.5,
                                   width: shadowW, height: 5))
 
-        // 상점에서 데려간 동료가 러너 뒤를 따라 걷는다 (멈춰 있으면 제자리에서 숨 쉰다)
-        if let buddy = GameWallet.shared.equipped(.buddy) {
-            let x = origin.x + bounds.minX * scale - 22
+        // 데려간 Petdex 펫이 러너 뒤를 따라 걷는다 (멈춰 있으면 제자리에서 숨 쉰다)
+        if let companion = GameWallet.shared.companion {
+            let x = origin.x + bounds.minX * scale - 26
             let moving = speed > 1
-            let hop = moving ? CGFloat(abs(sin(Double(scroll) / 14 * .pi))) * 2 : 0
             cg.setFillColor(NSColor.black.withAlphaComponent(0.22).cgColor)
-            cg.fillEllipse(in: CGRect(x: x - 14, y: groundY - 2.5, width: 28, height: 5))
-            GameFX.drawPet(buddy, feet: CGPoint(x: x, y: groundY - (buddy.art == nil ? hop : 0)),
-                           step: moving ? Double(scroll) / 14 : Double(time) * 1.5, scale: 2, moving: moving, cg)
+            cg.fillEllipse(in: CGRect(x: x - 16, y: groundY - 2.5, width: 32, height: 5))
+            GameFX.drawCompanion(companion, feet: CGPoint(x: x, y: groundY), height: 44,
+                                 phase: moving ? scroll / 60 : time / 2.4, moving: moving, theme: theme, cg)
         }
 
         if isSpace && playing == nil { drawStarStreaks(cg, size: size, time: time, groundY: groundY) }
@@ -477,8 +476,12 @@ final class StageModel: ObservableObject {
         var look = CharacterLook(rich: true, palette: theme.richPalette(rig.palette, phase: time / 6),
                                  tint: .white, outline: 0.36)
         look.alarm = display == .alert && playing == nil
+        let back = GameWallet.shared.equipped(.back)
+        GameFX.drawBack(back, on: scene, time: Double(time), front: false, cg)
         scene.draw(in: cg, look: look)
-        GameFX.drawAccessories(hat: GameWallet.shared.equipped(.hat), face: GameWallet.shared.equipped(.face), on: scene, cg)
+        GameFX.drawAccessories(hat: GameWallet.shared.equipped(.hat), face: GameWallet.shared.equipped(.face), on: scene,
+                               time: Double(time), cg)
+        GameFX.drawBack(back, on: scene, time: Double(time), front: true, cg)
         if playing == nil {
             display.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: true, leftEdge: leftEdge)
         }
