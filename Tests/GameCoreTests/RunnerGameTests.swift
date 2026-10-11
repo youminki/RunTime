@@ -137,6 +137,53 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         #expect(game.speed == game.tuning.maxSpeed)
     }
 
+    @Test func speedKeepsRisingSlowlyAfterRamp() {
+        let game = makeGame(catalog: [])
+        game.press()
+        let rampTime = (game.tuning.rampSpeed - game.tuning.startSpeed) / game.tuning.acceleration
+        for _ in 0..<Int((rampTime + 10) * 4) { game.advance(by: 0.25) }
+        #expect(game.speed > game.tuning.rampSpeed + 5)
+        #expect(game.speed < game.tuning.rampSpeed + 15)
+    }
+
+    /// 압박이 차면 같은 속도에서도 장애물이 더 촘촘해진다.
+    @Test func obstaclesGetDenserOverTime() {
+        func perSecond(from start: Double, to end: Double) -> Double {
+            var total = 0.0
+            for seed in 1...8 as ClosedRange<UInt64> {
+                let met = meetings(seed: seed, seconds: end).filter { $0.time >= start && $0.obstacle.y == 0 }
+                total += Double(met.count) / (end - start)
+            }
+            return total / 8
+        }
+        #expect(perSecond(from: 130, to: 160) > perSecond(from: 40, to: 70) * 1.1)
+    }
+
+    /// 문은 최고 속도 근처에서 나오고, 끝까지 누른 점프는 박쥐에 닿지만 가장 짧은 점프는 지나간다.
+    @Test func gatesNeedShortHop() {
+        let game = makeGame()
+        let tuning = game.tuning
+        let ceiling = tuning.gateCeiling(runnerHeight: runnerSize.height)
+        #expect(tuning.shortHop.apex + runnerSize.height < ceiling + tuning.hitInset)
+        let fullApex = tuning.jumpVelocity * tuning.jumpVelocity / (2 * tuning.gravity)
+        #expect(fullApex + runnerSize.height > ceiling + tuning.hitInset + 8)
+        var gates = 0
+        for seed in 1...10 as ClosedRange<UInt64> {
+            let met = meetings(seed: seed, seconds: 150)
+            for (time, o) in met where o.y == ceiling {
+                gates += 1
+                #expect(time > 30)
+                let ground = met.first { $0.obstacle.y == 0 && abs($0.time - time) < 0.1 }?.obstacle
+                #expect(ground != nil)
+                if let ground {
+                    #expect(game.canHop(width: ground.width, top: ground.height, ceiling: ceiling,
+                                        closingSpeed: ground.spawnSpeed))
+                }
+            }
+        }
+        #expect(gates > 10)
+    }
+
     @Test func scoreGrowsWithDistanceAndCoins() {
         let game = makeGame(catalog: [])
         game.press()
@@ -172,10 +219,11 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
     @Test(arguments: Array(UInt64(1)...UInt64(40)))
     func everyGapLeavesTimeToLandAndJumpAgain(seed: UInt64) {
         let tuning = RunnerGame.Tuning()
-        let met = meetings(seed: seed, seconds: 60)
+        // 문 위 박쥐는 땅 장애물과 같이 만나니 서서 지나가는 높이의 장애물은 뺀다
+        let met = meetings(seed: seed, seconds: 150).filter { $0.obstacle.y + tuning.hitInset < runnerSize.height + 2 }
         for (a, b) in zip(met, met.dropFirst()) {
             let between = b.time - a.time
-            #expect(between >= tuning.airTime + tuning.reactionTime - 0.03,
+            #expect(between >= tuning.airTime + tuning.lateReactionTime - 0.03,
                     "seed \(seed) \(a.obstacle.kind.id) → \(b.obstacle.kind.id): \(between)s")
         }
     }
@@ -200,9 +248,9 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         let game = makeGame(seed: seed)
         game.press()
         game.release()
-        autoplay(game, seconds: 40)
+        autoplay(game, seconds: 120)
         let hit = game.obstacles.first { $0.id == game.crashedInto }
-        #expect(game.elapsed > 20, "crashed at \(game.elapsed)s speed \(game.speed) into \(hit.map { "\($0.kind.id)×\($0.count) y\($0.y)" } ?? "-") runnerY \(game.runnerY)")
+        #expect(game.elapsed > 60, "crashed at \(game.elapsed)s speed \(game.speed) into \(hit.map { "\($0.kind.id)×\($0.count) y\($0.y)" } ?? "-") runnerY \(game.runnerY)")
     }
 
     @Test func duckingPassesLowFlyer() {

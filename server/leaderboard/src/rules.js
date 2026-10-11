@@ -13,6 +13,19 @@ export const RULES = {
     maxCoinsPerObstacle: 3,
     minSecondsPerObstacle: 0.7,
   },
+  // rampSpeed까지는 acceleration으로, 그 뒤로는 lateAcceleration으로 maxSpeed까지 오른다.
+  // 시간이 갈수록 장애물 간격이 체공+반응 시간(약 0.69초)까지 좁아진다.
+  2: {
+    startSpeed: 220,
+    rampSpeed: 440,
+    maxSpeed: 540,
+    acceleration: 6,
+    lateAcceleration: 1,
+    scorePerPoint: 0.04,
+    coinValue: 10,
+    maxCoinsPerObstacle: 3,
+    minSecondsPerObstacle: 0.65,
+  },
 };
 
 export const MAX_DURATION_MS = 2 * 60 * 60 * 1000;
@@ -22,13 +35,21 @@ export const SUBMIT_INTERVAL_MS = 3000;
 export const SUBMITS_PER_MINUTE = 6;
 
 /// 속도가 시작 속도에서 가속해 최고 속도에 머무를 때, t초 동안 달릴 수 있는 최대 거리.
+/// rampSpeed가 있으면 거기서부터는 lateAcceleration으로 오른다.
 export function maxDistance(rule, seconds) {
-  const rampTime = (rule.maxSpeed - rule.startSpeed) / rule.acceleration;
-  if (seconds <= rampTime) {
-    return rule.startSpeed * seconds + 0.5 * rule.acceleration * seconds * seconds;
+  const stages = rule.rampSpeed === undefined
+    ? [[rule.maxSpeed, rule.acceleration]]
+    : [[rule.rampSpeed, rule.acceleration], [rule.maxSpeed, rule.lateAcceleration]];
+  let speed = rule.startSpeed;
+  let left = seconds;
+  let distance = 0;
+  for (const [top, acceleration] of stages) {
+    const t = Math.min(left, (top - speed) / acceleration);
+    distance += speed * t + 0.5 * acceleration * t * t;
+    speed += acceleration * t;
+    left -= t;
   }
-  const ramp = rule.startSpeed * rampTime + 0.5 * rule.acceleration * rampTime * rampTime;
-  return ramp + rule.maxSpeed * (seconds - rampTime);
+  return distance + speed * left;
 }
 
 export function checkRun({ score, coins, durationMs, rules }) {

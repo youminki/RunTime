@@ -11,6 +11,23 @@ test("rules v1 match the game tuning", () => {
   );
 });
 
+test("rules v2 match the game tuning", () => {
+  assert.deepEqual(
+    { ...RULES[2] },
+    { startSpeed: 220, rampSpeed: 440, maxSpeed: 540, acceleration: 6, lateAcceleration: 1, scorePerPoint: 0.04,
+      coinValue: 10, maxCoinsPerObstacle: 3, minSecondsPerObstacle: 0.65 },
+  );
+});
+
+test("v2 distance keeps speeding up slowly after the ramp", () => {
+  const rule = RULES[2];
+  const ramp = (440 - 220) / 6;
+  assert.ok(Math.abs(maxDistance(rule, ramp) - maxDistance(RULES[1], ramp)) < 1e-6);
+  assert.ok(Math.abs(maxDistance(rule, ramp + 10) - (maxDistance(rule, ramp) + 4400 + 50)) < 1e-6);
+  const late = ramp + 100;
+  assert.ok(Math.abs(maxDistance(rule, late + 10) - (maxDistance(rule, late) + 5400)) < 1e-6);
+});
+
 test("distance ramps up then holds at max speed", () => {
   const rule = RULES[1];
   assert.equal(maxDistance(rule, 0), 0);
@@ -32,7 +49,7 @@ test("impossible runs are rejected", () => {
   assert.equal(checkRun({ score: 50, coins: 10, durationMs: 30_000, rules: 1 }), "impossible score");
   assert.equal(checkRun({ score: 10, coins: 0, durationMs: 0, rules: 1 }), "out of range");
   assert.equal(checkRun({ score: 10.5, coins: 0, durationMs: 1000, rules: 1 }), "not integers");
-  assert.equal(checkRun({ score: 10, coins: 0, durationMs: 1000, rules: 2 }), "unknown rules");
+  assert.equal(checkRun({ score: 10, coins: 0, durationMs: 1000, rules: 3 }), "unknown rules");
   for (const key of ["__proto__", "constructor", "toString", "1"]) {
     assert.equal(checkRun({ score: 1e300, coins: 0, durationMs: 1000, rules: key }), "unknown rules");
   }
