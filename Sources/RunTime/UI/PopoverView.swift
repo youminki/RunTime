@@ -25,9 +25,7 @@ struct PopoverView: View {
     private var customSelection: Binding<String?> {
         Binding(get: { settings.customRunnerID },
                 set: { id in
-                    if let pack = LocalPack.runner(storageID: id) {
-                        settings.select(pack)
-                    } else if petdex.pet(storageID: id) != nil {
+                    if petdex.pet(storageID: id) != nil {
                         settings.customRunnerID = id
                     } else if let custom = customRunners.runner(id: id) {
                         settings.select(custom)
@@ -35,10 +33,10 @@ struct PopoverView: View {
                 })
     }
 
-    /// 기본 러너, 개인 팩, Petdex 펫, 내 러너를 통틀어 지금과 다른 러너 하나.
+    /// 기본 러너, Petdex 펫, 내 러너를 통틀어 지금과 다른 러너 하나.
     private func pickRandomRunner() {
         let builtIns = Runner.allCases.filter { settings.customRunnerID != nil || $0 != settings.runner }
-        let others = (LocalPack.runners.map(LocalPack.storageID) + petdex.pets.map { PetdexStore.storageID($0.slug) }
+        let others = (petdex.pets.map { PetdexStore.storageID($0.slug) }
             + customRunners.runners.map(\.id)).filter { $0 != settings.customRunnerID }
         let index = Int.random(in: 0..<(builtIns.count + others.count))
         if index < builtIns.count {

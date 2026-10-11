@@ -39,13 +39,6 @@ scripts/setup-signing.sh
 ORIGIN=$(git remote get-url origin 2>/dev/null || true)
 RENAMED=$(printf '%s' "$ORIGIN" | sed -E 's#(github\.com[:/]youminki/)ClaudeTokenCat(\.git)?/?$#\1RunTime\2#')
 [ "$RENAMED" = "$ORIGIN" ] || git remote set-url origin "$RENAMED"
-# 개인 팩은 git이 무시하는 파일이라 소스 폴더 이름이 바뀔 때 옛 폴더(Sources/TokenCat)에 남는다
-for PACK in LocalPack Assets/LocalPack; do
-  if [ -d "Sources/TokenCat/$PACK" ] && [ ! -e "Sources/RunTime/$PACK" ]; then
-    mkdir -p "$(dirname "Sources/RunTime/$PACK")"
-    mv "Sources/TokenCat/$PACK" "Sources/RunTime/$PACK"
-  fi
-done
 [ ! -d Sources/TokenCat ] || find Sources/TokenCat -depth -type d -empty -delete
 scripts/build-app.sh
 

@@ -40,13 +40,12 @@ final class AppSettings: ObservableObject {
     @Published var runner: Runner { didSet { save(runner.rawValue, .runner) } }
     @Published var spriteTheme: SpriteTheme { didSet { save(spriteTheme.rawValue, .spriteTheme) } }
 
-    /// 내 러너(사용자가 불러온 그림), Petdex 펫, 개인 팩 러너를 쓰는 중이면 그 id. 기본 러너를 고르면 nil.
+    /// 내 러너(사용자가 불러온 그림), Petdex 펫을 쓰는 중이면 그 id. 기본 러너를 고르면 nil.
     @Published var customRunnerID: String? { didSet { save(customRunnerID ?? "", .customRunner) } }
 
-    /// 지금 그릴 러너. 내 러너를 지웠거나 개인 팩이 없는 빌드면 기본 러너로 돌아간다.
+    /// 지금 그릴 러너. 내 러너를 지웠으면 기본 러너로 돌아간다.
     var character: RunnerCharacter {
-        LocalPack.runner(storageID: customRunnerID)?.character
-            ?? CustomRunnerStore.shared.runner(id: customRunnerID)?.character
+        CustomRunnerStore.shared.runner(id: customRunnerID)?.character
             ?? PetdexStore.shared.pet(storageID: customRunnerID).flatMap(PetdexStore.shared.character(for:))
             ?? runner.character
     }
@@ -54,7 +53,7 @@ final class AppSettings: ObservableObject {
     /// 지금 러너를 가리키는 이름. 내 고스트에 남겨, 고스트가 그 판을 달린 러너 모습으로 보이게 한다.
     var runnerID: String { customRunnerID ?? runner.rawValue }
 
-    /// 남에게 보내도 되는 러너 이름. 기본 러너와 Petdex 펫만 (내 그림과 개인 팩은 이 Mac 밖으로 보내지 않는다).
+    /// 남에게 보내도 되는 러너 이름. 기본 러너와 Petdex 펫만 (내 그림은 이 Mac 밖으로 보내지 않는다).
     var shareableRunnerID: String? {
         guard let custom = customRunnerID else { return runner.rawValue }
         return custom.hasPrefix(PetdexStore.storageID("")) ? custom : nil
@@ -64,13 +63,8 @@ final class AppSettings: ObservableObject {
     static func character(forRunnerID id: String?) -> RunnerCharacter? {
         guard let id else { return nil }
         if let runner = Runner(rawValue: id) { return runner.character }
-        return LocalPack.runner(storageID: id)?.character
-            ?? CustomRunnerStore.shared.runner(id: id)?.character
+        return CustomRunnerStore.shared.runner(id: id)?.character
             ?? PetdexStore.shared.pet(storageID: id).flatMap(PetdexStore.shared.character(for:))
-    }
-
-    func select(_ pack: PackRunner) {
-        customRunnerID = LocalPack.storageID(pack)
     }
 
     func select(_ runner: Runner) {
@@ -147,7 +141,7 @@ final class AppSettings: ObservableObject {
         spriteTheme = SpriteTheme(rawValue: string(.spriteTheme)).flatMap { GameWallet.shared.owns($0) ? $0 : nil } ?? .auto
         // 내 러너 목록에서 사라진 id는 버린다 (그대로 두면 메뉴·고르기에서 아무 것도 선택되지 않아 보인다)
         let savedCustom = string(.customRunner)
-        let known = CustomRunnerStore.shared.runner(id: savedCustom) != nil || LocalPack.runner(storageID: savedCustom) != nil
+        let known = CustomRunnerStore.shared.runner(id: savedCustom) != nil
             || PetdexStore.shared.pet(storageID: savedCustom) != nil
         customRunnerID = known ? savedCustom : nil
         smoothness = SpriteSmoothness(rawValue: string(.smoothness)) ?? .smooth

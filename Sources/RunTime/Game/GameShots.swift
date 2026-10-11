@@ -237,7 +237,6 @@ enum AccessorySheet {
         let images = set != nil
         let runners: [RunnerCharacter] = switch set {
         case "petdex": PetdexStore.shared.pets.compactMap(PetdexStore.shared.character(for:))
-        case "pack": LocalPack.runners.map(\.character)
         default: Runner.allCases.map(\.character)
         }
         let cell = CGSize(width: 140, height: 84), columns = 7

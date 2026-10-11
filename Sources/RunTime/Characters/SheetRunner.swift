@@ -2,7 +2,7 @@ import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 
-/// 자세별 프레임 PNG가 든 폴더로 그리는 러너 (Petdex 펫, 개인 팩).
+/// 자세별 프레임 PNG가 든 폴더로 그리는 러너 (Petdex 펫).
 /// 폴더에는 `frames.json`과 `idle_0.png`, `run_0.png`, `sad_0.png`, `wait_0.png`, `wave_0.png` … 가 있다.
 /// 서 있기·달리기 칸(`w`×`h`)이 기준 크기이고, 그보다 넓은 줄(누운 자세 등)은 `rects`의 자리에 같은 배율로 그린다.
 struct SheetRig: CharacterRig {

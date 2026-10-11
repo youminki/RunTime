@@ -37,7 +37,6 @@ struct RunnerPicker: View {
     }
 
     var body: some View {
-        let packs = LocalPack.runners.filter { filter.matches($0.name, $0.id) }
         let pets = petdex.pets.filter { filter.matches($0.name, $0.slug) }
         VStack(alignment: .leading, spacing: 8) {
             searchField
@@ -56,21 +55,6 @@ struct RunnerPicker: View {
                             .accessibilityLabel(runner.displayName)
                             .accessibilityAddTraits(selected ? .isSelected : [])
                         }
-                    }
-                }
-            }
-            if !packs.isEmpty {
-                groupTitle("개인 팩 \(packs.count)")
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(packs, id: \.id) { pack in
-                        let id = LocalPack.storageID(pack)
-                        let selected = settings.customRunnerID == id
-                        Button { settings.select(pack) } label: {
-                            tile(pack.character, key: id, selected: selected)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hover.update(id, $0) }
-                        .accessibilityLabel(pack.name)
                     }
                 }
             }

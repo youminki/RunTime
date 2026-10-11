@@ -3,8 +3,5 @@
 .swiftpm/
 dist/
 .omc/
-# 개인용 러너 팩 (Characters/LocalPack.swift 참고). 저작권이 있는 그림이 공개 저장소에 올라가지 않게 한다.
-Sources/RunTime/LocalPack/
-Sources/RunTime/Assets/LocalPack/
 __pycache__/
 *.pyc

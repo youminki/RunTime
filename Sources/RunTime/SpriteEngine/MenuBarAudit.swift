@@ -23,7 +23,6 @@ enum MenuBarAudit {
 
     static func entries() -> [Entry] {
         Runner.allCases.map { Entry(id: $0.rawValue, character: $0.character) }
-            + LocalPack.runners.map { Entry(id: LocalPack.storageID($0), character: $0.character) }
             + PetdexStore.shared.pets.compactMap { pet in
                 PetdexStore.shared.character(for: pet).map { Entry(id: PetdexStore.storageID(pet.slug), character: $0) }
             }

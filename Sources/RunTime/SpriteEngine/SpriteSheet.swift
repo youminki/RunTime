@@ -58,15 +58,6 @@ enum SpriteSheet {
         return list
     }()
 
-    /// 개인 팩 러너만 컬러로 그린다 (`--sprite-sheet <폴더> pack`).
-    static func writePack(to directory: URL) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let rigs = LocalPack.runners.map { $0.character.rig }
-        guard !rigs.isEmpty else { return }
-        try render(theme: .natural, rigs: rigs, background: NSColor(hex: 0x8FA3B8))
-            .write(to: directory.appendingPathComponent("sheet-pack.png"))
-    }
-
     private static func render(theme: SpriteTheme, rigs: [CharacterRig], background: NSColor) -> Data {
         let scale: CGFloat = 5
         let cell = CGSize(width: Stage.size.width * scale, height: Stage.size.height * scale)

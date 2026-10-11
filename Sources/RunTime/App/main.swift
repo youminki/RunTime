@@ -60,7 +60,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--menubar-audit") {
 if let index = CommandLine.arguments.firstIndex(of: "--game-shots") {
     let args = Array(CommandLine.arguments.dropFirst(index + 1))
     let id = args.dropFirst().first
-    let character = LocalPack.runner(storageID: id)?.character ?? Runner(rawValue: id ?? "")?.character ?? Runner.cat.character
+    let character = Runner(rawValue: id ?? "")?.character ?? Runner.cat.character
     // 무대 그리기는 메인 액터에서만 된다
     Task { @MainActor in
         do {
@@ -121,11 +121,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--sprite-sheet") {
     let filter = args.dropFirst().first
     let runners = filter.map { $0.split(separator: ",").compactMap { Runner(rawValue: String($0)) } }
     do {
-        if filter == "pack" {
-            try SpriteSheet.writePack(to: URL(fileURLWithPath: path))
-        } else {
-            try SpriteSheet.write(to: URL(fileURLWithPath: path), runners: runners ?? Runner.allCases)
-        }
+        try SpriteSheet.write(to: URL(fileURLWithPath: path), runners: runners ?? Runner.allCases)
         print("saved: \(path)")
         exit(0)
     } catch {
