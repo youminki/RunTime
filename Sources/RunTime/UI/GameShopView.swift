@@ -16,11 +16,12 @@ struct GameShopView: View {
     static let gold = Color(nsColor: NSColor(hex: 0xFFD45E))
 
     enum Tab: String, CaseIterable {
-        case ability = "능력", buddy = "동료", head = "머리", trail = "꼬리", dust = "발먼지", crash = "부딪힘"
+        case ability = "능력", buddy = "동료", track = "트랙", weather = "날씨", trail = "꼬리", dust = "발먼지", crash = "부딪힘"
 
         var slots: [Cosmetic.Slot] {
             switch self {
-            case .head: [.hat, .face]
+            case .track: [.track]
+            case .weather: [.weather]
             case .trail: [.trail]
             case .dust: [.dust]
             case .crash: [.crash]
@@ -32,7 +33,8 @@ struct GameShopView: View {
             switch self {
             case .ability: "bolt.shield.fill"
             case .buddy: "pawprint.fill"
-            case .head: "crown.fill"
+            case .track: "road.lanes"
+            case .weather: "cloud.sun.fill"
             case .trail: "wind"
             case .dust: "aqi.medium"
             case .crash: "burst.fill"
@@ -128,9 +130,9 @@ struct GameShopView: View {
         .accessibilityLabel("오늘의 특가 \(item.name), \(price)코인")
     }
 
-    /// 머리·얼굴 꾸미기에 마우스를 올리면 위 무대의 러너가 써 본다.
+    /// 트랙·날씨에 마우스를 올리면 위 무대가 그 풍경으로 바뀐다.
     private func tryOn(_ item: Cosmetic, _ inside: Bool) {
-        guard item.slot == .hat || item.slot == .face else { return }
+        guard item.slot == .track || item.slot == .weather else { return }
         wallet.tryingOn = inside ? item : nil
     }
 
@@ -165,7 +167,8 @@ struct GameShopView: View {
         switch state.tab {
         case .ability: "능력은 미니게임에서만 쓰고 다음 판부터 적용됩니다. 순위 점수 계산은 같습니다."
         case .buddy: "받아 둔 Petdex 펫을 공짜로 데려갑니다. 게임과 사용량 창 무대에서 러너 뒤를 따라 달리고, 판정과 점수는 같습니다."
-        case .head: "마우스를 올리면 위 무대의 러너가 써 봅니다. 그림 러너는 그림에서 눈을 찾지 못하면 얼굴 꾸미기가 보이지 않습니다."
+        case .track: "마우스를 올리면 위 무대가 그 트랙으로 바뀝니다. 하늘은 지금 시각을 따르고, 미니게임에서도 같은 곳을 달립니다."
+        case .weather: "마우스를 올리면 위 무대에 날씨가 보입니다. 러너 뒤로 지나가서 게임 장애물을 가리지 않습니다."
         default: "게임 화면에만 보이고 점수와 판정은 같습니다. 다시 누르면 뗍니다."
         }
     }
@@ -198,20 +201,13 @@ struct GameShopView: View {
     private func cosmeticItem(_ cosmetic: Cosmetic) -> some View {
         let owned = wallet.owned.contains(cosmetic)
         let label = switch cosmetic.slot {
-        case .hat, .face: "쓰기"
+        case .track: "고르기"
+        case .weather: "켜기"
         default: "달기"
         }
         return card(key: cosmetic.rawValue, name: cosmetic.name, price: wallet.price(of: cosmetic), rarity: cosmetic.rarity,
                     owned: owned, on: wallet.equipped.contains(cosmetic), ownedLabel: label) {
-            // 머리·얼굴은 물건을 크게 보이고 무대에서 써 보게 한다. 꼬리·먼지·부딪힘은 움직임이 보여야 해서 작은 무대로 둔다
-            if cosmetic.slot == .hat || cosmetic.slot == .face {
-                ZStack {
-                    Color.white.opacity(0.035)
-                    ItemGlyph(item: cosmetic, size: 38)
-                }
-            } else {
-                ItemPreview(kind: .cosmetic(cosmetic), character: settings.character)
-            }
+            ItemPreview(kind: .cosmetic(cosmetic), character: settings.character)
         } action: {
             wallet.choose(cosmetic)
         }
@@ -399,14 +395,27 @@ struct FluentImage: View {
     }
 }
 
-/// 물건 그림. Fluent 그림이 없는 꼬리·먼지·부딪힘은 갈래 아이콘을 그 물건 색으로 그린다.
+/// 물건 그림. 트랙은 하늘·풍경·땅 색 띠로, 날씨는 그 기호로, 나머지는 Fluent 그림이나 갈래 아이콘으로 그린다.
 struct ItemGlyph: View {
     let item: Cosmetic
     var size: CGFloat = 30
 
     var body: some View {
-        if let art = item.art {
+        if let track = Backdrop.track(item) {
+            VStack(spacing: 0) {
+                Color(nsColor: NSColor(hex: 0x8FB4D8))
+                Color(nsColor: track.far)
+                Color(nsColor: track.ground)
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        } else if let art = item.art {
             FluentImage(name: art, size: size)
+        } else if let symbol = item.symbol {
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.55, weight: .semibold))
+                .foregroundStyle(Color(nsColor: item.color))
+                .frame(width: size, height: size)
         } else {
             let color = Color(nsColor: item.color)
             ZStack {
@@ -567,16 +576,10 @@ private struct RevealView: View {
                     .frame(width: 60 + 80 * min(1, age / 0.6), height: 60 + 80 * min(1, age / 0.6))
                 switch result {
                 case .item(let item):
-                    Group {
-                        if item.slot == .hat || item.slot == .face {
-                            ItemGlyph(item: item, size: 56)
-                        } else {
-                            ItemPreview(kind: .cosmetic(item), character: character)
-                                .frame(width: 150, height: 70)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        }
-                    }
-                    .scaleEffect(0.3 + 0.7 * pop)
+                    ItemPreview(kind: .cosmetic(item), character: character)
+                        .frame(width: 150, height: 70)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .scaleEffect(0.3 + 0.7 * pop)
                 case .refund(let coins):
                     VStack(spacing: 2) {
                         FluentImage(name: "moneybag", size: 44)
@@ -629,6 +632,16 @@ struct ItemPreview: View {
 
     func draw(_ cg: CGContext, size: CGSize, time: Double) {
         let ground = size.height - 9
+        if case .cosmetic(let item) = kind, item.slot == .track || item.slot == .weather {
+            // 트랙은 낮, 반딧불은 밤 하늘에서 보여야 풍경이 잘 보인다
+            var sky = Sky.at(hour: item == .fireflyWeather ? 22 : 12, space: false)
+            sky.clouds *= 0.35   // 작은 칸에서는 구름이 풍경을 가린다
+            let t = CGFloat(time)
+            Backdrop.draw(cg, size: size, sky: sky, time: t, groundY: ground, scroll: t * 40, speed: 40,
+                          track: item.slot == .track ? item : nil, weather: item.slot == .weather ? item : nil)
+            drawRunner(cg, centerX: size.width * 0.38, ground: ground, height: 34, theme: .auto, time: time)
+            return
+        }
         // 바탕은 칸과 같은 중립색으로 두고 땅 줄만 흐르게 해 달리는 느낌만 남긴다
         cg.setFillColor(NSColor(white: 1, alpha: 0.035).cgColor)
         cg.fill(CGRect(origin: .zero, size: size))
@@ -643,10 +656,8 @@ struct ItemPreview: View {
         switch kind {
         case .cosmetic(let item):
             switch item.slot {
-            case .hat, .face:
-                drawRunner(cg, centerX: size.width / 2, ground: ground, height: item.fit == .floating ? 44 : 54, theme: .auto,
-                           time: time, activity: .walk, hat: item.slot == .hat ? item : nil,
-                           face: item.slot == .face ? item : nil)
+            case .track, .weather:
+                break
             case .trail:
                 let base = ground - 18
                 let head = CGPoint(x: runnerX - 8, y: base)
@@ -695,7 +706,7 @@ struct ItemPreview: View {
     }
 
     private func drawRunner(_ cg: CGContext, centerX: CGFloat, ground: CGFloat, height: CGFloat, theme: SpriteTheme,
-                            time: Double, activity: CharacterPose.Activity = .run, hat: Cosmetic? = nil, face: Cosmetic? = nil) {
+                            time: Double, activity: CharacterPose.Activity = .run) {
         let cycle: Double = activity == .walk ? 1.25 : 0.72
         let phase = CGFloat(time.truncatingRemainder(dividingBy: cycle * 100) / cycle)
         let scene = CharacterScene(rig: character.rig, pose: CharacterPose(activity: activity, phase: phase))
@@ -708,7 +719,6 @@ struct ItemPreview: View {
         let look = CharacterLook(rich: true, palette: rich.richPalette(character.rig.palette, phase: CGFloat(time / 6)),
                                  tint: .white, outline: max(0.32, 1.1 / scale))
         scene.draw(in: cg, look: look)
-        GameFX.drawAccessories(hat: hat, face: face, on: scene, time: time, cg)
         cg.restoreGState()
     }
 }

@@ -8,40 +8,22 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     case sparkleTrail, cometTrail, rainbowTrail, fireTrail, noteTrail, heartTrail, magicTrail, smokeTrail, sparkTrail
     case blossomTrail, cloverTrail, mapleTrail, snowTrail, bubbleTrail, candyTrail
     case heartDust, goldDust, starDust, rainbowDust, cloudDust, sparkleDust, noteDust
+    case pineTrack, autumnTrack, desertTrack, beachTrack, snowTrack, blossomTrack, peakTrack, cityTrack
+    case drizzleWeather, snowWeather, petalWeather, leafWeather, fogWeather, fireflyWeather
     case fireworksCrash, heartCrash, coinCrash, magicCrash, flameCrash, boomCrash, confettiCrash, balloonCrash, sweetCrash
-    case crownHat, topHat, capHat, gradHat, helmetHat, sunHat, ribbonHat, headphoneHat, pumpkinHat
-    case militaryHat, mushroomHat, tulipHat, hibiscusHat, sunflowerHat, ladybugHat, chickHat, hamsterHat
-    case cloudHat, rainbowHat, starHat, fireHat
-    case sunglassesFace, glassesFace, gogglesFace, divingFace, bandageFace, heartFace, lollipopFace
 
     enum Slot: CaseIterable {
-        case hat, face, trail, dust, crash
+        case track, weather, trail, dust, crash
 
         var title: String {
             switch self {
-            case .hat: "모자"
-            case .face: "얼굴"
+            case .track: "트랙"
+            case .weather: "날씨"
             case .trail: "꼬리"
             case .dust: "발먼지"
             case .crash: "부딪힘"
             }
         }
-    }
-
-    /// 머리·얼굴 꾸미기를 몸 어디에 어떻게 붙이는지.
-    enum Fit {
-        /// 머리에 쓴다 (모자). 얼굴은 두 눈에 걸친다 (안경).
-        case worn
-        /// 머리 위에 앉아 통통 튄다 (병아리, 무당벌레).
-        case perched
-        /// 머리 옆에 꽂는다 (꽃).
-        case pin
-        /// 머리 위에 떠서 흔들린다 (구름, 별).
-        case floating
-        /// 볼에 붙인다.
-        case cheek
-        /// 입에 문다.
-        case mouth
     }
 
     struct Info {
@@ -51,17 +33,34 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         let rarity: Rarity
         /// 발먼지 색, 꼬리의 바탕색, 미리보기 빛.
         let color: NSColor
-        /// Fluent Emoji 그림 이름 (Assets/Fluent). 머리·얼굴은 그 그림을, 꼬리·발먼지·부딪힘은 입자로 쓴다.
+        /// Fluent Emoji 그림 이름 (Assets/Fluent). 꼬리·발먼지·부딪힘의 입자로 쓴다.
         var art: String? = nil
-        var fit: Fit = .worn
+        /// 그림이 없는 물건(날씨)을 목록에 보일 SF Symbol.
+        var symbol: String? = nil
     }
 
     private static func row(_ slot: Slot, _ name: String, _ price: Int, _ rarity: Rarity, _ hex: UInt32,
-                            art: String? = nil, fit: Fit = .worn) -> Info {
-        Info(slot: slot, name: name, price: price, rarity: rarity, color: NSColor(hex: hex), art: art, fit: fit)
+                            art: String? = nil, symbol: String? = nil) -> Info {
+        Info(slot: slot, name: name, price: price, rarity: rarity, color: NSColor(hex: hex), art: art, symbol: symbol)
     }
 
     private static let info: [Cosmetic: Info] = [
+        // 트랙: 무대와 게임에서 달리는 곳
+        .pineTrack: row(.track, "소나무 숲", 260, .common, 0x3D6B52),
+        .autumnTrack: row(.track, "가을 들판", 300, .common, 0xC07A3A),
+        .desertTrack: row(.track, "사막", 340, .rare, 0xD9A066),
+        .beachTrack: row(.track, "해변", 380, .rare, 0x3E8FB8),
+        .snowTrack: row(.track, "설원", 420, .rare, 0xB9CDE0),
+        .blossomTrack: row(.track, "벚꽃길", 560, .epic, 0xE9AFC8),
+        .peakTrack: row(.track, "설산", 680, .epic, 0x8C9DB8),
+        .cityTrack: row(.track, "도시 야경", 1100, .legendary, 0xFFD27A),
+        // 날씨: 무대와 게임 하늘에 떠도는 입자
+        .drizzleWeather: row(.weather, "이슬비", 180, .common, 0x9DB8D9, symbol: "cloud.drizzle.fill"),
+        .snowWeather: row(.weather, "눈", 260, .rare, 0xDCE8F2, symbol: "snowflake"),
+        .petalWeather: row(.weather, "꽃잎", 300, .rare, 0xF7B6CF, symbol: "camera.macro"),
+        .leafWeather: row(.weather, "단풍", 300, .rare, 0xE0702F, symbol: "leaf.fill"),
+        .fogWeather: row(.weather, "안개", 420, .epic, 0xC9D4E3, symbol: "cloud.fog.fill"),
+        .fireflyWeather: row(.weather, "반딧불", 520, .epic, 0xD8F27A, symbol: "sparkle"),
         // 꼬리
         .sparkleTrail: row(.trail, "반짝이", 120, .common, 0xFFD45E),
         .heartTrail: row(.trail, "하트", 140, .common, 0xFF8FB8),
@@ -96,36 +95,6 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         .magicCrash: row(.crash, "마법진", 400, .epic, 0xC68CFF),
         .sweetCrash: row(.crash, "간식 비", 450, .epic, 0xFFB0C8, art: "donut"),
         .confettiCrash: row(.crash, "축하 파티", 900, .legendary, 0xFFD45E, art: "confetti"),
-        // 모자
-        .capHat: row(.hat, "야구모자", 180, .common, 0x5B8CFF, art: "cap"),
-        .ribbonHat: row(.hat, "리본", 200, .common, 0xFF5C8A, art: "ribbon"),
-        .tulipHat: row(.hat, "튤립 핀", 180, .common, 0xFF6F91, art: "tulip", fit: .pin),
-        .mushroomHat: row(.hat, "버섯 모자", 220, .common, 0xE0443E, art: "mushroom"),
-        .ladybugHat: row(.hat, "무당벌레", 240, .common, 0xE0443E, art: "ladybug", fit: .perched),
-        .sunHat: row(.hat, "밀짚모자", 260, .rare, 0xF2C46D, art: "sunhat"),
-        .hibiscusHat: row(.hat, "하와이 꽃", 280, .rare, 0xFF5C8A, art: "hibiscus", fit: .pin),
-        .militaryHat: row(.hat, "군용 헬멧", 300, .rare, 0x7A8A4F, art: "militaryhelmet"),
-        .headphoneHat: row(.hat, "헤드폰", 320, .rare, 0x8899AA, art: "headphone"),
-        .helmetHat: row(.hat, "안전모", 340, .rare, 0xFFC94D, art: "helmet"),
-        .sunflowerHat: row(.hat, "해바라기", 360, .rare, 0xFFC93D, art: "sunflower", fit: .pin),
-        .chickHat: row(.hat, "머리 위 병아리", 420, .epic, 0xFFD45E, art: "chick", fit: .perched),
-        .gradHat: row(.hat, "학사모", 420, .epic, 0x445566, art: "gradcap"),
-        .pumpkinHat: row(.hat, "호박", 480, .epic, 0xFF8A2F, art: "pumpkin"),
-        .hamsterHat: row(.hat, "머리 위 햄스터", 520, .epic, 0xF2B279, art: "hamster", fit: .perched),
-        .cloudHat: row(.hat, "먹구름", 560, .epic, 0x8FA3B8, art: "raincloud", fit: .floating),
-        .topHat: row(.hat, "신사 모자", 650, .epic, 0x333344, art: "tophat"),
-        .rainbowHat: row(.hat, "무지개", 800, .legendary, 0xFF9E3D, art: "rainbow", fit: .floating),
-        .starHat: row(.hat, "떠도는 별", 900, .legendary, 0xFFD45E, art: "glowstar", fit: .floating),
-        .fireHat: row(.hat, "불타는 머리", 1200, .legendary, 0xFF7A2F, art: "fire", fit: .perched),
-        .crownHat: row(.hat, "왕관", 1500, .legendary, 0xFFC94D, art: "crown"),
-        // 얼굴
-        .bandageFace: row(.face, "반창고", 150, .common, 0xF2C49B, art: "bandage", fit: .cheek),
-        .glassesFace: row(.face, "안경", 200, .common, 0x8899AA, art: "glasses"),
-        .heartFace: row(.face, "하트 볼", 240, .common, 0xFF5C8A, art: "heart", fit: .cheek),
-        .gogglesFace: row(.face, "물안경", 300, .rare, 0x5BC0FF, art: "goggles"),
-        .lollipopFace: row(.face, "막대사탕", 340, .rare, 0xFF6FA8, art: "lollipop", fit: .mouth),
-        .divingFace: row(.face, "잠수 마스크", 420, .epic, 0x3DA5FF, art: "divingmask"),
-        .sunglassesFace: row(.face, "선글라스", 450, .epic, 0x333344, art: "sunglasses"),
     ]
 
     var id: String { rawValue }
@@ -136,7 +105,7 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     var rarity: Rarity { details.rarity }
     var color: NSColor { details.color }
     var art: String? { details.art }
-    var fit: Fit { details.fit }
+    var symbol: String? { details.symbol }
 
     /// 예전에 팔던 물건(동료, 색)의 값. 상점에서 뺄 때 가지고 있던 만큼 코인으로 보상한다 (상자에서 얻은 것도 같은 값).
     static let retiredPrices: [String: Int] = [
@@ -146,6 +115,11 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         "otterPet": 520, "slothPet": 560, "parrotPet": 600, "tigerPet": 650, "teddyPet": 650, "snowmanPet": 700,
         "ghostPet": 750, "trexPet": 1200, "unicornPet": 1400, "dragonPet": 1600,
         "theme:ruby": 250, "theme:mint": 250, "theme:gold": 400, "theme:aurora": 800,
+    ]
+
+    /// 상점에서 뺀 머리·얼굴 꾸미기의 정가.
+    static let retiredHeadPrices: [String: Int] = [
+        "capHat": 180, "ribbonHat": 200, "tulipHat": 180, "mushroomHat": 220, "ladybugHat": 240, "sunHat": 260, "hibiscusHat": 280, "militaryHat": 300, "headphoneHat": 320, "helmetHat": 340, "sunflowerHat": 360, "chickHat": 420, "gradHat": 420, "pumpkinHat": 480, "hamsterHat": 520, "cloudHat": 560, "topHat": 650, "rainbowHat": 800, "starHat": 900, "fireHat": 1200, "crownHat": 1500, "bandageFace": 150, "glassesFace": 200, "heartFace": 240, "gogglesFace": 300, "lollipopFace": 340, "divingFace": 420, "sunglassesFace": 450,
     ]
 
     /// 상점에서 뺀 등 꾸미기의 정가. 가지고 있었으면 한 번 돌려준다.
@@ -234,6 +208,7 @@ final class GameWallet: ObservableObject {
         static let companion = "gameCompanion"
         static let retired = "gameRetiredRefunded"
         static let retiredBack = "gameRetiredBackRefunded"
+        static let retiredHead = "gameRetiredHeadRefunded"
         static let abilityLevels = "gameAbilityLevels"
         static let abilitiesOff = "gameAbilitiesOff"
         static let weekly = "gameWeeklyChallenges"
@@ -308,7 +283,15 @@ final class GameWallet: ObservableObject {
             ?? Attendance()
         freeBoxes = defaults.integer(forKey: Key.boxes)
         refundRetired()
-        refundBackItems()
+        // 저장된 원본 목록을 한 번만 읽어 모든 환불에 쓴다. 앞 환불이 목록을 고쳐 쓰면 뒤 환불이 셀 것을 잃는다
+        let saved = defaults.stringArray(forKey: Key.owned) ?? []
+        let refunded = [refundRemoved(Cosmetic.retiredBackPrices, key: Key.retiredBack, from: saved),
+                        refundRemoved(Cosmetic.retiredHeadPrices, key: Key.retiredHead, from: saved)]
+        if refunded.contains(true) {
+            // 저장된 목록에서도 뺀 물건을 지워, 옛 값을 다시 읽어 셈하는 일이 없게 한다
+            defaults.set(owned.map(\.rawValue), forKey: Key.owned)
+            defaults.set(equipped.map(\.rawValue), forKey: Key.equipped)
+        }
     }
 
     /// 상점에서 뺀 동료와 색을 가지고 있었으면 그 값을 한 번 보상한다. 색은 이제 누구나 고를 수 있다.
@@ -320,15 +303,13 @@ final class GameWallet: ObservableObject {
         defaults.set(true, forKey: Key.retired)
     }
 
-    /// 등 꾸미기를 상점에서 뺐다. 산 것이 있었으면 정가를 한 번 돌려준다 (행운 상자로 받은 것도 같은 값).
-    private func refundBackItems() {
-        guard !defaults.bool(forKey: Key.retiredBack) else { return }
-        let bought = defaults.stringArray(forKey: Key.owned) ?? []
-        coins += bought.compactMap { Cosmetic.retiredBackPrices[$0] }.reduce(0, +)
-        // 저장된 목록에서도 뺀 물건을 지워, 옛 값을 다시 읽어 셈하는 일이 없게 한다
-        defaults.set(owned.map(\.rawValue), forKey: Key.owned)
-        defaults.set(equipped.map(\.rawValue), forKey: Key.equipped)
-        defaults.set(true, forKey: Key.retiredBack)
+    /// 상점에서 뺀 꾸미기를 가지고 있었으면 정가를 한 번 돌려준다 (행운 상자로 받은 것도 같은 값).
+    /// 이번에 처음 환불했으면 true.
+    private func refundRemoved(_ prices: [String: Int], key: String, from bought: [String]) -> Bool {
+        guard !defaults.bool(forKey: key) else { return false }
+        coins += bought.compactMap { prices[$0] }.reduce(0, +)
+        defaults.set(true, forKey: key)
+        return true
     }
 
     /// 업적·미션 이름을 바꾸기 전에 쌓인 보상도 새 이름으로 보여 준다.

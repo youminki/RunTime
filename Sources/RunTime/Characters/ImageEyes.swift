@@ -2,7 +2,7 @@ import CoreGraphics
 
 /// 그림 러너(Petdex, 내 그림)의 눈 자리. 먼저 흰자에 닿은 검은 눈동자 무리를 찾고, 흰자가 없는 그림은
 /// 밝은 얼굴에 둘러싸인 작은 어두운 덩어리를 눈으로 본다. 외곽선과 머리카락은 둘레가 어둡거나 투명해서 걸러진다.
-/// 못 찾으면 nil이라 얼굴 꾸미기를 씌우지 않는다. 메인 스레드에서만 쓴다.
+/// 못 찾으면 nil이라 얼굴 자리를 어림한다. 메인 스레드에서만 쓴다.
 enum ImageEyes {
     struct Found {
         /// 두 눈 가운데 (또는 한 눈). 그림 크기에 대한 비율, 위가 0.
@@ -24,7 +24,7 @@ enum ImageEyes {
     }
 
     /// 한 동작 줄의 프레임들. 프레임마다 찾은 눈을 그림 영역에 대한 자리로 바꿔 가운데값을 쓴다.
-    /// 한두 프레임에서 잘못 찾아도 안경이 튀지 않고, 영역을 따라 같이 움직인다.
+    /// 한두 프레임에서 잘못 찾아도 얼굴 효과가 튀지 않고, 영역을 따라 같이 움직인다.
     private final class Group {
         let images: [CGImage]
         lazy var consensus: Found? = ImageEyes.consensus(images)

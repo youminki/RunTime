@@ -498,8 +498,6 @@ final class StageModel: ObservableObject {
             }
         }
         scene.draw(in: cg, look: look)
-        GameFX.drawAccessories(hat: GameWallet.shared.equipped(.hat), face: GameWallet.shared.equipped(.face), on: scene,
-                               time: Double(time), cg)
         if playing == nil {
             display.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: true, leftEdge: leftEdge)
         }
@@ -565,108 +563,8 @@ final class StageModel: ObservableObject {
     // MARK: 배경
 
     private func drawBackdrop(_ cg: CGContext, size: CGSize, sky: Sky, time: CGFloat, groundY: CGFloat) {
-        let space = CGColorSpace(name: CGColorSpace.sRGB)
-        if let gradient = CGGradient(colorsSpace: space, colors: [sky.top.cgColor, sky.bottom.cgColor] as CFArray,
-                                     locations: [0, 1]) {
-            cg.drawLinearGradient(gradient, start: .zero, end: CGPoint(0, groundY), options: [.drawsAfterEndLocation])
-        }
-
-        // 별
-        if sky.stars > 0 {
-            for i in 0..<34 {
-                let x = Self.hash(i, 1) * size.width
-                let y = Self.hash(i, 2) * (groundY - 30) + 4
-                let twinkle = 0.35 + 0.65 * abs(sin(time * (0.8 + Self.hash(i, 3) * 1.6) + CGFloat(i)))
-                let r = 0.5 + Self.hash(i, 4) * 0.9
-                cg.setFillColor(NSColor.white.withAlphaComponent(sky.stars * twinkle).cgColor)
-                cg.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
-            }
-        }
-
-        // 해·달
-        // 오른쪽 위는 단추 자리, 러너 머리 위는 사용률 고리 자리라 그 사이 아래쪽에 둔다
-        let orb = CGPoint(size.width * 0.8, sky.orbLow ? groundY - 24 : 50)
-        cg.setFillColor(sky.orb.withAlphaComponent(0.16).cgColor)
-        cg.fillEllipse(in: CGRect(x: orb.x - 14, y: orb.y - 14, width: 28, height: 28))
-        cg.setFillColor(sky.orb.cgColor)
-        cg.fillEllipse(in: CGRect(x: orb.x - 8, y: orb.y - 8, width: 16, height: 16))
-        if sky.moon {
-            cg.setFillColor(sky.top.blended(withFraction: 0.25, of: sky.bottom)?.cgColor ?? sky.top.cgColor)
-            cg.fillEllipse(in: CGRect(x: orb.x - 3.5, y: orb.y - 11, width: 16, height: 16))
-        }
-
-        // 구름
-        if sky.clouds > 0 {
-            for i in 0..<4 {
-                let span = size.width + 90
-                let raw = Self.hash(i, 7) * span - scroll * 0.22 - time * 4
-                let x = raw - floor(raw / span) * span - 45
-                let y = 12 + Self.hash(i, 8) * 14   // 러너 머리보다 위로 지나가게
-                let s = 0.7 + Self.hash(i, 9) * 0.6
-                cg.setFillColor(NSColor.white.withAlphaComponent(0.6 * sky.clouds).cgColor)
-                for (dx, dy, r) in [(0.0, 0.0, 7.0), (8.0, -3.0, 8.5), (17.0, 0.0, 6.5), (8.0, 2.5, 7.0)] as [(CGFloat, CGFloat, CGFloat)] {
-                    cg.fillEllipse(in: CGRect(x: x + dx * s - r * s, y: y + dy * s - r * s, width: r * 2 * s, height: r * 2 * s))
-                }
-            }
-        }
-
-        // 먼 산과 가까운 언덕
-        layer(cg, size: size, base: groundY - 20, amplitude: 13, frequency: 0.022, parallax: 0.12, color: sky.far, seed: 1)
-        layer(cg, size: size, base: groundY - 7, amplitude: 7, frequency: 0.045, parallax: 0.35, color: sky.near, seed: 2)
-
-        // 땅
-        cg.setFillColor(sky.ground.cgColor)
-        cg.fill(CGRect(x: 0, y: groundY, width: size.width, height: size.height - groundY))
-        cg.setFillColor(sky.edge.withAlphaComponent(0.9).cgColor)
-        cg.fill(CGRect(x: 0, y: groundY - 1, width: size.width, height: 2))
-        // 빠를수록 땅 점선이 늘어져 흐릿하게 번진다 (모션 블러)
-        let dash: CGFloat = 26
-        let blur = min(speed / 140, 1)
-        let offset = scroll.truncatingRemainder(dividingBy: dash)
-        cg.setFillColor(sky.edge.withAlphaComponent(0.35 - 0.12 * blur).cgColor)
-        var x = -offset
-        while x < size.width {
-            cg.addPath(CGPath(roundedRect: CGRect(x: x, y: groundY + 5, width: 10 + 12 * blur, height: 2), cornerWidth: 1,
-                              cornerHeight: 1, transform: nil))
-            x += dash
-        }
-        cg.fillPath()
-        // 풀 무더기
-        let tuftGap: CGFloat = 47
-        let tuftOffset = scroll.truncatingRemainder(dividingBy: tuftGap)
-        cg.setStrokeColor(sky.edge.withAlphaComponent(0.7).cgColor)
-        cg.setLineWidth(1.2)
-        cg.setLineCap(.round)
-        x = -tuftOffset + 12
-        while x < size.width + 10 {
-            for dx in [-2.5, 0, 2.5] as [CGFloat] {
-                cg.move(to: CGPoint(x + dx * 0.4, groundY - 0.5))
-                cg.addLine(to: CGPoint(x + dx, groundY - 4 + abs(dx) * 0.4))
-            }
-            x += tuftGap
-        }
-        cg.strokePath()
-    }
-
-    /// 사인파를 겹친 능선. 시차를 둬서 멀수록 느리게 흐른다.
-    private func layer(_ cg: CGContext, size: CGSize, base: CGFloat, amplitude: CGFloat, frequency: CGFloat,
-                       parallax: CGFloat, color: NSColor, seed: CGFloat) {
-        let path = CGMutablePath()
-        path.move(to: CGPoint(0, size.height))
-        var x: CGFloat = 0
-        let shift = scroll * parallax
-        while x <= size.width + 4 {
-            let w = x + shift
-            let y = base - amplitude * (0.55 * sin(w * frequency + seed) + 0.3 * sin(w * frequency * 2.3 + seed * 2)
-                                        + 0.15 * sin(w * frequency * 5.1))
-            path.addLine(to: CGPoint(x, y))
-            x += 4
-        }
-        path.addLine(to: CGPoint(size.width, size.height))
-        path.closeSubpath()
-        cg.setFillColor(color.cgColor)
-        cg.addPath(path)
-        cg.fillPath()
+        Backdrop.draw(cg, size: size, sky: sky, time: time, groundY: groundY, scroll: scroll, speed: speed,
+                      track: GameWallet.shared.equipped(.track), weather: GameWallet.shared.equipped(.weather))
     }
 
     /// 질주할 때 하늘을 가로지르는 공기 줄. 앞머리가 진하고 꼬리로 갈수록 옅어진다.

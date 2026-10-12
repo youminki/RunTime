@@ -177,6 +177,7 @@ struct PopoverView: View {
                     switch page.section {
                     case .runners: RunnerPicker(settings: settings, importInPlace: importRunner)
                     case .shop: GameShopView(settings: settings)
+                    case .storage: StorageView(settings: settings) { page.section = .shop }
                     case .quests: QuestView()
                     }
                 }
@@ -203,7 +204,7 @@ struct PopoverView: View {
         }
     }
 
-    /// 러너·상점·퀘스트. 퀘스트에는 오늘 남은 미션 수를 붙인다.
+    /// 러너·상점·창고·퀘스트. 퀘스트에는 오늘 남은 미션 수를 붙인다.
     private var hubTabs: some View {
         HStack(spacing: 2) {
             ForEach(PopoverPage.Section.allCases, id: \.self) { section in
@@ -517,12 +518,13 @@ final class HoverIndex: ObservableObject {
 /// 팝오버 안 화면과 무대에 보낼 동작. `@State`를 못 쓰는 이유는 HoverFlag 참고.
 final class PopoverPage: ObservableObject {
     enum Section: CaseIterable {
-        case runners, shop, quests
+        case runners, shop, storage, quests
 
         var title: String {
             switch self {
             case .runners: "러너"
             case .shop: "상점"
+            case .storage: "창고"
             case .quests: "퀘스트"
             }
         }

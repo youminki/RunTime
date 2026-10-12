@@ -89,22 +89,6 @@ if let index = CommandLine.arguments.firstIndex(of: "--game-frames") {
     dispatchMain()
 }
 
-// 모자·안경 점검: 모든 러너에 꾸미기를 씌워 한 장으로 저장하고 종료.
-if let index = CommandLine.arguments.firstIndex(of: "--accessory-sheet") {
-    let path = CommandLine.arguments.dropFirst(index + 1).first ?? "accessory-sheet.png"
-    Task { @MainActor in
-        do {
-            try AccessorySheet.run(to: URL(fileURLWithPath: path), set: CommandLine.arguments.dropFirst(index + 2).first)
-            print("saved: \(path)")
-            exit(0)
-        } catch {
-            print("failed: \(error)")
-            exit(1)
-        }
-    }
-    dispatchMain()
-}
-
 // 성능 점검: 무대와 게임 한 장면을 그리는 데 드는 시간을 재고 종료.
 if CommandLine.arguments.contains("--game-bench") {
     Task { @MainActor in
@@ -146,7 +130,8 @@ if let index = CommandLine.arguments.firstIndex(of: "--stage-shots") {
     let character = MenuBarAudit.entries().first { $0.id == id }?.character ?? Runner.cat.character
     Task { @MainActor in
         do {
-            try StageShots.run(to: URL(fileURLWithPath: args.first ?? "stage-shots"), character: character)
+            let wearing = (args.dropFirst(2).first ?? "").split(separator: ",").compactMap { Cosmetic(rawValue: String($0)) }
+            try StageShots.run(to: URL(fileURLWithPath: args.first ?? "stage-shots"), character: character, wearing: wearing)
             exit(0)
         } catch {
             print("failed: \(error)")

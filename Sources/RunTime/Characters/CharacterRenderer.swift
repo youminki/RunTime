@@ -38,7 +38,7 @@ struct CharacterScene {
         return bounds.applying(affine)
     }
 
-    /// 모자·안경을 얹을 자리 (설계 좌표, 변형까지 적용). 앞쪽 눈과 그 눈을 품은 가장 작은 몸 부품을 머리로 본다.
+    /// 머리와 눈 자리 (설계 좌표, 변형까지 적용). 입김처럼 얼굴에 붙는 효과를 둘 때 쓴다. 앞쪽 눈과 그 눈을 품은 가장 작은 몸 부품을 머리로 본다.
     /// 그림 러너(내 그림, Petdex)는 그림에서 눈을 찾고(`ImageEyes`), 못 찾으면 그림 윗부분 앞쪽을 머리로 어림한다.
     struct HeadAnchor {
         let eye: CGPoint
@@ -46,7 +46,7 @@ struct CharacterScene {
         let width: CGFloat
         /// 머리 기울기 (라디안).
         let tilt: CGFloat
-        /// 눈 자리를 알고 있는지. 그림에서 눈을 못 찾은 그림 러너는 얼굴 꾸미기를 씌우지 않는다.
+        /// 눈 자리를 알고 있는지. 그림에서 눈을 못 찾은 그림 러너는 어림한 자리다.
         var hasEyes = true
         /// 그림 러너에서 찾은 두 눈 사이 거리. 있으면 `eye`는 두 눈 가운데다.
         var eyeSpan: CGFloat?
@@ -56,7 +56,7 @@ struct CharacterScene {
         guard !bounds.isNull else { return nil }
         let t = affine
         let scale = sqrt(t.a * t.a + t.b * t.b)
-        // 좌우로 뒤집힌 변형이면 기울기도 뒤집힌 쪽에서 잰다 (그대로 재면 π가 되어 모자가 거꾸로 선다)
+        // 좌우로 뒤집힌 변형이면 기울기도 뒤집힌 쪽에서 잰다 (그대로 재면 π가 되어 위아래가 뒤집힌다)
         let mirrored = t.a * t.d - t.b * t.c < 0
         let tilt = mirrored ? atan2(-t.b, -t.a) : atan2(t.b, t.a)
         let eyes = parts.filter { $0.layer == .eye }
@@ -75,7 +75,7 @@ struct CharacterScene {
             return HeadAnchor(eye: eye.applying(t), top: CGPoint(x: (head.midX + eye.x) / 2, y: crown).applying(t),
                               width: head.width * scale, tilt: tilt)
         }
-        // 그림 러너의 맨 위는 귀·머리카락 끝이라 모자를 조금 내려 머리에 얹는다
+        // 그림 러너의 맨 위는 귀·머리카락 끝이라 조금 내려 머리로 본다
         if let part = parts.first(where: { $0.image != nil }), let image = part.image, let found = ImageEyes.find(in: image) {
             let r = part.imageRect
             let eye = CGPoint(x: r.minX + found.center.x * r.width, y: r.minY + found.center.y * r.height)

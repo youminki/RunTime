@@ -1,9 +1,12 @@
 import AppKit
 
-/// 효과 점검 (`--stage-shots <폴더> [러너]`): 상태와 사용량 반응마다 무대 장면 몇 장과 메뉴바 프레임을 이어 붙여 PNG로 남긴다.
+/// 효과 점검 (`--stage-shots <폴더> [러너] [트랙·날씨,...]`): 상태와 사용량 반응마다 무대 장면 몇 장과 메뉴바 프레임을
+/// 이어 붙여 PNG로 남긴다. 트랙·날씨를 주면 그것을 써 본 무대로 찍는다.
 @MainActor
 enum StageShots {
-    static func run(to directory: URL, character: RunnerCharacter) throws {
+    static func run(to directory: URL, character: RunnerCharacter, wearing: [Cosmetic] = []) throws {
+        GameWallet.shared.preview = wearing.isEmpty ? nil : Set(wearing)
+        defer { GameWallet.shared.preview = nil }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let displays: [(String, SpriteDisplay)] = [
             ("sleeping", .normal(.sleeping)), ("walking", .normal(.walking)), ("running", .normal(.running)),
