@@ -1,17 +1,41 @@
 import AppKit
 import UsageCore
 
-/// 메뉴바에 표시할 스프라이트 종류: 5단계 상태 + 한도 임박 오버라이드 (§F2).
+/// 메뉴바에 표시할 스프라이트 종류. 움직임은 토큰 속도(5단계)가, 한도 경고는 사용률이 정한다 (§F2).
+/// 토큰을 쓰는 중이면 한도에 가까워도 속도대로 달리고 경고만 얹는다. 쉬는 중일 때만 앉거나 멈춰 선다.
 enum SpriteDisplay: Equatable {
     case normal(CatState)
-    case tired    // 사용률 80%+, 상태와 무관하게 오버라이드
-    case alert    // 사용률 95%+, 빨간 경고
+    case tired      // 사용률 80%+ 이고 쉬는 중: 앉아서 헐떡인다
+    case alert      // 사용률 95%+ 이고 쉬는 중: 빨갛게 멈춰 선다
+    /// 한도에 가까운 채로 달린다. 80%는 달리며 헐떡이고, 95%는 빨갛게 달린다.
+    case straining(CatState, critical: Bool)
 
     init(state: CatState, level: UsageAlertLevel) {
-        switch level {
-        case .critical: self = .alert
-        case .tired: self = .tired
-        case .normal: self = .normal(state)
+        switch (level, state) {
+        case (.normal, _): self = .normal(state)
+        case (.tired, .sleeping): self = .tired
+        case (.critical, .sleeping): self = .alert
+        case (.tired, _): self = .straining(state, critical: false)
+        case (.critical, _): self = .straining(state, critical: true)
+        }
+    }
+
+    /// 움직임을 정하는 토큰 속도 단계. 쉬면서 경고 중이면 nil.
+    var pace: CatState? {
+        switch self {
+        case .normal(let state), .straining(let state, _): return state
+        case .tired, .alert: return nil
+        }
+    }
+
+    /// 한도 경고 중인지. 경고 중에는 장난을 치지 않아 경고 모습이 가려지지 않게 한다.
+    var isLimited: Bool { if case .normal = self { return false } else { return true } }
+
+    /// 빨간 경고(95%+)인지.
+    var isCritical: Bool {
+        switch self {
+        case .alert, .straining(_, critical: true): return true
+        default: return false
         }
     }
 
@@ -24,7 +48,8 @@ enum SpriteDisplay: Equatable {
         case .normal(.dashing): return 0.54
         case .normal(.rainbow): return 0.44
         case .tired: return 1.1
-        case .alert: return 0.8
+        case .alert: return 1.6
+        case .straining(let state, _): return SpriteDisplay.normal(state).cycle
         }
     }
 
@@ -34,6 +59,7 @@ enum SpriteDisplay: Equatable {
         case .normal(let state): return state.rawValue
         case .tired: return "tired"
         case .alert: return "alert"
+        case .straining(let state, let critical): return "\(state.rawValue)-\(critical ? "critical" : "tired")"
         }
     }
 
@@ -44,6 +70,7 @@ enum SpriteDisplay: Equatable {
         switch self {
         case .normal(.sleeping): return 20
         case .tired: return 30
+        case .straining(let state, _): return SpriteDisplay.normal(state).maxFPS
         default: return 60
         }
     }
@@ -64,37 +91,88 @@ enum SpriteDisplay: Equatable {
         case .tired:
             return MotionFrame(pose: CharacterPose(activity: .sit, phase: phase, mouthOpen: true))
         case .alert:
+            // 멈춰 서서 무겁게 숨 쉰다. 떨게 하면 메뉴바에서 계속 눈에 걸려 일을 방해한다
             var frame = MotionFrame(pose: CharacterPose(activity: .stand, phase: phase))
-            frame.transform.rotation = 0.05 * sin(tau * phase * 2)
-            frame.transform.offset.x = 0.35 * sin(tau * phase * 6)
+            frame.transform.squash = 1 - 0.035 * sin(tau * phase)
+            return frame
+        case .straining(let state, _):
+            // 지쳐도 달리는 모습은 그대로 두고 입만 벌린다
+            var frame = SpriteDisplay.normal(state).motion(at: phase)
+            frame.pose.mouthOpen = true
             return frame
         }
     }
 
-    /// 상태마다 늘 붙는 효과 (무지개 꼬리, 바람, 먼지, Z, 땀, 느낌표).
-    /// `leftEdge`는 무지개 꼬리가 시작하는 x (팝오버 무대는 화면 왼쪽 끝까지 끈다).
+    /// 지나온 자세를 몇 장 뒤에 옅게 남긴다. 빠를수록 많이, 멀리.
+    struct Afterimage {
+        /// 몇 주기 전 자세인지.
+        let lag: CGFloat
+        /// 뒤로 밀린 거리 (설계 좌표).
+        let distance: CGFloat
+        let alpha: CGFloat
+    }
+
+    var afterimages: [Afterimage] {
+        switch self {
+        case .straining(let state, _): return SpriteDisplay.normal(state).afterimages
+        case .normal(.dashing): return [Afterimage(lag: 0.14, distance: 3, alpha: 0.18)]
+        case .normal(.rainbow):
+            // 촘촘하면 털처럼 번져 보여서 두 장만 띄워 둔다
+            return [Afterimage(lag: 0.12, distance: 3.2, alpha: 0.24), Afterimage(lag: 0.24, distance: 6.6, alpha: 0.1)]
+        default: return []
+        }
+    }
+
+    /// `phase`에서 잔상마다의 자세.
+    func ghosts(at phase: CGFloat) -> [(frame: MotionFrame, image: Afterimage)] {
+        afterimages.map { image in
+            let earlier = phase - image.lag
+            return (motion(at: earlier - floor(earlier)), image)
+        }
+    }
+
+    /// 상태마다 늘 붙는 효과 (빛 꼬리, 공기 줄, 흙먼지, z, 입김, 경고 점).
+    /// `leftEdge`는 빛 꼬리가 끝나는 x (팝오버 무대는 화면 왼쪽 끝까지 끈다).
     func drawLoopEffects(in cg: CGContext, scene: CharacterScene, phase: CGFloat, tint: NSColor, front: Bool,
                          leftEdge: CGFloat = -1) {
         let bounds = scene.placedBounds
+        let body = (bounds.minY + bounds.height * 0.2)...(bounds.maxY - bounds.height * 0.25)
+        let mouth = scene.headAnchor.map {
+            CGPoint(min($0.eye.x + $0.width * 0.32, bounds.maxX), $0.eye.y + $0.width * 0.3)
+        } ?? CGPoint(bounds.maxX - 0.3, bounds.minY + min(4, bounds.height * 0.35))
+        if case .straining(let state, let critical) = self {
+            // 속도 효과는 그대로, 위에 한도 표시만 얹는다
+            SpriteDisplay.normal(state).drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front,
+                                                        leftEdge: leftEdge)
+            guard front else { return }
+            if critical {
+                // 달리는 한 주기가 짧아 퍼지는 원은 너무 잦다. 점만 둔다
+                let c = CGPoint(min(bounds.maxX + 1.4, 33), max(bounds.minY + 0.5, 4.8))
+                cg.setFillColor(NSColor.systemRed.cgColor)
+                cg.fillEllipse(in: CGRect(x: c.x - 1.1, y: c.y - 1.1, width: 2.2, height: 2.2))
+            } else {
+                SpriteEffects.breath(cg, at: mouth, phase: phase, color: tint)
+            }
+            return
+        }
         switch (self, front) {
         case (.normal(.rainbow), false):
-            SpriteEffects.rainbowTrail(cg, from: leftEdge, to: bounds.minX + 3, centerY: bounds.midY - 0.3,
-                                       band: 1.05, phase: phase)
-            if leftEdge > -2 {
-                SpriteEffects.sparkleField(cg, phase: phase, width: bounds.minX + 2, height: Stage.size.height)
-            }
+            SpriteEffects.lightTrail(cg, from: leftEdge, to: bounds.minX + 4, centerY: bounds.midY - 0.3, width: 2.6,
+                                     phase: phase, color: tint)
+            SpriteEffects.airStreaks(cg, phase: phase * 2, maxX: bounds.minX + 1, band: body, color: tint, count: 4,
+                                     length: 8)
         case (.normal(.dashing), false):
-            SpriteEffects.speedLines(cg, phase: phase, maxX: bounds.minX + 2, color: tint)
+            SpriteEffects.airStreaks(cg, phase: phase, maxX: bounds.minX + 2, band: body, color: tint)
         case (.normal(.running), false):
-            SpriteEffects.dust(cg, at: CGPoint(bounds.minX + 4, Stage.ground - 0.8), phase: phase, color: tint)
+            SpriteEffects.footDust(cg, at: CGPoint(bounds.minX + 4, Stage.ground - 0.7), phase: phase, color: tint)
         case (.normal(.sleeping), true):
             SpriteEffects.zzz(cg, from: CGPoint(bounds.maxX - 2.5, bounds.minY + 0.5), phase: phase, color: tint)
         case (.tired, true):
-            SpriteEffects.sweat(cg, at: CGPoint(bounds.maxX - 1.5, bounds.minY + 1), phase: phase)
+            SpriteEffects.breath(cg, at: mouth, phase: phase, color: tint)
         case (.alert, true):
-            let blink = 0.55 + 0.45 * cos(tau * phase * 2)
-            SpriteEffects.exclaim(cg, at: CGPoint(min(bounds.maxX + 0.5, 34.5), 5.5), height: 7,
-                                  color: NSColor.systemRed.withAlphaComponent(blink))
+            // 퍼지는 원(반지름 2.4)이 메뉴바 칸 위·오른쪽에서 잘리지 않는 자리
+            SpriteEffects.ping(cg, at: CGPoint(min(bounds.maxX + 1.4, 33), max(bounds.minY + 0.5, 4.8)),
+                               phase: phase, color: .systemRed)
         default:
             break
         }
@@ -231,7 +309,8 @@ enum SpriteFrames {
             let phase = CGFloat(i) / CGFloat(count)
             return image { cg in
                 render(cg, rig: rig, frame: display.motion(at: phase), theme: theme, themePhase: phase,
-                       alarm: display == .alert, fit: fit, overlay: overlay) { cg, scene, tint, front in
+                       alarm: display.isCritical, fit: fit, overlay: overlay,
+                       ghosts: display.ghosts(at: phase)) { cg, scene, tint, front in
                     display.drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front)
                 }
             }
@@ -279,23 +358,44 @@ enum SpriteFrames {
     /// 러너 한 장면을 그린다. 효과는 `loopEffects`(뒤·앞 두 번 불림)와 동작 자체의 효과를 함께 얹는다.
     static func render(_ cg: CGContext, rig: CharacterRig, frame: MotionFrame, theme: SpriteTheme,
                        themePhase: CGFloat, alarm: Bool, fit: SceneFit = .none, overlay: SpriteTheme? = nil,
+                       ghosts: [(frame: MotionFrame, image: SpriteDisplay.Afterimage)] = [],
                        loopEffects: (CGContext, CharacterScene, NSColor, Bool) -> Void) {
-        var scene = CharacterScene(rig: rig, pose: frame.pose, transform: frame.transform)
-        switch fit {
-        case .none: break
-        case .each(let range): scene.fit(verticallyIn: range)
-        case .fixed(let transform): scene.apply(fit: transform)
+        func place(_ frame: MotionFrame) -> CharacterScene {
+            var scene = CharacterScene(rig: rig, pose: frame.pose, transform: frame.transform)
+            switch fit {
+            case .none: break
+            case .each(let range): scene.fit(verticallyIn: range)
+            case .fixed(let transform): scene.apply(fit: transform)
+            }
+            return scene
         }
+        let scene = place(frame)
         var palette = rig.palette
         palette.imageTint = overlay?.tint(at: themePhase)
         let look = theme.look(palette: palette, phase: themePhase, alarm: alarm)
         let tint = theme == .natural ? NSColor.labelColor : look.tint
         loopEffects(cg, scene, tint, false)
+        for ghost in ghosts.reversed() {
+            drawAfterimage(place(ghost.frame), image: ghost.image, color: look.rich ? look.palette.body : tint, in: cg)
+        }
         scene.draw(in: cg, look: look)
         loopEffects(cg, scene, tint, true)
         for effect in frame.effects {
             effect.draw(in: cg, around: scene.placedBounds, tint: tint)
         }
+    }
+
+    /// 잔상 한 장: 단색 실루엣을 뒤로 밀어 한 번에 투명도를 준다 (부품이 겹친 곳이 진해지지 않게).
+    static func drawAfterimage(_ scene: CharacterScene, image: SpriteDisplay.Afterimage, color: NSColor,
+                               in cg: CGContext) {
+        cg.saveGState()
+        cg.translateBy(x: -image.distance, y: 0)
+        cg.setAlpha(image.alpha)
+        // 레이어를 몸 크기로 잡는다. 무대는 1초에 60번 그려서 화면 크기 레이어는 부담이 크다
+        cg.beginTransparencyLayer(in: scene.placedBounds.insetBy(dx: -1, dy: -1), auxiliaryInfo: nil)
+        scene.draw(in: cg, look: .mono(color))
+        cg.endTransparencyLayer()
+        cg.restoreGState()
     }
 
     /// 설계 좌표(y 아래)로 그리는 이미지. 그리기는 래스터라이즈 시점에 일어난다.
@@ -319,6 +419,7 @@ enum SpriteFrames {
         case .normal: frames = loadAssets(named: "\(prefix)_run", count: 8)
         case .tired: frames = loadAssets(named: "\(prefix)_tired", count: 2)
         case .alert: frames = loadAssets(named: "\(prefix)_alert", count: 2)
+        case .straining(let state, _): return assetClip(for: .normal(state), prefix: prefix)
         }
         guard let frames else { return nil }
         return SpriteClip(frames: frames, interval: display.cycle / Double(frames.count))

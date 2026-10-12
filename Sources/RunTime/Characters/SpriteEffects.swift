@@ -9,46 +9,156 @@ enum SpriteEffects {
         NSColor(hex: 0x5BD86B), NSColor(hex: 0x4DA3FF), NSColor(hex: 0xA77BFF),
     ]
 
-    /// 무지개 꼬리. 띠마다 물결이 조금씩 늦게 따라온다.
-    static func rainbowTrail(_ cg: CGContext, from x0: CGFloat, to x1: CGFloat, centerY: CGFloat,
-                             band: CGFloat, phase: CGFloat, alpha: CGFloat = 1) {
-        guard x1 > x0 else { return }
-        let top = centerY - band * 3
-        let step: CGFloat = 0.5
-        for (i, color) in rainbow.enumerated() {
+    /// 전력 질주 때 등 뒤로 끌리는 빛 꼬리. 러너 쪽이 굵고 밝으며 멀어질수록 가늘어지고 사라진다.
+    static func lightTrail(_ cg: CGContext, from x0: CGFloat, to x1: CGFloat, centerY: CGFloat, width: CGFloat,
+                           phase: CGFloat, color: NSColor) {
+        let length = x1 - x0
+        guard length > 0 else { return }
+        func edge(_ x: CGFloat, _ side: CGFloat, _ thickness: CGFloat) -> CGPoint {
+            let distance = x1 - x
+            let taper = pow(max(0, 1 - distance / length), 0.7)
+            let wave = sin(tau * phase - distance * 0.32) * 0.45 * min(distance / 5, 1)
+            return CGPoint(x, centerY + wave + side * thickness / 2 * taper)
+        }
+        func ribbon(_ thickness: CGFloat, alpha: CGFloat) {
+            let xs = stride(from: x1, through: x0, by: -0.5).map { $0 }
             let path = CGMutablePath()
-            var x = x1
-            var first = true
-            while x >= x0 {
-                let distance = x1 - x
-                let wave = sin(tau * phase * 2 - distance * 0.55) * band * 0.45 * min(distance / 4, 1)
-                let y = top + CGFloat(i) * band + wave
-                first ? path.move(to: CGPoint(x, y)) : path.addLine(to: CGPoint(x, y))
-                first = false
-                x -= step
-            }
-            var back: [CGPoint] = []
-            x = x0
-            while x <= x1 {
-                let distance = x1 - x
-                let wave = sin(tau * phase * 2 - distance * 0.55) * band * 0.45 * min(distance / 4, 1)
-                back.append(CGPoint(x, top + CGFloat(i + 1) * band + wave))
-                x += step
-            }
-            back.forEach { path.addLine(to: $0) }
+            path.addLines(between: xs.map { edge($0, -1, thickness) } + xs.reversed().map { edge($0, 1, thickness) })
             path.closeSubpath()
-            // 뒤로 갈수록 옅어진다
             cg.saveGState()
             cg.addPath(path)
             cg.clip()
-            let faded = color.withAlphaComponent(0)
             if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-                                         colors: [faded.cgColor, color.withAlphaComponent(alpha).cgColor] as CFArray,
-                                         locations: [0, 0.6]) {
+                                         colors: [color.withAlphaComponent(0).cgColor,
+                                                  color.withAlphaComponent(alpha).cgColor] as CFArray,
+                                         locations: [0, 1]) {
                 cg.drawLinearGradient(gradient, start: CGPoint(x0, 0), end: CGPoint(x1, 0), options: [])
             }
             cg.restoreGState()
         }
+        ribbon(width, alpha: 0.4)
+        ribbon(width * 0.32, alpha: 0.85)
+    }
+
+    /// 몸 높이 언저리를 뒤로 스치는 공기 줄. 앞머리가 굵고 꼬리 쪽으로 가늘어진다.
+    static func airStreaks(_ cg: CGContext, phase: CGFloat, maxX: CGFloat, band: ClosedRange<CGFloat>,
+                           color: NSColor, count: Int = 3, length: CGFloat = 7) {
+        let seeds: [(y: CGFloat, length: CGFloat, offset: CGFloat)] = [
+            (0.2, 1, 0), (0.75, 0.8, 0.45), (0.45, 1.25, 0.7), (0.95, 0.7, 0.2),
+        ]
+        for seed in seeds.prefix(count) {
+            let t = (phase + seed.offset).truncatingRemainder(dividingBy: 1)
+            let len = length * seed.length
+            let head = maxX - t * (maxX + len + 2)
+            let y = band.lowerBound + (band.upperBound - band.lowerBound) * seed.y
+            let alpha = 0.6 * sin(.pi * t)
+            let half: CGFloat = 0.36
+            let path = CGMutablePath()
+            path.move(to: CGPoint(head + half, y - half))
+            path.addLine(to: CGPoint(head + len, y))
+            path.addLine(to: CGPoint(head + half, y + half))
+            path.addArc(center: CGPoint(head + half, y), radius: half, startAngle: .pi / 2, endAngle: -.pi / 2,
+                        clockwise: false)
+            path.closeSubpath()
+            cg.saveGState()
+            cg.addPath(path)
+            cg.clip()
+            if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                                         colors: [color.withAlphaComponent(alpha).cgColor,
+                                                  color.withAlphaComponent(0).cgColor] as CFArray,
+                                         locations: [0, 1]) {
+                cg.drawLinearGradient(gradient, start: CGPoint(head, 0), end: CGPoint(head + len, 0), options: [])
+            }
+            cg.restoreGState()
+        }
+    }
+
+    /// 발이 땅을 찰 때(한 주기에 두 번) 일어나는 흙먼지. 뒤로 밀리며 퍼지고 옅어진다.
+    static func footDust(_ cg: CGContext, at origin: CGPoint, phase: CGFloat, color: NSColor) {
+        for contact in [0, 0.5] as [CGFloat] {
+            let age = (phase - contact + 1).truncatingRemainder(dividingBy: 1)
+            guard age < 0.45 else { continue }
+            let k = age / 0.45
+            for i in 0..<2 {
+                let lag = CGFloat(i)
+                let c = origin + CGPoint(-k * 5 - lag * 1.3, -k * 1.5 - lag * 0.3)
+                let r = max(0.1, 0.45 + k * 1.05 - lag * 0.18)
+                cg.setFillColor(color.withAlphaComponent(0.36 * pow(1 - k, 1.5)).cgColor)
+                cg.fillEllipse(in: CGRect(x: c.x - r * 1.3, y: c.y - r, width: r * 2.6, height: r * 2))
+            }
+        }
+    }
+
+    /// 헐떡이는 입김. 한 주기에 두 번 내쉰다.
+    static func breath(_ cg: CGContext, at mouth: CGPoint, phase: CGFloat, color: NSColor) {
+        for exhale in [0, 0.5] as [CGFloat] {
+            let age = (phase - exhale + 1).truncatingRemainder(dividingBy: 1)
+            guard age < 0.42 else { continue }
+            let k = age / 0.42
+            let ease = 1 - pow(1 - k, 2)
+            for i in 0..<3 {
+                let c = mouth + CGPoint(0.5 + ease * 2.4 + CGFloat(i) * 0.55, -ease * 1.1 - CGFloat(i % 2) * 0.35)
+                let r = 0.3 + ease * 0.75 - CGFloat(i) * 0.08
+                cg.setFillColor(color.withAlphaComponent(0.42 * (1 - k)).cgColor)
+                cg.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+            }
+        }
+    }
+
+    /// 한도 경고 점. 가운데 점은 그대로 두고 둘레만 한 주기에 한 번 퍼진다.
+    static func ping(_ cg: CGContext, at c: CGPoint, phase: CGFloat, color: NSColor) {
+        let k = phase - floor(phase)
+        let ring = 1.1 + k * 1.3
+        cg.saveGState()
+        defer { cg.restoreGState() }
+        cg.setStrokeColor(color.withAlphaComponent(0.75 * pow(1 - k, 1.4)).cgColor)
+        cg.setLineWidth(0.15 + 0.4 * (1 - k))
+        cg.strokeEllipse(in: CGRect(x: c.x - ring, y: c.y - ring, width: ring * 2, height: ring * 2))
+        cg.setFillColor(color.cgColor)
+        cg.fillEllipse(in: CGRect(x: c.x - 1.1, y: c.y - 1.1, width: 2.2, height: 2.2))
+    }
+
+    /// 퍼지는 고리와 바깥으로 튀는 점. `t`는 0~1.
+    static func burst(_ cg: CGContext, at c: CGPoint, radius: CGFloat, t: CGFloat, color: NSColor, accent: NSColor) {
+        guard t > 0 && t < 1 else { return }
+        let ring = 1 - pow(1 - min(t / 0.55, 1), 3)
+        if t < 0.55 {
+            let r = radius * (0.25 + 0.75 * ring)
+            cg.setStrokeColor(color.withAlphaComponent(0.85 * (1 - ring)).cgColor)
+            cg.setLineWidth(max(0.05, 1.1 * (1 - ring)))
+            cg.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+        }
+        let fly = 1 - pow(1 - min(max((t - 0.08) / 0.8, 0), 1), 3)
+        for i in 0..<8 {
+            let angle = CGFloat(i) / 8 * tau + 0.2
+            let p = c + CGPoint.polar(angle, radius * (0.55 + 0.75 * fly))
+            let r = 0.6 * (1 - fly) * (i % 2 == 0 ? 1 : 0.7)
+            guard r > 0.04 else { continue }
+            cg.setFillColor((i % 2 == 0 ? color : accent).cgColor)
+            cg.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+        }
+    }
+
+    /// 사용률 고리. 12시부터 시계 방향으로 `from`에서 `to`까지 채운다 (0~1).
+    static func progressRing(_ cg: CGContext, at c: CGPoint, radius r: CGFloat, from: CGFloat, to: CGFloat,
+                             fill: CGFloat, alpha: CGFloat, color: NSColor) {
+        guard alpha > 0.01 else { return }
+        cg.saveGState()
+        defer { cg.restoreGState() }
+        cg.setLineCap(.round)
+        cg.setLineWidth(r * 0.3)
+        cg.setStrokeColor(color.withAlphaComponent(0.25 * alpha).cgColor)
+        cg.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+        let end = from + (to - from) * fill
+        guard end > 0.001 else { return }
+        let steps = max(2, Int(end * 48))
+        let points = (0...steps).map { i -> CGPoint in
+            let a = -.pi / 2 + tau * end * CGFloat(i) / CGFloat(steps)
+            return c + CGPoint.polar(a, r)
+        }
+        cg.setStrokeColor(color.withAlphaComponent(alpha).cgColor)
+        cg.addLines(between: points)
+        cg.strokePath()
     }
 
     /// 네 갈래 반짝이.
@@ -67,74 +177,23 @@ enum SpriteEffects {
         cg.fillPath()
     }
 
-    /// 뒤로 흘러가는 반짝이들.
-    static func sparkleField(_ cg: CGContext, phase: CGFloat, width: CGFloat, height: CGFloat, color: NSColor? = nil) {
-        let seeds: [(x: CGFloat, y: CGFloat, size: CGFloat, speed: CGFloat)] = [
-            (0.15, 0.18, 1.3, 1), (0.55, 0.08, 1.0, 2), (0.85, 0.32, 0.9, 1),
-            (0.35, 0.86, 1.1, 2), (0.7, 0.92, 0.8, 1),
-        ]
-        for (i, seed) in seeds.enumerated() {
-            let t = (phase * seed.speed + seed.x).truncatingRemainder(dividingBy: 1)
-            let x = width * (1 - t) - 2
-            let twinkle = 0.5 + 0.5 * sin(tau * (phase * 2 * seed.speed) + CGFloat(i))
-            let tint = color ?? rainbow[(i * 2) % rainbow.count].tinted(by: 0.35)
-            sparkle(cg, at: CGPoint(x, height * seed.y), radius: seed.size * (0.6 + 0.5 * twinkle), color: tint)
-        }
-    }
-
-    /// 질주할 때 뒤로 스치는 바람 줄.
-    static func speedLines(_ cg: CGContext, phase: CGFloat, maxX: CGFloat, color: NSColor) {
-        let lines: [(y: CGFloat, length: CGFloat, offset: CGFloat)] = [(6.5, 7, 0), (11.5, 9, 0.4), (16, 6, 0.7)]
-        cg.setLineCap(.round)
-        for line in lines {
-            let t = (phase + line.offset).truncatingRemainder(dividingBy: 1)
-            let head = maxX - t * (maxX + line.length)
-            let alpha = sin(.pi * t)
-            cg.setStrokeColor(color.withAlphaComponent(0.55 * alpha).cgColor)
-            cg.setLineWidth(0.8)
-            cg.move(to: CGPoint(head, line.y))
-            cg.addLine(to: CGPoint(head + line.length, line.y))
-            cg.strokePath()
-        }
-    }
-
-    /// 발밑 먼지.
-    static func dust(_ cg: CGContext, at origin: CGPoint, phase: CGFloat, color: NSColor) {
-        for k in 0..<3 {
-            let t = (phase + CGFloat(k) / 3).truncatingRemainder(dividingBy: 1)
-            let c = origin + CGPoint(-t * 7, -t * 2.4)
-            let r = 0.5 + t * 1.3
-            cg.setFillColor(color.withAlphaComponent(0.42 * (1 - t)).cgColor)
-            cg.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
-        }
-    }
-
-    /// 머리 위로 떠오르는 Z.
+    /// 머리 위로 천천히 떠오르는 z 두 개.
     static func zzz(_ cg: CGContext, from origin: CGPoint, phase: CGFloat, color: NSColor) {
         cg.setLineCap(.round)
         cg.setLineJoin(.round)
-        for k in 0..<3 {
-            let t = (phase + CGFloat(k) / 3).truncatingRemainder(dividingBy: 1)
-            let size = 1.4 + t * 1.9
-            let c = origin + CGPoint(t * 4.2 + sin(t * tau) * 0.6, -t * 8.5)
-            let alpha = sin(.pi * min(t * 1.15, 1))
+        for k in 0..<2 {
+            let t = (phase + CGFloat(k) / 2).truncatingRemainder(dividingBy: 1)
+            let rise = 1 - pow(1 - t, 2)
+            let size = 1.3 + t * 1.3
+            let c = origin + CGPoint(rise * 3 + sin(t * .pi) * 0.7, -rise * 7)
+            let alpha = 0.85 * pow(sin(.pi * t), 1.5)
             cg.setStrokeColor(color.withAlphaComponent(alpha).cgColor)
-            cg.setLineWidth(0.55 + t * 0.3)
+            cg.setLineWidth(0.5)
             cg.move(to: c + CGPoint(-size / 2, -size / 2))
             cg.addLine(to: c + CGPoint(size / 2, -size / 2))
             cg.addLine(to: c + CGPoint(-size / 2, size / 2))
             cg.addLine(to: c + CGPoint(size / 2, size / 2))
             cg.strokePath()
-        }
-    }
-
-    /// 이마에서 흘러내리는 땀방울.
-    static func sweat(_ cg: CGContext, at origin: CGPoint, phase: CGFloat) {
-        for k in 0..<2 {
-            let t = (phase + CGFloat(k) * 0.5).truncatingRemainder(dividingBy: 1)
-            let c = origin + CGPoint(CGFloat(k) * 1.6 + t * 0.8, t * 5)
-            let alpha = t < 0.15 ? t / 0.15 : (1 - t) / 0.85
-            drop(cg, at: c, size: 1.25, color: NSColor(hex: 0x5AC8FA).withAlphaComponent(alpha))
         }
     }
 

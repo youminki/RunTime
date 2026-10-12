@@ -114,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { [weak self] _ in self?.layoutSprite() }
             .store(in: &cancellables)
 
-        // 한도 오버라이드(§F2): 80% 이상 지침, 95% 이상 경고. 속도 상태보다 우선
+        // 한도 표시(§F2): 쉬는 중이면 지침·경고 자세, 토큰을 쓰는 중이면 속도대로 달리며 경고만 얹는다
         Publishers.CombineLatest(engine.$catState, engine.$alertLevel)
             .map { SpriteDisplay(state: $0, level: $1) }
             .removeDuplicates()

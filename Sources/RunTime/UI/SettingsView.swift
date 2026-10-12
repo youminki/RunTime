@@ -122,7 +122,7 @@ struct SettingsView: View {
                 GroupedRow("움직임", icon: "film.stack", tint: Palette.orange) {
                     segmented("움직임", $settings.smoothness, SpriteSmoothness.allCases) { $0.displayName }
                 }
-                ToggleRow(title: "가끔 혼자 장난치기", icon: "sparkles", tint: Palette.purple, isOn: $settings.tricksEnabled)
+                ToggleRow(title: "가끔 혼자 장난치기", icon: "hand.wave.fill", tint: Palette.purple, isOn: $settings.tricksEnabled)
             }
 
             GroupedSection("러너 고르기", footer: "직접 만들었거나 쓸 권리가 있는 그림만 불러오세요. 불러온 그림은 이 Mac에만 저장되고 어디로도 보내지 않습니다.") {

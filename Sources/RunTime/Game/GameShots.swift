@@ -57,16 +57,16 @@ enum GameShots {
             if game.phase == .over { break }
         }
         // 꾸미기를 단 모습 (꼬리 셋, 발먼지)
-        let looks: [(trail: Cosmetic, dust: Cosmetic, back: Cosmetic, hat: Cosmetic)] = [
-            (.rainbowTrail, .rainbowDust, .wingBack, .crownHat), (.fireTrail, .cloudDust, .rocketBack, .topHat),
-            (.noteTrail, .starDust, .guitarBack, .capHat), (.heartTrail, .heartDust, .balloonBack, .ribbonHat),
-            (.magicTrail, .starDust, .butterflyBack, .starHat), (.smokeTrail, .cloudDust, .kiteBack, .cloudHat),
-            (.sparkTrail, .goldDust, .parrotBack, .chickHat), (.blossomTrail, .sparkleDust, .backpackBack, .hibiscusHat),
-            (.bubbleTrail, .noteDust, .shieldBack, .fireHat),
+        let looks: [(trail: Cosmetic, dust: Cosmetic, hat: Cosmetic)] = [
+            (.rainbowTrail, .rainbowDust, .crownHat), (.fireTrail, .cloudDust, .topHat),
+            (.noteTrail, .starDust, .capHat), (.heartTrail, .heartDust, .ribbonHat),
+            (.magicTrail, .starDust, .starHat), (.smokeTrail, .cloudDust, .cloudHat),
+            (.sparkTrail, .goldDust, .chickHat), (.blossomTrail, .sparkleDust, .hibiscusHat),
+            (.bubbleTrail, .noteDust, .fireHat),
         ]
         session.companionOverride = PetdexStore.shared.pets.first.flatMap(PetdexStore.shared.character(for:))
-        for (item, dust, back, hat) in looks where game.phase == .playing {
-            GameWallet.shared.preview = [item, dust, back, hat, .sunglassesFace, .confettiCrash]
+        for (item, dust, hat) in looks where game.phase == .playing {
+            GameWallet.shared.preview = [item, dust, hat, .sunglassesFace, .confettiCrash]
             step(0.5, autoplay: true)
             try shot("2-play-\(item.rawValue)")
         }
@@ -277,10 +277,10 @@ enum AccessorySheet {
         try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
     }
 
-    /// 머리·얼굴·등 꾸미기를 하나씩 여러 러너(기본 러너 몇과 Petdex 펫)에 달아 크게 그린다 (`--accessory-sheet <파일> items`).
+    /// 머리·얼굴 꾸미기를 하나씩 여러 러너(기본 러너 몇과 Petdex 펫)에 달아 크게 그린다 (`--accessory-sheet <파일> items`).
     @MainActor
     static func items(to url: URL) throws {
-        let items = Cosmetic.allCases.filter { [.hat, .face, .back].contains($0.slot) }
+        let items = Cosmetic.allCases.filter { [.hat, .face].contains($0.slot) }
         let runners = [Runner.cat, .penguin, .dog, .whale, .robot].map(\.character)
             + PetdexStore.shared.pets.prefix(3).compactMap(PetdexStore.shared.character(for:))
         let cell = CGSize(width: 110, height: 80)
@@ -307,11 +307,9 @@ enum AccessorySheet {
                 cg.scaleBy(x: scale, y: scale)
                 let look = CharacterLook(rich: true, palette: character.theme(.auto).richPalette(character.rig.palette, phase: 0),
                                          tint: .white, outline: 0.36)
-                GameFX.drawBack(item.slot == .back ? item : nil, on: scene, time: 0.3, front: false, cg)
                 scene.draw(in: cg, look: look)
                 GameFX.drawAccessories(hat: item.slot == .hat ? item : nil, face: item.slot == .face ? item : nil, on: scene,
                                        time: 0.3, cg)
-                GameFX.drawBack(item.slot == .back ? item : nil, on: scene, time: 0.3, front: true, cg)
                 cg.restoreGState()
             }
         }

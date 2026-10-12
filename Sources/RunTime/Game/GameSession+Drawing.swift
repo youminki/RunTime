@@ -209,16 +209,13 @@ extension GameSession {
         cg.scaleBy(x: scale, y: scale)
         let look = CharacterLook(rich: true, palette: theme.richPalette(rig.palette, phase: CGFloat(time / 6)),
                                  tint: .white, outline: 0.36)
-        // 모자·안경·등 꾸미기는 내 러너에만 (고스트는 그 판의 모습만 남긴다)
+        // 모자·안경 꾸미기는 내 러너에만 (고스트는 그 판의 모습만 남긴다)
         let mine = game === self.game
-        let back = mine ? GameWallet.shared.equipped(.back) : nil
-        GameFX.drawBack(back, on: scene, time: time, front: false, cg)
         scene.draw(in: cg, look: look)
         if mine {
             GameFX.drawAccessories(hat: GameWallet.shared.equipped(.hat), face: GameWallet.shared.equipped(.face), on: scene,
                                    time: time, cg)
         }
-        GameFX.drawBack(back, on: scene, time: time, front: true, cg)
         for effect in frame.effects { effect.draw(in: cg, around: scene.placedBounds, tint: .white) }
         cg.restoreGState()
     }

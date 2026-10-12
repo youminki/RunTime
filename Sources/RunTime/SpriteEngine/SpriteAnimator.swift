@@ -74,7 +74,7 @@ final class SpriteAnimator {
     /// 한 번짜리 동작 재생. 지침·경고 중이거나 그릴 수 없으면 false.
     @discardableResult
     func perform(_ trick: Trick) -> Bool {
-        guard let display, display != .tired, display != .alert,
+        guard let display, !display.isLimited,
               let clip = rasterized(trick: trick) else { return false }
         playing = trick
         show(clip, loop: false)
@@ -98,7 +98,7 @@ final class SpriteAnimator {
         switch reaction {
         case .burst: .zoom
         case .resumed: .stretch
-        case .sessionMilestone: .sparkle
+        case .sessionMilestone(let percent): percent >= 75 ? .milestone75 : percent >= 50 ? .milestone50 : .milestone25
         case .multitask: .dance
         case .newSession: .celebrate
         }
@@ -184,7 +184,7 @@ final class SpriteAnimator {
         return result
     }
 
-    /// 동작 클립 캐시. 30fps 이하는 21종을 다 둬도 십여 MB라 다 두고, 60fps는 한 동작이 100장을 넘어 최근 것만 둔다.
+    /// 동작 클립 캐시. 30fps 이하는 모든 동작을 다 둬도 십여 MB라 다 두고, 60fps는 한 동작이 100장을 넘어 최근 것만 둔다.
     private var trickKeys: [String] = []
     private var trickCacheLimit: Int { smoothnessProvider() == .max ? 6 : Trick.allCases.count }
 
@@ -228,7 +228,7 @@ final class SpriteAnimator {
         let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             guard let self else { return }
             if self.tricksEnabledProvider(), self.playing == nil,
-               let display = self.display, display != .tired, display != .alert {
+               let display = self.display, !display.isLimited {
                 self.performRandom()
             }
             self.scheduleIdleTrick()

@@ -105,7 +105,7 @@ struct PopoverView: View {
                 HStack(spacing: 4) {
                     Text(settings.character.name).foregroundStyle(Theme.primary)
                     Text("·").foregroundStyle(Theme.tertiary)
-                    Text(stateLabel).foregroundStyle(display == .alert ? Theme.critical : Theme.secondary)
+                    Text(stateLabel).foregroundStyle(display.isCritical ? Theme.critical : Theme.secondary)
                     Image(systemName: page.showsRunners ? "chevron.up" : "chevron.right")
                         .font(.system(size: 8.5, weight: .bold))
                         .foregroundStyle(Theme.tertiary)
@@ -125,6 +125,7 @@ struct PopoverView: View {
         case .normal(let state): return state.label
         case .tired: return "지침"
         case .alert: return "한도 임박"
+        case .straining(let state, let critical): return "\(state.label) · \(critical ? "한도 임박" : "지침")"
         }
     }
 
@@ -136,7 +137,7 @@ struct PopoverView: View {
             }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: "sparkles").font(.system(size: 9.5, weight: .semibold))
+                Image(systemName: "hand.tap").font(.system(size: 9.5, weight: .semibold))
                 Text("동작")
             }
             .font(Theme.label)
@@ -152,8 +153,8 @@ struct PopoverView: View {
         .fixedSize()
         .accessibilityLabel("동작")
         // 지쳤거나 한도 경고 중에는 메뉴바 러너가 그 모습을 유지해야 해서 동작을 받지 않는다
-        .disabled(display == .tired || display == .alert)
-        .help(display == .tired || display == .alert ? "한도에 가까워 쉬는 중이라 동작을 하지 않아요" : "동작 해보기")
+        .disabled(display.isLimited)
+        .help(display.isLimited ? "한도에 가까워 경고를 보이는 중이라 동작을 하지 않아요" : "동작 해보기")
     }
 
     private func play(_ trick: Trick) {

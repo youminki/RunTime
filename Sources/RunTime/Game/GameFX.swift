@@ -257,7 +257,7 @@ enum GameFX {
         }
     }
 
-    // MARK: 동료·머리·얼굴·등
+    // MARK: 동료·머리·얼굴
 
     /// 동료 (Petdex 펫) 한 장면. `feet`는 발이 닿는 자리, `height`는 서 있을 때 키(pt).
     static func drawCompanion(_ character: RunnerCharacter, feet: CGPoint, height: CGFloat, phase: CGFloat, moving: Bool,
@@ -342,61 +342,6 @@ enum GameFX {
         }
         cg.strokePath()
         cg.restoreGState()
-    }
-
-    /// 등 꾸미기. 대부분 몸 뒤라 `front`가 false일 때(몸을 그리기 전) 그리고, 어깨에 앉는 것만 몸 앞에 그린다.
-    static func drawBack(_ item: Cosmetic?, on scene: CharacterScene, time: Double = 0, front: Bool, _ cg: CGContext) {
-        guard let item, let art = item.art, abs(scene.transform.scaleX) > 0.3 else { return }
-        let box = scene.placedBounds
-        guard box.height > 0 else { return }
-        // 옆으로 긴 네발 러너는 메는 물건을 등 위에 얹어 몸 앞에 그린다
-        let lying = box.width > box.height * 1.3
-        let inFront = item.fit == .shoulder || (lying && item.fit == .strapped)
-        guard inFront == front else { return }
-        let flip = scene.transform.scaleX < 0
-        let dir: CGFloat = flip ? -1 : 1
-        let size = max(box.height * 0.5, 3)
-        // 옆으로 긴 네발 러너는 등 위에 얹고, 서 있는 러너는 등 뒤 끝에 메어 몸 밖으로 반쯤 보이게 한다
-        let rear = dir > 0 ? box.minX : box.maxX
-        let back = lying ? CGPoint(x: box.midX - dir * box.width * 0.18, y: box.minY + box.height * 0.15)
-            : CGPoint(x: rear + dir * size * 0.12, y: box.minY + box.height * 0.5)
-        switch item.fit {
-        case .wings:
-            let flap = CGFloat(sin(time * (item == .butterflyBack ? 9 : 6)))
-            for layer in 0..<2 {
-                let spread = CGFloat(layer == 0 ? 0.55 : 0.2) + flap * 0.18
-                drawArt(art, at: CGPoint(x: back.x - dir * size * 0.25, y: back.y - size * 0.32), size: size * 1.05,
-                        alpha: layer == 0 ? 0.75 : 1, rotation: -dir * spread, flip: flip, cg)
-            }
-        case .tethered:
-            let sway = CGFloat(sin(time * 1.8))
-            let float = CGPoint(x: back.x - dir * size * (0.7 + 0.08 * sway), y: back.y - size * 1.55)
-            cg.saveGState()
-            cg.setStrokeColor(NSColor.white.withAlphaComponent(0.75).cgColor)
-            cg.setLineWidth(max(size * 0.03, 0.1))
-            cg.move(to: back)
-            cg.addQuadCurve(to: CGPoint(x: float.x, y: float.y + size * 0.4),
-                            control: CGPoint(x: back.x - dir * size * 0.5, y: back.y - size * 0.3))
-            cg.strokePath()
-            cg.restoreGState()
-            drawArt(art, at: float, size: size * 0.9, rotation: sway * 0.12 - dir * 0.1, flip: flip, cg)
-        case .shoulder where lying:
-            drawArt(art, at: CGPoint(x: back.x, y: back.y - size * 0.15), size: size * 0.62, rotation: -dir * 0.1, flip: flip, cg)
-        case .shoulder:
-            guard let head = scene.headAnchor else { return }
-            let hop = CGFloat(abs(sin(time * 4))) * size * 0.05
-            let shoulder = CGPoint(x: head.top.x - dir * head.width * 0.75, y: head.eye.y + head.width * 0.35 - hop)
-            drawArt(art, at: shoulder, size: size * 0.62, rotation: -dir * 0.1, flip: flip, cg)
-        default:
-            if item == .rocketBack {
-                // 분사 불꽃이 깜빡인다
-                let flame = CGPoint(x: back.x - dir * size * 0.35, y: back.y + size * 0.42)
-                draw(.flame, tint: NSColor(hex: 0xFF8A3D), at: flame, size: size * (0.5 + 0.12 * CGFloat(sin(time * 30))),
-                     alpha: 0.9, rotation: .pi, cg)
-            }
-            let tilt: CGFloat = item == .guitarBack ? -dir * 0.7 : item == .rocketBack ? dir * 0.45 : -dir * 0.12
-            drawArt(art, at: back, size: size * (item == .guitarBack ? 0.95 : 0.72), rotation: tilt, flip: flip, cg)
-        }
     }
 
     // MARK: 발먼지·부딪힘

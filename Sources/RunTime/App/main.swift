@@ -138,6 +138,24 @@ if let index = CommandLine.arguments.firstIndex(of: "--hero-gif") {
     exit(0)
 }
 
+// 효과 점검: 상태·반응마다 무대와 메뉴바 장면을 PNG로 저장하고 종료.
+if let index = CommandLine.arguments.firstIndex(of: "--stage-shots") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    // 기본 러너 id나 Petdex·내 그림 러너 id (메뉴바 점검과 같은 목록)
+    let id = args.dropFirst().first ?? ""
+    let character = MenuBarAudit.entries().first { $0.id == id }?.character ?? Runner.cat.character
+    Task { @MainActor in
+        do {
+            try StageShots.run(to: URL(fileURLWithPath: args.first ?? "stage-shots"), character: character)
+            exit(0)
+        } catch {
+            print("failed: \(error)")
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
 // 화면 점검: 주요 창을 실제 데이터로 찍어 PNG로 저장하고 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "ui-shots"

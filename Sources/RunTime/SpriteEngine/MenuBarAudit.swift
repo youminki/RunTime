@@ -56,7 +56,8 @@ enum MenuBarAudit {
                 return raster
             }
             let displays: [SpriteDisplay] = [.normal(.sleeping), .normal(.walking), .normal(.running), .normal(.dashing),
-                                             .normal(.rainbow), .tired, .alert]
+                                             .normal(.rainbow), .tired, .alert,
+                                             .straining(.running, critical: false), .straining(.rainbow, critical: true)]
             for display in displays {
                 let fit = SpriteFrames.loopFit(display, rig: character.rig, range: canvas.visibleY, count: 12)
                 for i in 0..<12 { _ = measure(display.motion(at: CGFloat(i) / 12), display.key, fit: .fixed(fit)) }

@@ -322,7 +322,7 @@ final class StageModel: ObservableObject {
         let hour = Calendar.current.component(.hour, from: Date())
         let line: String
         switch display {
-        case .tired, .alert, .normal(.sleeping): line = Self.phrases(for: display).randomElement() ?? ""
+        case .tired, .alert, .straining, .normal(.sleeping): line = Self.phrases(for: display).randomElement() ?? ""
         default:
             switch hour {
             case 5..<11: line = "좋은 아침"
@@ -336,10 +336,10 @@ final class StageModel: ObservableObject {
     }
 
     /// 메뉴에서 고른 동작을 무대 러너도 한다. 게임 중에는 판을 방해하지 않게 하지 않는다.
-    func play(_ kind: Trick) {
+    func play(_ kind: Trick, at date: Date = Date()) {
         guard game == nil else { return }
-        trick = (kind, Date())
-        nextIdle = Date().addingTimeInterval(kind.duration + 9)
+        trick = (kind, date)
+        nextIdle = date.addingTimeInterval(kind.duration + 9)
     }
 
     /// 누르면 장난 하나 + 말풍선. 메뉴바 러너도 같은 장난을 하도록 고른 동작을 돌려준다.
@@ -347,7 +347,7 @@ final class StageModel: ObservableObject {
         let kind: Trick
         switch display {
         case .normal(.sleeping): kind = .wakeUp
-        case .tired, .alert: kind = .shake
+        case .tired, .alert, .straining: kind = .shake
         default: kind = Trick.petting.filter { $0 != trick?.kind }.randomElement() ?? .hop
         }
         trick = (kind, Date())
@@ -359,14 +359,14 @@ final class StageModel: ObservableObject {
 
     /// 사용량 흐름에 반응한다. 메뉴바 러너와 같은 동작을 하고 무슨 일인지 말풍선으로 알린다. 게임 중에는 판을 방해하지 않는다.
     func react(_ reaction: UsageReactions.Reaction, display: SpriteDisplay) {
-        guard game == nil, AppSettings.shared.tricksEnabled, display != .tired, display != .alert else { return }
+        guard game == nil, AppSettings.shared.tricksEnabled, !display.isLimited else { return }
         play(SpriteAnimator.trick(for: reaction))
         let line = switch reaction {
-        case .burst: "부스트! 토큰이 쏟아진다"
-        case .resumed: "다시 달려 볼까"
-        case .sessionMilestone(let percent): "세션 \(percent)% 지났어"
-        case .multitask(let count): "프로젝트 \(count)개 동시 진행!"
-        case .newSession: "새 세션! 다시 가득 찼어"
+        case .burst: "갑자기 바빠졌네"
+        case .resumed: "다시 시작이다"
+        case .sessionMilestone(let percent): "세션 \(percent)% 썼어"
+        case .multitask(let count): "\(count)곳에서 같이 일하는 중"
+        case .newSession: "새 세션, 한도 초기화"
         }
         say(line, seconds: 2.4)
     }
@@ -393,13 +393,15 @@ final class StageModel: ObservableObject {
 
     static func phrases(for display: SpriteDisplay) -> [String] {
         switch display {
-        case .normal(.sleeping): return ["쿨쿨...", "5분만 더...", "꿈에서 토큰 세는 중", "음냐음냐"]
-        case .normal(.walking): return ["산책 중", "느긋하게 가자", "오늘도 코딩?", "천천히, 꾸준히"]
-        case .normal(.running): return ["달린다!", "토큰 냠냠", "좋은 페이스", "가보자고"]
-        case .normal(.dashing): return ["질주 중!", "바람을 가른다", "속도 올라간다", "따라올 테면 와 봐"]
-        case .normal(.rainbow): return ["무지개 모드!", "전력 질주!", "아무도 못 말려", "토큰이 불탄다"]
-        case .tired: return ["헥헥...", "좀 쉬자...", "한도가 가까워", "물 한 잔만..."]
-        case .alert: return ["한도 코앞!", "브레이크!", "/usage 확인해", "곧 멈춰야 해"]
+        case .normal(.sleeping): return ["쿨쿨", "5분만 더", "음냐"]
+        case .normal(.walking): return ["산책 중", "느긋하게", "천천히 가자"]
+        case .normal(.running): return ["좋은 페이스", "몸 풀렸다", "이 속도 좋아"]
+        case .normal(.dashing): return ["속도 붙었다", "바람 좋다", "이대로 쭉"]
+        case .normal(.rainbow): return ["숨 차다", "지금이 제일 빨라", "전력으로 가는 중"]
+        case .tired: return ["헥헥", "좀 쉬자", "한도가 가까워"]
+        case .alert: return ["한도 거의 다 썼어", "여기서 멈추자", "/usage 한번 봐 줘"]
+        case .straining(_, critical: false): return ["헥헥, 그래도 간다", "한도가 가까워", "숨 차다"]
+        case .straining(_, critical: true): return ["한도 거의 다 썼어", "곧 멈춰야 해", "/usage 한번 봐 줘"]
         }
     }
 
@@ -430,10 +432,21 @@ final class StageModel: ObservableObject {
         let scale: CGFloat = 5.0
         let runnerX = size.width * Self.runnerAnchor + speed / 140 * 16
         let origin = CGPoint(runnerX - Stage.size.width / 2 * scale, groundY - Stage.ground * scale)
-        let isSpace = display == .normal(.rainbow)
-        let sky = Sky.at(hour: Sky.hourOverride ?? Calendar.current.component(.hour, from: date), space: isSpace)
+        let sky = Sky.at(hour: Sky.hourOverride ?? Calendar.current.component(.hour, from: date), space: false)
 
         drawBackdrop(cg, size: size, sky: sky, time: time, groundY: groundY)
+        // 한도가 가까우면 배경만 어둡게 눌러 러너와 위 게이지로 눈이 가게 한다
+        // 달리는 중에는 덜 눌러 속도감이 남게 한다
+        let dim: CGFloat = switch display {
+        case .alert: 0.34
+        case .tired: 0.16
+        case .straining(_, let critical): critical ? 0.2 : 0.08
+        case .normal: 0
+        }
+        if dim > 0 {
+            cg.setFillColor(NSColor.black.withAlphaComponent(dim).cgColor)
+            cg.fill(CGRect(origin: .zero, size: size))
+        }
 
         // 러너 장면
         let rig = character.rig
@@ -460,9 +473,9 @@ final class StageModel: ObservableObject {
                                  phase: moving ? scroll / 60 : time / 2.4, moving: moving, theme: theme, cg)
         }
 
-        if isSpace && playing == nil { drawStarStreaks(cg, size: size, time: time, groundY: groundY) }
-        if display == .normal(.dashing) || (isSpace && playing == nil) {
-            drawWind(cg, size: size, time: time, groundY: groundY, strong: isSpace)
+        let top = display.pace == .rainbow
+        if playing == nil && (display.pace == .dashing || top) {
+            drawWind(cg, size: size, groundY: groundY, color: sky.edge, count: top ? 9 : 5)
         }
 
         cg.saveGState()
@@ -475,13 +488,18 @@ final class StageModel: ObservableObject {
         }
         var look = CharacterLook(rich: true, palette: theme.richPalette(rig.palette, phase: time / 6),
                                  tint: .white, outline: 0.36)
-        look.alarm = display == .alert && playing == nil
-        let back = GameWallet.shared.equipped(.back)
-        GameFX.drawBack(back, on: scene, time: Double(time), front: false, cg)
+        look.alarm = display.isCritical && playing == nil
+        if playing == nil {
+            let fit = (-origin.y / scale + 0.4)...((size.height - origin.y) / scale)
+            for ghost in display.ghosts(at: loopPhase).reversed() {
+                var ghostScene = CharacterScene(rig: rig, pose: ghost.frame.pose, transform: ghost.frame.transform)
+                ghostScene.fit(verticallyIn: fit)
+                SpriteFrames.drawAfterimage(ghostScene, image: ghost.image, color: look.palette.body, in: cg)
+            }
+        }
         scene.draw(in: cg, look: look)
         GameFX.drawAccessories(hat: GameWallet.shared.equipped(.hat), face: GameWallet.shared.equipped(.face), on: scene,
                                time: Double(time), cg)
-        GameFX.drawBack(back, on: scene, time: Double(time), front: true, cg)
         if playing == nil {
             display.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: true, leftEdge: leftEdge)
         }
@@ -490,7 +508,6 @@ final class StageModel: ObservableObject {
         }
         cg.restoreGState()
 
-        if display == .alert { drawAlarm(cg, size: size, time: time) }
     }
 
     private func updateTricks(date: Date, display: SpriteDisplay) {
@@ -500,13 +517,14 @@ final class StageModel: ObservableObject {
             case (true, .normal(let s)) where s != .sleeping: trick = (.wakeUp, date)
             case (false, .normal(.sleeping)): trick = (.fallAsleep, date)
             case (false, .normal(.rainbow)): trick = (.celebrate, date)
-            case (_, .tired), (_, .alert): trick = nil
+            // 한도 경고에 처음 들어설 때만 장난을 끊는다. 경고 중 걷기·달리기가 바뀔 때마다 끊으면 쓰다듬기가 잘린다
+            case _ where display.isLimited && !previous.isLimited: trick = nil
             default: break
             }
         }
         guard trick == nil, date >= nextIdle else { return }
         nextIdle = date.addingTimeInterval(.random(in: 7...14))
-        guard display != .tired && display != .alert else { return }
+        guard !display.isLimited else { return }
         let pool = (display.isAsleep ? Trick.asleep : Trick.awake).filter { $0 != lastIdleTrick }
         if let kind = pool.randomElement() {
             lastIdleTrick = kind
@@ -518,6 +536,7 @@ final class StageModel: ObservableObject {
     static func worldSpeed(_ display: SpriteDisplay) -> CGFloat {
         switch display {
         case .normal(.sleeping), .tired, .alert: return 0
+        case .straining(let state, _): return worldSpeed(.normal(state))
         case .normal(.walking): return 16
         case .normal(.running): return 46
         case .normal(.dashing): return 88
@@ -565,7 +584,8 @@ final class StageModel: ObservableObject {
         }
 
         // 해·달
-        let orb = CGPoint(size.width * 0.6, sky.orbLow ? groundY - 24 : 26)   // 오른쪽 위는 단추 자리
+        // 오른쪽 위는 단추 자리, 러너 머리 위는 사용률 고리 자리라 그 사이 아래쪽에 둔다
+        let orb = CGPoint(size.width * 0.8, sky.orbLow ? groundY - 24 : 50)
         cg.setFillColor(sky.orb.withAlphaComponent(0.16).cgColor)
         cg.fillEllipse(in: CGRect(x: orb.x - 14, y: orb.y - 14, width: 28, height: 28))
         cg.setFillColor(sky.orb.cgColor)
@@ -599,12 +619,14 @@ final class StageModel: ObservableObject {
         cg.fill(CGRect(x: 0, y: groundY, width: size.width, height: size.height - groundY))
         cg.setFillColor(sky.edge.withAlphaComponent(0.9).cgColor)
         cg.fill(CGRect(x: 0, y: groundY - 1, width: size.width, height: 2))
+        // 빠를수록 땅 점선이 늘어져 흐릿하게 번진다 (모션 블러)
         let dash: CGFloat = 26
+        let blur = min(speed / 140, 1)
         let offset = scroll.truncatingRemainder(dividingBy: dash)
-        cg.setFillColor(sky.edge.withAlphaComponent(0.35).cgColor)
+        cg.setFillColor(sky.edge.withAlphaComponent(0.35 - 0.12 * blur).cgColor)
         var x = -offset
         while x < size.width {
-            cg.addPath(CGPath(roundedRect: CGRect(x: x, y: groundY + 5, width: 10, height: 2), cornerWidth: 1,
+            cg.addPath(CGPath(roundedRect: CGRect(x: x, y: groundY + 5, width: 10 + 12 * blur, height: 2), cornerWidth: 1,
                               cornerHeight: 1, transform: nil))
             x += dash
         }
@@ -647,50 +669,26 @@ final class StageModel: ObservableObject {
         cg.fillPath()
     }
 
-    /// 무지개 질주 중 뒤로 쏟아지는 별빛.
-    private func drawStarStreaks(_ cg: CGContext, size: CGSize, time: CGFloat, groundY: CGFloat) {
-        cg.setLineCap(.round)
-        for i in 0..<14 {
-            let span = size.width + 60
-            let raw = Self.hash(i, 11) * span - scroll * (1.2 + Self.hash(i, 12))
-            let x = raw - floor(raw / span) * span - 30
-            let y = Self.hash(i, 13) * (groundY - 16) + 6
-            let length = 10 + Self.hash(i, 14) * 22
-            let color = SpriteEffects.rainbow[i % SpriteEffects.rainbow.count].tinted(by: 0.4)
-            cg.setStrokeColor(color.withAlphaComponent(0.7).cgColor)
-            cg.setLineWidth(1.2)
-            cg.move(to: CGPoint(x, y))
-            cg.addLine(to: CGPoint(x + length, y))
-            cg.strokePath()
-            SpriteEffects.sparkle(cg, at: CGPoint(x, y), radius: 2.2 + sin(time * 6 + CGFloat(i)) * 0.8, color: color)
-        }
-    }
-
-    private func drawWind(_ cg: CGContext, size: CGSize, time: CGFloat, groundY: CGFloat, strong: Bool) {
-        cg.setLineCap(.round)
-        for i in 0..<6 {
-            let span = size.width + 80
-            let raw = Self.hash(i, 21) * span - scroll * 2.2
-            let x = raw - floor(raw / span) * span - 40
-            let y = 20 + Self.hash(i, 22) * (groundY - 30)
-            let length = 24 + Self.hash(i, 23) * 30
-            cg.setStrokeColor(NSColor.white.withAlphaComponent(strong ? 0.35 : 0.28).cgColor)
-            cg.setLineWidth(1.1)
-            cg.move(to: CGPoint(x, y))
-            cg.addLine(to: CGPoint(x + length, y))
-            cg.strokePath()
-        }
-    }
-
-    private func drawAlarm(_ cg: CGContext, size: CGSize, time: CGFloat) {
-        let pulse = 0.18 + 0.14 * sin(time * 5)
-        let space = CGColorSpace(name: CGColorSpace.sRGB)
-        let center = CGPoint(size.width / 2, size.height / 2)
-        if let gradient = CGGradient(colorsSpace: space, colors: [NSColor.systemRed.withAlphaComponent(0).cgColor,
-                                                                  NSColor.systemRed.withAlphaComponent(pulse).cgColor] as CFArray,
-                                     locations: [0.35, 1]) {
-            cg.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center,
-                                  endRadius: size.width * 0.6, options: [.drawsAfterEndLocation])
+    /// 질주할 때 하늘을 가로지르는 공기 줄. 앞머리가 진하고 꼬리로 갈수록 옅어진다.
+    private func drawWind(_ cg: CGContext, size: CGSize, groundY: CGFloat, color: NSColor, count: Int) {
+        let tint = color.blended(withFraction: 0.5, of: .white) ?? color
+        for i in 0..<count {
+            let span = size.width + 120
+            let raw = Self.hash(i, 21) * span - scroll * (1.8 + Self.hash(i, 24) * 0.8)
+            let x = raw - floor(raw / span) * span - 60
+            let y = 22 + Self.hash(i, 22) * (groundY - 34)
+            let length = 26 + Self.hash(i, 23) * 34
+            let rect = CGRect(x: x, y: y - 0.6, width: length, height: 1.2)
+            cg.saveGState()
+            cg.addPath(CGPath(roundedRect: rect, cornerWidth: 0.6, cornerHeight: 0.6, transform: nil))
+            cg.clip()
+            if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                                         colors: [tint.withAlphaComponent(0.45).cgColor,
+                                                  tint.withAlphaComponent(0).cgColor] as CFArray,
+                                         locations: [0, 1]) {
+                cg.drawLinearGradient(gradient, start: CGPoint(x, y), end: CGPoint(x + length, y), options: [])
+            }
+            cg.restoreGState()
         }
     }
 

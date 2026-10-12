@@ -13,16 +13,14 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     case militaryHat, mushroomHat, tulipHat, hibiscusHat, sunflowerHat, ladybugHat, chickHat, hamsterHat
     case cloudHat, rainbowHat, starHat, fireHat
     case sunglassesFace, glassesFace, gogglesFace, divingFace, bandageFace, heartFace, lollipopFace
-    case backpackBack, shieldBack, guitarBack, balloonBack, kiteBack, butterflyBack, parrotBack, rocketBack, wingBack
 
     enum Slot: CaseIterable {
-        case hat, face, back, trail, dust, crash
+        case hat, face, trail, dust, crash
 
         var title: String {
             switch self {
             case .hat: "모자"
             case .face: "얼굴"
-            case .back: "등"
             case .trail: "꼬리"
             case .dust: "발먼지"
             case .crash: "부딪힘"
@@ -30,7 +28,7 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 머리·얼굴·등 꾸미기를 몸 어디에 어떻게 붙이는지.
+    /// 머리·얼굴 꾸미기를 몸 어디에 어떻게 붙이는지.
     enum Fit {
         /// 머리에 쓴다 (모자). 얼굴은 두 눈에 걸친다 (안경).
         case worn
@@ -44,14 +42,6 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         case cheek
         /// 입에 문다.
         case mouth
-        /// 등에 멘다 (몸 뒤에 그린다).
-        case strapped
-        /// 날개처럼 등 뒤에서 퍼덕인다.
-        case wings
-        /// 줄에 매달려 등 뒤 위로 뜬다 (풍선, 연).
-        case tethered
-        /// 어깨에 앉는다.
-        case shoulder
     }
 
     struct Info {
@@ -61,7 +51,7 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         let rarity: Rarity
         /// 발먼지 색, 꼬리의 바탕색, 미리보기 빛.
         let color: NSColor
-        /// Fluent Emoji 그림 이름 (Assets/Fluent). 머리·얼굴·등은 그 그림을, 꼬리·발먼지·부딪힘은 입자로 쓴다.
+        /// Fluent Emoji 그림 이름 (Assets/Fluent). 머리·얼굴은 그 그림을, 꼬리·발먼지·부딪힘은 입자로 쓴다.
         var art: String? = nil
         var fit: Fit = .worn
     }
@@ -136,16 +126,6 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         .lollipopFace: row(.face, "막대사탕", 340, .rare, 0xFF6FA8, art: "lollipop", fit: .mouth),
         .divingFace: row(.face, "잠수 마스크", 420, .epic, 0x3DA5FF, art: "divingmask"),
         .sunglassesFace: row(.face, "선글라스", 450, .epic, 0x333344, art: "sunglasses"),
-        // 등
-        .shieldBack: row(.back, "방패", 220, .common, 0xA0B4C8, art: "shield", fit: .strapped),
-        .backpackBack: row(.back, "책가방", 260, .common, 0xFF6F5C, art: "backpack", fit: .strapped),
-        .guitarBack: row(.back, "기타", 340, .rare, 0xC0885A, art: "guitar", fit: .strapped),
-        .balloonBack: row(.back, "풍선", 380, .rare, 0xFF5C5C, art: "balloon", fit: .tethered),
-        .kiteBack: row(.back, "연", 450, .rare, 0x5BC0FF, art: "kite", fit: .tethered),
-        .butterflyBack: row(.back, "나비 날개", 520, .epic, 0x6FA8FF, art: "butterfly", fit: .wings),
-        .parrotBack: row(.back, "어깨 앵무새", 600, .epic, 0x5BD86B, art: "parrot", fit: .shoulder),
-        .rocketBack: row(.back, "로켓", 750, .epic, 0xFF7A5C, art: "rocket", fit: .strapped),
-        .wingBack: row(.back, "천사 날개", 1300, .legendary, 0xF5F5FF, art: "wing", fit: .wings),
     ]
 
     var id: String { rawValue }
@@ -166,6 +146,12 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         "otterPet": 520, "slothPet": 560, "parrotPet": 600, "tigerPet": 650, "teddyPet": 650, "snowmanPet": 700,
         "ghostPet": 750, "trexPet": 1200, "unicornPet": 1400, "dragonPet": 1600,
         "theme:ruby": 250, "theme:mint": 250, "theme:gold": 400, "theme:aurora": 800,
+    ]
+
+    /// 상점에서 뺀 등 꾸미기의 정가. 가지고 있었으면 한 번 돌려준다.
+    static let retiredBackPrices: [String: Int] = [
+        "shieldBack": 220, "backpackBack": 260, "guitarBack": 340, "balloonBack": 380, "kiteBack": 450,
+        "butterflyBack": 520, "parrotBack": 600, "rocketBack": 750, "wingBack": 1300,
     ]
 }
 
@@ -247,6 +233,7 @@ final class GameWallet: ObservableObject {
         static let unlocked = "gameUnlocked"
         static let companion = "gameCompanion"
         static let retired = "gameRetiredRefunded"
+        static let retiredBack = "gameRetiredBackRefunded"
         static let abilityLevels = "gameAbilityLevels"
         static let abilitiesOff = "gameAbilitiesOff"
         static let weekly = "gameWeeklyChallenges"
@@ -313,13 +300,15 @@ final class GameWallet: ObservableObject {
             ?? .week(Self.thisWeek())
         achievements = defaults.data(forKey: Key.achievements).flatMap { try? JSONDecoder().decode(Achievements.self, from: $0) }
             ?? Achievements()
-        pending = defaults.data(forKey: Key.pending).flatMap { try? JSONDecoder().decode([PendingReward].self, from: $0) } ?? []
+        pending = (defaults.data(forKey: Key.pending).flatMap { try? JSONDecoder().decode([PendingReward].self, from: $0) } ?? [])
+            .map(Self.renamingTitles)
         runnerLevel = defaults.data(forKey: Key.level).flatMap { try? JSONDecoder().decode(RunnerLevel.self, from: $0) }
             ?? RunnerLevel()
         attendance = defaults.data(forKey: Key.attendance).flatMap { try? JSONDecoder().decode(Attendance.self, from: $0) }
             ?? Attendance()
         freeBoxes = defaults.integer(forKey: Key.boxes)
         refundRetired()
+        refundBackItems()
     }
 
     /// 상점에서 뺀 동료와 색을 가지고 있었으면 그 값을 한 번 보상한다. 색은 이제 누구나 고를 수 있다.
@@ -329,6 +318,28 @@ final class GameWallet: ObservableObject {
         coins += bought.compactMap { Cosmetic.retiredPrices[$0] }.reduce(0, +)
         defaults.removeObject(forKey: Key.unlocked)
         defaults.set(true, forKey: Key.retired)
+    }
+
+    /// 등 꾸미기를 상점에서 뺐다. 산 것이 있었으면 정가를 한 번 돌려준다 (행운 상자로 받은 것도 같은 값).
+    private func refundBackItems() {
+        guard !defaults.bool(forKey: Key.retiredBack) else { return }
+        let bought = defaults.stringArray(forKey: Key.owned) ?? []
+        coins += bought.compactMap { Cosmetic.retiredBackPrices[$0] }.reduce(0, +)
+        // 저장된 목록에서도 뺀 물건을 지워, 옛 값을 다시 읽어 셈하는 일이 없게 한다
+        defaults.set(owned.map(\.rawValue), forKey: Key.owned)
+        defaults.set(equipped.map(\.rawValue), forKey: Key.equipped)
+        defaults.set(true, forKey: Key.retiredBack)
+    }
+
+    /// 업적·미션 이름을 바꾸기 전에 쌓인 보상도 새 이름으로 보여 준다.
+    private static func renamingTitles(_ reward: PendingReward) -> PendingReward {
+        let renamed = ["꾸준한 러너": "꾸준히 달리기", "코인 수집가": "코인 모으기", "기록 사냥꾼": "최고 점수",
+                       "점프 장인": "점프", "아슬아슬 달인": "아슬아슬 피하기", "고스트 버스터": "고스트 이기기",
+                       "미션 해결사": "미션 채우기"]
+        var title = renamed.reduce(reward.title) { $0.replacingOccurrences(of: $1.key, with: $1.value) }
+        title = title.replacingOccurrences(of: #"아슬! (\d+)번"#, with: "아슬아슬하게 $1번 피하기", options: .regularExpression)
+        guard title != reward.title else { return reward }
+        return PendingReward(id: reward.id, title: title, coins: reward.coins, boxes: reward.boxes)
     }
 
     /// 데려갈 동료 그림. 펫을 지웠으면 nil.
@@ -369,7 +380,13 @@ final class GameWallet: ObservableObject {
     /// 화면 점검 도구가 저장하지 않고 꾸미기를 달아 볼 때.
     var preview: Set<Cosmetic>?
 
-    func equipped(_ slot: Cosmetic.Slot) -> Cosmetic? { (preview ?? equipped).first { $0.slot == slot } }
+    /// 상점에서 마우스를 올려 써 보는 물건 하나. 그 갈래만 덮어써서, 써 보는 동안 다른 갈래를 바꿔도 그대로 반영된다.
+    var tryingOn: Cosmetic?
+
+    func equipped(_ slot: Cosmetic.Slot) -> Cosmetic? {
+        if let tryingOn, tryingOn.slot == slot { return tryingOn }
+        return (preview ?? equipped).first { $0.slot == slot }
+    }
 
     /// 미션·도전·업적·레벨·출석을 채워 생긴 보상. 같은 id는 한 번만 생긴다.
     struct PendingReward: Codable, Equatable, Identifiable {
@@ -478,9 +495,9 @@ final class GameWallet: ObservableObject {
     var dailyDeal: Cosmetic? {
         let today = Self.today()
         let saved = defaults.string(forKey: Key.deal)?.split(separator: ":")
-        if let saved, saved.count == 2, Int(saved[0]) == today {
-            let item = Cosmetic(rawValue: String(saved[1]))
-            return item.flatMap { owned.contains($0) ? nil : $0 }
+        // 상점에서 뺀 물건이 저장돼 있으면 새로 고른다
+        if let saved, saved.count == 2, Int(saved[0]) == today, let item = Cosmetic(rawValue: String(saved[1])) {
+            return owned.contains(item) ? nil : item
         }
         let left = Cosmetic.allCases.filter { !owned.contains($0) && $0.rarity >= .rare }
         guard !left.isEmpty else { return nil }
@@ -557,7 +574,7 @@ extension DailyMissions.Mission {
     func title(weekly: Bool) -> String {
         let text = switch kind {
         case .coins: "코인 \(target)개 먹기"
-        case .nearMisses: "아슬! \(target)번"
+        case .nearMisses: "아슬아슬하게 \(target)번 피하기"
         case .score: "한 판 \(target)점 넘기"
         case .plays: "\(target)판 하기"
         case .jumps: "\(target)번 뛰기"
@@ -583,13 +600,13 @@ extension DailyMissions.Mission {
 extension Achievements.Kind {
     var name: String {
         switch self {
-        case .plays: "꾸준한 러너"
-        case .coins: "코인 수집가"
-        case .bestScore: "기록 사냥꾼"
-        case .jumps: "점프 장인"
-        case .nearMisses: "아슬아슬 달인"
-        case .ghostWins: "고스트 버스터"
-        case .missions: "미션 해결사"
+        case .plays: "꾸준히 달리기"
+        case .coins: "코인 모으기"
+        case .bestScore: "최고 점수"
+        case .jumps: "점프"
+        case .nearMisses: "아슬아슬 피하기"
+        case .ghostWins: "고스트 이기기"
+        case .missions: "미션 채우기"
         }
     }
 
@@ -600,7 +617,7 @@ extension Achievements.Kind {
         case .coins: "코인 \(n)개 모으기"
         case .bestScore: "한 판 \(n)점"
         case .jumps: "\(n)번 뛰기"
-        case .nearMisses: "아슬! \(n)번"
+        case .nearMisses: "아슬아슬하게 \(n)번 피하기"
         case .ghostWins: "고스트 \(n)번 이기기"
         case .missions: "미션·도전 \(n)개 채우기"
         }

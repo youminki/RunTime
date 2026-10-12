@@ -13,7 +13,9 @@ enum MotionEffect {
     case notes(CGFloat)
     case question(CGFloat)        // 투명도
     case exclaim(CGFloat)         // 투명도
-    case sparkles(CGFloat)
+    case burst(CGFloat)
+    /// 사용률 고리: 진행도, 채우기 시작과 끝 (0~1).
+    case ring(CGFloat, from: CGFloat, to: CGFloat)
     case dizzyStars(CGFloat)
     case dots(CGFloat)
     case puff(CGFloat)
@@ -32,6 +34,8 @@ enum Trick: String, CaseIterable {
     case wakeUp, fallAsleep, celebrate
     // 잘 때
     case rollOver, snore, dream
+    // 세션 사용률이 25·50·75%를 넘을 때
+    case milestone25, milestone50, milestone75
 
     static let awake: [Trick] = [.hop, .flip, .spin, .lookAround, .love, .sing, .dance, .stretch, .blink, .blink,
                                  .shake, .sneeze, .sparkle, .doze, .dizzy, .zoom, .wiggle]
@@ -55,6 +59,7 @@ enum Trick: String, CaseIterable {
         case .wakeUp: return 1.7
         case .fallAsleep: return 1.9
         case .snore, .dream: return 2.8
+        case .milestone25, .milestone50, .milestone75: return 1.9
         }
     }
 
@@ -71,7 +76,7 @@ enum Trick: String, CaseIterable {
         case .blink: return "깜빡"
         case .shake: return "부르르"
         case .sneeze: return "에취"
-        case .sparkle: return "반짝"
+        case .sparkle: return "팡"
         case .doze: return "꾸벅"
         case .dizzy: return "어질어질"
         case .zoom: return "슝"
@@ -82,6 +87,9 @@ enum Trick: String, CaseIterable {
         case .rollOver: return "뒤척"
         case .snore: return "코풍선"
         case .dream: return "꿈"
+        case .milestone25: return "세션 25%"
+        case .milestone50: return "세션 50%"
+        case .milestone75: return "세션 75%"
         }
     }
 
@@ -107,7 +115,8 @@ enum Trick: String, CaseIterable {
             f.transform.pivotAtCenter = true
             if t > 0.16 && t < 0.8 { f.pose = CharacterPose(activity: .run, phase: 0.62, speed: 1) }
             f.pose.eyes = t > 0.75 ? .happy : .open
-            if self == .celebrate { f.effects = [.sparkles(t)] }
+            // 착지하는 순간 터진다
+            if self == .celebrate { f.effects = [.burst((t - 0.72) / 0.28)] }
 
         case .spin:
             let k = smoothstep(t)
@@ -185,10 +194,9 @@ enum Trick: String, CaseIterable {
 
         case .sparkle:
             stand.eyes = .happy
-            stand.wave = seconds / Self.waveCycle
             f.pose = stand
-            f.transform.offset.y = -1.2 * abs(sin(.pi * t * 3))
-            f.effects = [.sparkles(t)]
+            f.transform = Self.jump(t, height: 2.4, start: 0.14, end: 0.5)
+            f.effects = [.burst((t - 0.26) / 0.7)]
 
         case .doze:
             if t < 0.72 {
@@ -277,6 +285,15 @@ enum Trick: String, CaseIterable {
         case .dream:
             f.pose = sleep
             f.effects = [.dream(t)]
+
+        case .milestone25, .milestone50, .milestone75:
+            // 고리가 다 차는 순간 살짝 뛰어오른다
+            let goal: CGFloat = self == .milestone25 ? 0.25 : self == .milestone50 ? 0.5 : 0.75
+            stand.eyes = t > 0.5 && t < 0.85 ? .happy : .open
+            f.pose = stand
+            f.transform.squash = 1 - 0.1 * Self.window(t, 0.42, 0.52)
+            f.transform.offset.y = -1.6 * Self.window(t, 0.5, 0.72)
+            f.effects = [.ring(t, from: goal - 0.25, to: goal)]
         }
         return f
     }
@@ -324,6 +341,7 @@ extension MotionEffect {
         let nose = CGPoint(bounds.maxX - 0.5, bounds.minY + min(4, bounds.height * 0.35))
         let pink = NSColor(hex: 0xFF5C93)
         let gold = NSColor(hex: 0xFFD23F)
+        let warm = NSColor(hex: 0xFFB547)
         switch self {
         case .hearts(let t):
             for k in 0..<3 {
@@ -347,14 +365,26 @@ extension MotionEffect {
             guard alpha > 0.01 else { return }
             SpriteEffects.exclaim(cg, at: head + CGPoint(0.8, -1.5), height: 4.5 * (0.7 + 0.3 * alpha),
                                   color: NSColor.systemOrange.withAlphaComponent(alpha))
-        case .sparkles(let t):
-            let center = CGPoint(bounds.midX, bounds.midY)
-            for k in 0..<5 {
-                let angle = CGFloat(k) / 5 * tau + t * 2
-                let radius = max(bounds.width, bounds.height) * 0.6
-                let twinkle = max(0, sin(.pi * 2 * (t * 2 + CGFloat(k) * 0.37)))
-                let c = center + CGPoint(cos(angle) * radius, sin(angle) * radius * 0.6)
-                SpriteEffects.sparkle(cg, at: c, radius: 1.6 * twinkle, color: k % 2 == 0 ? gold : .white)
+        case .burst(let t):
+            SpriteEffects.burst(cg, at: CGPoint(bounds.midX, bounds.midY - bounds.height * 0.1),
+                                radius: max(bounds.width, bounds.height) * 0.42, t: t, color: tint, accent: warm)
+        case .ring(let t, let from, let to):
+            let fill = smoothstep((t - 0.12) / 0.38)
+            let alpha = smoothstep(t / 0.1) * (1 - smoothstep((t - 0.8) / 0.2))
+            // 다 퍼진 고리(반지름 3.4)까지 메뉴바 칸 위·오른쪽 안에 들어가는 자리
+            let c = CGPoint(min(bounds.maxX + 3.2, 31.8), max(bounds.minY + 1.2, 5.6))
+            let grow = 1 + 0.1 * smoothstep((t - 0.8) / 0.2)
+            SpriteEffects.progressRing(cg, at: c, radius: 2.2 * grow, from: from, to: to, fill: fill, alpha: alpha,
+                                       color: tint)
+            // 다 찬 순간 고리 바깥으로 한 번 퍼진다
+            let pulse = (t - 0.5) / 0.3
+            if pulse > 0 && pulse < 1 {
+                let r = 2.2 + pulse * 1.2
+                cg.saveGState()
+                defer { cg.restoreGState() }
+                cg.setStrokeColor(tint.withAlphaComponent(0.5 * (1 - pulse) * alpha).cgColor)
+                cg.setLineWidth(0.4 * (1 - pulse) + 0.1)
+                cg.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
             }
         case .dizzyStars(let t):
             for k in 0..<3 {
@@ -422,7 +452,9 @@ extension MotionEffect {
                 }
             }
         case .speedLines(let t):
-            SpriteEffects.speedLines(cg, phase: t - floor(t), maxX: bounds.minX, color: tint)
+            SpriteEffects.airStreaks(cg, phase: t - floor(t), maxX: bounds.minX,
+                                     band: (bounds.minY + bounds.height * 0.2)...(bounds.maxY - bounds.height * 0.25),
+                                     color: tint)
         case .zzz(let t):
             SpriteEffects.zzz(cg, from: CGPoint(bounds.maxX - 2.5, bounds.minY + 0.5), phase: t, color: tint)
         }
