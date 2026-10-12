@@ -22,6 +22,8 @@ final class SpriteAnimator {
     var themeProvider: () -> SpriteTheme = { .auto }
     var smoothnessProvider: () -> SpriteSmoothness = { .smooth }
     var tricksEnabledProvider: () -> Bool = { true }
+    /// 메뉴바에 사용률 숫자가 러너 바로 옆에 붙어 있는지. 그러면 몸 오른쪽으로 나가는 효과를 뺀다.
+    var compactProvider: () -> Bool = { false }
     /// 레이어 크기. 프레임을 이 픽셀 크기 그대로 그린다.
     var canvas = MenuBarCanvas(barHeight: NSStatusBar.system.thickness, zoom: 1, backing: 2) {
         didSet { if canvas != oldValue { reloadFrames() } }
@@ -120,6 +122,7 @@ final class SpriteAnimator {
     /// 캐시를 비우고 현재 표시 상태의 프레임을 다시 만든다 (macOS 테마·러너·색상·부드러움 변경 시).
     func reloadFrames() {
         rasterCache.removeAll()
+        bodyRightCache.removeAll()
         trickKeys.removeAll()
         guard display != nil else { return }
         playing = nil
@@ -171,14 +174,14 @@ final class SpriteAnimator {
     private var cacheSuffix: String {
         let appearance = appearanceProvider()?.name.rawValue ?? "default"
         return "\(characterProvider().key)|\(themeProvider().rawValue)|\(smoothnessProvider().rawValue)|\(appearance)"
-            + "|\(canvas.cacheKey)"
+            + "|\(canvas.cacheKey)|\(compactProvider() ? "compact" : "wide")"
     }
 
     private func rasterized(display: SpriteDisplay) -> RasterClip {
         let key = "\(display.key)|\(cacheSuffix)"
         if let cached = rasterCache[key] { return cached }
         let clip = SpriteFrames.clip(for: display, character: characterProvider(), theme: themeProvider(),
-                                     fps: smoothnessProvider().fps, visibleY: canvas.visibleY)
+                                     fps: smoothnessProvider().fps, visibleY: canvas.visibleY, compact: compactProvider())
         let result = rasterize(clip)
         rasterCache[key] = result
         return result
@@ -192,7 +195,8 @@ final class SpriteAnimator {
         let key = "trick.\(trick.rawValue)|\(cacheSuffix)"
         if let cached = rasterCache[key] { return cached }
         guard let clip = SpriteFrames.clip(for: trick, character: characterProvider(), theme: themeProvider(),
-                                           fps: smoothnessProvider().fps, visibleY: canvas.visibleY) else { return nil }
+                                           fps: smoothnessProvider().fps, visibleY: canvas.visibleY,
+                                           compact: compactProvider()) else { return nil }
         let result = rasterize(clip)
         rasterCache[key] = result
         trickKeys.append(key)
@@ -217,6 +221,57 @@ final class SpriteAnimator {
         guard theme == .natural else { return nil }
         let dark = appearance?.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         return dark ? NSColor(white: 1, alpha: 0.55) : NSColor(white: 0, alpha: 0.35)
+    }
+
+    // MARK: - 몸 오른쪽 끝
+
+    private var bodyRightCache: [String: CGFloat] = [:]
+
+    /// 러너 몸이 닿는 오른쪽 끝 (칸 왼쪽에서 pt). 사용률 숫자를 몸 바로 옆에 붙이는 데 쓴다.
+    /// 그림 러너는 그림 둘레가 투명해서 칸 끝보다 한참 안쪽에서 끝난다. 반복 동작 몇 장을 효과 없이 그려 실제 픽셀로 잰다.
+    /// 누운 잠 자세가 달리는 자세보다 길어서 둘을 따로 잰다. 그래야 달리는 동안 숫자가 몸에 붙고,
+    /// 항목 폭은 잠들고 깰 때만 바뀐다 (걷기·달리기가 바뀔 때마다 메뉴바를 다시 배치하지 않는다).
+    func bodyRight(resting: Bool) -> CGFloat {
+        let character = characterProvider()
+        let key = "\(character.key)|\(themeProvider().rawValue)|\(canvas.cacheKey)|\(resting)"
+        if let cached = bodyRightCache[key] { return cached }
+        var right = 0
+        let displays: [SpriteDisplay] = resting ? [.normal(.sleeping), .tired, .alert]
+            : [.normal(.walking), .normal(.running), .normal(.dashing), .normal(.rainbow)]
+        // 메뉴바와 같은 색 방식으로 그린다. 단색 실루엣은 그림 러너의 투명한 둘레까지 칠할 수 있다
+        let theme = character.menuBarTheme(themeProvider())
+        do {
+            for display in displays {
+                let count = 6
+                let fit = SpriteFrames.loopFit(display, rig: character.rig, range: canvas.visibleY, count: count)
+                for i in 0..<count {
+                    let image = SpriteFrames.image { cg in
+                        SpriteFrames.render(cg, rig: character.rig, frame: display.motion(at: CGFloat(i) / CGFloat(count)),
+                                            theme: theme, themePhase: 0, alarm: false, fit: .fixed(fit)) { _, _, _, _ in }
+                    }
+                    if let raster = SpriteRasterizer.cgImage(image, canvas: canvas, appearance: nil) {
+                        right = max(right, Self.opaqueRight(raster))
+                    }
+                }
+            }
+        }
+        let points = right == 0 ? canvas.size.width : min(canvas.size.width, CGFloat(right) / canvas.backing)
+        bodyRightCache[key] = points
+        return points
+    }
+
+    /// 알파가 있는 가장 오른쪽 픽셀 열 + 1.
+    private static func opaqueRight(_ image: CGImage) -> Int {
+        let width = image.width, height = image.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        guard let cg = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return width }
+        cg.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        for x in stride(from: width - 1, through: 0, by: -1) {
+            for y in 0..<height where bytes[(y * width + x) * 4 + 3] > 24 { return x + 1 }
+        }
+        return 0
     }
 
     // MARK: - 장난 타이머

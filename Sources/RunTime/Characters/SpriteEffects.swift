@@ -178,14 +178,16 @@ enum SpriteEffects {
     }
 
     /// 머리 위로 천천히 떠오르는 z 두 개.
-    static func zzz(_ cg: CGContext, from origin: CGPoint, phase: CGFloat, color: NSColor) {
+    /// `leftward`면 오른쪽에 붙은 사용률 숫자를 가리지 않게 머리 위 왼쪽으로 떠오른다.
+    static func zzz(_ cg: CGContext, from origin: CGPoint, phase: CGFloat, color: NSColor, leftward: Bool = false) {
         cg.setLineCap(.round)
         cg.setLineJoin(.round)
         for k in 0..<2 {
             let t = (phase + CGFloat(k) / 2).truncatingRemainder(dividingBy: 1)
             let rise = 1 - pow(1 - t, 2)
             let size = 1.3 + t * 1.3
-            let c = origin + CGPoint(rise * 3 + sin(t * .pi) * 0.7, -rise * 7)
+            let drift = rise * 3 + sin(t * .pi) * 0.7
+            let c = origin + CGPoint(leftward ? -drift - 2 : drift, -rise * 7)
             let alpha = 0.85 * pow(sin(.pi * t), 1.5)
             cg.setStrokeColor(color.withAlphaComponent(alpha).cgColor)
             cg.setLineWidth(0.5)

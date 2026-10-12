@@ -31,6 +31,9 @@ enum SpriteDisplay: Equatable {
     /// 한도 경고 중인지. 경고 중에는 장난을 치지 않아 경고 모습이 가려지지 않게 한다.
     var isLimited: Bool { if case .normal = self { return false } else { return true } }
 
+    /// 제자리에 있는 모습인지 (잠, 쉬며 지침·경고). 누운 잠 자세는 달리는 모습보다 옆으로 길다.
+    var isResting: Bool { pace == nil || pace == .sleeping }
+
     /// 빨간 경고(95%+)인지.
     var isCritical: Bool {
         switch self {
@@ -133,8 +136,10 @@ enum SpriteDisplay: Equatable {
 
     /// 상태마다 늘 붙는 효과 (빛 꼬리, 공기 줄, 흙먼지, z, 입김, 경고 점).
     /// `leftEdge`는 빛 꼬리가 끝나는 x (팝오버 무대는 화면 왼쪽 끝까지 끈다).
+    /// `compact`면 메뉴바에서 러너 바로 오른쪽에 사용률 숫자가 붙어 있다. 몸 오른쪽으로 나가는 효과는 숫자를 가리므로
+    /// 빼거나 왼쪽으로 돌린다. 경고는 숫자 색(주황·빨강)이 대신 알린다.
     func drawLoopEffects(in cg: CGContext, scene: CharacterScene, phase: CGFloat, tint: NSColor, front: Bool,
-                         leftEdge: CGFloat = -1) {
+                         leftEdge: CGFloat = -1, compact: Bool = false) {
         let bounds = scene.placedBounds
         let body = (bounds.minY + bounds.height * 0.2)...(bounds.maxY - bounds.height * 0.25)
         let mouth = scene.headAnchor.map {
@@ -143,8 +148,8 @@ enum SpriteDisplay: Equatable {
         if case .straining(let state, let critical) = self {
             // 속도 효과는 그대로, 위에 한도 표시만 얹는다
             SpriteDisplay.normal(state).drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front,
-                                                        leftEdge: leftEdge)
-            guard front else { return }
+                                                        leftEdge: leftEdge, compact: compact)
+            guard front, !compact else { return }
             if critical {
                 // 달리는 한 주기가 짧아 퍼지는 원은 너무 잦다. 점만 둔다
                 let c = CGPoint(min(bounds.maxX + 1.4, 33), max(bounds.minY + 0.5, 4.8))
@@ -166,10 +171,11 @@ enum SpriteDisplay: Equatable {
         case (.normal(.running), false):
             SpriteEffects.footDust(cg, at: CGPoint(bounds.minX + 4, Stage.ground - 0.7), phase: phase, color: tint)
         case (.normal(.sleeping), true):
-            SpriteEffects.zzz(cg, from: CGPoint(bounds.maxX - 2.5, bounds.minY + 0.5), phase: phase, color: tint)
-        case (.tired, true):
+            SpriteEffects.zzz(cg, from: CGPoint(bounds.maxX - 2.5, bounds.minY + 0.5), phase: phase, color: tint,
+                              leftward: compact)
+        case (.tired, true) where !compact:
             SpriteEffects.breath(cg, at: mouth, phase: phase, color: tint)
-        case (.alert, true):
+        case (.alert, true) where !compact:
             // 퍼지는 원(반지름 2.4)이 메뉴바 칸 위·오른쪽에서 잘리지 않는 자리
             SpriteEffects.ping(cg, at: CGPoint(min(bounds.maxX + 1.4, 33), max(bounds.minY + 0.5, 4.8)),
                                phase: phase, color: .systemRed)
@@ -298,7 +304,7 @@ enum SpriteFrames {
 
     /// `visibleY`를 주면 그 높이 범위(메뉴바 칸)를 벗어나는 장면을 줄여 넣는다.
     static func clip(for display: SpriteDisplay, character: RunnerCharacter, theme chosen: SpriteTheme,
-                     fps: Double, visibleY: ClosedRange<CGFloat>? = nil) -> SpriteClip {
+                     fps: Double, visibleY: ClosedRange<CGFloat>? = nil, compact: Bool = false) -> SpriteClip {
         if let prefix = character.assetPrefix, let assets = assetClip(for: display, prefix: prefix) { return assets }
         let theme = character.menuBarTheme(chosen)
         let overlay = character.imageTint(chosen)
@@ -311,7 +317,7 @@ enum SpriteFrames {
                 render(cg, rig: rig, frame: display.motion(at: phase), theme: theme, themePhase: phase,
                        alarm: display.isCritical, fit: fit, overlay: overlay,
                        ghosts: display.ghosts(at: phase)) { cg, scene, tint, front in
-                    display.drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front)
+                    display.drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front, compact: compact)
                 }
             }
         }
@@ -320,7 +326,7 @@ enum SpriteFrames {
 
     /// 한 번 재생하는 동작. Assets 폴더 PNG로 바꾼 러너는 동작 프레임이 없어 nil.
     static func clip(for trick: Trick, character: RunnerCharacter, theme chosen: SpriteTheme, fps: Double,
-                     visibleY: ClosedRange<CGFloat>? = nil) -> SpriteClip? {
+                     visibleY: ClosedRange<CGFloat>? = nil, compact: Bool = false) -> SpriteClip? {
         if let prefix = character.assetPrefix, loadAssets(named: "\(prefix)_run", count: 8) != nil { return nil }
         let theme = character.menuBarTheme(chosen)
         let overlay = character.imageTint(chosen)
@@ -328,8 +334,11 @@ enum SpriteFrames {
         let rig = character.rig
         let frames = (0...count).map { i -> NSImage in
             let t = CGFloat(i) / CGFloat(count)
+            var frame = trick.frame(at: t)
+            // 사용률 고리는 러너 오른쪽에 떠서 붙어 있는 숫자를 가린다. 숫자가 이미 사용률을 보여 준다
+            if compact { frame.effects.removeAll { if case .ring = $0 { true } else { false } } }
             return image { cg in
-                render(cg, rig: rig, frame: trick.frame(at: t), theme: theme, themePhase: t, alarm: false,
+                render(cg, rig: rig, frame: frame, theme: theme, themePhase: t, alarm: false,
                        fit: visibleY.map(SceneFit.each) ?? .none, overlay: overlay) { _, _, _, _ in }
             }
         }

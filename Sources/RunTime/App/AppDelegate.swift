@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         animator.tricksEnabledProvider = { [weak self] in
             self?.engine.settings.tricksEnabled ?? true
         }
+        animator.compactProvider = { [weak self] in self?.currentLabel != nil }
         animator.set(display: .normal(.sleeping))
         LeaderboardFeed.shared.start()
         AppUpdater.shared.isInUse = { [weak self] in self?.popover?.isShown ?? false }
@@ -107,7 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                    CustomRunnerStore.shared.$runners.dropFirst().map { _ in },
                    PetdexStore.shared.$pets.dropFirst().map { _ in })
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.animator.reloadFrames() }
+            .sink { [weak self] _ in
+                self?.animator.reloadFrames()
+                // 러너가 바뀌면 몸 폭도 바뀌어 숫자 자리를 다시 잡는다
+                self?.resizeStatusItem()
+            }
             .store(in: &cancellables)
         engine.settings.$runnerSize.dropFirst()
             .receive(on: DispatchQueue.main)
@@ -119,7 +124,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .map { SpriteDisplay(state: $0, level: $1) }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] display in self?.animator.set(display: display) }
+            .sink { [weak self] display in
+                guard let self else { return }
+                let resting = self.animator.display?.isResting
+                self.animator.set(display: display)
+                // 잠들거나 깨면 몸 길이가 달라 숫자 자리를 다시 잡는다
+                if self.currentLabel != nil, resting != display.isResting { self.resizeStatusItem() }
+            }
             .store(in: &cancellables)
 
         // Claude가 일을 마치면 메뉴바 러너가 축하 동작으로 알린다 (다른 창을 보고 있어도 눈에 띄게).
@@ -303,6 +314,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         closed.contentViewController = nil
         popover = nil
         anchorWindow?.orderOut(nil)
+        // 상점에서 써 보던 트랙·날씨가 닫힌 뒤에도 남지 않게
+        GameWallet.shared.tryingOn = nil
         AppUpdater.shared.popoverClosed()
     }
 
@@ -402,7 +415,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private static let labelGap: CGFloat = 1
 
     private func applyStatusLabel(_ label: StatusLabel?) {
+        let compactChanged = (currentLabel == nil) != (label == nil)
         currentLabel = label
+        // 숫자를 켜고 끄면 몸 오른쪽 효과를 넣고 빼야 해서 프레임을 다시 굽는다
+        if compactChanged { animator.reloadFrames() }
         if let label {
             percentLabel.stringValue = label.text
             percentLabel.font = Self.statusLabelFont
@@ -429,25 +445,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// NSTextField 글자 칸은 좌우에 2pt씩 안쪽 여백이 있어, 프레임을 그만큼 넓히고 왼쪽으로 당긴다.
     private static let cellInset: CGFloat = 2
 
-    /// 항목 폭 = 러너 칸 + (켜져 있으면) 1pt + 숫자 폭. 버튼 제목을 쓰지 않아 여백이 생기지 않는다.
+    /// 러너가 차지하는 폭. 숫자를 붙이면 칸 끝이 아니라 몸 오른쪽 끝까지만 센다 (그림 러너는 둘레가 투명하다).
+    private var runnerWidth: CGFloat {
+        currentLabel == nil ? animator.canvas.size.width : ceil(animator.bodyRight(resting: animator.display?.isResting ?? true))
+    }
+
+    /// 항목 폭 = 러너 폭 + (켜져 있으면) 1pt + 숫자 폭. 버튼 제목을 쓰지 않아 여백이 생기지 않는다.
+    /// 폭이 그대로면 길이와 이미지를 다시 넣지 않는다. 메뉴바 항목이 바뀌면 macOS가 메뉴바를 다시 배치하기 때문이다.
     private func resizeStatusItem() {
         guard let button = statusItem.button else { return }
         button.title = ""
         button.imagePosition = .imageOnly
-        button.image = placeholder(for: animator.canvas)
-        statusItem.length = animator.canvas.size.width + labelWidth + 4
+        let size = NSSize(width: runnerWidth + labelWidth, height: Stage.size.height)
+        if button.image?.size != size { button.image = NSImage(size: size) }
+        let length = size.width + 4
+        if abs(statusItem.length - length) > 0.25 { statusItem.length = length }
         DispatchQueue.main.async { self.layoutSprite() }   // 길이가 바뀐 뒤 버튼 배치가 끝나면
     }
 
     /// 버튼 크기·글자 배치를 잡는 투명한 이미지. 높이는 버튼(22pt)에 맞추고 러너 레이어만 위아래로 넘친다.
     private func placeholder(for canvas: MenuBarCanvas) -> NSImage {
-        NSImage(size: NSSize(width: canvas.size.width + labelWidth, height: Stage.size.height))
+        NSImage(size: NSSize(width: runnerWidth + labelWidth, height: Stage.size.height))
     }
 
     /// 자리 표시 이미지가 놓인 자리에 러너 레이어를 맞춘다. 레이어는 버튼 위아래로 넘쳐 메뉴바 창 높이를 채운다.
     private func layoutSprite() {
         guard let button = statusItem.button, let cell = button.cell else { return }
-        let canvas = MenuBarCanvas(barHeight: button.window?.frame.height ?? NSStatusBar.system.thickness,
+        // 전체 화면 전환처럼 메뉴바가 잠깐 숨거나 낮아질 때의 높이로는 칸을 다시 잡지 않는다.
+        // 그 높이로 칸을 바꾸면 항목 폭이 바뀌어 메뉴바를 다시 배치하게 되고, 높이가 돌아오면 또 바뀐다.
+        let barHeight = max(button.window?.frame.height ?? 0, NSStatusBar.system.thickness)
+        let canvas = MenuBarCanvas(barHeight: barHeight,
                                    zoom: engine.settings.runnerSize.zoom,
                                    backing: button.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         if canvas != animator.canvas {
@@ -479,7 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         CATransaction.commit()
         let height = percentLabel.fittingSize.height
         percentLabel.frame = host.backingAlignedRect(
-            NSRect(x: spriteView.frame.maxX + Self.labelGap - Self.cellInset, y: spriteView.frame.midY - height / 2,
+            NSRect(x: spriteView.frame.minX + runnerWidth + Self.labelGap - Self.cellInset, y: spriteView.frame.midY - height / 2,
                    width: textWidth + Self.cellInset * 2, height: height),
             options: .alignAllEdgesNearest)
     }
