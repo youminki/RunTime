@@ -8,7 +8,7 @@ struct GameShopView: View {
     @ObservedObject private var wallet = GameWallet.shared
     @StateObject private var state: ShopState
 
-    init(settings: AppSettings, tab: Tab = .buddy) {
+    init(settings: AppSettings, tab: Tab = .track) {
         self.settings = settings
         _state = StateObject(wrappedValue: ShopState(tab: tab))
     }
