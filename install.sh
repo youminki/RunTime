@@ -84,6 +84,9 @@ fi
 
 rm -rf "$TARGET/RunTime.app"
 cp -R dist/RunTime.app "$TARGET/"
+# 같은 자리에 덮어쓰면 Finder·Dock이 옛 아이콘을 계속 보여 줘서, 날짜를 바꾸고 LaunchServices에 다시 알린다
+touch "$TARGET/RunTime.app"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$TARGET/RunTime.app" 2>/dev/null || true
 scripts/place-menubar.sh
 
 # 5) 실행
