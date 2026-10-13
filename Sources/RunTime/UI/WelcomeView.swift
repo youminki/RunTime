@@ -9,11 +9,11 @@ struct WelcomeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
-                TimelineView(.animation) { context in
-                    CharacterCanvas(character: settings.character, theme: settings.spriteTheme, date: context.date)
-                }
-                .frame(width: 84, height: 56)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.characterBackdrop))
+                // 사용량 창 무대처럼 하늘과 언덕 위를 고른 러너가 달린다
+                ItemPreview(kind: .cosmetic(.pineTrack), character: settings.character)
+                    .frame(width: 96, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
                 VStack(alignment: .leading, spacing: 3) {
                     Text("RunTime을 설치했어요").font(.system(size: 20, weight: .bold))
                     Text("Claude Code로 토큰을 빨리 쓸수록 메뉴바의 러너가 빨리 달립니다.")
