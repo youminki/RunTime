@@ -184,8 +184,9 @@ public final class RunnerGame {
         public var lateGateChance: Double = 0.35
         /// 숙인 키 (선 키 대비).
         public var duckRatio: Double = 0.55
-        /// 판정은 보이는 모습보다 조금 너그럽게 한다.
-        public var hitInset: Double = 2.5
+        /// 판정은 보이는 모습보다 조금 너그럽게 한다. 2.5면 첫 장애물 타이밍 창이 약 130ms라 처음 하는 사람이
+        /// 첫 장애물에서 자주 끝나서, 창이 약 170ms가 되는 5로 둔다 (`--game-sim`으로 잰 값).
+        public var hitInset: Double = 5
         /// 뛰어넘을 수 있다고 칠 때 사람에게 남겨 두는 누름 시각 여유(초). 이보다 빠듯하면 숙이거나 아래로 지나가야 하는 높이만 쓴다.
         public var jumpSlack: Double = 0.05
         /// 내리찍는 장애물이 러너에 닿기 이만큼(초) 전에 떨어지기 시작하고, 이 중력으로 떨어진다.

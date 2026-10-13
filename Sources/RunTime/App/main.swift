@@ -89,6 +89,13 @@ if let index = CommandLine.arguments.firstIndex(of: "--game-frames") {
     dispatchMain()
 }
 
+// 난이도 점검: 실제 장애물로 여러 판을 화면 없이 돌려 목표 점수까지 가는지 보고 종료.
+if let index = CommandLine.arguments.firstIndex(of: "--game-sim") {
+    let args = CommandLine.arguments.dropFirst(index + 1).compactMap { Int($0) }
+    MainActor.assumeIsolated { GameSim.run(runs: args.first ?? 40, target: args.dropFirst().first ?? 5000) }
+    exit(0)
+}
+
 // 성능 점검: 무대와 게임 한 장면을 그리는 데 드는 시간을 재고 종료.
 if CommandLine.arguments.contains("--game-bench") {
     Task { @MainActor in

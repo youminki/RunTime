@@ -68,6 +68,16 @@ enum GameShots {
             step(0.5, autoplay: true)
             try shot("2-play-\(item.rawValue)")
         }
+        // 후반 모습: 5000점까지 달리며 1000점마다 한 장 (빨라진 속도, 몰려오는 장애물, 다섯 자리 점수)
+        GameWallet.shared.preview = nil
+        var nextLate = 1000
+        while game.phase == .playing, game.score < 5000 {
+            step(1, autoplay: true)
+            if game.score >= nextLate {
+                try shot("2-late-\(nextLate)")
+                nextLate += 1000
+            }
+        }
         // →를 눌러 앞으로 나간 모습. 자동 플레이는 앞뒤 이동을 셈하지 않아 마지막에 찍는다
         if game.phase == .playing {
             game.setMove(forward: true)
