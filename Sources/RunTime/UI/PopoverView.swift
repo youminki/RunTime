@@ -185,22 +185,49 @@ struct PopoverView: View {
                 .padding(.bottom, 4)
             }
             .frame(height: 304)   // 사용량 화면과 높이를 맞춰 전환할 때 팝오버가 출렁이지 않게
-            HStack(spacing: 8) {
+            // 시스템 단추 대신 상점·창고와 같은 단추로 둔다
+            HStack(spacing: 6) {
                 Button { page.showsRunners = false } label: {
-                    Label("사용량", systemImage: "chevron.left")
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
+                        Text("사용량")
+                    }
                 }
+                .buttonStyle(GameButtonStyle(kind: .plain, height: 22))
                 .keyboardShortcut(.cancelAction)
                 Spacer()
                 if page.section == .runners {
-                    Picker("색상", selection: $settings.spriteTheme) {
-                        ForEach(SpriteTheme.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    Menu {
+                        Picker("색상", selection: $settings.spriteTheme) {
+                            ForEach(SpriteTheme.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } label: {
+                        // 메뉴는 단추 꼴을 시스템이 그려서 같은 모습을 이름표에 직접 칠한다
+                        HStack(spacing: 4) {
+                            Image(systemName: "paintpalette.fill").font(.system(size: 9.5))
+                            Text(settings.spriteTheme.displayName)
+                            Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold)).opacity(0.7)
+                        }
+                        .gameChip()
                     }
-                    .pickerStyle(.menu)
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
                     .fixedSize()
-                    Button("아무거나", action: pickRandomRunner)
+                    .help("러너 색상")
+                    Button(action: pickRandomRunner) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "shuffle").font(.system(size: 9, weight: .bold))
+                            Text("아무거나")
+                        }
+                    }
+                    .buttonStyle(GameButtonStyle(kind: .plain, height: 22))
+                    .help("다른 러너 하나를 아무거나 고르기")
                 }
             }
-            .controlSize(.small)
+            .padding(.bottom, 2)
         }
     }
 

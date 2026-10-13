@@ -93,6 +93,20 @@ struct GameButtonStyle: ButtonStyle {
     }
 }
 
+extension View {
+    /// 보통 단추와 같은 모습. 메뉴처럼 단추 꼴을 시스템이 정하는 곳의 이름표에 쓴다.
+    func gameChip(height: CGFloat = 22) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+        return font(.system(size: 11, weight: .bold))
+            .foregroundStyle(Theme.primary)
+            .padding(.horizontal, 10)
+            .frame(height: height)
+            .background(shape.fill(Color(white: 0.3)))
+            .background(shape.fill(Color(white: 0.16)).offset(y: 2))
+            .contentShape(shape)
+    }
+}
+
 extension Rarity {
     /// 테두리 위쪽에 쓰는 밝은 등급 색.
     var light: Color { Color(nsColor: color.blended(withFraction: 0.35, of: .white) ?? color) }

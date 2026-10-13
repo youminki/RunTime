@@ -10,6 +10,7 @@ extension GameSession {
         let text: Text
         let position: CGPoint
         var anchor: UnitPoint = .center
+        var opacity: Double = 1
     }
 
     struct Panel {
@@ -28,23 +29,33 @@ extension GameSession {
 
         // 끝난 화면은 결과 카드가 점수를 크게 보여 준다
         if game.phase == .playing {
+            // 뛰어오른 러너나 위에 떠 있는 장애물이 점수판 밑을 지나면 점수판을 옅게 해 가리지 않게 한다
+            let groundY = size.height - 15
+            let hud = CGRect(x: 0, y: 0, width: 170, height: 50)
+            let runnerTop = groundY - CGFloat(game.runnerY + Self.runnerHeight * 1.3)
+            let covered = (runnerTop < hud.maxY && runnerLeft < hud.maxX)
+                || game.obstacles.contains { o in
+                    let x = screenX(o.x)
+                    return groundY - CGFloat(o.y + o.height) < hud.maxY && x < hud.maxX && x + CGFloat(o.width) > hud.minX
+                }
+            hudAlpha += ((covered ? 0.3 : 1) - hudAlpha) * 0.2
             let glow = milestoneGlow > 0 && Int(milestoneGlow * 10) % 2 == 0
             labels.append(Label(text: Text(String(format: "%05d", game.score)).font(digits)
                                     .foregroundColor(glow ? gold : .white),
-                                position: CGPoint(12, 10), anchor: .topLeading))
+                                position: CGPoint(12, 10), anchor: .topLeading, opacity: hudAlpha))
             // 점수 아래 한 줄: 최고 점수, 먹은 코인, 남은 보호막
-            var line = Text("BEST \(max(game.best, game.score))").foregroundColor(.white.opacity(0.6))
+            var line = Text(verbatim: "BEST \(max(game.best, game.score))").foregroundColor(.white.opacity(0.6))
             if game.coinsTaken > 0 || boosted {
                 line = line + Text("   ") + Text(Image(systemName: "circle.fill")).foregroundColor(gold)
-                    + Text(" \(game.coinsTaken)").foregroundColor(gold)
+                    + Text(verbatim: " \(game.coinsTaken)").foregroundColor(gold)
                 if boosted { line = line + Text(" ×2").foregroundColor(gold.opacity(0.75)) }
             }
             if game.abilities.shields > 0 {
                 line = line + Text("   ") + Text(Image(systemName: "shield.fill"))
                     .foregroundColor(Color(nsColor: NSColor(hex: 0x8FD3FF)).opacity(game.shieldsLeft > 0 ? 1 : 0.35))
-                    + Text(" \(game.shieldsLeft)").foregroundColor(.white.opacity(game.shieldsLeft > 0 ? 0.85 : 0.4))
+                    + Text(verbatim: " \(game.shieldsLeft)").foregroundColor(.white.opacity(game.shieldsLeft > 0 ? 0.85 : 0.4))
             }
-            labels.append(Label(text: line.font(caption), position: CGPoint(13, 31), anchor: .topLeading))
+            labels.append(Label(text: line.font(caption), position: CGPoint(13, 31), anchor: .topLeading, opacity: hudAlpha))
         }
         for popup in popups {
             labels.append(Label(text: Text(popup.text).font(GameFont.pixel(12))
@@ -56,7 +67,7 @@ extension GameSession {
             let name = next.name.count > 6 ? next.name.prefix(6) + "…" : Substring(next.name)
             labels.append(Label(text: (Text(Image(systemName: "flag.fill")).foregroundColor(Color(nsColor: NSColor(hex: 0xFF6B5E)))
                                        + Text(" \(String(name))까지 ").foregroundColor(.white.opacity(0.7))
-                                       + Text("\(max(0, next.score + 1 - game.score))").foregroundColor(.white))
+                                       + Text(verbatim: "\(max(0, next.score + 1 - game.score))").foregroundColor(.white))
                                     .font(caption),
                                 position: CGPoint(size.width / 2, 14)))
             if let x = flagX(), x > 0, x < size.width {
@@ -144,12 +155,12 @@ extension GameSession {
             labels.append(Label(text: Text(title).font(.system(size: 11, weight: .bold))
                                     .foregroundColor(highlight ? gold : .white.opacity(0.65)),
                                 position: CGPoint(inset, cardTop + 11), anchor: .topLeading))
-            labels.append(Label(text: Text("\(game.score)").font(GameFont.pixel(24)).foregroundColor(.white),
+            labels.append(Label(text: Text(verbatim: "\(game.score)").font(GameFont.pixel(24)).foregroundColor(.white),
                                 position: CGPoint(inset - 1, cardTop + 27), anchor: .topLeading))
-            labels.append(Label(text: Text("BEST \(game.best)").font(caption).foregroundColor(.white.opacity(0.55)),
+            labels.append(Label(text: Text(verbatim: "BEST \(game.best)").font(caption).foregroundColor(.white.opacity(0.55)),
                                 position: CGPoint(cardLeft + cardWidth - 12, cardTop + 12), anchor: .topTrailing))
             if game.coinsTaken > 0 {
-                labels.append(Label(text: (Text(Image(systemName: "circle.fill")) + Text(" +\(game.coinsTaken)")).font(caption)
+                labels.append(Label(text: (Text(Image(systemName: "circle.fill")) + Text(verbatim: " +\(game.coinsTaken)")).font(caption)
                                         .foregroundColor(gold),
                                     position: CGPoint(cardLeft + cardWidth - 12, cardTop + 38), anchor: .topTrailing))
             }

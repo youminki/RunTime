@@ -75,7 +75,8 @@ struct QuestView: View {
                      + (wallet.pending.count > 2 ? " 외 \(wallet.pending.count - 2)개" : ""))
                     .font(.system(size: 10.5)).foregroundStyle(Theme.secondary).lineLimit(1)
                 if boxes > 0 {
-                    Text("행운 상자 \(boxes)개 포함, 받은 뒤 상점에서 엽니다").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
+                    Text("행운 상자 \(boxes)개 포함 · 상점에서 열기").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
+                        .lineLimit(1)
                 }
             }
             Spacer(minLength: 4)

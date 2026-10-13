@@ -45,6 +45,8 @@ final class GameSession {
     var shake: CGFloat = 0
     var flash: CGFloat = 0
     var milestoneGlow: CGFloat = 0
+    /// 왼쪽 위 점수판의 불투명도. 러너나 장애물이 그 밑을 지나면 옅어진다.
+    var hudAlpha: Double = 1
     var recordBanner: CGFloat = 0
     var finished = false
     /// 캐릭터별 게임 배율. 서 있는 모습을 재서 정한다.

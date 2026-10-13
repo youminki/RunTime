@@ -111,7 +111,9 @@ struct RunnerStage: View {
         context.drawLayer { layer in
             layer.addFilter(.shadow(color: .black.opacity(0.55), radius: 0, x: 0, y: 1))
             for label in overlay.labels {
-                layer.draw(label.text, at: label.position, anchor: label.anchor)
+                var context = layer
+                context.opacity = label.opacity
+                context.draw(label.text, at: label.position, anchor: label.anchor)
             }
         }
     }
