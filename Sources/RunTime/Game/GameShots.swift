@@ -178,6 +178,8 @@ enum GameBench {
 enum GameFrames {
     @MainActor
     static func run(to directory: URL, character: RunnerCharacter) throws {
+        // README GIF라 내 지갑 대신 예시 값을 쓴다 (팬아트인 Petdex 동료가 찍히지 않게)
+        ReadmeShots.useDemoDefaults()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = StageModel()
         let size = CGSize(width: 344, height: RunnerStage.height)
@@ -188,9 +190,9 @@ enum GameFrames {
         let game = session.game
         let pilot = Autopilot(game: game)
 
-        func step(_ seconds: Double, every: Int = 0, capture: (() throws -> Void)? = nil) rethrows {
+        func step(_ seconds: Double, autoplay: Bool = true, every: Int = 0, capture: (() throws -> Void)? = nil) rethrows {
             for k in 0..<Int(seconds / frame) {
-                pilot.step()
+                if autoplay { pilot.step() }
                 date = date.addingTimeInterval(frame)
                 session.update(date: date)
                 if every > 0, k % every == 0 { try capture?() }
@@ -202,7 +204,8 @@ enum GameFrames {
         session.press()
         session.release()
         step(12)
-        while game.phase == .playing { step(0.25) }
+        // 자동 플레이어는 거의 부딪히지 않아서 손을 놓아 판을 끝낸다
+        while game.phase == .playing { step(0.25, autoplay: false) }
         step(0.6)
         session.savedGhost = GhostStore.record(of: game, runner: Runner.dragon.rawValue)
 

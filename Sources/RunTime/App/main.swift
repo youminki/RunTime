@@ -148,6 +148,18 @@ if let index = CommandLine.arguments.firstIndex(of: "--stage-shots") {
     dispatchMain()
 }
 
+// README 그림: 예시 값으로 사용량 창, 상점, 창고, 퀘스트를 찍어 PNG로 저장하고 종료.
+if let index = CommandLine.arguments.firstIndex(of: "--readme-shots") {
+    let path = CommandLine.arguments.dropFirst(index + 1).first ?? "readme-shots"
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    MainActor.assumeIsolated {
+        ReadmeShots.useDemoDefaults()
+        ReadmeShots.run(to: URL(fileURLWithPath: path))
+    }
+    app.run()
+}
+
 // 화면 점검: 주요 창을 실제 데이터로 찍어 PNG로 저장하고 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "ui-shots"
