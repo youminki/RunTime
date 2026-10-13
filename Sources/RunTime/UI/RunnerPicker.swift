@@ -8,11 +8,14 @@ struct RunnerPicker: View {
     @ObservedObject var settings: AppSettings
     /// 팝오버처럼 파일 창을 띄우면 닫혀 버리는 곳에서는 그림 불러오기를 이 동작(팝오버를 닫고 파일 창 열기)으로 넘긴다.
     var importInPlace: (() -> Void)?
+    /// 팝오버처럼 늘 어두운 곳에서는 상점·창고와 같은 칸 틀을 쓴다. 설정 창은 시스템 밝기를 따른다.
+    var gameStyle = false
     @ObservedObject private var store = CustomRunnerStore.shared
     @ObservedObject private var petdex = PetdexStore.shared
     @StateObject private var hover = HoveredRunner()
     @StateObject private var importState = ImportState()
     @StateObject private var filter = RunnerFilter()
+    @StateObject private var rename = RenameState()
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
 
@@ -32,7 +35,10 @@ struct RunnerPicker: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.06)))
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(gameStyle ? GameKit.slot : Color.primary.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .strokeBorder(gameStyle ? Theme.hairline : .clear))
     }
 
     var body: some View {
@@ -63,13 +69,13 @@ struct RunnerPicker: View {
                     if let character = petdex.character(for: pet) {
                         let id = PetdexStore.storageID(pet.slug)
                         let selected = settings.customRunnerID == id
-                        Button { settings.customRunnerID = id } label: {
+                        selectable(id, action: { settings.customRunnerID = id }) {
                             tile(character, key: id, selected: selected)
                         }
-                        .buttonStyle(.plain)
                         .onHover { hover.update(id, $0) }
                         .accessibilityLabel(pet.name)
                         .contextMenu {
+                            Button("이름 바꾸기") { rename.start(id, name: pet.name) { petdex.rename(pet, to: $0) } }
                             Button("Petdex에서 보기") {
                                 if let url = URL(string: "https://petdex.dev/pets/\(pet.slug)") { NSWorkspace.shared.open(url) }
                             }
@@ -79,7 +85,7 @@ struct RunnerPicker: View {
                                 petdex.delete(pet)
                             }
                         }
-                        .help("오른쪽 클릭: Petdex에서 보기, 삭제")
+                        .help("오른쪽 클릭: 이름 바꾸기, Petdex에서 보기, 삭제")
                     }
                 }
                 Button { PetdexWindow.shared.show(settings: settings) } label: {
@@ -93,10 +99,9 @@ struct RunnerPicker: View {
                 // 내 러너 id는 UUID라 이름으로만 찾는다
                 ForEach(store.runners.filter { filter.matches($0.name, "") }) { custom in
                     let selected = settings.customRunnerID == custom.id
-                    Button { settings.select(custom) } label: {
+                    selectable(custom.id, action: { settings.select(custom) }) {
                         tile(custom.character, key: custom.id, selected: selected)
                     }
-                    .buttonStyle(.plain)
                     .onHover { hover.update(custom.id, $0) }
                     .contextMenu { customMenu(custom) }
                     .help("오른쪽 클릭: 이름 바꾸기, 실루엣, 삭제")
@@ -115,11 +120,16 @@ struct RunnerPicker: View {
         }
     }
 
+    @ViewBuilder
     private func groupTitle(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .padding(.top, 2)
+        if gameStyle {
+            GameSectionHeader(title: text).padding(.top, 4)
+        } else {
+            Text(text)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
     }
 
     private func tile(_ character: RunnerCharacter, key: String, selected: Bool) -> some View {
@@ -136,18 +146,42 @@ struct RunnerPicker: View {
                 }
             }
             .frame(height: 56)
-            Text(character.name)
-                .font(.system(size: 11, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? .primary : .secondary)
-                .lineLimit(1)
+            TileName(name: character.name, key: key, selected: selected, rename: rename)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Palette.characterBackdrop.opacity(selected ? 1 : (live ? 0.85 : 0.6))))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .strokeBorder(selected ? Color.accentColor.opacity(0.9) : Color.primary.opacity(0.06), lineWidth: 1))
+        .modifier(TileFrame(gameStyle: gameStyle, selected: selected, live: live))
         .contentShape(Rectangle())
+    }
+
+    /// 칸 바탕. 팝오버는 상점과 같은 칸 틀, 설정 창은 밝기에 맞춘 캐릭터 바탕.
+    private struct TileFrame: ViewModifier {
+        let gameStyle: Bool
+        let selected: Bool
+        let live: Bool
+
+        func body(content: Content) -> some View {
+            if gameStyle {
+                content.rarityFrame(nil, highlight: selected ? Theme.accent : nil, radius: 8)
+            } else {
+                content
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Palette.characterBackdrop.opacity(selected ? 1 : (live ? 0.85 : 0.6))))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(selected ? Color.accentColor.opacity(0.9) : Color.primary.opacity(0.06), lineWidth: 1))
+            }
+        }
+    }
+
+    /// 고를 수 있는 칸. 이름을 고치는 동안은 단추로 감싸지 않아야 입력 칸이 클릭을 받는다.
+    @ViewBuilder
+    private func selectable<Label: View>(_ key: String, action: @escaping () -> Void,
+                                         @ViewBuilder label: () -> Label) -> some View {
+        if rename.id == key {
+            label()
+        } else {
+            Button(action: action, label: label).buttonStyle(.plain)
+        }
     }
 
     private func actionTile(icon: String, title: String) -> some View {
@@ -167,7 +201,7 @@ struct RunnerPicker: View {
 
     @ViewBuilder
     private func customMenu(_ custom: CustomRunner) -> some View {
-        Button("이름 바꾸기…") { rename(custom) }
+        Button("이름 바꾸기") { startRenaming(custom) }
         Button(custom.silhouette ? "원본 색으로 보기" : "메뉴바 색에 맞춰 실루엣으로 보기") {
             var updated = custom
             updated.silhouette.toggle()
@@ -180,21 +214,12 @@ struct RunnerPicker: View {
         }
     }
 
-    private func rename(_ custom: CustomRunner) {
-        let alert = NSAlert()
-        alert.messageText = "러너 이름"
-        let field = NSTextField(string: custom.name)
-        field.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "바꾸기")
-        alert.addButton(withTitle: "취소")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        var updated = custom
-        updated.name = String(name.prefix(12))
-        store.update(updated)
+    private func startRenaming(_ custom: CustomRunner) {
+        rename.start(custom.id, name: custom.name) { name in
+            var updated = custom
+            updated.name = name
+            store.update(updated)
+        }
     }
 }
 
@@ -286,6 +311,114 @@ enum RunnerImport {
             case .failure(let error):
                 report(error.localizedDescription, true)
             }
+        }
+    }
+}
+
+/// 칸 안에서 이름을 바로 고치는 중인지. 팝오버에서 알림 창을 띄우면 팝오버가 닫혀서 칸 이름표 자리에서 고친다.
+final class RenameState: ObservableObject {
+    @Published private(set) var id: String?
+    private(set) var original = ""
+    private var commit: ((String) -> Void)?
+
+    func start(_ id: String, name: String, commit: @escaping (String) -> Void) {
+        original = name
+        self.commit = commit
+        self.id = id
+    }
+
+    /// 빈 이름이나 그대로인 이름은 바꾸지 않는다. 이름표가 좁아 12자까지만 둔다.
+    func finish(_ text: String?) {
+        let name = String((text ?? "").trimmingCharacters(in: .whitespaces).prefix(12))
+        if !name.isEmpty, name != original { commit?(name) }
+        commit = nil
+        id = nil
+    }
+}
+
+/// 나타나자마자 글자를 받는 이름 칸. return이면 저장, esc면 취소, 다른 곳을 누르면 저장한다.
+struct InlineNameField: NSViewRepresentable {
+    let text: String
+    let finish: (String?) -> Void
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: text)
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.alignment = .center
+        field.font = .systemFont(ofSize: 11, weight: .semibold)
+        field.textColor = .labelColor
+        field.cell?.isScrollable = true
+        field.delegate = context.coordinator
+        DispatchQueue.main.async {
+            // 오른쪽 클릭 메뉴가 닫힌 직후라 팝오버 창이 키 창이 아닐 수 있다
+            field.window?.makeKey()
+            field.window?.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+        }
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.finish = finish
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(finish: finish) }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var finish: (String?) -> Void
+        private var done = false
+
+        init(finish: @escaping (String?) -> Void) { self.finish = finish }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                end(control.stringValue)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                end(nil)
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// 다른 곳을 눌러 입력이 끝나면 저장한다. 창이 키를 잃어서 끝난 것(메뉴가 닫히는 순간 등)은 무시하고 칸을 남긴다.
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField, field.window?.isKeyWindow == true else { return }
+            end(field.stringValue)
+        }
+
+        private func end(_ value: String?) {
+            guard !done else { return }
+            done = true
+            DispatchQueue.main.async { [finish] in finish(value) }
+        }
+    }
+}
+
+/// 칸 아래 이름표. 이름을 고치는 중이면 그 자리가 입력 칸이 된다.
+struct TileName: View {
+    let name: String
+    let key: String
+    let selected: Bool
+    @ObservedObject var rename: RenameState
+
+    var body: some View {
+        if rename.id == key {
+            InlineNameField(text: name) { rename.finish($0) }
+                .frame(height: 16)
+                .padding(.horizontal, 4)
+                .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color.black.opacity(0.35)))
+                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Theme.accent.opacity(0.8)))
+                .padding(.horizontal, 6)
+        } else {
+            Text(name)
+                .font(.system(size: 11, weight: selected ? .bold : .medium))
+                .foregroundStyle(selected ? .primary : .secondary)
+                .lineLimit(1)
         }
     }
 }

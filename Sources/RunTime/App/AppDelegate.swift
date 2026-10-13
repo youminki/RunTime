@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var currentLabel: StatusLabel?
     private let engine = UsageEngine()
     private var popover: NSPopover?
+    /// 앱이 일부러 닫는 중인지. 아니면 팝오버 안을 누른 순간에는 닫지 않는다 (popoverShouldClose).
+    private var closingPopover = false
     private var settingsWindow: NSWindow?
     private var dailyDetailWindow: NSWindow?
     private var leaderboardWindow: NSWindow?
@@ -204,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 메뉴바 앱에서 흔히 기대하는 오른쪽 클릭 메뉴. 사용량 창을 열지 않고 자주 쓰는 곳으로 바로 간다.
     private func showQuickMenu() {
-        popover?.performClose(nil)
+        closePopover()
         let menu = NSMenu()
         func add(_ title: String, action: @escaping () -> Void) {
             let item = NSMenuItem(title: title, action: #selector(runMenuAction(_:)), keyEquivalent: "")
@@ -245,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     @objc private func togglePopover() {
         if let popover, popover.isShown {
-            popover.performClose(nil)
+            closePopover()
             return
         }
         let popover = NSPopover()
@@ -308,6 +310,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 닫힌 팝오버의 화면을 놓아 준다. 무대 애니메이션이 보이지 않는 채로 돌지 않게.
+    private func closePopover() {
+        closingPopover = true
+        popover?.performClose(nil)
+        closingPopover = false
+    }
+
+    /// 팝오버 안의 단추(동료 고르기 등)를 누르는 순간 바깥을 누른 것으로 잘못 보고 닫히지 않게 한다.
+    /// 그 클릭으로 다른 창(Petdex 찾기, 파일 창)이 앞으로 나왔으면 평소처럼 닫는다.
+    func popoverShouldClose(_ popover: NSPopover) -> Bool {
+        guard !closingPopover, let window = popover.contentViewController?.view.window,
+              let event = NSApp.currentEvent, event.window === window,
+              [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp].contains(event.type) else { return true }
+        return NSApp.keyWindow != nil && NSApp.keyWindow !== window
+    }
+
     func popoverDidClose(_ notification: Notification) {
         // 닫히는 애니메이션 중에 다시 열었으면 새 팝오버는 건드리지 않는다
         guard let closed = notification.object as? NSPopover, closed === popover else { return }
@@ -330,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 팝오버에서 누른 그림 불러오기. 팝오버를 닫은 뒤 파일 창을 띄우고, 결과는 알림 창으로 알린다.
     private func importRunner() {
-        popover?.performClose(nil)
+        closePopover()
         DispatchQueue.main.async { [engine] in
             NSApp.activate(ignoringOtherApps: true)
             RunnerImport.choose(settings: engine.settings) { message, isError in
@@ -373,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 창은 한 번만 만들고 다시 열 때는 앞으로 가져온다.
     private func showWindow<Content: View>(_ existing: NSWindow?, title: String, style: NSWindow.StyleMask,
                                            content: () -> Content) -> NSWindow {
-        popover?.performClose(nil)
+        closePopover()
         let window = existing ?? {
             let window = NSWindow(contentViewController: NSHostingController(rootView: content()))
             window.title = title

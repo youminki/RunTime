@@ -48,7 +48,7 @@ struct QuestView: View {
                         withAnimation(.easeOut(duration: 0.2)) { page.allAchievements.toggle() }
                     } label: {
                         Text(page.allAchievements ? "접기" : "업적 \(kinds.count)개 모두 보기")
-                            .font(.system(size: 11)).foregroundStyle(Theme.accent)
+                            .font(.system(size: 11, weight: .semibold)).foregroundStyle(GameKit.gold)
                             .frame(maxWidth: .infinity).padding(.vertical, 8)
                             .contentShape(Rectangle())
                     }
@@ -68,8 +68,9 @@ struct QuestView: View {
         let total = wallet.pending.reduce(0) { $0 + $1.coins }
         let boxes = wallet.pending.reduce(0) { $0 + $1.boxes }
         return HStack(spacing: 10) {
+            FluentImage(name: boxes > 0 ? "gift" : "moneybag", size: 34)
             VStack(alignment: .leading, spacing: 2) {
-                Text("받을 보상 \(wallet.pending.count)개").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)
+                Text("받을 보상 \(wallet.pending.count)개").font(.system(size: 12.5, weight: .bold)).foregroundStyle(Theme.primary)
                 Text(wallet.pending.prefix(2).map(\.title).joined(separator: ", ")
                      + (wallet.pending.count > 2 ? " 외 \(wallet.pending.count - 2)개" : ""))
                     .font(.system(size: 10.5)).foregroundStyle(Theme.secondary).lineLimit(1)
@@ -82,18 +83,17 @@ struct QuestView: View {
                 let coins = wallet.claimAll()
                 claims.fire(coins: coins, boxes: boxes, big: true)
             } label: {
-                Text("모두 받기 · \(total)코인")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(.black.opacity(0.82))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(GameShopView.gold))
+                HStack(spacing: 3) {
+                    Text("모두 받기")
+                    CoinIcon(size: 12)
+                    Text(total.formatted())
+                }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(GameButtonStyle(kind: .gold, height: 26))
             .accessibilityLabel("보상 모두 받기, 코인 \(total)개")
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(GameShopView.gold.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(GameShopView.gold.opacity(0.35)))
+        .rarityFrame(nil, highlight: GameKit.gold, radius: 10)
     }
 
     // MARK: 레벨 · 출석
@@ -105,48 +105,47 @@ struct QuestView: View {
         let next = RunnerLevel.reward(reaching: level.level + 1)
         // 이번 7일 주기에서 지난 날
         let inCycle = streak == 0 ? 0 : (streak - 1) % Attendance.rewards.count + 1
-        return Card(padding: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("레벨 \(level.level)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.primary)
-                    Spacer()
-                    Text("\(level.xp)/\(level.needed) XP").font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.tertiary)
-                }
-                ProgressTrack(fraction: Double(level.xp) / Double(max(level.needed, 1)), done: false, color: Theme.accent, height: 5)
-                Text("레벨 \(level.level + 1)이 되면 \(next.coins)코인\(next.box ? "과 행운 상자" : "")")
-                    .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
-                Hairline().padding(.vertical, 2)
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("출석").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)
-                        Text(streak > 0 ? "\(streak)일 연속\(checkedToday ? "" : ", 오늘 한 판 남음")" : "오늘 한 판 하면 1일째")
-                            .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                LevelEmblem(level: level.level, size: 42)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("러너 레벨").font(.system(size: 12.5, weight: .bold)).foregroundStyle(Theme.primary)
+                        Spacer()
+                        Text("\(level.xp.formatted()) / \(level.needed.formatted()) XP")
+                            .font(.system(size: 10.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.secondary)
                     }
-                    Spacer(minLength: 4)
-                    HStack(spacing: 5) {
-                        ForEach(0..<Attendance.rewards.count, id: \.self) { i in
-                            let reached = i < inCycle
-                            let isNext = i == inCycle && !checkedToday
-                            let last = i == Attendance.rewards.count - 1
-                            Group {
-                                if last {
-                                    Image(systemName: "gift.fill").font(.system(size: 9))
-                                        .foregroundStyle(reached ? GameShopView.gold : Theme.tertiary)
-                                } else {
-                                    Circle().fill(reached ? GameShopView.gold : Color.white.opacity(0.12))
-                                        .overlay(Circle().strokeBorder(isNext ? GameShopView.gold : .clear, lineWidth: 1))
-                                        .frame(width: 7, height: 7)
-                                }
-                            }
-                            .frame(width: 10, height: 10)
-                            .help("\(i + 1)일째 \(Attendance.rewards[i])코인\(last ? "과 행운 상자" : "")")
-                        }
+                    GaugeTrack(fraction: Double(level.xp) / Double(max(level.needed, 1)))
+                    HStack(spacing: 3) {
+                        Text("레벨 \(level.level + 1) 보상").font(.system(size: 10.5)).foregroundStyle(Theme.tertiary)
+                        CoinAmount(amount: next.coins, size: 10)
+                        if next.box { FluentImage(name: "gift", size: 12) }
                     }
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(streak > 0 ? "출석 \(streak)일 연속" : "오늘 한 판으로 출석")
             }
+            Hairline()
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("출석").font(.system(size: 12.5, weight: .bold)).foregroundStyle(Theme.primary)
+                    Text(streak > 0 ? "\(streak)일 연속" : "오늘 한 판 하면 1일째")
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+                    Spacer()
+                    if streak > 0 && !checkedToday {
+                        Text("오늘 한 판 남음").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.warning)
+                    }
+                }
+                HStack(spacing: 5) {
+                    ForEach(0..<Attendance.rewards.count, id: \.self) { i in
+                        AttendanceDay(day: i + 1, coins: Attendance.rewards[i], last: i == Attendance.rewards.count - 1,
+                                      reached: i < inCycle, next: i == inCycle && !checkedToday)
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(streak > 0 ? "출석 \(streak)일 연속" : "오늘 한 판으로 출석")
         }
+        .padding(12)
+        .rarityFrame(nil, radius: 10)
     }
 
     // MARK: 목록
@@ -154,17 +153,10 @@ struct QuestView: View {
     /// 카드 바깥에 갈래 이름과 진행, 안에 줄을 둔다 (설정 화면과 같은 짜임).
     private func list<Content: View>(_ title: String, count: String, note: String,
                                      @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)
-                Text(count).font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.secondary)
-                Spacer()
-                Text(note).font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.tertiary)
-            }
-            .padding(.horizontal, 4)
+        VStack(alignment: .leading, spacing: 6) {
+            GameSectionHeader(title: title, count: count, note: note)
             VStack(spacing: 0) { content() }
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline))
+                .rarityFrame(nil, radius: 10)
         }
     }
 
@@ -186,12 +178,11 @@ struct QuestView: View {
                 if let claimID {
                     claimButton(claimID, coins: reward)
                 } else {
-                    Text("\(reward)코인").font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(done ? Theme.tertiary : Theme.secondary)
+                    CoinAmount(amount: reward, size: 11).opacity(done ? 0.4 : 1)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            if !last { Hairline().padding(.leading, 40) }
+            if !last { Hairline().padding(.leading, 44) }
         }
         .accessibilityElement(children: .combine)
     }
@@ -200,13 +191,13 @@ struct QuestView: View {
         Button {
             if let reward = wallet.claim(id) { claims.fire(coins: reward.coins, boxes: reward.boxes, big: false) }
         } label: {
-            Text("받기 \(coins)")
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.black.opacity(0.82))
-                .padding(.horizontal, 9).padding(.vertical, 3)
-                .background(Capsule().fill(GameShopView.gold))
+            HStack(spacing: 3) {
+                Text("받기")
+                CoinIcon(size: 12)
+                Text(coins.formatted())
+            }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(GameButtonStyle(kind: .gold, height: 22))
         .accessibilityLabel("받기, 코인 \(coins)개")
     }
 
@@ -245,11 +236,11 @@ struct QuestView: View {
                 if let claim {
                     claimButton(claim.id, coins: claim.coins)
                 } else if let next {
-                    Text("\(next.reward)코인").font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.secondary)
+                    CoinAmount(amount: next.reward, size: 11)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            if !last { Hairline().padding(.leading, 40) }
+            if !last { Hairline().padding(.leading, 44) }
         }
         .accessibilityElement(children: .combine)
     }
@@ -277,16 +268,52 @@ struct ProgressRing: View {
     var body: some View {
         ZStack {
             if done {
-                Image(systemName: "checkmark.circle.fill").font(.system(size: 17)).foregroundStyle(Theme.positive)
+                Circle().fill(Theme.positive)
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .black)).foregroundStyle(.white)
             } else {
-                Circle().stroke(Theme.track, lineWidth: 2.5)
+                Circle().stroke(Theme.track, lineWidth: 3)
                 Circle().trim(from: 0, to: min(max(fraction, 0), 1))
-                    .stroke(Theme.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .stroke(GameKit.gold, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         }
-        .frame(width: 18, height: 18)
+        .frame(width: 22, height: 22)
         .accessibilityHidden(true)
+    }
+}
+
+/// 출석 하루 칸. 지난 날은 금빛에 체크, 오늘 할 날은 금테, 7일째는 상자.
+private struct AttendanceDay: View {
+    let day: Int
+    let coins: Int
+    let last: Bool
+    let reached: Bool
+    let next: Bool
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        VStack(spacing: 2) {
+            ZStack {
+                if last {
+                    FluentImage(name: "gift", size: 18).saturation(reached ? 1 : 0.6)
+                } else {
+                    CoinIcon(size: 15, dimmed: !reached && !next)
+                }
+                if reached {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white, Theme.positive)
+                        .offset(x: 9, y: 7)
+                }
+            }
+            .frame(height: 19)
+            Text("\(day)일").font(.system(size: 9, weight: .bold)).foregroundStyle(reached || next ? Theme.primary : Theme.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 40)
+        .background(shape.fill(reached ? GameKit.gold.opacity(0.16) : Color.white.opacity(0.04)))
+        .overlay(shape.strokeBorder(next ? GameKit.gold : reached ? GameKit.gold.opacity(0.45) : Theme.hairline,
+                                    lineWidth: next ? 1.5 : 1))
+        .help("\(day)일째 \(coins)코인\(last ? "과 행운 상자" : "")")
     }
 }
 

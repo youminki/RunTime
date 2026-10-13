@@ -13,7 +13,7 @@ struct GameShopView: View {
         _state = StateObject(wrappedValue: ShopState(tab: tab))
     }
 
-    static let gold = Color(nsColor: NSColor(hex: 0xFFD45E))
+    static let gold = GameKit.gold
 
     enum Tab: String, CaseIterable {
         case ability = "능력", buddy = "동료", track = "트랙", weather = "날씨", trail = "꼬리", dust = "발먼지", crash = "부딪힘"
@@ -33,10 +33,10 @@ struct GameShopView: View {
             switch self {
             case .ability: "bolt.shield.fill"
             case .buddy: "pawprint.fill"
-            case .track: "road.lanes"
+            case .track: "flag.checkered"
             case .weather: "cloud.sun.fill"
             case .trail: "wind"
-            case .dust: "aqi.medium"
+            case .dust: "shoeprints.fill"
             case .crash: "burst.fill"
             }
         }
@@ -83,7 +83,7 @@ struct GameShopView: View {
         .help("도감 \(wallet.collection.owned)/\(wallet.collection.total)")
     }
 
-    /// 오늘의 특가 타일. 행운 상자 옆에 같은 크기로 둔다.
+    /// 오늘의 특가 타일. 행운 상자 옆에 같은 크기로 두고, 물건이 게임에서 보일 모습을 위에 돌린다.
     private func dealTile(_ item: Cosmetic) -> some View {
         let price = wallet.price(of: item)
         let affordable = wallet.coins >= price
@@ -98,29 +98,44 @@ struct GameShopView: View {
                 state.confirming = key
             }
         } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .top) {
-                    ItemGlyph(item: item, size: 30)
-                    Spacer()
-                    Text("-\(Int(GameWallet.dealDiscount * 100))%").font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Theme.warning)
+            VStack(alignment: .leading, spacing: 5) {
+                ItemPreview(kind: .cosmetic(item), character: settings.character)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(alignment: .topLeading) {
+                        Text("특가 -\(Int(GameWallet.dealDiscount * 100))%")
+                            .font(.system(size: 9, weight: .heavy).monospacedDigit())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5).frame(height: 14)
+                            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Theme.critical))
+                            .padding(4)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if item.rarity >= .rare { RarityRibbon(rarity: item.rarity).padding(4) }
+                    }
+                HStack(spacing: 4) {
+                    Text(item.name).font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.primary).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(QuestView.untilTomorrow().replacingOccurrences(of: " 뒤 바뀜", with: " 남음"))
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                        .help("내일 다른 물건으로 바뀝니다")
                 }
-                Spacer(minLength: 4)
-                Text("오늘의 특가").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.warning)
-                Text(item.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary).lineLimit(1)
-                HStack(spacing: 3) {
-                    Text(item.price.formatted()).strikethrough().foregroundStyle(Theme.tertiary)
-                    Text(asking ? "\(price)에 사기?" : "\(price.formatted())코인")
-                        .foregroundStyle(asking ? Theme.warning : affordable ? Self.gold : Theme.tertiary)
+                HStack(spacing: 5) {
+                    if asking {
+                        Text("한 번 더 누르면 구매").font(.system(size: 10.5, weight: .bold)).foregroundStyle(Theme.warning)
+                    } else {
+                        Text(item.price.formatted()).strikethrough()
+                            .font(.system(size: 10, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                        Image(systemName: "arrow.right").font(.system(size: 7, weight: .bold)).foregroundStyle(Theme.tertiary)
+                        CoinAmount(amount: price, size: 11, affordable: affordable)
+                    }
                 }
-                .font(.system(size: 10, weight: .semibold).monospacedDigit())
                 .lineLimit(1)
             }
-            .padding(9)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.warning.opacity(asking ? 0.14 : 0.05)))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.warning.opacity(asking ? 0.8 : 0.3)))
+            .padding(7)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .rarityFrame(item.rarity, highlight: asking ? Theme.warning : nil, radius: 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -136,21 +151,24 @@ struct GameShopView: View {
         wallet.tryingOn = inside ? item : nil
     }
 
-    /// 갈래 고르기. 일곱 개라 아이콘과 짧은 이름을 두 줄로 둔다.
+    /// 갈래 고르기. 일곱 개라 아이콘과 짧은 이름을 두 줄로 두고, 고른 칸은 금빛 바닥줄로 표시한다.
     private var tabs: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             ForEach(Tab.allCases, id: \.self) { tab in
                 let on = state.tab == tab
                 Button { state.tab = tab } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: tab.icon).font(.system(size: 11, weight: .semibold))
-                        Text(tab.rawValue).font(.system(size: 9.5, weight: .medium))
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.icon).font(.system(size: 13, weight: .semibold))
+                            .frame(height: 15)
+                        Text(tab.rawValue).font(.system(size: 10, weight: on ? .bold : .medium))
                     }
-                    .foregroundStyle(on ? Theme.primary : Theme.tertiary)
+                    .foregroundStyle(on ? GameKit.gold : Theme.tertiary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(on ? Color.white.opacity(0.12) : Color.clear))
+                    .frame(height: 40)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(on ? 0.07 : 0)))
+                    .overlay(alignment: .bottom) {
+                        Capsule().fill(GameKit.gold).frame(width: 18, height: 2).opacity(on ? 1 : 0)
+                    }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -159,8 +177,9 @@ struct GameShopView: View {
             }
         }
         .padding(3)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.hairline))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(GameKit.slot))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline))
+        .animation(.easeOut(duration: 0.15), value: state.tab)
     }
 
     private var footnote: String {
@@ -214,25 +233,14 @@ struct GameShopView: View {
         .onHover { tryOn(cosmetic, $0) }
     }
 
-    /// 공통 칸. 안 산 것은 처음 누르면 "사기?"로 바뀌고, 한 번 더 누르면 산다
+    /// 공통 칸. 안 산 것은 처음 누르면 "한 번 더 누르면 구매"로 바뀌고, 한 번 더 누르면 산다
     /// (팝오버에서 확인 창을 띄우면 팝오버가 닫혀서).
     private func card<Preview: View>(key: String, name: String, price: Int, rarity: Rarity?, owned: Bool, on: Bool,
                                      ownedLabel: String, @ViewBuilder preview: () -> Preview,
                                      action: @escaping () -> Void) -> some View {
         let affordable = owned || wallet.coins >= price
         let asking = state.confirming == key
-        let tint = rarity.map { Color(nsColor: $0.color) } ?? Theme.secondary
-        let status: String
-        let statusColor: Color
-        if on {
-            status = "쓰는 중"; statusColor = Theme.accent
-        } else if owned {
-            status = ownedLabel; statusColor = Theme.secondary
-        } else if asking {
-            status = "\(price)에 사기?"; statusColor = Theme.warning
-        } else {
-            status = price.formatted(); statusColor = affordable ? Self.gold : Theme.tertiary
-        }
+        let status = on ? "쓰는 중" : owned ? ownedLabel : asking ? "\(price)에 사기?" : "\(price)코인"
         return Button {
             if owned || asking {
                 state.confirming = nil
@@ -241,41 +249,40 @@ struct GameShopView: View {
                 state.confirming = key
             }
         } label: {
-            VStack(spacing: 5) {
+            VStack(spacing: 6) {
                 preview()
                     .frame(height: 62)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.black.opacity(0.4)))
                     .overlay(alignment: .topLeading) {
-                        if let rarity, rarity >= .rare {
-                            Text(rarity.title).font(.system(size: 8.5, weight: .semibold)).foregroundStyle(tint)
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Capsule().fill(tint.opacity(0.14)))
-                                .padding(4)
-                        }
+                        if let rarity, rarity >= .rare { RarityRibbon(rarity: rarity).padding(4) }
                     }
                     .overlay(alignment: .topTrailing) {
-                        if on {
-                            Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
-                                .foregroundStyle(Theme.accent).padding(4)
-                        }
+                        if on { EquippedBadge().padding(4) }
                     }
                 HStack(spacing: 4) {
-                    Text(name).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.primary).lineLimit(1)
+                    Text(name).font(.system(size: 11.5, weight: .bold)).foregroundStyle(Theme.primary).lineLimit(1)
                     Spacer(minLength: 2)
-                    HStack(spacing: 2) {
-                        if !owned && !asking { Image(systemName: "dollarsign.circle.fill").opacity(affordable ? 1 : 0.5) }
-                        Text(status)
+                    Group {
+                        if on {
+                            Text("쓰는 중").foregroundStyle(Theme.accent)
+                        } else if owned {
+                            Text(ownedLabel).foregroundStyle(Theme.secondary)
+                        } else if asking {
+                            Text("한 번 더").foregroundStyle(Theme.warning)
+                        } else {
+                            CoinAmount(amount: price, size: 10.5, affordable: affordable)
+                        }
                     }
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(statusColor)
+                    .font(.system(size: 10.5, weight: .bold))
                     .lineLimit(1)
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, 3)
+                .padding(.bottom, 1)
             }
             .padding(5)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(on ? Theme.accent.opacity(0.14) : asking ? Theme.warning.opacity(0.12) : Theme.surface))
-            .overlay(RarityBorder(rarity: rarity, highlight: on ? Theme.accent : asking ? Theme.warning : nil))
+            .rarityFrame(rarity, highlight: on ? Theme.accent : asking ? Theme.warning : nil)
+            .opacity(owned || affordable ? 1 : 0.82)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -291,21 +298,15 @@ struct GameShopView: View {
         let next = wallet.nextPrice(ability)
         let key = "ability:\(ability.rawValue)"
         let asking = state.confirming == key
-        return HStack(spacing: 8) {
-            Image(systemName: ability.icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(level > 0 ? Theme.accent : Theme.tertiary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(ability.name).font(.system(size: 11.5, weight: .semibold))
-                    HStack(spacing: 2) {
-                        ForEach(0..<ability.maxLevel, id: \.self) { i in
-                            Circle().fill(i < level ? Self.gold : Color.white.opacity(0.15)).frame(width: 5, height: 5)
-                        }
-                    }
+        return HStack(spacing: 10) {
+            AbilityIcon(ability: ability, active: level > 0)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(ability.name).font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.primary)
+                    LevelPips(level: level, max: ability.maxLevel)
                 }
-                Text(ability.detail(level: max(level, 1))).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(ability.detail(level: max(level, 1))).font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
             }
             Spacer(minLength: 4)
             if level > 0 {
@@ -324,20 +325,61 @@ struct GameShopView: View {
                         state.confirming = key
                     }
                 } label: {
-                    Text(asking ? "\(next)에 사기?" : level == 0 ? "\(next)" : "+1단계 \(next)")
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(Capsule().fill(asking ? Theme.warning.opacity(0.25) : Color.white.opacity(0.08)))
-                        .foregroundStyle(asking ? Theme.warning : affordable ? Self.gold : Theme.tertiary)
+                    if asking {
+                        Text("사기?")
+                    } else {
+                        HStack(spacing: 3) {
+                            if level > 0 { Image(systemName: "arrow.up").font(.system(size: 8, weight: .black)) }
+                            CoinIcon(size: 12, dimmed: !affordable)
+                            Text(next.formatted())
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                .help(affordable ? "두 번 누르면 삽니다" : "코인 \(next - wallet.coins)개가 더 필요해요")
+                .buttonStyle(GameButtonStyle(kind: asking ? .warning : .gold, height: 22))
+                .disabled(!affordable && !asking)
+                .help(affordable ? (level == 0 ? "두 번 누르면 삽니다" : "다음 단계. 두 번 누르면 삽니다")
+                      : "코인 \(next - wallet.coins)개가 더 필요해요")
+                .accessibilityLabel(level == 0 ? "\(ability.name) 사기, \(next)코인" : "\(ability.name) 올리기, \(next)코인")
             } else {
-                Text("최대").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.positive)
+                Text("MAX").font(GameFont.pixel(12)).foregroundStyle(GameKit.gold)
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(0.05)))
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .rarityFrame(nil, highlight: asking ? Theme.warning : nil)
+    }
+}
+
+/// 능력 아이콘. 산 능력은 파란 원, 안 산 능력은 옅은 원.
+struct AbilityIcon: View {
+    let ability: Ability
+    let active: Bool
+
+    var body: some View {
+        Image(systemName: ability.icon)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(active ? .white : Theme.tertiary)
+            .frame(width: 30, height: 30)
+            .background(Circle().fill(active ? Theme.accent : Color.white.opacity(0.08)))
+            .accessibilityHidden(true)
+    }
+}
+
+/// 능력 단계. 채운 단계는 금빛 마름모.
+struct LevelPips: View {
+    let level: Int
+    let max: Int
+
+    var body: some View {
+        HStack(spacing: 2.5) {
+            ForEach(0..<max, id: \.self) { i in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(i < level ? GameKit.gold : Color.white.opacity(0.14))
+                    .frame(width: 5, height: 5)
+                    .rotationEffect(.degrees(45))
+            }
+        }
+        .frame(height: 8)
+        .accessibilityLabel("\(level)/\(max)단계")
     }
 }
 
@@ -476,37 +518,65 @@ private struct LuckyBoxCard<Deal: View>: View {
 
     private var closedBox: some View {
         let free = wallet.freeBoxes
-        let buttonFill: Color = wallet.canOpenBox ? GameShopView.gold : Color.white.opacity(0.08)
         let odds = Rarity.allCases.map { "\($0.title) \($0.weight)%" }.joined(separator: " · ")
-        return VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 5) {
             TimelineView(.animation(minimumInterval: 1.0 / 20)) { context in
                 let t = context.date.timeIntervalSinceReferenceDate
-                // 열 수 있을 때만 가끔 들썩인다
+                // 열 수 있을 때만 가끔 들썩이고 둘레에 작은 별이 번갈아 반짝인다
                 let nudge = wallet.canOpenBox ? max(0, sin(t * 1.6)) : 0
-                FluentImage(name: "gift", size: 30)
-                    .rotationEffect(.degrees(sin(t * 14) * 6 * pow(nudge, 6)))
+                Canvas { canvas, size in
+                    guard wallet.canOpenBox else { return }
+                    canvas.withCGContext { cg in
+                        let spots: [(CGFloat, CGFloat, Double)] = [(0.3, 0.3, 0), (0.7, 0.25, 0.9), (0.66, 0.72, 1.7), (0.34, 0.7, 2.4)]
+                        for (x, y, offset) in spots {
+                            let k = max(0, sin(t * 2.4 + offset))
+                            SpriteEffects.sparkle(cg, at: CGPoint(x: size.width * x, y: size.height * y), radius: 4 * k,
+                                                  color: NSColor(hex: 0xFFE7A0).withAlphaComponent(0.9))
+                        }
+                    }
+                }
+                .background(Color(nsColor: NSColor(hex: 0x2A2216)))
+                .overlay {
+                    FluentImage(name: "gift", size: 36)
+                        .rotationEffect(.degrees(sin(t * 14) * 6 * pow(nudge, 6)))
+                        .offset(y: -2 * pow(nudge, 6))
+                }
             }
-            .frame(width: 30, height: 30)
-            Spacer(minLength: 0)
-            Text("행운 상자").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)
-            Text("아직 없는 꾸미기 하나").font(.system(size: 10)).foregroundStyle(Theme.secondary).lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                if free > 0 {
+                    Text("무료 \(free)")
+                        .font(.system(size: 9, weight: .heavy)).foregroundStyle(.white)
+                        .padding(.horizontal, 5).frame(height: 14)
+                        .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Theme.positive))
+                        .padding(4)
+                }
+            }
+            HStack(spacing: 4) {
+                Text("행운 상자").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.primary)
+                Spacer(minLength: 2)
+                OddsBar().frame(width: 46)
+            }
             Button(action: open) {
-                Text(free > 0 ? "공짜로 열기 · \(free)개" : "열기 · \(GameWallet.boxPrice)코인")
-                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(wallet.canOpenBox ? Color.black.opacity(0.82) : Theme.tertiary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(buttonFill))
+                if free > 0 {
+                    Text("무료로 열기")
+                } else {
+                    HStack(spacing: 3) {
+                        Text("열기")
+                        CoinIcon(size: 12, dimmed: !wallet.canOpenBox)
+                        Text(GameWallet.boxPrice.formatted())
+                    }
+                }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(GameButtonStyle(kind: .gold, height: 22, fill: true))
             .disabled(!wallet.canOpenBox)
-            .padding(.top, 3)
         }
-        .padding(9)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline))
-        .help(wallet.canOpenBox ? "등급 확률: \(odds)"
+        .padding(7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .rarityFrame(nil, highlight: wallet.canOpenBox ? GameKit.gold : nil, radius: 10)
+        .help(wallet.canOpenBox ? "아직 없는 꾸미기 하나. 등급 확률: \(odds)"
               : wallet.hasUncollected ? "코인 \(GameWallet.boxPrice - wallet.coins)개가 더 필요해요" : "모두 모았어요")
     }
 
@@ -522,6 +592,24 @@ private struct LuckyBoxCard<Deal: View>: View {
                 GameSound.shared.play(.coin)
             }
         }
+    }
+}
+
+/// 등급 확률을 색 띠 하나로. 칸 너비가 확률에 비례한다.
+private struct OddsBar: View {
+    var body: some View {
+        GeometryReader { geo in
+            let total = CGFloat(Rarity.allCases.reduce(0) { $0 + $1.weight })
+            HStack(spacing: 1) {
+                ForEach(Rarity.allCases, id: \.self) { rarity in
+                    Rectangle().fill(rarity.swiftColor)
+                        .frame(width: max(2, (geo.size.width - 3) * CGFloat(rarity.weight) / total))
+                }
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 4)
+        .accessibilityHidden(true)
     }
 }
 
@@ -552,8 +640,7 @@ private struct RevealView: View {
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(glow.opacity(0.5)))
+        .rarityFrame(nil, highlight: glow, radius: 10)
     }
 
     private var glow: Color {
@@ -566,11 +653,10 @@ private struct RevealView: View {
         let pop = min(1, age / 0.25)
         VStack(spacing: 6) {
             ZStack {
-                // 등급 빛이 돌며 퍼진다
-                Circle().fill(RadialGradient(colors: [glow.opacity(0.35), glow.opacity(0)], center: .center,
-                                             startRadius: 0, endRadius: 70))
-                    .scaleEffect(0.6 + 0.6 * pop)
-                    .opacity(1 - min(1, age / 2.5) * 0.5)
+                // 등급 색 원판이 톡 커지며 물건 뒤를 받친다
+                Circle().fill(glow.opacity(0.14))
+                    .frame(width: 96, height: 96)
+                    .scaleEffect(0.6 + 0.4 * pop)
                 // 열리는 순간 등급 색 고리가 한 번 퍼진다
                 Circle().strokeBorder(glow.opacity(0.7 * (1 - min(1, age / 0.6))), lineWidth: 1.5)
                     .frame(width: 60 + 80 * min(1, age / 0.6), height: 60 + 80 * min(1, age / 0.6))
@@ -594,13 +680,14 @@ private struct RevealView: View {
                 RarityTag(rarity: item.rarity, slot: item.slot)
                 Text(item.name).font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.primary)
                 HStack(spacing: 8) {
-                    Button("닫기", action: close).controlSize(.small)
-                    Button("바로 쓰기", action: equip)
-                        .controlSize(.small).keyboardShortcut(.defaultAction)
+                    Button("닫기", action: close).buttonStyle(GameButtonStyle(kind: .plain, height: 24))
+                    Button("바로 쓰기", action: equip).buttonStyle(GameButtonStyle(kind: .gold, height: 24))
+                        .keyboardShortcut(.defaultAction)
                 }
+                .padding(.top, 2)
             case .refund:
                 Text("모두 모아서 코인으로 돌려받았습니다").font(.system(size: 11)).foregroundStyle(Theme.secondary)
-                Button("닫기", action: close).controlSize(.small)
+                Button("닫기", action: close).buttonStyle(GameButtonStyle(kind: .plain, height: 24))
             }
         }
         .frame(maxWidth: .infinity)
@@ -630,12 +717,25 @@ struct ItemPreview: View {
         .accessibilityHidden(true)
     }
 
+    /// 멈춘 한 장. 창고처럼 칸이 많은 곳에서 쓰지 않는 칸을 그린다.
+    struct Still: View {
+        let kind: Kind
+        let character: RunnerCharacter
+
+        var body: some View {
+            Canvas { canvas, size in
+                canvas.withCGContext { cg in ItemPreview(kind: kind, character: character).draw(cg, size: size, time: 0.35) }
+            }
+            .accessibilityHidden(true)
+        }
+    }
+
     func draw(_ cg: CGContext, size: CGSize, time: Double) {
         let ground = size.height - 9
         if case .cosmetic(let item) = kind, item.slot == .track || item.slot == .weather {
             // 트랙은 낮, 반딧불은 밤 하늘에서 보여야 풍경이 잘 보인다
             var sky = Sky.at(hour: item == .fireflyWeather ? 22 : 12, space: false)
-            sky.clouds *= 0.35   // 작은 칸에서는 구름이 풍경을 가린다
+            sky.clouds *= 0.12   // 작은 칸에서는 구름이 풍경을 가린다
             let t = CGFloat(time)
             Backdrop.draw(cg, size: size, sky: sky, time: t, groundY: ground, scroll: t * 40, speed: 40,
                           track: item.slot == .track ? item : nil, weather: item.slot == .weather ? item : nil)
@@ -731,6 +831,7 @@ private struct CompanionPicker: View {
     @ObservedObject private var wallet = GameWallet.shared
     @ObservedObject private var petdex = PetdexStore.shared
     @StateObject private var hover = HoveredRunner()
+    @StateObject private var rename = RenameState()
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
@@ -740,12 +841,23 @@ private struct CompanionPicker: View {
                 if let character = petdex.character(for: pet) {
                     let id = PetdexStore.storageID(pet.slug)
                     let on = wallet.companionID == id
-                    Button { wallet.companionID = on ? nil : id } label: {
-                        tile(character, name: pet.name, on: on, live: on || hover.key == id)
+                    Group {
+                        // 이름을 고치는 동안은 단추로 감싸지 않아야 입력 칸이 클릭을 받는다
+                        if rename.id == id {
+                            tile(character, name: pet.name, key: id, on: on, live: true)
+                        } else {
+                            Button { wallet.companionID = on ? nil : id } label: {
+                                tile(character, name: pet.name, key: id, on: on, live: on || hover.key == id)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
                     .onHover { hover.update(id, $0) }
-                    .help(on ? "다시 누르면 혼자 달립니다" : "\(pet.name)을(를) 동료로 데려가기")
+                    .contextMenu {
+                        Button("이름 바꾸기") { rename.start(id, name: pet.name) { petdex.rename(pet, to: $0) } }
+                    }
+                    .help(on ? "다시 누르면 혼자 달립니다. 오른쪽 클릭으로 이름 바꾸기"
+                          : "\(pet.name)을(를) 동료로 데려가기. 오른쪽 클릭으로 이름 바꾸기")
                     .accessibilityLabel(pet.name)
                     .accessibilityAddTraits(on ? .isSelected : [])
                 }
@@ -757,9 +869,9 @@ private struct CompanionPicker: View {
                 }
                 .foregroundStyle(Theme.secondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
+                .padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                    .strokeBorder(Color.white.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -767,7 +879,7 @@ private struct CompanionPicker: View {
         }
     }
 
-    private func tile(_ character: RunnerCharacter, name: String, on: Bool, live: Bool) -> some View {
+    private func tile(_ character: RunnerCharacter, name: String, key: String, on: Bool, live: Bool) -> some View {
         VStack(spacing: 4) {
             Group {
                 if live {
@@ -779,18 +891,12 @@ private struct CompanionPicker: View {
                 }
             }
             .frame(height: 54)
-            HStack(spacing: 3) {
-                Text(name).font(.system(size: 10.5, weight: on ? .semibold : .regular)).lineLimit(1)
-                if on { Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.accent) }
-            }
-            .foregroundStyle(on ? Theme.primary : Theme.secondary)
+            TileName(name: name, key: key, selected: on, rename: rename)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .fill(on ? Theme.accent.opacity(0.16) : Color.white.opacity(0.05)))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-            .strokeBorder(on ? Theme.accent.opacity(0.75) : Theme.hairline))
+        .padding(.vertical, 6)
+        .overlay(alignment: .topTrailing) { if on { EquippedBadge().padding(4) } }
+        .rarityFrame(nil, highlight: on ? Theme.accent : nil)
         .contentShape(Rectangle())
     }
 }

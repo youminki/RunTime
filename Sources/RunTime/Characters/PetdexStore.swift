@@ -256,6 +256,15 @@ final class PetdexStore: ObservableObject {
         }
     }
 
+    /// 받은 펫의 이름을 바꾼다. 러너·동료 이름표와 말풍선 소리에 쓰인다.
+    func rename(_ pet: Pet, to name: String) {
+        guard let index = pets.firstIndex(where: { $0.slug == pet.slug }) else { return }
+        pets[index].name = name
+        // 캐릭터가 이름을 품고 있어 다음에 다시 만든다
+        characters[pet.slug] = nil
+        save()
+    }
+
     func delete(_ pet: Pet) {
         let folder = Self.folder(pet.slug)
         try? FileManager.default.removeItem(at: folder)

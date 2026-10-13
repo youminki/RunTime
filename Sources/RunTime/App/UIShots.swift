@@ -46,6 +46,7 @@ enum UIShots {
             ("daily", .darkAqua, nil, AnyView(DailyDetailView(engine: engine).background(windowBackground))),
             ("daily-light", .aqua, nil, AnyView(DailyDetailView(engine: engine).background(windowBackground))),
             ("leaderboard", .darkAqua, nil, AnyView(LeaderboardView().background(windowBackground))),
+            ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, close: {}).background(windowBackground))),
             ("leaderboard-light", .aqua, nil, AnyView(LeaderboardView().background(windowBackground))),
         ]
         let windows = screens.map { screen -> NSWindow in

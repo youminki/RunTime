@@ -175,7 +175,7 @@ struct PopoverView: View {
             ScrollView {
                 Group {
                     switch page.section {
-                    case .runners: RunnerPicker(settings: settings, importInPlace: importRunner)
+                    case .runners: RunnerPicker(settings: settings, importInPlace: importRunner, gameStyle: true)
                     case .shop: GameShopView(settings: settings)
                     case .storage: StorageView(settings: settings) { page.section = .shop }
                     case .quests: QuestView()
@@ -214,17 +214,17 @@ struct PopoverView: View {
                         Text(section.title)
                         if section == .quests, questsLeft > 0 {
                             Text("\(questsLeft)")
-                                .font(.system(size: 9, weight: .bold).monospacedDigit())
-                                .foregroundStyle(.black.opacity(0.8))
-                                .padding(.horizontal, 4)
-                                .background(Capsule().fill(GameShopView.gold))
+                                .font(.system(size: 9, weight: .heavy).monospacedDigit())
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 15, minHeight: 15)
+                                .background(Circle().fill(wallet.pending.isEmpty ? Theme.critical : Theme.positive))
                         }
                     }
                     .font(.system(size: 11.5, weight: on ? .semibold : .medium))
                     .foregroundStyle(on ? Theme.primary : Theme.secondary)
                     .padding(.horizontal, 10)
                     .frame(height: 24)
-                    .background(Capsule().fill(on ? Color.white.opacity(0.13) : Color.clear))
+                    .background(Capsule().fill(Color.white.opacity(on ? 0.14 : 0)))
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -234,7 +234,7 @@ struct PopoverView: View {
             }
         }
         .padding(2)
-        .background(Capsule().fill(Theme.surface))
+        .background(Capsule().fill(GameKit.slot))
         .overlay(Capsule().strokeBorder(Theme.hairline))
     }
 
@@ -246,14 +246,19 @@ struct PopoverView: View {
     }
 
     private var coinBalance: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "dollarsign.circle.fill")
+        HStack(spacing: 4) {
+            CoinIcon(size: 15)
             Text(wallet.coins.formatted()).contentTransition(.numericText())
+                .font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(GameKit.gold)
         }
-        .font(Theme.value)
-        .foregroundStyle(GameShopView.gold)
+        .padding(.leading, 4).padding(.trailing, 9)
+        .frame(height: 24)
+        .background(Capsule().fill(GameKit.slot))
+        .overlay(Capsule().strokeBorder(GameKit.gold.opacity(0.3)))
         .animation(.easeOut(duration: 0.25), value: wallet.coins)
         .help("미니게임에서 먹은 코인과 퀘스트 보상. Claude가 일하는 동안 한 판은 두 배")
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("코인 \(wallet.coins)개")
     }
 
