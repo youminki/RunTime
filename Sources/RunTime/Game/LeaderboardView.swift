@@ -50,8 +50,17 @@ struct LeaderboardView: View {
                 placeholder("flag.checkered", state.period == .week ? "이번 주 기록이 아직 없습니다." : "아직 기록이 없습니다.")
             } else {
                 ScrollView {
-                    GroupedSection(footer: footerText(result)) {
-                        ForEach(result.entries) { row($0) }
+                    VStack(spacing: 14) {
+                        podium(Array(result.entries.prefix(3)))
+                        let rest = Array(result.entries.dropFirst(3))
+                        if rest.isEmpty {
+                            Text(footerText(result)).font(.system(size: 11)).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14)
+                        } else {
+                            GroupedSection(footer: footerText(result)) {
+                                ForEach(rest) { row($0) }
+                            }
+                        }
                     }
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -80,6 +89,79 @@ struct LeaderboardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Palette.groupedRow))
+    }
+
+    /// 1~3위 시상대. 가운데가 1위, 왼쪽 2위, 오른쪽 3위. 빈 자리는 점선으로 남긴다.
+    private func podium(_ top: [Leaderboard.Board.Entry]) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            ForEach([1, 0, 2], id: \.self) { index in
+                podiumColumn(index < top.count ? top[index] : nil, place: index + 1)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
+    }
+
+    private func podiumColumn(_ entry: Leaderboard.Board.Entry?, place: Int) -> some View {
+        let medal = Self.medal(place) ?? Palette.gray
+        let first = place == 1
+        let block: CGFloat = [64, 46, 34][place - 1]
+        return VStack(spacing: 6) {
+            ZStack {
+                Circle().fill(entry == nil ? Color.primary.opacity(0.06) : medal)
+                if first, entry != nil {
+                    Image(systemName: "crown.fill").font(.system(size: 13)).foregroundStyle(Self.gold)
+                        .offset(y: -26)
+                }
+                Text(entry.map { String($0.nickname.prefix(1)).uppercased() } ?? "")
+                    .font(.system(size: first ? 18 : 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.black.opacity(0.72))
+            }
+            .frame(width: first ? 44 : 36, height: first ? 44 : 36)
+            VStack(spacing: 1) {
+                HStack(spacing: 3) {
+                    Text(entry?.nickname ?? "비어 있음")
+                        .font(.system(size: 12, weight: entry?.you == true ? .bold : .semibold)).lineLimit(1)
+                        .foregroundStyle(entry == nil ? .tertiary : .primary)
+                    if entry?.you == true {
+                        Text("나").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Palette.blue)
+                    }
+                }
+                Text(entry.map { $0.score.formatted() } ?? "-")
+                    .font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(entry == nil ? .tertiary : .secondary)
+            }
+            ZStack(alignment: .top) {
+                UnevenTop(radius: 8)
+                    .fill(entry == nil ? Color.primary.opacity(0.04) : Palette.groupedRow)
+                Rectangle().fill(entry == nil ? Color.clear : medal).frame(height: 3)
+                    .clipShape(UnevenTop(radius: 8))
+                Text("\(place)").font(.system(size: first ? 22 : 18, weight: .heavy, design: .rounded))
+                    .foregroundStyle(entry == nil ? Color.primary.opacity(0.15) : medal)
+                    .padding(.top, first ? 12 : 8)
+            }
+            .frame(height: block)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(entry.map { "\(place)위 \($0.nickname), \($0.score)점" } ?? "\(place)위 비어 있음")
+    }
+
+    /// 위 모서리만 둥근 시상대 칸.
+    private struct UnevenTop: Shape {
+        let radius: CGFloat
+
+        func path(in rect: CGRect) -> Path {
+            var p = Path()
+            p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+            p.addQuadCurve(to: CGPoint(x: rect.minX + radius, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+            p.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + radius), control: CGPoint(x: rect.maxX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            p.closeSubpath()
+            return p
+        }
     }
 
     /// 1~3위는 메달 색. 같은 점수 1위가 여럿이어도 먼저 세운 맨 위 한 명에게만 왕관 (요약의 1위와 같은 기준)

@@ -27,15 +27,22 @@ extension GameSession {
         let center = CGPoint(runnerLeft + CGFloat(Self.runnerWidth) / 2, groundY - CGFloat(game.runnerY + Self.runnerHeight / 2))
         cg.saveGState()
         if game.shieldsLeft > 0 {
-            let pulse = 1 + 0.04 * CGFloat(sin(time * 5))
-            for k in 0..<game.shieldsLeft {
-                let r = (27 + CGFloat(k) * 4) * pulse
-                let rect = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
-                cg.setFillColor(NSColor(hex: 0x8FD3FF).withAlphaComponent(k == 0 ? 0.08 : 0).cgColor)
-                cg.fillEllipse(in: rect)
-                cg.setStrokeColor(NSColor(hex: 0x8FD3FF).withAlphaComponent(0.55 - CGFloat(k) * 0.15).cgColor)
-                cg.setLineWidth(1.2)
-                cg.strokeEllipse(in: rect)
+            // 고리 하나를 남은 보호막 수만큼 나눠 그려 몇 번 더 버티는지 보인다. 천천히 돈다
+            let r: CGFloat = 28 + CGFloat(sin(time * 5)) * 0.8
+            let tint = NSColor(hex: 0x8FD3FF)
+            cg.setFillColor(tint.withAlphaComponent(0.07).cgColor)
+            cg.fillEllipse(in: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
+            let count = game.shieldsLeft
+            let gap: CGFloat = count > 1 ? 0.22 : 0
+            let span = 2 * .pi / CGFloat(count)
+            let spin = CGFloat(time * 0.8)
+            cg.setStrokeColor(tint.withAlphaComponent(0.8).cgColor)
+            cg.setLineWidth(1.6)
+            cg.setLineCap(.round)
+            for k in 0..<count {
+                let start = spin + CGFloat(k) * span + gap / 2
+                cg.addArc(center: center, radius: r, startAngle: start, endAngle: start + span - gap, clockwise: false)
+                cg.strokePath()
             }
         }
         if game.isGliding {
@@ -164,8 +171,10 @@ extension GameSession {
     }
 
     struct Popup {
-        let text: String
+        var text: String
         var position: CGPoint
         var life: CGFloat
+        /// 코인처럼 이어서 먹으면 한 팝업에 더하는 값.
+        var coins = 0
     }
 }

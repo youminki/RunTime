@@ -74,10 +74,15 @@ extension GameSession {
                 }
             }
             if obstacle.id == game.crashedInto {
-                cg.setStrokeColor(NSColor.systemRed.withAlphaComponent(0.8).cgColor)
-                cg.setLineWidth(1.5)
-                cg.stroke(CGRect(x: left - 2, y: ground(obstacle.y) - CGFloat(obstacle.height) - 2,
-                                 width: CGFloat(obstacle.width) + 4, height: CGFloat(obstacle.height) + 4))
+                // 부딪힌 장애물 위에 느낌표 표지를 띄운다 (톡 튀어 오른 뒤 제자리에서 살짝 떠 있다)
+                let top = ground(obstacle.y) - CGFloat(obstacle.height)
+                let bob = CGFloat(sin(time * 5)) * 1.2
+                let c = CGPoint(left + CGFloat(obstacle.width) / 2, top - 13 + bob)
+                cg.setFillColor(NSColor(hex: 0xFF453A).cgColor)
+                cg.fillEllipse(in: CGRect(x: c.x - 7, y: c.y - 7, width: 14, height: 14))
+                cg.setFillColor(NSColor.white.cgColor)
+                cg.fill(CGRect(x: c.x - 1, y: c.y - 4.5, width: 2, height: 5.5))
+                cg.fillEllipse(in: CGRect(x: c.x - 1.1, y: c.y + 2.2, width: 2.2, height: 2.2))
             }
         }
 

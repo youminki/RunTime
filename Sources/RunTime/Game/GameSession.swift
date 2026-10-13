@@ -304,7 +304,15 @@ final class GameSession {
                 let point = CGPoint(screenX(coin.x), CGFloat(coin.y))
                 burst(at: point, count: 8, color: NSColor(hex: 0xFFD45E), speed: 70, life: 0.45, drift: 0.6)
                 coinFlyers.append(CoinFlyer(from: CGPoint(screenX(coin.x), groundY - CGFloat(coin.y))))
-                popups.append(Popup(text: "+\(game.tuning.coinValue)", position: point, life: 0.8))
+                // 이어서 먹은 코인은 떠 있는 팝업 하나에 더해 글자가 겹치지 않게 한다
+                let value = game.tuning.coinValue
+                if let i = popups.lastIndex(where: { $0.coins > 0 && $0.life > 0.35 }) {
+                    popups[i].coins += value
+                    popups[i].text = "+\(popups[i].coins)"
+                    popups[i].life = 0.8
+                } else {
+                    popups.append(Popup(text: "+\(value)", position: point, life: 0.8, coins: value))
+                }
             }
         case .milestone:
             play(.milestone)
