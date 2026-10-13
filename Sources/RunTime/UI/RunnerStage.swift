@@ -103,12 +103,16 @@ struct RunnerStage: View {
     static func drawOverlay(_ overlay: (panels: [GameSession.Panel], labels: [GameSession.Label]),
                                     in context: inout GraphicsContext) {
         for panel in overlay.panels {
-            let shape = Path(roundedRect: panel.rect, cornerRadius: 10, style: .continuous)
-            context.fill(shape, with: .color(.black.opacity(0.5)))
-            context.stroke(shape, with: .color(.white.opacity(0.12)), lineWidth: 1)
+            let shape = Path(roundedRect: panel.rect, cornerRadius: 8, style: .continuous)
+            context.fill(shape, with: .color(Color(white: 0.07).opacity(0.93)))
+            context.stroke(shape, with: .color(.white.opacity(0.1)), lineWidth: 1)
         }
-        for label in overlay.labels {
-            context.draw(label.text, at: label.position, anchor: label.anchor)
+        // 러너·하늘 위에서도 읽히게 글자 아래로 1pt 그림자를 둔다 (번지지 않는 또렷한 그림자)
+        context.drawLayer { layer in
+            layer.addFilter(.shadow(color: .black.opacity(0.55), radius: 0, x: 0, y: 1))
+            for label in overlay.labels {
+                layer.draw(label.text, at: label.position, anchor: label.anchor)
+            }
         }
     }
 
@@ -219,6 +223,7 @@ final class StageModel: ObservableObject {
     private var nextIdle = Date().addingTimeInterval(5)
     private var lastIdleTrick: Trick?
     private var bubbleToken = 0
+    private let extras = StageExtras()
 
     private var pointerPushed = false
 
@@ -270,6 +275,8 @@ final class StageModel: ObservableObject {
 
     func endGame() {
         game = nil
+        // 게임이 scroll을 판 거리로 바꿔 놓아 길 위 물건 자리가 어긋난다
+        extras.reset()
     }
 
     func popoverClosed() {
@@ -431,10 +438,15 @@ final class StageModel: ObservableObject {
         let groundY = size.height - 15
         let scale: CGFloat = 5.0
         let runnerX = size.width * Self.runnerAnchor + speed / 140 * 16
-        let origin = CGPoint(runnerX - Stage.size.width / 2 * scale, groundY - Stage.ground * scale)
+        let clock = date.timeIntervalSinceReferenceDate
+        // 길 위 물건은 달리기를 따라 생긴다. 장난 중이거나 지쳤으면 새로 놓지 않는다
+        let hop = extras.update(time: clock, scroll: scroll, speed: speed, size: size,
+                                active: playing == nil && !display.isLimited)
+        let origin = CGPoint(runnerX - Stage.size.width / 2 * scale, groundY - Stage.ground * scale - hop)
         let sky = Sky.at(hour: Sky.hourOverride ?? Calendar.current.component(.hour, from: date), space: false)
 
         drawBackdrop(cg, size: size, sky: sky, time: time, groundY: groundY)
+        extras.drawSky(cg, size: size, sky: sky, time: clock)
         // 한도가 가까우면 배경만 어둡게 눌러 러너와 위 게이지로 눈이 가게 한다
         // 달리는 중에는 덜 눌러 속도감이 남게 한다
         let dim: CGFloat = switch display {
@@ -457,7 +469,7 @@ final class StageModel: ObservableObject {
         let bounds = scene.placedBounds
 
         // 그림자: 높이 뜰수록 옅고 작아진다
-        let lift = max(0, Stage.ground - bounds.maxY)
+        let lift = max(0, Stage.ground - bounds.maxY) + hop / scale
         let shadowW = bounds.width * scale * 0.5 * (1 - min(lift / 14, 0.6))
         cg.setFillColor(NSColor.black.withAlphaComponent(0.28 * (1 - min(lift / 10, 0.8))).cgColor)
         cg.fillEllipse(in: CGRect(x: origin.x + bounds.midX * scale - shadowW / 2, y: groundY - 2.5,
@@ -478,33 +490,40 @@ final class StageModel: ObservableObject {
             drawWind(cg, size: size, groundY: groundY, color: sky.edge, count: top ? 9 : 5)
         }
 
+        // 몸 자리(화면 좌표)를 넘겨 코인 줍기·장애물 넘기·꼬리·발먼지를 맞춘다
+        let screenBody = CGRect(x: origin.x + bounds.minX * scale, y: origin.y + bounds.minY * scale,
+                                width: bounds.width * scale, height: bounds.height * scale)
+        extras.record(back: CGPoint(screenBody.minX + screenBody.width * 0.18, screenBody.midY + screenBody.height * 0.08),
+                      scroll: scroll, speed: speed, body: screenBody)
+        if playing == nil {
+            extras.step(gait: gait, time: clock, scroll: scroll,
+                        feet: CGPoint(screenBody.minX + screenBody.width * 0.3, groundY - 1), airborne: hop > 2, speed: speed)
+        }
+        extras.drawGround(cg, groundY: groundY, scroll: scroll, time: clock)
+
         cg.saveGState()
         cg.translateBy(x: origin.x, y: origin.y)
         cg.scaleBy(x: scale, y: scale)
         let leftEdge = -origin.x / scale
         let loopPhase = gait - floor(gait)
+        // 무대는 메뉴바보다 훨씬 커서 흐린 잔상과 빛 꼬리가 번져 보인다. 전력 질주도 공기 줄만 쓰고,
+        // 그 대신 하늘 바람 줄·상점 꼬리·발먼지로 빠르기를 보인다
+        let effects = Self.stageEffects(display)
         if playing == nil {
-            display.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: false, leftEdge: leftEdge)
+            effects.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: false, leftEdge: leftEdge)
         }
         var look = CharacterLook(rich: true, palette: theme.richPalette(rig.palette, phase: time / 6),
                                  tint: .white, outline: 0.36)
         look.alarm = display.isCritical && playing == nil
-        if playing == nil {
-            let fit = (-origin.y / scale + 0.4)...((size.height - origin.y) / scale)
-            for ghost in display.ghosts(at: loopPhase).reversed() {
-                var ghostScene = CharacterScene(rig: rig, pose: ghost.frame.pose, transform: ghost.frame.transform)
-                ghostScene.fit(verticallyIn: fit)
-                SpriteFrames.drawAfterimage(ghostScene, image: ghost.image, color: look.palette.body, in: cg)
-            }
-        }
         scene.draw(in: cg, look: look)
         if playing == nil {
-            display.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: true, leftEdge: leftEdge)
+            effects.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: true, leftEdge: leftEdge)
         }
         for effect in frame.effects {
             effect.draw(in: cg, around: bounds, tint: .white)
         }
         cg.restoreGState()
+        extras.drawFront(cg, groundY: groundY, scroll: scroll, time: clock)
 
     }
 
@@ -527,6 +546,15 @@ final class StageModel: ObservableObject {
         if let kind = pool.randomElement() {
             lastIdleTrick = kind
             trick = (kind, date)
+        }
+    }
+
+    /// 무대에서 쓸 늘 붙는 효과. 전력 질주의 빛 꼬리 대신 질주의 공기 줄을 쓴다.
+    static func stageEffects(_ display: SpriteDisplay) -> SpriteDisplay {
+        switch display {
+        case .normal(.rainbow): .normal(.dashing)
+        case .straining(.rainbow, let critical): .straining(.dashing, critical: critical)
+        default: display
         }
     }
 

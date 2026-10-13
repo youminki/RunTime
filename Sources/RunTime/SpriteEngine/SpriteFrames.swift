@@ -106,34 +106,6 @@ enum SpriteDisplay: Equatable {
         }
     }
 
-    /// 지나온 자세를 몇 장 뒤에 옅게 남긴다. 빠를수록 많이, 멀리.
-    struct Afterimage {
-        /// 몇 주기 전 자세인지.
-        let lag: CGFloat
-        /// 뒤로 밀린 거리 (설계 좌표).
-        let distance: CGFloat
-        let alpha: CGFloat
-    }
-
-    var afterimages: [Afterimage] {
-        switch self {
-        case .straining(let state, _): return SpriteDisplay.normal(state).afterimages
-        case .normal(.dashing): return [Afterimage(lag: 0.14, distance: 3, alpha: 0.18)]
-        case .normal(.rainbow):
-            // 촘촘하면 털처럼 번져 보여서 두 장만 띄워 둔다
-            return [Afterimage(lag: 0.12, distance: 3.2, alpha: 0.24), Afterimage(lag: 0.24, distance: 6.6, alpha: 0.1)]
-        default: return []
-        }
-    }
-
-    /// `phase`에서 잔상마다의 자세.
-    func ghosts(at phase: CGFloat) -> [(frame: MotionFrame, image: Afterimage)] {
-        afterimages.map { image in
-            let earlier = phase - image.lag
-            return (motion(at: earlier - floor(earlier)), image)
-        }
-    }
-
     /// 상태마다 늘 붙는 효과 (빛 꼬리, 공기 줄, 흙먼지, z, 입김, 경고 점).
     /// `leftEdge`는 빛 꼬리가 끝나는 x (팝오버 무대는 화면 왼쪽 끝까지 끈다).
     /// `compact`면 메뉴바에서 러너 바로 오른쪽에 사용률 숫자가 붙어 있다. 몸 오른쪽으로 나가는 효과는 숫자를 가리므로
@@ -315,8 +287,7 @@ enum SpriteFrames {
             let phase = CGFloat(i) / CGFloat(count)
             return image { cg in
                 render(cg, rig: rig, frame: display.motion(at: phase), theme: theme, themePhase: phase,
-                       alarm: display.isCritical, fit: fit, overlay: overlay,
-                       ghosts: display.ghosts(at: phase)) { cg, scene, tint, front in
+                       alarm: display.isCritical, fit: fit, overlay: overlay) { cg, scene, tint, front in
                     display.drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front, compact: compact)
                 }
             }
@@ -367,7 +338,6 @@ enum SpriteFrames {
     /// 러너 한 장면을 그린다. 효과는 `loopEffects`(뒤·앞 두 번 불림)와 동작 자체의 효과를 함께 얹는다.
     static func render(_ cg: CGContext, rig: CharacterRig, frame: MotionFrame, theme: SpriteTheme,
                        themePhase: CGFloat, alarm: Bool, fit: SceneFit = .none, overlay: SpriteTheme? = nil,
-                       ghosts: [(frame: MotionFrame, image: SpriteDisplay.Afterimage)] = [],
                        loopEffects: (CGContext, CharacterScene, NSColor, Bool) -> Void) {
         func place(_ frame: MotionFrame) -> CharacterScene {
             var scene = CharacterScene(rig: rig, pose: frame.pose, transform: frame.transform)
@@ -384,27 +354,11 @@ enum SpriteFrames {
         let look = theme.look(palette: palette, phase: themePhase, alarm: alarm)
         let tint = theme == .natural ? NSColor.labelColor : look.tint
         loopEffects(cg, scene, tint, false)
-        for ghost in ghosts.reversed() {
-            drawAfterimage(place(ghost.frame), image: ghost.image, color: look.rich ? look.palette.body : tint, in: cg)
-        }
         scene.draw(in: cg, look: look)
         loopEffects(cg, scene, tint, true)
         for effect in frame.effects {
             effect.draw(in: cg, around: scene.placedBounds, tint: tint)
         }
-    }
-
-    /// 잔상 한 장: 단색 실루엣을 뒤로 밀어 한 번에 투명도를 준다 (부품이 겹친 곳이 진해지지 않게).
-    static func drawAfterimage(_ scene: CharacterScene, image: SpriteDisplay.Afterimage, color: NSColor,
-                               in cg: CGContext) {
-        cg.saveGState()
-        cg.translateBy(x: -image.distance, y: 0)
-        cg.setAlpha(image.alpha)
-        // 레이어를 몸 크기로 잡는다. 무대는 1초에 60번 그려서 화면 크기 레이어는 부담이 크다
-        cg.beginTransparencyLayer(in: scene.placedBounds.insetBy(dx: -1, dy: -1), auxiliaryInfo: nil)
-        scene.draw(in: cg, look: .mono(color))
-        cg.endTransparencyLayer()
-        cg.restoreGState()
     }
 
     /// 설계 좌표(y 아래)로 그리는 이미지. 그리기는 래스터라이즈 시점에 일어난다.

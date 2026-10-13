@@ -146,8 +146,7 @@ enum SpriteSheet {
                     cg.scaleBy(x: scale, y: scale)
                     let local = phase - floor(phase)
                     SpriteFrames.render(cg, rig: runner.rig, frame: display.motion(at: local), theme: .natural,
-                                        themePhase: 0, alarm: false,
-                                        ghosts: display.ghosts(at: local)) { cg, scene, _, front in
+                                        themePhase: 0, alarm: false) { cg, scene, _, front in
                         display.drawLoopEffects(in: cg, scene: scene, phase: local, tint: .white, front: front)
                     }
                 }

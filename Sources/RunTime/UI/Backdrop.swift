@@ -113,10 +113,17 @@ enum Backdrop {
                 let x = raw - floor(raw / span) * span - 45
                 let y = 12 + hash(i, 8) * 14   // 러너 머리보다 위로 지나가게
                 let s = 0.7 + hash(i, 9) * 0.6
-                cg.setFillColor(NSColor.white.withAlphaComponent(0.6 * sky.clouds).cgColor)
-                for (dx, dy, r) in [(0.0, 0.0, 7.0), (8.0, -3.0, 8.5), (17.0, 0.0, 6.5), (8.0, 2.5, 7.0)] as [(CGFloat, CGFloat, CGFloat)] {
-                    cg.fillEllipse(in: CGRect(x: x + dx * s - r * s, y: y + dy * s - r * s, width: r * 2 * s, height: r * 2 * s))
+                // 둥근 봉우리 셋과 납작한 밑면을 한 모양으로 합쳐 한 번에 칠한다.
+                // 원마다 따로 칠하면 겹친 곳만 진해져 얼룩져 보인다
+                let cloud = CGMutablePath()
+                for (dx, dy, r) in [(4.0, 0.0, 5.5), (11.0, -3.5, 7.5), (19.0, -0.5, 5.5)] as [(CGFloat, CGFloat, CGFloat)] {
+                    cloud.addEllipse(in: CGRect(x: x + dx * s - r * s, y: y + dy * s - r * s, width: r * 2 * s, height: r * 2 * s))
                 }
+                cloud.addRoundedRect(in: CGRect(x: x - 2 * s, y: y, width: 27 * s, height: 5.5 * s),
+                                     cornerWidth: 2.75 * s, cornerHeight: 2.75 * s)
+                cg.addPath(cloud)
+                cg.setFillColor(NSColor.white.withAlphaComponent(0.7 * sky.clouds).cgColor)
+                cg.fillPath(using: .winding)
             }
         }
     }
