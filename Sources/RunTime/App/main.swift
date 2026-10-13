@@ -148,6 +148,19 @@ if let index = CommandLine.arguments.firstIndex(of: "--stage-shots") {
     dispatchMain()
 }
 
+// 앱 아이콘: 무대 그림으로 1024px PNG를 그리고 종료 (scripts/make-icon.sh가 .icns로 만든다).
+if let index = CommandLine.arguments.firstIndex(of: "--app-icon") {
+    let path = CommandLine.arguments.dropFirst(index + 1).first ?? "AppIcon.png"
+    do {
+        try MainActor.assumeIsolated { try AppIcon.write(to: URL(fileURLWithPath: path)) }
+        print("saved: \(path)")
+        exit(0)
+    } catch {
+        print("failed: \(error)")
+        exit(1)
+    }
+}
+
 // README 그림: 예시 값으로 사용량 창, 상점, 창고, 퀘스트를 찍어 PNG로 저장하고 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--readme-shots") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "readme-shots"

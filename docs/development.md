@@ -211,7 +211,7 @@ RunTime/
 │   ├── Services/               #   Notifier(UserNotifications), LaunchAtLogin(SMAppService)
 │   └── Assets/                 #   PNG 넣으면 자동 교체되는 스프라이트 폴더
 ├── docs/                       #   개발 기록 (이 문서)
-└── scripts/                    #   build-app.sh, setup-signing.sh, install.sh, generate-brand.py, test.sh
+└── scripts/                    #   build-app.sh, setup-signing.sh, install.sh, make-icon.sh, test.sh
 ```
 
 **성능 예산 vs 실측**: 유휴 CPU < 0.5% → **0.05%**(잠자는 러너, 기본 30fps 설정), 전력 질주 30fps
