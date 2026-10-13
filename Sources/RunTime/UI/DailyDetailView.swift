@@ -201,9 +201,12 @@ struct DailyDetailView: View {
             HStack(spacing: 8) {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.08)).frame(width: 44, height: 5)
-                    Capsule().fill(Palette.blue).frame(width: max(3, 44 * share), height: 5)
+                    // 1%가 안 되는 폴더는 막대를 비우고 <1%로 적는다 (0%에 막대가 있으면 어긋나 보인다)
+                    if share >= 0.005 {
+                        Capsule().fill(Palette.blue).frame(width: max(3, 44 * share), height: 5)
+                    }
                 }
-                Text("\(Int((share * 100).rounded()))%").foregroundStyle(.secondary)
+                Text(share < 0.005 ? "<1%" : "\(Int((share * 100).rounded()))%").foregroundStyle(.secondary)
                     .frame(width: 32, alignment: .trailing)
                 Text(Format.tokens(tokens))
                     .frame(width: 58, alignment: .trailing)
