@@ -127,10 +127,11 @@ enum ImageEyes {
             }
             groups.append(members)
         }
+        let largest = groups.map(\.count).max() ?? 0
         let clusters = groups.filter { $0.count >= 4 }.map { members -> (x: CGFloat, y: CGFloat, n: Int) in
             (CGFloat(members.reduce(0) { $0 + points[$1].x }) / CGFloat(members.count),
              CGFloat(members.reduce(0) { $0 + points[$1].y }) / CGFloat(members.count), members.count)
-        }.filter { $0.n * 4 >= clusters(maxOf: groups) }
+        }.filter { $0.n * 4 >= largest }
         guard let strongest = clusters.max(by: { $0.n < $1.n }) else { return nil }
         var pair: (CGFloat, CGFloat, CGFloat)?
         var pairScore = 0
@@ -147,8 +148,6 @@ enum ImageEyes {
         return Found(center: CGPoint(x: strongest.x / CGFloat(w), y: strongest.y / CGFloat(h)),
                      span: CGFloat(boxW) * 0.16 / CGFloat(w))
     }
-
-    private static func clusters(maxOf groups: [[Int]]) -> Int { groups.map(\.count).max() ?? 0 }
 
     private static func detect(_ image: CGImage) -> Found? {
         let w = image.width, h = image.height
