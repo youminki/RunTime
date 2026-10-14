@@ -22,7 +22,6 @@ extension GameSession {
         var panels: [Panel] = []
         // 100점마다 점수가 잠깐 커진다
         let digits = GameFont.pixel(18 * (1 + 0.3 * milestoneGlow * milestoneGlow))
-        let small = GameFont.pixel(12)
         // 설명 글은 시스템 글꼴로 둔다. 픽셀 글꼴은 점수·제목처럼 크게 읽는 글자에만 쓴다
         let caption = Font.system(size: 10.5, weight: .semibold).monospacedDigit()
         let gold = Color(nsColor: NSColor(hex: 0xFFD45E))
