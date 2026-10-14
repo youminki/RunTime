@@ -262,6 +262,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   openDailyDetail: { [weak self] in self?.openDailyDetail() },
                                   openLeaderboard: { [weak self] in self?.openLeaderboard() },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))
+        // 크기를 모르는 채로 띄우면 자리를 먼저 잡고 위로 커져서, 위쪽에 모니터가 붙어 있으면 윗부분이 그쪽으로 넘어가 잘린다
+        if let view = popover.contentViewController?.view { popover.contentSize = view.fittingSize }
         engine.refreshNow()   // 여는 순간 JSONL 재스캔 + 공식 재조회(30초 스로틀)
         if let button = statusItem.button, let window = button.window, window.isVisible,
            NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
