@@ -1,0 +1,37 @@
+name: build
+
+# 앱은 사용자 Mac에 깔린 Swift로 빌드되므로, 오래된 컴파일러에서도 빌드되는지 푸시마다 본다
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Xcode ${{ matrix.xcode }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            xcode: "16.0"
+          - runner: macos-15
+            xcode: "16.4"
+          - runner: macos-26
+            xcode: "26.6"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode 고르기
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app"
+          swift --version
+      - name: release 빌드
+        run: swift build -c release
+      - name: 테스트
+        run: ./scripts/test.sh
