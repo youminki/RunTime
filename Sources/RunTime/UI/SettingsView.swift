@@ -295,7 +295,7 @@ private struct UpdateRows: View {
     private var status: String {
         switch updater.state {
         case .unavailable: return "설치한 앱에서만 확인"
-        case .idle: return "6시간마다 확인"
+        case .idle: return "30분마다 확인"
         case .checking: return "확인 중…"
         case .upToDate: return "최신 버전"
         case .available(let count, _): return "새 커밋 \(count)개"

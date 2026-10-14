@@ -36,7 +36,7 @@ final class AppUpdater: ObservableObject {
         static let failedTarget = "updateFailedTarget"
     }
 
-    private static let checkInterval: TimeInterval = 6 * 60 * 60
+    private static let checkInterval: TimeInterval = 30 * 60
     static let logURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Logs/RunTime/update.log")
 
@@ -82,7 +82,7 @@ final class AppUpdater: ObservableObject {
         return true
     }
 
-    /// 앱이 켜질 때. 업데이트 뒤 처음 켜진 것이면 알리고, 잠시 뒤부터 6시간마다 확인한다.
+    /// 앱이 켜질 때. 업데이트 뒤 처음 켜진 것이면 알리고, 잠시 뒤부터 30분마다 확인한다.
     func start() {
         guard let build else { return }
         let defaults = UserDefaults.standard
@@ -98,10 +98,10 @@ final class AppUpdater: ObservableObject {
         self.timer = timer
     }
 
-    /// 팝오버를 열 때. 마지막 확인이 1시간도 더 됐으면 다시 본다.
+    /// 팝오버를 열 때. 잠자기에서 깨어나 확인이 밀렸으면 다시 본다.
     func checkIfStale() {
         let last = UserDefaults.standard.double(forKey: Key.lastCheck)
-        if Date().timeIntervalSince1970 - last > 60 * 60 { check() }
+        if Date().timeIntervalSince1970 - last > Self.checkInterval { check() }
     }
 
     func takeBubble() -> String? {
