@@ -30,7 +30,7 @@ enum LaunchAtLogin {
         try? set(true)
     }
 
-    /// 자동 시작 기록은 번들 ID와 앱 경로에 묶여 있어서 옛 이름(TokenCat.app, RunTime.app) 앱의 기록은 이어지지 않는다.
+    /// 자동 시작 기록은 번들 ID와 앱 경로에 묶여 있어서 옛 TokenCat 앱의 기록은 이어지지 않는다.
     /// install.sh가 옛 앱에서 켜져 있던 것을 남겨 두면 이 앱으로 다시 등록한다.
     static func restoreAfterRename() {
         let key = "restoreLaunchAtLogin"

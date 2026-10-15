@@ -1,5 +1,5 @@
 #!/bin/bash
-# 메뉴바에서 러너 자리를 다른 앱 아이콘들의 오른쪽 끝(시계·제어 센터 바로 왼쪽)으로 잡는다.
+# 메뉴바에서 RunTime 자리를 다른 앱 아이콘들의 오른쪽 끝(시계·제어 센터 바로 왼쪽)으로 잡는다.
 #
 # macOS 27은 상태 항목 자리를 MenuBar.plist의 TrailingItemPreferredPositions에
 # "status:<번들ID>::<autosaveName>" → 오른쪽 끝에서 잰 pt로 둔다. 처음 생긴 항목은 왼쪽 끝에 놓여
@@ -26,4 +26,4 @@ defaults write "$DOMAIN" TrailingItemPreferredPositions -dict-add "$KEY" -float 
 defaults write dev.runtime.RunTime menuBarPlaced -bool true
 # 메뉴바가 새 자리를 읽도록 다시 띄운다 (macOS가 바로 되살린다)
 killall MenuBarAgent 2>/dev/null || true
-echo "메뉴바에서 러너 자리를 오른쪽 끝으로 잡았습니다. ⌘를 누른 채 끌면 옮길 수 있습니다."
+echo "메뉴바에서 RunTime 자리를 오른쪽 끝으로 잡았습니다. ⌘를 누른 채 끌면 옮길 수 있습니다."

@@ -1,6 +1,6 @@
-# Time is Running out 개발 기록
+# RunTime 개발 기록
 
-Time is Running out(옛 이름 RunTime, TokenCat)을 만들면서 정한 설계, 잰 숫자, 겪은 문제를 모았다. 사용법은 [README](../README.md)에 있다.
+RunTime(옛 이름 TokenCat)을 만들면서 정한 설계, 잰 숫자, 겪은 문제를 모았다. 사용법은 [README](../README.md)에 있다.
 
 - 기간: 2026.07부터. 이틀 동안 기획안 작성, M0~M3, v1.1, 오픈소스 배포까지 했고 이후 러너·미니게임·순위·업데이트를 더했다.
 - 스택: Swift 5.9, SwiftUI + AppKit(NSStatusItem), SPM, macOS 13+

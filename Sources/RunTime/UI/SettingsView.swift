@@ -86,7 +86,7 @@ struct SettingsView: View {
                 UpdateRows(updater: AppUpdater.shared)
             }
 
-            GroupedSection("정보", footer: " Anthropic과 관계없는 개인 프로젝트입니다.") {
+            GroupedSection("정보", footer: "RunTime은 Anthropic과 관계없는 개인 프로젝트입니다.") {
                 GroupedRow("버전", icon: "info", tint: Palette.gray) {
                     Text(Self.versionText).foregroundStyle(.secondary)
                 }
@@ -185,12 +185,12 @@ struct SettingsView: View {
                           isOn: $settings.weeklySummaryEnabled)
                 GroupedRow("알림 보내 보기", icon: "paperplane.fill", tint: Palette.blue) {
                     Button("보내기") {
-                        Notifier.shared.send(title: "Time is Running out 알림", body: "알림이 이렇게 와요. 사용률이 80%, 95%에 닿으면 알려 드릴게요.")
+                        Notifier.shared.send(title: "RunTime 알림", body: "알림이 이렇게 와요. 사용률이 80%, 95%에 닿으면 알려 드릴게요.")
                     }
                     .controlSize(.small)
                     .disabled(!Notifier.shared.available)
                 }
-                .help("알림이 오지 않으면 시스템 설정 > 알림 >  허용을 확인하세요.")
+                .help("알림이 오지 않으면 시스템 설정 > 알림 > RunTime에서 허용을 확인하세요.")
             }
             if !Notifier.shared.available { devOnlyNote("알림") }
         }
@@ -221,7 +221,7 @@ struct SettingsView: View {
     }
 
     private func devOnlyNote(_ feature: String) -> some View {
-        Text("\(feature)은 install.sh로 설치한 Time is Running out.app에서만 동작합니다.")
+        Text("\(feature)은 install.sh로 설치한 RunTime.app에서만 동작합니다.")
             .font(.system(size: 11)).foregroundStyle(Palette.orange)
             .padding(.horizontal, 14)
             .padding(.top, -12)

@@ -501,8 +501,8 @@ struct PopoverView: View {
             Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
                 .buttonStyle(ToolbarButtonStyle(tint: Theme.critical))
                 .keyboardShortcut("q")
-                .help("Time is Running out 종료 (⌘Q)")
-                .accessibilityLabel("Time is Running out 종료")
+                .help("RunTime 종료 (⌘Q)")
+                .accessibilityLabel("RunTime 종료")
         }
         .buttonStyle(ToolbarButtonStyle())
     }

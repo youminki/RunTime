@@ -1,7 +1,7 @@
-# Time is Running out
+# RunTime
 
 <p align="center">
-  <img src="assets/runtime-run.gif" width="252" alt="메뉴바에서 달리는 러너들">
+  <img src="assets/runtime-run.gif" width="252" alt="메뉴바에서 달리는 RunTime 러너들">
 </p>
 
 Claude Code를 쓰는 만큼 macOS 메뉴바의 러너가 빨리 달립니다.
@@ -77,7 +77,7 @@ cd RunTime
 
 ## 지우기
 
-응용 프로그램 폴더에서 `Time is Running out.app`을 지웁니다. 설정과 기록까지 지우려면 아래도 실행하세요.
+응용 프로그램 폴더에서 `RunTime.app`을 지웁니다. 설정과 기록까지 지우려면 아래도 실행하세요.
 
 ```bash
 defaults delete dev.runtime.RunTime
@@ -97,10 +97,9 @@ install.sh는 처음 설치할 때 러너를 오른쪽 끝에 두어 가장 늦�
 **`/usage`와 숫자가 달라요.**
 공식 값은 3분마다 받아서 최대 3분까지 늦을 수 있습니다. 사용량 창을 열거나 ↻를 누르면 바로 다시 받습니다.
 
-**예전 이름 RunTime이나 TokenCat으로 설치했어요.**
-업데이트하거나 `./install.sh`를 다시 실행하면 옛 앱을 지우고 `Time is Running out.app`을 설치합니다.
-RunTime에서 바로 넘어오면 설정, 기록, 알림 허용, 메뉴바 자리가 그대로 이어집니다. TokenCat에서 넘어오면
-설정, 최고 점수, 순위 참여 정보, 내 러너와 받은 펫, 로그인 시 자동 시작을 새 앱이 처음 켜질 때 옮겨 옵니다.
+**예전 이름 TokenCat으로 설치했어요.**
+업데이트하거나 `./install.sh`를 다시 실행하면 옛 앱을 지우고 `RunTime.app`을 설치합니다.
+설정, 최고 점수, 순위 참여 정보, 내 러너와 받은 펫, 로그인 시 자동 시작은 새 앱이 처음 켜질 때 옮겨 옵니다.
 알림 허용은 한 번 더 묻습니다. 옛 설정(`dev.tokencat.TokenCat`)은 지우지 않으니 필요 없으면
 `defaults delete dev.tokencat.TokenCat`로 지우세요.
 
@@ -131,7 +130,7 @@ RunTime에서 바로 넘어오면 설정, 기록, 알림 허용, 메뉴바 자�
 ```bash
 swift run RunTime             # 빌드하지 않은 채 개발 실행 (알림과 자동 시작은 동작하지 않음)
 ./scripts/test.sh             # 테스트
-scripts/build-app.sh          # dist/Time is Running out.app과 dmg 만들기
+scripts/build-app.sh          # dist/RunTime.app과 dmg 만들기
 python3 -I scripts/update-prices.py   # Claude 모델 단가를 LiteLLM 가격 데이터에서 다시 받아 PricingData.swift 만들기
 python3 -I scripts/update-aliases.py  # Petdex 캐릭터의 한국어 이름을 Wikidata에서 받아 한글 검색 사전 만들기 (30분쯤)
 ```
