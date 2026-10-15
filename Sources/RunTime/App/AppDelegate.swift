@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                         backing: NSScreen.main?.backingScaleFactor ?? 2)
         statusItem = NSStatusBar.system.statusItem(withLength: animator.canvas.size.width + 4)
         // 이름이 있어야 사용자가 ⌘로 끌어 옮긴 자리를 macOS가 기억한다. 없으면 켤 때마다 맨 왼쪽에 놓여
-        // 메뉴가 긴 앱이 앞에 오면 가장 먼저 «로 접힌다.
+        // 메뉴가 긴 앱이 앞에 오면 가장 먼저 «로 접힌다. 기억한 자리가 이 이름에 묶여 있어 앱 이름이 바뀌어도 그대로 둔다.
         statusItem.autosaveName = "RunTime"
         if let button = statusItem.button {
             button.target = self
@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.layoutSprite() }
             .store(in: &cancellables)
-        statusItem.button?.setAccessibilityLabel("RunTime 사용량")
+        statusItem.button?.setAccessibilityLabel("Time is Running out 사용량")
 
         Publishers.CombineLatest(engine.$sessionGauge, engine.$weeklyGauge)
             .map { Self.tooltip(session: $0, weekly: $1) }
@@ -229,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.openSettings()
         }
         menu.addItem(.separator())
-        add("RunTime 종료") { NSApp.terminate(nil) }
+        add("Time is Running out 종료") { NSApp.terminate(nil) }
         // 메뉴를 잠깐 붙여 눌린 자리에 띄우고 바로 떼어, 왼쪽 클릭은 계속 사용량 창을 연다
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
@@ -341,7 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func openSettings(tab: SettingsView.Tab? = nil) {
         if let tab { settingsTab.selection = tab }
         engine.settings.reloadLaunchAtLogin()
-        settingsWindow = showWindow(settingsWindow, title: "RunTime 설정",
+        settingsWindow = showWindow(settingsWindow, title: "Time is Running out 설정",
                                     style: [.titled, .closable, .resizable]) {   // 세로 드래그로 크기 조절
             SettingsView(settings: engine.settings, engine: engine, tab: settingsTab)
         }
@@ -369,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func openWelcome() {
-        welcomeWindow = showWindow(welcomeWindow, title: "RunTime", style: [.titled, .closable]) {
+        welcomeWindow = showWindow(welcomeWindow, title: "Time is Running out", style: [.titled, .closable]) {
             WelcomeView(settings: engine.settings,
                         openSettings: { [weak self] in self?.openSettings() },
                         close: { [weak self] in self?.welcomeWindow?.performClose(nil) })
@@ -535,7 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         func line(_ name: String, _ gauge: GaugeReading?) -> String {
             "\(name) \(gauge.map { "\($0.displayPercent)" } ?? "--")%"
         }
-        return "RunTime · \(line("세션", session)) · \(line("주간", weekly))"
+        return "Time is Running out · \(line("세션", session)) · \(line("주간", weekly))"
     }
 }
 

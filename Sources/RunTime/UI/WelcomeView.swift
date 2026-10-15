@@ -15,7 +15,7 @@ struct WelcomeView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("RunTime을 설치했어요").font(.system(size: 20, weight: .bold))
+                    Text(" 설치했어요").font(.system(size: 20, weight: .bold))
                     Text("Claude Code로 토큰을 빨리 쓸수록 메뉴바의 러너가 빨리 달립니다.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

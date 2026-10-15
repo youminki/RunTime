@@ -1,4 +1,4 @@
-# RunTime 자세한 사용법
+# Time is Running out 자세한 사용법
 
 처음 쓰는 법은 [README](../README.md)에 있습니다. 여기에는 화면과 기능을 하나씩 적었습니다.
 
@@ -171,8 +171,8 @@ Claude Code가 대답을 마치면 메뉴바 러너가 축하 동작을 합니�
 
 ## 다시 켜기와 지우기
 
-- 다시 켜기: Spotlight에서 RunTime을 찾거나 `open -a RunTime`. 로그인할 때마다 켜려면 설정 > 일반에서 "로그인 시 자동 시작"을 켭니다.
-- 지우기: 응용 프로그램 폴더에서 `RunTime.app`을 지웁니다. 설정과 기록까지 지우려면 아래도 실행하세요.
+- 다시 켜기: Spotlight에서 Time is Running out을 찾거나 `open -a "Time is Running out"`. 로그인할 때마다 켜려면 설정 > 일반에서 "로그인 시 자동 시작"을 켭니다.
+- 지우기: 응용 프로그램 폴더에서 `Time is Running out.app`을 지웁니다. 설정과 기록까지 지우려면 아래도 실행하세요.
 
 ```bash
 defaults delete dev.runtime.RunTime

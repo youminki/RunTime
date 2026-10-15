@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>ko</string>
+	<key>CFBundleDisplayName</key>
+	<string>Time is Running out</string>
 	<key>CFBundleExecutable</key>
 	<string>RunTime</string>
 	<key>CFBundleIconFile</key>
@@ -12,10 +14,8 @@
 	<string>dev.runtime.RunTime</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
-	<key>CFBundleDisplayName</key>
-	<string>RunTime</string>
 	<key>CFBundleName</key>
-	<string>RunTime</string>
+	<string>Time is Running out</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

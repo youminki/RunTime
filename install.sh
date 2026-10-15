@@ -1,5 +1,5 @@
 #!/bin/bash
-# RunTime 원클릭 설치: 서명 identity 준비 → 빌드 → 응용 프로그램 폴더로 복사 → 실행.
+# Time is Running out 원클릭 설치: 서명 identity 준비 → 빌드 → 응용 프로그램 폴더로 복사 → 실행.
 #
 #   git clone https://github.com/youminki/RunTime.git && cd RunTime && ./install.sh
 #
@@ -7,7 +7,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "RunTime 설치를 시작합니다"
+NAME="Time is Running out"
+echo "$NAME 설치를 시작합니다"
 
 # 앱 안 업데이트와 직접 실행이 겹치면 같은 .build를 함께 고쳐 빌드가 깨진다. 한 번에 하나만 돈다
 # TMPDIR은 앱이 띄운 셸과 터미널이 달라 늘 같은 자리에 둔다
@@ -55,14 +56,14 @@ pkill -a -x TokenCat 2>/dev/null || true
 # 종료가 끝나기 전에 open하면 LaunchServices가 -600으로 실행을 거부한다
 for _ in $(seq 1 50); do pgrep -a -x RunTime > /dev/null || pgrep -a -x TokenCat > /dev/null || break; sleep 0.1; done
 
-# 옛 번들 ID로 설치한 앱(TokenCat.app, 이름만 바뀐 RunTime.app)은 지운다. 자동 시작 기록은 번들 ID에 묶여 있어서,
+# 옛 이름으로 설치한 앱(TokenCat.app, RunTime.app)은 지운다. 자동 시작 기록은 번들 ID와 앱 경로에 묶여 있어서,
 # 옛 앱에서 켜져 있었으면 새 앱이 처음 켜질 때 다시 등록하도록 남긴다
-OLD_ID=dev.tokencat.TokenCat
+OLD_IDS="dev.tokencat.TokenCat dev.runtime.RunTime"
 OLDS=()
 for OLD in /Applications/TokenCat.app "$HOME/Applications/TokenCat.app" /Applications/RunTime.app "$HOME/Applications/RunTime.app"; do
   [ -d "$OLD" ] || continue
-  [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$OLD/Contents/Info.plist" 2>/dev/null || true)" = "$OLD_ID" ] \
-    && OLDS+=("$OLD")
+  ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$OLD/Contents/Info.plist" 2>/dev/null || true)
+  case " $OLD_IDS " in *" $ID "*) [ -n "$ID" ] && OLDS+=("$OLD") ;; esac
 done
 if [ ${#OLDS[@]} -gt 0 ]; then
   if BTM=$(sfltool dumpbtm 2>/dev/null) && [ -n "$BTM" ]; then
@@ -70,7 +71,7 @@ if [ ${#OLDS[@]} -gt 0 ]; then
     if printf '%s\n' "$BTM" | awk '
       /^ *#[0-9]+:$/ { if (id && on) found = 1; id = 0; on = 0 }
       /^ *Disposition:/ { on = ($0 ~ /\[enabled/) }
-      /^ *(Bundle )?Identifier: (2\.)?dev\.tokencat\.TokenCat$/ { id = 1 }
+      /^ *(Bundle )?Identifier: (2\.)?dev\.(tokencat\.TokenCat|runtime\.RunTime)$/ { id = 1 }
       END { if (id && on) found = 1; exit !found }'; then
       defaults write dev.runtime.RunTime restoreLaunchAtLogin -bool true
     fi
@@ -82,15 +83,15 @@ if [ ${#OLDS[@]} -gt 0 ]; then
   done
 fi
 
-rm -rf "$TARGET/RunTime.app"
-cp -R dist/RunTime.app "$TARGET/"
+rm -rf "$TARGET/$NAME.app"
+cp -R "dist/$NAME.app" "$TARGET/"
 # 같은 자리에 덮어쓰면 Finder·Dock이 옛 아이콘을 계속 보여 줘서, 날짜를 바꾸고 LaunchServices에 다시 알린다
-touch "$TARGET/RunTime.app"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$TARGET/RunTime.app" 2>/dev/null || true
+touch "$TARGET/$NAME.app"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$TARGET/$NAME.app" 2>/dev/null || true
 scripts/place-menubar.sh
 
 # 5) 실행
-open "$TARGET/RunTime.app"
+open "$TARGET/$NAME.app"
 
 cat <<'GUIDE'
 
@@ -101,6 +102,6 @@ cat <<'GUIDE'
     반드시 [항상 허용]을 누르세요. [허용]만 누르면 다음에 또 묻습니다.
   • 알림 권한 요청은 한도 80%/95% 경고에 쓰입니다 — 허용 권장.
 
-제거: 응용 프로그램 폴더에서 RunTime.app 삭제.
+제거: 응용 프로그램 폴더에서 Time is Running out.app 삭제.
 업데이트: git pull --ff-only && ./install.sh (설정 > 정보에서도 가능)
 GUIDE
