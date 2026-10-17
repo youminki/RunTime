@@ -18,8 +18,9 @@ public final class JSONLWatcher {
     /// 1회 스캔: 새로 추가된 줄에서 파싱된 이벤트를 반환. (중복 제거는 UsageStore 담당)
     public func scan(now: Date = Date()) -> [UsageEvent] {
         var events: [UsageEvent] = []
+        // 폴더 자체가 심볼릭 링크면 enumerator가 아무것도 돌려주지 않는다 (기록을 다른 디스크로 옮긴 경우)
         guard let enumerator = fileManager.enumerator(
-            at: rootDirectory,
+            at: rootDirectory.resolvingSymlinksInPath(),
             includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
