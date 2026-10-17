@@ -348,7 +348,8 @@ final class GameWallet: ObservableObject {
     }
 
     static func today(_ date: Date = Date()) -> Int {
-        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        // 불기·연호 달력을 쓰는 Mac도 다른 사람과 같은 날 같은 미션을 받게 그레고리력으로 센다
+        let parts = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day], from: date)
         return (parts.year ?? 0) * 10_000 + (parts.month ?? 0) * 100 + (parts.day ?? 0)
     }
 
