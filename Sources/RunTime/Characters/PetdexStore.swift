@@ -175,7 +175,9 @@ final class PetdexStore: ObservableObject {
         }
         struct Manifest: Decodable { let pets: [Lenient] }
         guard let manifest = try? JSONDecoder().decode(Manifest.self, from: data) else { return nil }
-        let list = manifest.pets.compactMap(\.entry).filter { isValidSlug($0.slug) }
+        // slug가 겹치면 검색 사전을 만들다 죽고, 받은 목록을 캐시해 두어 열 때마다 다시 죽는다
+        var seen: Set<String> = []
+        let list = manifest.pets.compactMap(\.entry).filter { isValidSlug($0.slug) && seen.insert($0.slug).inserted }
         return list.isEmpty ? nil : list
     }
 
