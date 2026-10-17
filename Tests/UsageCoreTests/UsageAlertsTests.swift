@@ -34,6 +34,17 @@ struct UsageAlertsTests {
         #expect(tracker.alertsToFire(kind: .session, percent: 85, windowId: "w1") == [])
     }
 
+    @Test func savedHistorySurvivesRestart() {
+        var before = LimitAlertTracker()
+        _ = before.alertsToFire(kind: .session, percent: 85, windowId: "w1")
+        _ = before.alertsToFire(kind: .weekly, percent: 96, windowId: "k1")
+        var after = LimitAlertTracker()
+        after.saved = before.saved
+        #expect(after.alertsToFire(kind: .session, percent: 85, windowId: "w1") == [])
+        #expect(after.alertsToFire(kind: .weekly, percent: 97, windowId: "k1") == [])
+        #expect(after.alertsToFire(kind: .session, percent: 96, windowId: "w1") == [.ninetyFive])
+    }
+
     @Test func newWindowResets() {
         var tracker = LimitAlertTracker()
         #expect(tracker.alertsToFire(kind: .session, percent: 85, windowId: "w1") == [.eighty])

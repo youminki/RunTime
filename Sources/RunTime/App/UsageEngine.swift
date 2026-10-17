@@ -81,7 +81,12 @@ final class UsageEngine: ObservableObject {
     private var config: Config
     private var officialValue: OfficialUsage?
     private var clientVersion: String?
-    private var alertTracker = LimitAlertTracker()
+    private var alertTracker: LimitAlertTracker = {
+        var tracker = LimitAlertTracker()
+        tracker.saved = UserDefaults.standard.dictionary(forKey: UsageEngine.limitAlertsKey) as? [String: String] ?? [:]
+        return tracker
+    }()
+    private static let limitAlertsKey = "limitAlertsSent"
     private var lastBlockStart: Date?
     private var lastWeeklyReset: Date?
     private var lastTickAt: Date?
@@ -89,6 +94,8 @@ final class UsageEngine: ObservableObject {
     private var officialInFlight = false
     private var officialBackoffUntil: Date?
     private var lastOfficialFailure = ""
+    /// 켠 뒤 공식 조회 결과를 한 번이라도 받았는지. 그 전에는 주간 경계를 모른다.
+    private var officialAnswered = false
     private var knownWeeklyReset: Date?
     /// 최근 공식 세션 %의 오름세. "약 N분 뒤 한도"를 공식 값만으로 계산한다.
     private var sessionTrend = OfficialTrend()
@@ -242,7 +249,13 @@ final class UsageEngine: ObservableObject {
             ?? WeeklyWindow.rollingStart(now: now)
 
         let scanned = watcher.scan(now: now)
-        defer { checkWeeklySummary(nextReset: nextWeeklyReset, now: now, enabled: config.weeklySummaryEnabled) }
+        // 켠 직후 공식 리셋을 아직 모르면 월요일을 주의 시작으로 잘못 보고 지난주 요약을 한 번 더 보낸다
+        let weeklyBoundaryKnown = nextWeeklyReset != nil || !config.officialEnabled || officialAnswered
+        defer {
+            if weeklyBoundaryKnown {
+                checkWeeklySummary(nextReset: nextWeeklyReset, now: now, enabled: config.weeklySummaryEnabled)
+            }
+        }
         let finished = turnDetector.finishedTurns(in: scanned, now: now)
         store.add(scanned)
         let lastEvent = scanned.map(\.timestamp).max()
@@ -326,6 +339,9 @@ final class UsageEngine: ObservableObject {
                 notify(threshold: threshold, kind: "주간", remaining: nil)
             }
         }
+        // 리셋 시각을 모를 때의 고정 ID는 저장하면 다음 창에서도 알림이 막힌다
+        UserDefaults.standard.set(alertTracker.saved.filter { !$0.value.hasPrefix("rolling|") && !$0.value.hasPrefix("none|") },
+                                  forKey: Self.limitAlertsKey)
     }
 
     private func notify(threshold: LimitAlertTracker.Threshold, kind: String, remaining: String?) {
@@ -423,6 +439,7 @@ final class UsageEngine: ObservableObject {
 
     private func handleOfficial(_ result: Result<OfficialUsage, Error>) {
         officialInFlight = false
+        officialAnswered = true
         switch result {
         case .success(let usage):
             officialBackoffUntil = nil

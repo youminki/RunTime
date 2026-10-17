@@ -26,6 +26,18 @@ public struct LimitAlertTracker {
 
     public init() {}
 
+    /// 앱을 다시 켜도 같은 창에서 다시 알리지 않게 저장해 두는 값. 종류 → "창ID|80,95".
+    public var saved: [String: String] {
+        get { sent.mapValues { "\($0.windowId)|\($0.thresholds.sorted().map(String.init).joined(separator: ","))" } }
+        set {
+            sent = newValue.compactMapValues { value in
+                let parts = value.split(separator: "|", omittingEmptySubsequences: false)
+                guard parts.count == 2 else { return nil }
+                return (String(parts[0]), Set(parts[1].split(separator: ",").compactMap { Int($0) }))
+            }
+        }
+    }
+
     /// 창 식별자. resets_at은 조회마다 1초 안쪽으로 흔들려 그대로 쓰면 매 조회가 새 창으로 보이고
     /// 80%/95% 알림이 반복된다. 분 단위로 반올림한다.
     public static func windowId(resetsAt: Date) -> String {
