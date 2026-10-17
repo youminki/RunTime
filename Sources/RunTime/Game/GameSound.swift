@@ -19,7 +19,7 @@ final class GameSound {
     }
 
     private init() {
-        let folder = Bundle.module.resourceURL?.appendingPathComponent("Assets/Game")
+        let folder = Bundle.assets.resourceURL?.appendingPathComponent("Assets/Game")
         for effect in Effect.allCases {
             guard let url = folder?.appendingPathComponent("\(effect.rawValue).m4a"),
                   let sound = NSSound(contentsOf: url, byReference: false) else { continue }

@@ -393,7 +393,7 @@ enum SpriteFrames {
     private static func loadAssets(named prefix: String, count: Int) -> [NSImage]? {
         if let cached = assetCache[prefix] { return cached }
         var result: [NSImage]? = nil
-        if let assetsDir = Bundle.module.resourceURL?.appendingPathComponent("Assets") {
+        if let assetsDir = Bundle.assets.resourceURL?.appendingPathComponent("Assets") {
             var frames: [NSImage] = []
             for i in 0..<count {
                 let url = assetsDir.appendingPathComponent("\(prefix)_\(i).png")

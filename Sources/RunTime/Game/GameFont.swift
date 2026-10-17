@@ -10,7 +10,7 @@ enum GameFont {
 
     /// 앱 안에서만 쓰게 등록한다. 실패하면(파일이 없으면) 시스템 글꼴로 그린다.
     private static let available: Bool = {
-        guard let url = Bundle.module.resourceURL?.appendingPathComponent("Assets/Game/Galmuri11-Bold.ttf") else { return false }
+        guard let url = Bundle.assets.resourceURL?.appendingPathComponent("Assets/Game/Galmuri11-Bold.ttf") else { return false }
         var error: Unmanaged<CFError>?
         let registered = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error)
         // 이미 등록돼 있으면(다시 불렸을 때) 실패로 오지만 쓸 수는 있다

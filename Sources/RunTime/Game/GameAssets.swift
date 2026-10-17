@@ -69,7 +69,7 @@ enum GameAssets {
     /// Assets/Game의 PNG 한 장.
     static func image(_ name: String) -> CGImage? {
         if let cached = imageCache[name] { return cached }
-        guard let url = Bundle.module.resourceURL?.appendingPathComponent("Assets/Game/\(name).png"),
+        guard let url = Bundle.assets.resourceURL?.appendingPathComponent("Assets/Game/\(name).png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         imageCache[name] = image

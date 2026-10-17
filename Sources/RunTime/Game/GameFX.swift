@@ -19,7 +19,7 @@ enum GameFX {
     static func image(_ name: String, folder: String = "Game") -> CGImage? {
         let key = folder + "/" + name
         if let cached = images[key] { return cached }
-        guard let url = Bundle.module.resourceURL?.appendingPathComponent("Assets/\(folder)/\(name).png"),
+        guard let url = Bundle.assets.resourceURL?.appendingPathComponent("Assets/\(folder)/\(name).png"),
               let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         images[key] = image
