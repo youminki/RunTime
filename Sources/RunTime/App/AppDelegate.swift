@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let settingsTab = SettingsTabState(.general)
     /// 메뉴바 항목이 « 안에 숨었을 때 팝오버를 붙이는 보이지 않는 창.
     private var anchorWindow: NSWindow?
+    /// 팝오버 창이 커지거나 움직일 때 윗변을 붙이는 관찰자.
+    private var popoverFrameObservers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         animator.canvas = MenuBarCanvas(barHeight: NSStatusBar.system.thickness, zoom: engine.settings.runnerSize.zoom,
@@ -255,27 +257,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
         popover.animates = true
         popover.appearance = NSAppearance(named: .darkAqua)   // RunCat 스타일 다크 팝오버
-        popover.contentViewController = NSHostingController(
+        let content = NSHostingController(
             rootView: PopoverView(engine: engine, settings: engine.settings,
                                   openSettings: { [weak self] in self?.openSettings() },
                                   importRunner: { [weak self] in self?.importRunner() },
                                   openDailyDetail: { [weak self] in self?.openDailyDetail() },
                                   openLeaderboard: { [weak self] in self?.openLeaderboard() },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))
+        // 내용 크기가 바뀌면 창 제약 대신 팝오버에 알려서, 팝오버가 메뉴바 쪽 자리를 지킨 채 크기를 바꾸게 한다
+        content.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = content
         // 크기를 모르는 채로 띄우면 자리를 먼저 잡고 위로 커져서, 위쪽에 모니터가 붙어 있으면 윗부분이 그쪽으로 넘어가 잘린다
-        if let view = popover.contentViewController?.view { popover.contentSize = view.fittingSize }
+        popover.contentSize = content.view.fittingSize
         engine.refreshNow()   // 여는 순간 JSONL 재스캔 + 공식 재조회(30초 스로틀)
+        let anchor: NSView
         if let button = statusItem.button, let window = button.window, window.isVisible,
            NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        } else if let anchor = hiddenItemAnchor() {
+            anchor = button
+        } else if let hidden = hiddenItemAnchor() {
             // 단축키로 열었는데 러너가 « 안에 숨어 있으면 화면 오른쪽 위, 메뉴바 바로 아래에 띄운다
-            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+            anchor = hidden
         } else {
             return
         }
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
         Self.makeOpaque(popover)
+        pinTop(of: popover, below: anchor)
         self.popover = popover
+    }
+
+    /// 어떤 macOS에서는 띄운 뒤 내용이 커지면 팝오버가 아래 끝을 두고 위로 자라 메뉴바 위로 잘린다.
+    /// 커지거나 움직일 때마다 윗변이 메뉴바 항목 아래를 넘지 않게 되돌린다.
+    private func pinTop(of popover: NSPopover, below anchor: NSView) {
+        guard let window = popover.contentViewController?.view.window, let anchorWindow = anchor.window else { return }
+        let top = anchorWindow.convertToScreen(anchor.convert(anchor.bounds, to: nil)).minY
+        let pin = { [weak window] in
+            guard let window, window.frame.maxY > top + 0.5 else { return }
+            window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+        }
+        pin()
+        popoverFrameObservers.forEach(NotificationCenter.default.removeObserver)
+        popoverFrameObservers = [NSWindow.didResizeNotification, NSWindow.didMoveNotification].map {
+            NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { _ in pin() }
+        }
     }
 
     /// 팝오버는 뒤 창이 비치는 반투명이라 흰 창 위에서 열면 바탕이 밝아져 흰 글자·차트가 묻힌다.
@@ -332,6 +356,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let closed = notification.object as? NSPopover, closed === popover else { return }
         closed.contentViewController = nil
         popover = nil
+        popoverFrameObservers.forEach(NotificationCenter.default.removeObserver)
+        popoverFrameObservers = []
         anchorWindow?.orderOut(nil)
         // 상점에서 써 보던 트랙·날씨가 닫힌 뒤에도 남지 않게
         GameWallet.shared.tryingOn = nil
