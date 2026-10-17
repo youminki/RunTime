@@ -137,7 +137,7 @@ struct RunnerPicker: View {
         return VStack(spacing: 3) {
             Group {
                 if live {
-                    TimelineView(.animation) { context in
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                         CharacterCanvas(character: character, theme: settings.spriteTheme, date: context.date,
                                         activity: selected ? .run : .walk)
                     }

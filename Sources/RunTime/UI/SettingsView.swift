@@ -135,7 +135,7 @@ struct SettingsView: View {
     /// 지금 고른 러너를 크게 보여 주는 머리 카드 (iOS 설정 앱 맨 위 계정 카드 자리).
     private var runnerHero: some View {
         HStack(spacing: 14) {
-            TimelineView(.animation) { context in
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                 CharacterCanvas(character: settings.character, theme: settings.spriteTheme, date: context.date)
             }
             .frame(width: 92, height: 60)
