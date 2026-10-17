@@ -178,9 +178,10 @@ final class AppUpdater: ObservableObject {
         return String(line[range.upperBound...])
     }
 
-    /// 팝오버가 닫혔을 때. 미뤄 둔 자동 업데이트를 적용한다.
-    func popoverClosed() {
-        applyAutoUpdateIfIdle()
+    /// 팝오버나 앱 창이 닫혔을 때 미뤄 둔 자동 업데이트를 적용한다.
+    /// 팝오버를 닫고 설정·파일 창을 여는 중일 수 있어, 그 창이 뜬 뒤에 다시 본다.
+    func appClosedWindow() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.applyAutoUpdateIfIdle() }
     }
 
     private func applyAutoUpdateIfIdle() {

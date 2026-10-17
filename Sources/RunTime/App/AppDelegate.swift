@@ -71,8 +71,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         animator.compactProvider = { [weak self] in self?.currentLabel != nil }
         animator.set(display: .normal(.sleeping))
         LeaderboardFeed.shared.start()
-        AppUpdater.shared.isInUse = { [weak self] in self?.popover?.isShown ?? false }
+        // 설정·순위표 창이나 파일 고르는 창을 쓰는 중에도 업데이트가 앱을 끄지 않게 본다
+        AppUpdater.shared.isInUse = { [weak self] in
+            self?.popover?.isShown == true || NSApp.modalWindow != nil
+                || NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) }
+        }
         AppUpdater.shared.start()
+        NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
+            .filter { ($0.object as? NSWindow)?.styleMask.contains(.titled) == true }
+            .sink { _ in AppUpdater.shared.appClosedWindow() }
+            .store(in: &cancellables)
         // 메뉴바가 있는 화면이 바뀌면(레티나↔일반, 메뉴바 높이) 레이어 배율과 칸 크기를 맞춘다
         NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)
             .merge(with: NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification),
@@ -361,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         anchorWindow?.orderOut(nil)
         // 상점에서 써 보던 트랙·날씨가 닫힌 뒤에도 남지 않게
         GameWallet.shared.tryingOn = nil
-        AppUpdater.shared.popoverClosed()
+        AppUpdater.shared.appClosedWindow()
     }
 
     private func openSettings(tab: SettingsView.Tab? = nil) {
