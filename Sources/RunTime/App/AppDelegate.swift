@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         animator.canvas = MenuBarCanvas(barHeight: NSStatusBar.system.thickness, zoom: engine.settings.runnerSize.zoom,
                                         backing: NSScreen.main?.backingScaleFactor ?? 2)
         statusItem = NSStatusBar.system.statusItem(withLength: animator.canvas.size.width + 4)
+        EditMenu.install()
         // 이름이 있어야 사용자가 ⌘로 끌어 옮긴 자리를 macOS가 기억한다. 없으면 켤 때마다 맨 왼쪽에 놓여
         // 메뉴가 긴 앱이 앞에 오면 가장 먼저 «로 접힌다.
         statusItem.autosaveName = "RunTime"
