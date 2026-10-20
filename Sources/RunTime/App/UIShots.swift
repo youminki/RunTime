@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WorkLogCore
 
 /// 화면 점검: 팝오버·설정·일별·순위표를 실제 데이터로 창에 띄워 PNG로 저장한다.
 /// `ImageRenderer`는 Form·Toggle 같은 AppKit 컨트롤을 그리지 못해서 창에 올린 뒤 그 뷰를 찍는다.
@@ -10,6 +11,8 @@ enum UIShots {
         let page = WorkLogPage()
         page.mode = mode
         page.preview = preview
+        // 예시 일지의 마지막 기록일을 보인다 (날이 바뀌어도 빈 화면이 찍히지 않게)
+        if let last = WorkLogStore.shared.log.days.first { page.day = last }
         page.search = search
         // 줄이 없는 새 프로젝트도 카드와 목록에 보이는지 본다
         if let newProject {
@@ -19,9 +22,17 @@ enum UIShots {
         return page
     }
 
+    private static func importPage() -> WorkLogPage {
+        let page = WorkLogPage()
+        page.importText = "1.uxhub\n- QA 수정사항 7건 반영 (완료)\n2. VeloX\n- 데이터 수집 > 파이프라인 생성 API 연동 (100%)"
+        return page
+    }
+
     private static func settingsPage(_ section: WorkLogPage.SettingsSection) -> WorkLogPage {
         let page = WorkLogPage()
         page.settingsSection = section
+        // 긴 웹훅 주소를 붙여 넣었을 때 창 너비를 넘지 않는지 본다
+        if section == .teams { page.teamsDraft = String(repeating: "https://example.environment.api.powerplatform.com/workflows/", count: 3) }
         return page
     }
 
@@ -77,6 +88,22 @@ enum UIShots {
             ("worklog-month", .aqua, 700, AnyView(WorkLogView(store: .shared, page: workLogPage(.month)))),
             ("worklog-search", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, search: "ㄷㅇㅌ")))),
             ("worklog-new-project", .aqua, 700, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, newProject: "회의·보고")))),
+            ("worklog-issues", .aqua, 760, AnyView(WorkLogView(store: .shared, page: workLogPage(.issues)))),
+            ("worklog-issues-dark", .darkAqua, 760, AnyView(WorkLogView(store: .shared, page: workLogPage(.issues)))),
+            ("worklog-quickadd", .aqua, nil, AnyView(QuickAddView(model: QuickAddModel(), store: .shared) {})),
+            ("worklog-quickadd-dark", .darkAqua, nil, AnyView(QuickAddView(model: QuickAddModel(), store: .shared) {})),
+            ("worklog-editor", .aqua, nil, AnyView(Group {
+                if let id = WorkLogStore.shared.log.entries.last(where: { $0.issue != nil })?.id {
+                    EntryEditor(store: .shared, page: WorkLogPage(), id: id).background(WL.canvas)
+                }
+            })),
+            ("worklog-editor-unlinked", .darkAqua, nil, AnyView(Group {
+                if let id = WorkLogStore.shared.log.entries.last(where: { $0.issue == nil })?.id {
+                    EntryEditor(store: .shared, page: WorkLogPage(), id: id).background(WL.canvas)
+                }
+            })),
+            ("worklog-status", .aqua, nil, AnyView(StatusPicker(current: .percent(60)) { _ in }.background(WL.canvas))),
+            ("worklog-import", .aqua, nil, AnyView(WorkLogImportSheet(store: .shared, page: importPage()))),
             ("worklog-settings", .aqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: WorkLogPage(), store: .shared))),
             ("worklog-settings-dark", .darkAqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: WorkLogPage(), store: .shared))),
             ("worklog-settings-redmine", .aqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: settingsPage(.redmine), store: .shared))),

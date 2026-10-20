@@ -120,7 +120,7 @@ struct WorkLogSettingsView: View {
         switch page.settingsSection {
         case .gitlab: return "머지한 내 MR은 머지한 날에 완료로, 아직 main·dev·release에 들어가지 않은 내 커밋은 브랜치마다 진행중으로 들어옵니다. MR 설명이 레드마인 댓글이 됩니다."
         case .redmine: return "앱이 레드마인 API로 진척률과 댓글을 직접 보내 Claude 토큰을 쓰지 않습니다. 보내기는 레드마인 탭에서 눌러야 나가고, 일감 상태는 바꾸지 않습니다."
-        case .teams: return "일일·주간·월간 보고를 팀즈 채널에 카드로 올립니다. 올리기 전에 한 번 더 묻습니다."
+        case .teams: return "일일·주간·월간 보고를 팀즈 채팅에 카드로 보냅니다. 처음에는 나에게 오는 채팅으로 이어 시험해 보세요. 보내기 전에 한 번 더 묻습니다."
         case .recurring: return "정한 요일이 되면 그날 일지에 저절로 들어갑니다. 그날 지우면 다시 넣지 않습니다."
         case .shortcuts: return "어디서든 한 줄 적기와 퇴근 무렵 알림."
         }
@@ -238,16 +238,24 @@ struct WorkLogSettingsView: View {
     private var teams: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingRow("웹훅 주소", "아래 순서로 만든 주소를 복사해 두고 붙여넣기를 누르세요. 주소는 키체인에 둡니다.") {
-                SecretInput(saved: settings.hasTeamsWebhook, hint: settings.teamsHint ?? "키체인에 저장됨", placeholder: "https://…logic.azure.com/…",
+                SecretInput(saved: settings.hasTeamsWebhook, hint: settings.teamsHint ?? "키체인에 저장됨", placeholder: "https://…powerplatform.com/…",
                             draft: $page.teamsDraft, save: saveTeams,
                             clear: { settings.setTeamsWebhook(""); page.flash("팀즈 웹훅을 지웠습니다") })
             }
+            SettingRow("시험 보내기", teamsTestNote, detailTint: page.teamsTestFailed ? WL.waiting : nil) {
+                Button(sync.postingTeams ? "보내는 중…" : "시험 글 보내기") { sendTest() }
+                    .buttonStyle(NotionButtonStyle())
+                    .disabled(!settings.hasTeamsWebhook || sync.postingTeams)
+            }
             Callout {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("웹훅 주소 만들기").font(.system(size: 13, weight: .semibold))
-                    ForEach(Array(["보고를 올릴 팀즈 채널에서 ⋯ > 워크플로를 엽니다.",
-                                   "‘웹후크 요청이 수신되면 채널에 게시’를 고르고 만듭니다.",
-                                   "마지막 화면에 나온 주소를 복사합니다."].enumerated()), id: \.offset) { index, step in
+                    Text("채팅 웹훅 주소 만들기").font(.system(size: 13, weight: .semibold))
+                    // 채팅용 웹훅 템플릿은 워크플로 앱 목록에는 없고, 보낼 채팅의 ⋯ 메뉴에서 열어야 보인다
+                    ForEach(Array(["팀즈 채팅 목록에서 보낼 채팅(나와의 채팅은 내 이름 옆 ‘(나)’)에 마우스를 올리고 ⋯를 누릅니다.",
+                                   "‘워크플로’를 누르고 ‘웹후크 경고를 채팅으로 보내기’ 템플릿을 고릅니다. 검색은 ‘웹후크’로 합니다.",
+                                   "받을 채팅이 그 채팅으로 채워져 있는지 보고 저장합니다.",
+                                   "워크플로 앱에서 만든 흐름을 열고 편집 > ‘팀즈 웹후크 요청을 받은 경우’에서 ‘흐름을 트리거할 수 있는 사람’(Who can trigger the flow)을 ‘누구나’(Anyone)로 바꿔 저장합니다. 기본값(회사 사용자만)이면 앱이 보낼 수 없습니다.",
+                                   "웹훅 주소를 복사해 위의 붙여넣기를 누르고 ‘시험 글 보내기’로 확인합니다."].enumerated()), id: \.offset) { index, step in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("\(index + 1)").font(.system(size: 12, weight: .semibold)).foregroundStyle(WL.muted).monospacedDigit()
                             Text(step).font(.system(size: 12.5)).foregroundStyle(WL.text)
@@ -256,6 +264,19 @@ struct WorkLogSettingsView: View {
                 }
             }
             .padding(.top, 16)
+        }
+    }
+
+    private var teamsTestNote: String {
+        if let result = page.teamsTestResult { return result }
+        return settings.hasTeamsWebhook ? "이어 둔 채팅에 짧은 시험 카드를 보냅니다." : "웹훅 주소를 먼저 넣으세요."
+    }
+
+    private func sendTest() {
+        sync.postTeams("[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 이어졌습니다 (완료)",
+                       title: "RunTime 연결 시험 · \(WorkLogFormat.when(Date()))") { error in
+            page.teamsTestFailed = error != nil
+            page.teamsTestResult = error.map { "보내지 못했습니다: \($0)" } ?? "보냈습니다. 팀즈 채팅에 카드가 왔는지 보세요."
         }
     }
 
@@ -405,8 +426,9 @@ struct SettingRow<Control: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 12)
-                // 조작은 줄이지 않고, 설명이 남은 너비에서 줄을 바꾼다
-                control.fixedSize().layoutPriority(1)
+                // 조작은 줄이지 않고 설명이 남은 너비에서 줄을 바꾼다. 통째로 fixedSize를 걸면
+                // 글 칸이 들어 있는 글 길이만큼 늘어나 긴 웹훅 주소가 창 밖으로 나간다
+                control.layoutPriority(1)
             }
             .padding(.vertical, 14)
             Rectangle().fill(WL.border).frame(height: 1)

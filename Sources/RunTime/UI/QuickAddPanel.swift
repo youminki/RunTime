@@ -96,7 +96,7 @@ final class QuickAddModel: ObservableObject {
     }
 }
 
-private struct QuickAddView: View {
+struct QuickAddView: View {
     @ObservedObject var model: QuickAddModel
     @ObservedObject var store: WorkLogStore
     let close: () -> Void

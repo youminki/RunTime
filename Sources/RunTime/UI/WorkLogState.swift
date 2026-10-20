@@ -3,7 +3,7 @@ import WorkLogCore
 
 /// 업무 일지 창 상태. `@State` 대신 쓴다 (HoverFlag 참고).
 final class WorkLogPage: ObservableObject {
-    enum Mode: String, CaseIterable { case day = "하루", week = "주간", month = "월간", project = "프로젝트" }
+    enum Mode: String, CaseIterable { case day = "하루", week = "주간", month = "월간", project = "프로젝트", issues = "내 일감" }
     enum Preview { case report, redmine }
 
     @Published var mode = Mode.day
@@ -34,8 +34,19 @@ final class WorkLogPage: ObservableObject {
     @Published var recurringTitle = ""
     @Published var recurringDays: Set<Int> = [2]
     @Published var confirmingTeams = false
+    @Published var teamsTestResult: String?
+    @Published var teamsTestFailed = false
     /// 접어 둔 묶음 (프로젝트 이름, 날짜).
     @Published var collapsed: Set<String> = []
+    /// 내 일감 보기: 찾는 말과 거르기.
+    @Published var issueQuery = ""
+    @Published var issueFilter = IssueFilter.all
+    @Published var renamingRedmine: String?
+    @Published var redmineRenameText = ""
+
+    enum IssueFilter: String, CaseIterable {
+        case all = "전체", working = "진행 중", due = "기한 임박", logged = "오늘 적은"
+    }
     /// 설정 창에서 고른 칸.
     @Published var settingsSection = SettingsSection.gitlab
 

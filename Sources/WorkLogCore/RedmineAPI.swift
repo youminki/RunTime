@@ -8,14 +8,52 @@ public enum RedmineAPI {
         public let project: String
         public let status: String
         public let doneRatio: Int
+        public var tracker: String = ""
+        public var parentID: Int?
+        /// `yyyy-MM-dd`
+        public var dueDate: String?
+        public var priority: String = ""
 
-        public init(id: Int, subject: String, project: String, status: String, doneRatio: Int) {
+        public init(id: Int, subject: String, project: String, status: String, doneRatio: Int,
+                    tracker: String = "", parentID: Int? = nil, dueDate: String? = nil, priority: String = "") {
             self.id = id
             self.subject = subject
             self.project = project
             self.status = status
             self.doneRatio = doneRatio
+            self.tracker = tracker
+            self.parentID = parentID
+            self.dueDate = dueDate
+            self.priority = priority
         }
+    }
+
+    /// 나에게 배정된 열린 일감 한 쪽 (100개씩). `offset`으로 다음 쪽.
+    public static func myIssuesRequest(base: URL, key: String, offset: Int) -> URLRequest {
+        var request = myIssuesRequest(base: base, key: key)
+        var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "offset", value: String(offset))]
+        request.url = components.url
+        return request
+    }
+
+    /// 번호로 여러 일감을 한 번에 (닫힌 것도). 부모 일감 이름을 받아 보고서 이름을 만드는 데 쓴다.
+    public static func issuesRequest(base: URL, key: String, ids: [Int]) -> URLRequest {
+        var components = URLComponents(url: base.appendingPathComponent("issues.json"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "issue_id", value: ids.map(String.init).joined(separator: ",")),
+            URLQueryItem(name: "status_id", value: "*"),
+            URLQueryItem(name: "limit", value: "100"),
+        ]
+        var request = URLRequest(url: components.url!)
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        return request
+    }
+
+    /// 목록 응답의 전체 개수 (쪽을 더 받을지 정한다).
+    public static func totalCount(_ data: Data) -> Int? {
+        struct Count: Decodable { let total_count: Int? }
+        return (try? JSONDecoder().decode(Count.self, from: data))?.total_count
     }
 
     public static func baseURL(_ text: String) -> URL? {
@@ -94,18 +132,24 @@ public enum RedmineAPI {
 
     public static func parseIssues(_ data: Data) throws -> [Issue] {
         struct Named: Decodable { let name: String }
+        struct Ref: Decodable { let id: Int }
         struct Raw: Decodable {
             let id: Int
             let subject: String
             let project: Named?
             let status: Named?
+            let tracker: Named?
+            let priority: Named?
+            let parent: Ref?
             let done_ratio: Int?
+            let due_date: String?
         }
         struct List: Decodable { let issues: [Raw]? ; let issue: Raw? }
         let list = try JSONDecoder().decode(List.self, from: data)
         return (list.issues ?? list.issue.map { [$0] } ?? []).map {
             Issue(id: $0.id, subject: $0.subject, project: $0.project?.name ?? "", status: $0.status?.name ?? "",
-                  doneRatio: $0.done_ratio ?? 0)
+                  doneRatio: $0.done_ratio ?? 0, tracker: $0.tracker?.name ?? "", parentID: $0.parent?.id,
+                  dueDate: $0.due_date, priority: $0.priority?.name ?? "")
         }
     }
 

@@ -42,6 +42,17 @@ public enum TeamsWebhook {
         }
     }
 
+    /// 실패 응답을 고칠 수 있는 말로. 템플릿 기본값(회사 사용자만 실행)이면 OAuth를 요구해 401이 온다.
+    public static func failure(status: Int?, body: Data) -> String {
+        let text = String(decoding: body, as: UTF8.self)
+        if text.contains("DirectApiAuthorizationRequired") || status == 401 {
+            return "워크플로가 회사 계정 인증을 요구합니다. 워크플로 편집 > ‘팀즈 웹후크 요청을 받은 경우’ > ‘흐름을 트리거할 수 있는 사람’을 ‘누구나’로 바꾸고 저장한 뒤 새 주소를 넣으세요."
+        }
+        if status == 404 { return "워크플로를 찾지 못했습니다. 지웠거나 꺼져 있는지 보세요. (404)" }
+        if status == 400 { return "워크플로가 카드 꼴을 받지 않았습니다. ‘웹후크 경고를 채팅으로 보내기’ 템플릿인지 보세요. (400)" }
+        return "팀즈가 받지 않았습니다 (HTTP \(status ?? 0))"
+    }
+
     public static func request(url: URL, report: String, title: String) throws -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

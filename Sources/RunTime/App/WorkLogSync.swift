@@ -26,6 +26,8 @@ final class WorkLogSettings: ObservableObject {
     @Published var doneFirst: Bool { didSet { defaults.set(doneFirst, forKey: "workLog.doneFirst") } }
     @Published var weeklyPlan: Bool { didSet { defaults.set(weeklyPlan, forKey: "workLog.weeklyPlan") } }
     @Published var dailyHeader: Bool { didSet { defaults.set(dailyHeader, forKey: "workLogReportHeader") } }
+    /// 보고서를 레드마인 일감 이름으로 쓰고 QA 건은 `QA 수정사항 N건 반영`으로 모은다.
+    @Published var reportByIssue: Bool { didSet { defaults.set(reportByIssue, forKey: "workLog.reportByIssue") } }
     /// ⌃⌥L로 어디서든 한 줄 적기.
     @Published var quickAddEnabled: Bool { didSet { defaults.set(quickAddEnabled, forKey: "workLog.quickAdd") } }
 
@@ -46,14 +48,17 @@ final class WorkLogSettings: ObservableObject {
         doneFirst = defaults.object(forKey: "workLog.doneFirst") as? Bool ?? true
         weeklyPlan = defaults.object(forKey: "workLog.weeklyPlan") as? Bool ?? false
         dailyHeader = defaults.object(forKey: "workLogReportHeader") as? Bool ?? false
+        reportByIssue = defaults.object(forKey: "workLog.reportByIssue") as? Bool ?? true
         quickAddEnabled = defaults.object(forKey: "workLog.quickAdd") as? Bool ?? true
     }
 
     private static let keyAccount = "redmine-api-key"
     private static let teamsAccount = "teams-webhook"
 
-    /// 웹훅 주소는 아는 사람 누구나 채널에 글을 올릴 수 있어 키체인에 둔다.
+    /// 웹훅 주소는 아는 사람 누구나 그 채팅에 글을 올릴 수 있어 키체인에 둔다.
     var teamsWebhook: URL? {
+        // 점검용: 다른 서명의 빌드가 키체인을 묻지 않게 환경 변수로 받는다
+        if let text = ProcessInfo.processInfo.environment["RUNTIME_TEAMS_WEBHOOK"], TeamsWebhook.isValid(text) { return URL(string: text) }
         guard !Self.keychainOff else { return nil }
         return Keychain.read(Self.teamsAccount).flatMap(URL.init(string:))
     }
@@ -75,6 +80,8 @@ final class WorkLogSettings: ObservableObject {
 
     /// 보낼 때만 키체인에서 읽고, 한 번 읽으면 앱이 켜져 있는 동안 메모리에 둔다.
     var redmineKey: String? {
+        // 점검용: 다른 서명의 빌드가 키체인을 묻지 않게 환경 변수로 받는다
+        if let key = ProcessInfo.processInfo.environment["RUNTIME_REDMINE_KEY"], !key.isEmpty { return key }
         // 허용 창에서 거부해도 한 번만 묻는다 (보낼 때마다 다시 뜨지 않게). 키를 새로 저장하면 다시 읽는다
         if keyLoaded { return cachedKey }
         guard !Self.keychainOff else { return nil }
@@ -114,7 +121,11 @@ final class WorkLogSettings: ObservableObject {
     /// 웹훅 주소의 호스트만 (서명 값이 든 주소 전체는 키체인에만).
     @Published private(set) var teamsHint: String?
 
-    var redmineReady: Bool { RedmineAPI.baseURL(redmineURL) != nil && hasRedmineKey }
+    /// 점검용 환경 변수(RUNTIME_REDMINE_URL)가 있으면 그 주소를 쓴다. 설정에는 쓰지 않아 앱 설정이 바뀌지 않는다.
+    var effectiveRedmineURL: String { ProcessInfo.processInfo.environment["RUNTIME_REDMINE_URL"] ?? redmineURL }
+    private var envKey: Bool { !(ProcessInfo.processInfo.environment["RUNTIME_REDMINE_KEY"] ?? "").isEmpty }
+
+    var redmineReady: Bool { RedmineAPI.baseURL(effectiveRedmineURL) != nil && (hasRedmineKey || envKey) }
 
     /// Claude Code의 redmine MCP 설정에서 주소와 키를 옮겨 온다. 키는 그 레드마인에만 보낸다.
     func importFromClaude() -> Bool {
@@ -193,11 +204,9 @@ final class WorkLogSync: ObservableObject {
     @Published private(set) var lastCapture: Date?
     @Published private(set) var captureError: String?
     @Published private(set) var lastAdded = 0
-    /// 나에게 배정된 열린 일감. 일감 고르기와 지금 진척률 보기에 쓴다.
-    @Published private(set) var myIssues: [RedmineAPI.Issue] = []
     @Published private(set) var issuesError: String?
-    /// 보낼 일감의 지금 제목·진척률. 내 열린 일감 목록에 없는 것(남이 맡았거나 닫힌 일감)도 하나씩 받아 둔다.
-    @Published private(set) var issueInfo: [Int: RedmineAPI.Issue] = [:]
+    @Published private(set) var loadingIssues = false
+    @Published private(set) var issuesLoadedAt: Date?
     private var requestedInfo: Set<Int> = []
     @Published private(set) var sending = false
     @Published private(set) var activities: [RedmineAPI.Activity] = []
@@ -220,6 +229,8 @@ final class WorkLogSync: ObservableObject {
 
     private func tick() {
         if settings.captureEnabled, Date().timeIntervalSince(lastCapture ?? .distantPast) >= 600 { capture() }
+        // 내 일감은 30분마다 새로 받는다
+        if settings.redmineReady, Date().timeIntervalSince(issuesLoadedAt ?? .distantPast) >= 1800 { loadMyIssues() }
         remindIfDue()
     }
 
@@ -364,29 +375,122 @@ final class WorkLogSync: ObservableObject {
 
     // MARK: 레드마인
 
-    func loadMyIssues() {
-        guard let base = RedmineAPI.baseURL(settings.redmineURL), let key = settings.redmineKey else { return }
-        URLSession.shared.dataTask(with: RedmineAPI.myIssuesRequest(base: base, key: key)) { [weak self] data, response, error in
-            let result = Result { () -> [RedmineAPI.Issue] in
-                if let error { throw error }
-                try Self.check(response)
-                return try RedmineAPI.parseIssues(data ?? Data())
-            }
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let issues):
-                    self?.myIssues = issues
-                    self?.issuesError = nil
-                    for issue in issues { self?.issueInfo[issue.id] = issue }
-                case .failure(let error):
-                    self?.issuesError = error.localizedDescription
-                }
-            }
-        }.resume()
+    /// 나에게 배정된 열린 일감 전부와, 일지가 가리키는 일감, 그 조상 일감을 받아 장부에 넣는다.
+    /// 조상 이름으로 보고서 이름(`데이터 수집 > 공유 파일 관리 API 연동`)을 만들고 QA 건을 가린다.
+    func loadMyIssues(completion: (() -> Void)? = nil) {
+        let referenced = store.log.entries.filter { $0.day >= WorkDay.adding(-40, to: WorkDay.today()) }.compactMap(\.issue)
+        fetchBook(assigned: true, extra: referenced, completion: completion)
     }
 
+    /// 장부에 없는 일감만 받아 넣는다 (일감 번호를 새로 적었을 때).
+    func loadInfo(_ ids: [Int]) {
+        let missing = ids.filter { store.log.issue($0) == nil && !requestedInfo.contains($0) }
+        guard !missing.isEmpty else { return }
+        requestedInfo.formUnion(missing)
+        fetchBook(assigned: false, extra: missing)
+    }
+
+    private func fetchBook(assigned: Bool, extra: [Int], completion: (() -> Void)? = nil) {
+        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
+            issuesError = "레드마인 주소(https)와 API 키를 설정하세요"
+            completion?()
+            return
+        }
+        if assigned {
+            guard !loadingIssues else { completion?(); return }
+            loadingIssues = true
+        }
+        queue.async { [weak self] in
+            // 받기를 시작한 때를 장부에 적어, 그 뒤에 앱에서 보낸 진척률을 덮지 않게 한다
+            let startedAt = Date()
+            let result = Result { () -> (infos: [IssueInfo], assignedIDs: Set<Int>?) in
+                var lookup: [Int: RedmineAPI.Issue] = [:]
+                var assignedIDs: Set<Int>?
+                if assigned {
+                    // 100개씩 끝까지 (열린 일감이 100개를 넘는다)
+                    var offset = 0
+                    var ids = Set<Int>()
+                    while offset < 1000 {
+                        let data = try Self.fetch(RedmineAPI.myIssuesRequest(base: base, key: key, offset: offset))
+                        let page = try RedmineAPI.parseIssues(data)
+                        for issue in page { lookup[issue.id] = issue; ids.insert(issue.id) }
+                        offset += 100
+                        if page.isEmpty || offset >= (RedmineAPI.totalCount(data) ?? 0) { break }
+                    }
+                    assignedIDs = ids
+                }
+                // 조상과 따로 부른 일감을 100개씩 묶어 받는다. 사슬이 깊어도 여섯 번이면 맨 위에 닿는다
+                var wanted = Set(extra).subtracting(lookup.keys)
+                var asked = Set<Int>()
+                for _ in 0..<6 {
+                    wanted.formUnion(lookup.values.compactMap(\.parentID))
+                    // 받아지지 않는(권한 없는·지운) 번호는 다시 묻지 않는다
+                    wanted.subtract(lookup.keys)
+                    wanted.subtract(asked)
+                    guard !wanted.isEmpty else { break }
+                    asked.formUnion(wanted)
+                    let list = Array(wanted)
+                    for start in stride(from: 0, to: list.count, by: 100) {
+                        let data = try Self.fetch(RedmineAPI.issuesRequest(base: base, key: key,
+                                                                            ids: Array(list[start..<min(start + 100, list.count)])))
+                        for issue in try RedmineAPI.parseIssues(data) { lookup[issue.id] = issue }
+                    }
+                    wanted = []
+                }
+                let targets = (assignedIDs ?? []).union(extra).filter { lookup[$0] != nil }
+                let infos = targets.compactMap { id in
+                    lookup[id].map { IssueInfo.build($0, lookup: lookup, assigned: assignedIDs?.contains(id) ?? false, now: startedAt) }
+                }
+                return (infos, assignedIDs)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if assigned { self.loadingIssues = false }
+                switch result {
+                case .success(let book):
+                    self.store.updateIssues(book.infos, assignedIDs: book.assignedIDs)
+                    if assigned { self.issuesLoadedAt = Date() }
+                    self.issuesError = nil
+                case .failure(let error):
+                    self.issuesError = error.localizedDescription
+                }
+                completion?()
+            }
+        }
+    }
+
+    /// 백그라운드 큐에서 응답을 기다린다.
+    private static func fetch(_ request: URLRequest) throws -> Data {
+        let semaphore = DispatchSemaphore(value: 0)
+        var output: Result<Data, Error> = .failure(SyncError("응답 없음"))
+        var timed = request
+        timed.timeoutInterval = 30
+        URLSession.shared.dataTask(with: timed) { data, response, error in
+            if let error {
+                output = .failure(error)
+            } else if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                output = .failure(SyncError(statusText(response)))
+            } else {
+                output = .success(data ?? Data())
+            }
+            semaphore.signal()
+        }.resume()
+        semaphore.wait()
+        return try output.get()
+    }
+
+    /// 나에게 배정된 열린 일감 (장부에서). 기한 가까운 것 먼저, 같으면 최근 번호 먼저.
+    var myIssues: [IssueInfo] {
+        store.log.issues.values.filter(\.assigned).sorted {
+            let a = $0.dueDate ?? "9999", b = $1.dueDate ?? "9999"
+            return a != b ? a < b : $0.id > $1.id
+        }
+    }
+
+    func info(_ id: Int) -> IssueInfo? { store.log.issue(id) }
+
     func loadActivities() {
-        guard let base = RedmineAPI.baseURL(settings.redmineURL), let key = settings.redmineKey else { return }
+        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
         URLSession.shared.dataTask(with: RedmineAPI.activitiesRequest(base: base, key: key)) { [weak self] data, response, _ in
             guard (try? Self.check(response)) != nil, let list = try? RedmineAPI.parseActivities(data ?? Data()) else { return }
             DispatchQueue.main.async {
@@ -416,24 +520,15 @@ final class WorkLogSync: ObservableObject {
             return
         }
         postingTeams = true
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            let message: String? = error?.localizedDescription ?? ((try? Self.check(response)) == nil ? Self.statusText(response) : nil)
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            let message: String? = error?.localizedDescription
+                ?? ((try? Self.check(response)) == nil ? TeamsWebhook.failure(status: (response as? HTTPURLResponse)?.statusCode,
+                                                                                body: data ?? Data()) : nil)
             DispatchQueue.main.async {
                 self?.postingTeams = false
                 done(message)
             }
         }.resume()
-    }
-
-    func loadInfo(_ ids: [Int]) {
-        guard let base = RedmineAPI.baseURL(settings.redmineURL), let key = settings.redmineKey else { return }
-        for id in ids where issueInfo[id] == nil && !requestedInfo.contains(id) {
-            requestedInfo.insert(id)
-            URLSession.shared.dataTask(with: RedmineAPI.issueRequest(base: base, key: key, issue: id)) { [weak self] data, response, _ in
-                guard (try? Self.check(response)) != nil, let issue = (try? RedmineAPI.parseIssues(data ?? Data()))?.first else { return }
-                DispatchQueue.main.async { self?.issueInfo[id] = issue }
-            }.resume()
-        }
     }
 
     /// 일감마다 차례로: 댓글·진척률을 보내야 하면 먼저 보내고, 그 다음 날짜별 작업 시간을 남긴다. 상태는 바꾸지 않는다.
@@ -443,7 +538,7 @@ final class WorkLogSync: ObservableObject {
             done(0, ["이미 보내는 중입니다"])
             return
         }
-        guard let base = RedmineAPI.baseURL(settings.redmineURL), let key = settings.redmineKey else {
+        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
             done(0, ["레드마인 주소(https)와 API 키를 설정하세요"])
             return
         }
@@ -488,9 +583,8 @@ final class WorkLogSync: ObservableObject {
                     guard let self else { return }
                     if ok {
                         self.store.markPosted(update.entryIDs)
-                        // 보낸 뒤 진척률을 다시 받아 화면이 새 값을 보이게
-                        self.issueInfo[update.issue] = nil
-                        self.requestedInfo.remove(update.issue)
+                        // 보낸 진척률을 장부에도 적어 다시 받기 전에도 화면이 새 값을 보이게
+                        if let ratio = update.doneRatio { self.store.setIssueRatio(update.issue, ratio) }
                     } else {
                         failures.append("#\(update.issue) " + (error?.localizedDescription ?? Self.statusText(response)))
                     }

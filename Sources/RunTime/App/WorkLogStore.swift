@@ -251,6 +251,60 @@ final class WorkLogStore: ObservableObject {
         if copy.applyRecurring(on: WorkDay.today()) > 0 { change { $0 = copy } }
     }
 
+    /// 받은 일감을 장부에 넣는다. 배정 목록을 통째로 받았으면 거기 없는 일감은 내 일감에서 뺀다.
+    func updateIssues(_ infos: [IssueInfo], assignedIDs: Set<Int>?) {
+        change { log in
+            if let assignedIDs {
+                for (key, info) in log.issues where info.assigned && !assignedIDs.contains(info.id) {
+                    log.issues[key]?.assigned = false
+                }
+            }
+            for var info in infos {
+                let key = String(info.id)
+                if let old = log.issues[key] {
+                    // 배정 목록을 받지 않은 조회는 내 일감 여부를 모르니 있던 값을 둔다
+                    if assignedIDs == nil { info.assigned = old.assigned }
+                    // 받기를 시작한 뒤에 보낸 진척률은 늦게 끝난 받기가 옛 값으로 덮지 않게 둔다
+                    if old.fetchedAt > info.fetchedAt { info.doneRatio = old.doneRatio }
+                }
+                log.issues[key] = info
+            }
+        }
+    }
+
+    func setIssueRatio(_ id: Int, _ ratio: Int) {
+        guard log.issues[String(id)] != nil else { return }
+        change {
+            $0.issues[String(id)]?.doneRatio = ratio
+            $0.issues[String(id)]?.fetchedAt = Date()
+        }
+    }
+
+    /// 레드마인 프로젝트를 보고서에서 부를 이름.
+    func setReportProject(_ name: String, for redmineProject: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        change { log in
+            log.redmineProjects[redmineProject] = trimmed.isEmpty ? nil : trimmed
+            if !trimmed.isEmpty { log.register(project: trimmed) }
+        }
+    }
+
+    /// 내 일감을 고른 날 일지에 넣는다. 이미 그날 그 일감 줄이 있으면 상태만 바꾼다.
+    @discardableResult
+    func addIssue(_ info: IssueInfo, day: String, status: WorkStatus) -> WorkEntry? {
+        if let index = log.entries.firstIndex(where: { $0.day == day && $0.issue == info.id }) {
+            update(log.entries[index].id) { $0.status = status }
+            return log.entries[index]
+        }
+        let project = log.reportProject(for: info)
+        let entry = WorkEntry(day: day, project: project, title: info.reportTitle, status: status, issue: info.id)
+        change {
+            $0.register(project: project)
+            $0.entries.append(entry)
+        }
+        return entry
+    }
+
     func markPosted(_ ids: [UUID]) {
         let now = Date()
         change { log in

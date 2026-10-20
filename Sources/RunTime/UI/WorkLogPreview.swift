@@ -23,11 +23,11 @@ struct WorkLogPreview: View {
         .padding(16)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(WL.sidebar)
-        .alert("팀즈에 올릴까요?", isPresented: $page.confirmingTeams) {
-            Button("올리기") { postTeams() }
+        .alert("팀즈 채팅에 보낼까요?", isPresented: $page.confirmingTeams) {
+            Button("보내기") { postTeams() }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("\(reportTitle)를 연결한 팀즈 채널에 올립니다. 올린 글은 팀즈에서 지워야 합니다.")
+            Text("\(reportTitle)를 이어 둔 팀즈 채팅에 보냅니다. 보낸 글은 팀즈에서 지워야 합니다.")
         }
     }
 
@@ -40,7 +40,7 @@ struct WorkLogPreview: View {
 
     private var scopeEntries: [WorkEntry] {
         switch page.mode {
-        case .day: return store.log.entries(on: page.day)
+        case .day, .issues: return store.log.entries(on: page.day)
         case .week: return store.log.entries(in: WorkDay.week(of: page.day))
         case .month: return store.log.entries(in: WorkDay.month(of: page.day))
         case .project: return selectedProject.map { name in store.log.entries.filter { $0.project == name } } ?? []
@@ -54,7 +54,7 @@ struct WorkLogPreview: View {
 
     private var reportTitle: String {
         switch page.mode {
-        case .day: return "일일보고"
+        case .day, .issues: return "일일보고"
         case .week: return "주간 보고"
         case .month: return "월간 보고"
         case .project: return "프로젝트 요약"
@@ -63,7 +63,7 @@ struct WorkLogPreview: View {
 
     private var rangeText: String {
         switch page.mode {
-        case .day: return WorkLogFormat.dayTitle(page.day)
+        case .day, .issues: return WorkLogFormat.dayTitle(page.day)
         case .week: return WorkLogFormat.weekTitle(page.day)
         case .month: return WorkLogFormat.monthTitle(page.day)
         case .project: return selectedProject ?? ""
@@ -72,16 +72,17 @@ struct WorkLogPreview: View {
 
     private var reportText: String {
         switch page.mode {
-        case .day:
-            let body = WorkReport.daily(scopeEntries, in: store.log, doneFirst: settings.doneFirst)
+        case .day, .issues:
+            let body = WorkReport.daily(scopeEntries, in: store.log, doneFirst: settings.doneFirst, byIssue: settings.reportByIssue)
             return body.isEmpty || !settings.dailyHeader ? body : "[금일 진행 사항]\n" + body
         case .week:
             return WorkReport.weekly(scopeEntries, in: store.log, week: WorkDay.week(of: page.day),
-                                     doneFirst: settings.doneFirst, nextWeekPlan: settings.weeklyPlan)
+                                     doneFirst: settings.doneFirst, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue)
         case .month:
-            return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day))
+            return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: settings.reportByIssue)
         case .project:
-            return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: settings.doneFirst)
+            return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: settings.doneFirst,
+                                    byIssue: settings.reportByIssue)
         }
     }
 
@@ -107,7 +108,9 @@ struct WorkLogPreview: View {
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
             VStack(alignment: .leading, spacing: 6) {
-                if page.mode == .day {
+                Toggle("레드마인 일감 이름으로, QA는 건수로 모아 쓰기", isOn: $settings.reportByIssue)
+                    .help("일감 줄은 `데이터 수집 > 공유 파일 관리 API 연동 (100%)`처럼, QA 건은 `QA 수정사항 N건 반영`으로 적습니다")
+                if page.mode == .day || page.mode == .issues {
                     Toggle("맨 위에 [금일 진행 사항] 붙이기", isOn: $settings.dailyHeader)
                 }
                 if page.mode != .month {
@@ -133,13 +136,13 @@ struct WorkLogPreview: View {
                     Button { page.confirmingTeams = true } label: {
                         HStack {
                             if sync.postingTeams { ProgressView().controlSize(.small) }
-                            Label("팀즈에 올리기", systemImage: "bubble.left.and.text.bubble.right")
+                            Label("팀즈 채팅에 보내기", systemImage: "bubble.left.and.text.bubble.right")
                         }
                     }
                     .buttonStyle(NotionButtonStyle(fill: true))
                     .disabled(text.isEmpty || sync.postingTeams)
                 } else {
-                    Button("팀즈 채널 잇기") { page.settingsSection = .teams; page.showsSettings = true }
+                    Button("팀즈 채팅 잇기") { page.settingsSection = .teams; page.showsSettings = true }
                         .buttonStyle(TextLinkButtonStyle())
                         .frame(maxWidth: .infinity)
                 }
@@ -149,7 +152,7 @@ struct WorkLogPreview: View {
 
     private func postTeams() {
         sync.postTeams(reportText, title: "\(reportTitle) · \(rangeText)") { error in
-            page.flash(error.map { "팀즈에 올리지 못했습니다: \($0)" } ?? "팀즈에 올렸습니다")
+            page.flash(error.map { "팀즈에 보내지 못했습니다: \($0)" } ?? "팀즈 채팅에 보냈습니다")
         }
     }
 
@@ -231,8 +234,8 @@ struct WorkLogPreview: View {
         return parts.joined(separator: " · ") + " · 일감 상태는 바꾸지 않습니다"
     }
 
-    private func info(_ issue: Int) -> RedmineAPI.Issue? {
-        sync.issueInfo[issue] ?? sync.myIssues.first { $0.id == issue }
+    private func info(_ issue: Int) -> IssueInfo? {
+        sync.info(issue)
     }
 
     /// 이 일감에서 작업 시간을 아직 남기지 않은 날들.
@@ -270,8 +273,9 @@ struct WorkLogPreview: View {
                     .help(lowering ? "레드마인의 지금 진척률보다 낮습니다" : "")
             }
             if let current {
-                Text(current.subject).font(WL.meta).lineLimit(2)
-                Text(current.project).font(WL.caption).foregroundStyle(.secondary).lineLimit(1)
+                // 대괄호 머리와 기능 번호를 뗀 보고서 이름으로 보인다. QA 건은 QA로 묶일 것을 알린다
+                Text(current.isQA ? IssueInfo.cleanSubject(current.subject) : current.reportTitle).font(WL.meta).lineLimit(2)
+                Text((current.isQA ? "QA 수정사항 · " : "") + current.project).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1)
             }
             if !update.needsNote {
                 Text("댓글은 보냈습니다. 작업 시간만 남깁니다.").font(WL.caption).foregroundStyle(.secondary)

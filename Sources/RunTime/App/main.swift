@@ -9,6 +9,39 @@ LegacyMigration.run()
 if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
     let args = Array(CommandLine.arguments.dropFirst(index + 1))
     // 앱 창을 열지 않고 GitLab MR과 로컬 커밋을 지금 가져온다
+    // 나에게 배정된 열린 일감을 받아 장부에 넣고 보고서 이름과 함께 짧게 보인다 (MCP 없이 일감 목록 보기)
+    if args.first == "issues" {
+        WorkLogSync.shared.loadMyIssues {
+            WorkLogStore.shared.saveNow()
+            let sync = WorkLogSync.shared
+            if let error = sync.issuesError { print("받지 못함: \(error)"); exit(1) }
+            let log = WorkLogStore.shared.log
+            for project in Array(Set(sync.myIssues.map(\.project))).sorted() {
+                let issues = sync.myIssues.filter { $0.project == project }
+                print("\(project) → 보고서: \(log.reportProject(for: issues[0])) (\(issues.count)개)")
+                for info in issues {
+                    let due = info.dueDate.map { " 기한 \($0)" } ?? ""
+                    print("  #\(info.id) \(info.doneRatio)% \(info.status)\(due)\(info.isQA ? " [QA]" : "")  \(info.reportTitle)")
+                }
+            }
+            exit(0)
+        }
+        RunLoop.main.run()
+    }
+    // 팀즈 채팅 웹훅 시험: RUNTIME_TEAMS_WEBHOOK(없으면 앱에 저장한 주소)으로 카드를 보낸다. 둘째 값이 report면 오늘 일일보고를 보낸다
+    if args.first == "teams-test" {
+        let log = WorkLogStore.shared.log
+        let today = WorkDay.today()
+        let report = args.dropFirst().first == "report"
+            ? WorkReport.daily(log.entries(on: today), in: log, doneFirst: true, byIssue: true)
+            : "[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 이어졌습니다 (완료)"
+        let title = args.dropFirst().first == "report" ? "일일보고 · \(WorkReport.shortDate(today))" : "RunTime 연결 시험"
+        WorkLogSync.shared.postTeams(report.isEmpty ? "오늘 기록 없음" : report, title: title) { error in
+            print(error.map { "보내지 못함: \($0)" } ?? "보냄")
+            exit(error == nil ? 0 : 1)
+        }
+        RunLoop.main.run()
+    }
     if args.first == "capture" {
         WorkLogSync.shared.capture {
             WorkLogStore.shared.saveNow()

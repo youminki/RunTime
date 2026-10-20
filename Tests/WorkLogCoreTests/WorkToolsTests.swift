@@ -98,5 +98,7 @@ import Testing
         #expect(TeamsWebhook.isValid("https://prod-12.koreacentral.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke?sig=x"))
         #expect(!TeamsWebhook.isValid("https://example.com/hook"))
         #expect(!TeamsWebhook.isValid("https://evil-office.com/hook"))
+        #expect(TeamsWebhook.isValid("https://default9cc8.a6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/x/triggers/manual/paths/invoke?api-version=1"))
+        #expect(TeamsWebhook.failure(status: 401, body: Data(#"{"error":{"code":"DirectApiAuthorizationRequired"}}"#.utf8)).contains("누구나"))
     }
 }

@@ -29,6 +29,7 @@ struct WorkLogView: View {
                             case .week: periodPage(weekEntries, span: "이 주")
                             case .month: periodPage(monthEntries, span: "이 달")
                             case .project: projectPage
+                            case .issues: IssueBoard(store: store, page: page, sync: sync, settings: settings)
                             }
                         }
                     }
@@ -646,7 +647,7 @@ struct WorkLogImportSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("보고서 붙여넣기").font(WL.title)
-                Text("\(WorkLogFormat.dayTitle(page.day))에 넣습니다. `1. 프로젝트` 아래 `- 내용 (완료)` 꼴을 읽고, #1234는 일감 번호로 저장합니다.")
+                Text("\(WorkLogFormat.dayTitle(page.day))에 넣습니다. ‘1. 프로젝트’ 아래 ‘- 내용 (완료)’ 꼴을 읽고, #1234는 일감 번호로 저장합니다.")
                     .font(.system(size: 12.5)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
             }
             TextEditor(text: $page.importText)

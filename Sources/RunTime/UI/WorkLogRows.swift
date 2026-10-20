@@ -27,7 +27,8 @@ struct EntryRow: View {
             ), onCommit: { store.commitTitle(entry.id) })
             .textFieldStyle(.plain)
             .font(.system(size: 14))
-            Spacer(minLength: 6)
+            // 빈칸을 두면 글 칸과 너비를 반씩 나눠 제목이 잘려, 글 칸이 남은 너비를 다 쓰게 한다
+            .frame(maxWidth: .infinity)
             if let source = entry.source { SourceMark(source: source) }
             if let hours = entry.hours, hours > 0 {
                 Text(WorkTime.label(hours)).font(WL.number).foregroundStyle(.tertiary)
@@ -104,7 +105,7 @@ struct StatusPicker: View {
                 option(.ongoing)
             }
             SectionLabel("진행률")
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(48), spacing: 6), count: 5), spacing: 6) {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(64), spacing: 6), count: 5), spacing: 6) {
                 ForEach(Array(stride(from: 10, through: 90, by: 10)), id: \.self) { option(.percent($0)) }
             }
         }
@@ -117,6 +118,7 @@ struct StatusPicker: View {
             HStack(spacing: 5) {
                 StatusGlyph(status: status, size: 12)
                 Text(status.label).font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                    .lineLimit(1).fixedSize()
             }
             .padding(.horizontal, 8)
             .frame(minWidth: 48, minHeight: 26)
@@ -156,13 +158,22 @@ struct EntryEditor: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 92)
                         if !sync.myIssues.isEmpty {
-                            Menu("내 일감에서") {
+                            Menu {
                                 ForEach(sortedIssues(for: entry), id: \.id) { issue in
-                                    Button("#\(String(issue.id))  \(issue.subject) · \(issue.doneRatio)%") {
+                                    Button("#\(String(issue.id))  \(issue.reportTitle) · \(issue.doneRatio)%") {
                                         store.update(id) { $0.issue = issue.id }
                                     }
                                 }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text("내 일감에서 고르기")
+                                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                                }
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(WL.accent)
                             }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
                             .fixedSize()
                         }
                         Spacer()
@@ -171,8 +182,28 @@ struct EntryEditor: View {
                         }
                     }
                 }
-                if let issue = entry.issue, let info = sync.issueInfo[issue] ?? sync.myIssues.first(where: { $0.id == issue }) {
-                    Text("\(info.project) · \(info.subject) · 지금 \(info.doneRatio)%")
+                if entry.issue == nil {
+                    let suggestions = IssueMatch.suggest(entry.title, in: Array(store.log.issues.values))
+                    if !suggestions.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            SectionLabel("맞을 만한 일감")
+                            ForEach(suggestions) { info in
+                                Button { store.update(id) { $0.issue = info.id } } label: {
+                                    HStack(spacing: 6) {
+                                        Text("#" + String(info.id)).font(WL.number).foregroundStyle(WL.muted)
+                                        Text(info.reportTitle).font(.system(size: 12)).foregroundStyle(WL.text).lineLimit(1)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(.horizontal, 6).frame(height: 24).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .hoverRow()
+                            }
+                        }
+                    }
+                }
+                if let issue = entry.issue, let info = sync.info(issue) {
+                    Text("\(info.reportTitle) · 레드마인 \(info.doneRatio)%")
                         .font(WL.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
                 field("작업 시간") {
@@ -230,13 +261,14 @@ struct EntryEditor: View {
                         Button(entry.needsRedmine ? "보낸 것으로 표시" : "다시 보내기") {
                             if entry.needsRedmine { store.markPosted([id]) } else { store.update(id) { $0.postedAt = nil } }
                         }
-                        .controlSize(.small)
+                        .buttonStyle(TextLinkButtonStyle(tint: WL.muted))
                     }
-                    Button("지우기", role: .destructive) {
+                    Button("지우기") {
                         page.editing = nil
                         store.delete(id)
                     }
-                    .controlSize(.small)
+                    .buttonStyle(TextLinkButtonStyle(tint: Palette.red))
+                    .padding(.leading, 8)
                 }
             }
             .padding(16)
@@ -253,9 +285,9 @@ struct EntryEditor: View {
     }
 
     /// 이 줄과 이름이 겹치는 레드마인 프로젝트의 일감을 앞에 둔다.
-    private func sortedIssues(for entry: WorkEntry) -> [RedmineAPI.Issue] {
+    private func sortedIssues(for entry: WorkEntry) -> [IssueInfo] {
         let project = entry.project.lowercased()
-        let related = { (issue: RedmineAPI.Issue) in
+        let related = { (issue: IssueInfo) in
             issue.project.lowercased().contains(project) || project.contains(issue.project.lowercased())
         }
         return sync.myIssues.filter(related) + sync.myIssues.filter { !related($0) }

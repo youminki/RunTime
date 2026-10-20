@@ -160,6 +160,10 @@ public struct WorkLog: Codable, Equatable {
     public var dismissed: Set<String>
     /// 정한 요일마다 저절로 넣는 일 (주간 회의 같은 상시 업무).
     public var recurring: [RecurringWork]
+    /// 레드마인 일감 장부 (번호 문자열 → 정보). JSON에서 번호를 키로 쓰려고 문자열로 둔다.
+    public var issues: [String: IssueInfo]
+    /// 레드마인 프로젝트 이름 → 보고서 프로젝트 이름. 예: `목포 데이터밸류 체인 구축` → `uxhub`.
+    public var redmineProjects: [String: String]
 
     public init(projects: [String] = [], entries: [WorkEntry] = [], aliases: [String: String] = [:],
                 dismissed: Set<String> = [], recurring: [RecurringWork] = []) {
@@ -168,6 +172,20 @@ public struct WorkLog: Codable, Equatable {
         self.aliases = aliases
         self.dismissed = dismissed
         self.recurring = recurring
+        self.issues = [:]
+        self.redmineProjects = [:]
+    }
+
+    public func issue(_ id: Int?) -> IssueInfo? {
+        id.flatMap { issues[String($0)] }
+    }
+
+    /// 레드마인 일감을 적을 때 쓸 보고서 프로젝트. 정해 둔 이름, 같은 레드마인 프로젝트 일감을 적은 일지 프로젝트, 레드마인 이름 순.
+    public func reportProject(for info: IssueInfo) -> String {
+        if let name = redmineProjects[info.project], !name.isEmpty { return name }
+        let sameProject = Set(issues.values.filter { $0.project == info.project }.map(\.id))
+        if let used = entries.last(where: { $0.issue.map(sameProject.contains) == true })?.project { return used }
+        return info.project
     }
 
     public init(from decoder: Decoder) throws {
@@ -177,6 +195,8 @@ public struct WorkLog: Codable, Equatable {
         aliases = try c.decodeIfPresent([String: String].self, forKey: .aliases) ?? [:]
         dismissed = try c.decodeIfPresent(Set<String>.self, forKey: .dismissed) ?? []
         recurring = try c.decodeIfPresent([RecurringWork].self, forKey: .recurring) ?? []
+        issues = try c.decodeIfPresent([String: IssueInfo].self, forKey: .issues) ?? [:]
+        redmineProjects = try c.decodeIfPresent([String: String].self, forKey: .redmineProjects) ?? [:]
     }
 
     /// 그날 요일에 맞는 고정 업무를 넣는다. 이미 있거나 그날 지운 것은 건너뛴다.
@@ -295,6 +315,10 @@ public struct WorkLog: Codable, Equatable {
         merged.entries += mine.entries.filter { changed[$0.id] != nil && !onDisk.contains($0.id) && baseByID[$0.id] == nil }
         merged.dismissed.formUnion(mine.dismissed)
         if mine.recurring != base.recurring { merged.recurring = mine.recurring }
+        // 장부는 나중에 받은 것이 맞다. 이 창에서 받은 것을 파일 것 위에 얹는다
+        merged.issues.merge(mine.issues) { disk, mine in mine.fetchedAt >= disk.fetchedAt ? mine : disk }
+        // 지운 이름도 되살아나지 않게 바뀌었으면 통째로 내 것을 쓴다
+        if mine.redmineProjects != base.redmineProjects { merged.redmineProjects = mine.redmineProjects }
         if mine.aliases != base.aliases { merged.aliases.merge(mine.aliases) { _, mine in mine } }
         if mine.projects != base.projects {
             merged.projects = mine.projects + disk.projects.filter { !mine.projects.contains($0) }
