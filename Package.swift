@@ -8,13 +8,15 @@ let package = Package(
         .target(name: "UsageCore"),
         .target(name: "GameCore"),
         .target(name: "SearchCore"),
+        .target(name: "WorkLogCore"),
         .executableTarget(
             name: "RunTime",
-            dependencies: ["UsageCore", "GameCore", "SearchCore"],
+            dependencies: ["UsageCore", "GameCore", "SearchCore", "WorkLogCore"],
             resources: [.copy("Assets")]
         ),
         .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"]),
         .testTarget(name: "GameCoreTests", dependencies: ["GameCore"]),
         .testTarget(name: "SearchCoreTests", dependencies: ["SearchCore"]),
+        .testTarget(name: "WorkLogCoreTests", dependencies: ["WorkLogCore"]),
     ]
 )

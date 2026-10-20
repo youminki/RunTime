@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 import UsageCore
+import WorkLogCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
@@ -22,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var closingPopover = false
     private var settingsWindow: NSWindow?
     private var dailyDetailWindow: NSWindow?
+    private var workLogWindow: NSWindow?
+    private let workLogPage = WorkLogPage()
     private var leaderboardWindow: NSWindow?
     private var welcomeWindow: NSWindow?
     private var cancellables: Set<AnyCancellable> = []
@@ -32,10 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popoverFrameObservers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        EditMenu.install()
         animator.canvas = MenuBarCanvas(barHeight: NSStatusBar.system.thickness, zoom: engine.settings.runnerSize.zoom,
                                         backing: NSScreen.main?.backingScaleFactor ?? 2)
         statusItem = NSStatusBar.system.statusItem(withLength: animator.canvas.size.width + 4)
-        EditMenu.install()
         // 이름이 있어야 사용자가 ⌘로 끌어 옮긴 자리를 macOS가 기억한다. 없으면 켤 때마다 맨 왼쪽에 놓여
         // 메뉴가 긴 앱이 앞에 오면 가장 먼저 «로 접힌다.
         statusItem.autosaveName = "RunTime"
@@ -192,6 +195,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 if self.popover?.isShown != true { self.togglePopover() }
             case .daily:
                 self.openDailyDetail()
+            case .workLog:
+                self.workLogPage.preview = .redmine
+                self.openWorkLog()
             }
         }
         // 설정 창을 열어 둔 채 시스템 설정에서 자동 시작을 바꾸고 돌아와도 맞게 보이게
@@ -200,6 +206,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .store(in: &cancellables)
         Notifier.shared.requestAuthorization()
         engine.start()
+        WorkLogSync.shared.start()
+        // 업무 일지 작업 시간 어림: 그날 폴더별로 Claude Code를 쓴 분
+        WorkLogSync.shared.minutesByFolder = { [weak self] day in
+            self?.engine.snapshot?.dailyTotals.first { WorkDay.key($0.dayStart) == day }?.projectActiveMinutes ?? [:]
+        }
+        GlobalHotKey.shared.quickAction = { QuickAddPanel.shared.toggle() }
+        GlobalHotKey.shared.setQuickAdd(WorkLogSettings.shared.quickAddEnabled)
         // 처음 설치한 사람에게만 한 번. 러너가 메뉴바에 자리 잡은 뒤에 띄운다
         if LegacyMigration.isFreshInstall && LaunchAtLogin.available {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.openWelcome() }
@@ -230,6 +243,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menu.addItem(.separator())
         add(engine.settings.globalHotKeyEnabled && GlobalHotKey.shared.isRegistered
             ? "사용량 보기 (\(GlobalHotKey.displayName))" : "사용량 보기") { [weak self] in self?.togglePopover() }
+        add("업무 일지") { [weak self] in self?.openWorkLog() }
+        add(WorkLogSettings.shared.quickAddEnabled ? "업무 한 줄 적기 (\(GlobalHotKey.quickCombo.label))" : "업무 한 줄 적기") {
+            QuickAddPanel.shared.show()
+        }
         add("일별 사용량") { [weak self] in self?.openDailyDetail() }
         add("토큰 러너 순위") { [weak self] in self?.openLeaderboard() }
         add("새로고침") { [weak self] in self?.engine.refreshNow(forceOfficial: true) }
@@ -271,6 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   openSettings: { [weak self] in self?.openSettings() },
                                   importRunner: { [weak self] in self?.importRunner() },
                                   openDailyDetail: { [weak self] in self?.openDailyDetail() },
+                                  openWorkLog: { [weak self] in self?.openWorkLog() },
                                   openLeaderboard: { [weak self] in self?.openLeaderboard() },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))
         // 내용 크기가 바뀌면 창 제약 대신 팝오버에 알려서, 팝오버가 메뉴바 쪽 자리를 지킨 채 크기를 바꾸게 한다
@@ -400,6 +418,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func openDailyDetail() {
         dailyDetailWindow = showWindow(dailyDetailWindow, title: "일별 사용량", style: [.titled, .closable]) {
             DailyDetailView(engine: engine)
+        }
+    }
+
+    private func openWorkLog() {
+        if workLogWindow?.isVisible != true { workLogPage.resetToToday() }
+        workLogWindow = showWindow(workLogWindow, title: "업무 일지",
+                                   style: [.titled, .closable, .resizable, .miniaturizable]) {
+            WorkLogView(store: .shared, page: workLogPage)
         }
     }
 

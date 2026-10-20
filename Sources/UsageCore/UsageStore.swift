@@ -38,7 +38,12 @@ public final class UsageStore {
         /// 폴더(프로젝트)별 토큰과 비용. 폴더를 남기지 않은 옛 기록은 빈 이름("")으로 모은다.
         public var projectTokens: [String: Int] = [:]
         public var projectCostUSD: [String: Double] = [:]
+        /// 폴더별로 Claude Code를 쓴 시간(분). 기록이 있는 5분 칸을 센다. 업무 일지의 작업 시간 추정에 쓴다.
+        public var projectActiveMinutes: [String: Int] = [:]
     }
+
+    /// 활동 시간을 셀 때 한 칸의 길이(분).
+    public static let activitySlotMinutes = 5
 
     private let queue = DispatchQueue(label: "runtime.usagestore")
     private var events: [UsageEvent] = []
@@ -87,6 +92,7 @@ public final class UsageStore {
             var sparkline = [Int](repeating: 0, count: Self.sparklineMinutes)
             var daily: [Date: (tokens: Int, cost: Double, models: [String: Int], projects: [String: Int],
                                projectCost: [String: Double])] = [:]
+            var slots: [Date: [String: Set<Int>]] = [:]
 
             for event in events where event.timestamp <= now {
                 let tokens = event.totalTokens
@@ -103,6 +109,10 @@ public final class UsageStore {
                     daily[eventDay]!.models[event.model, default: 0] += tokens
                     daily[eventDay]!.projects[event.project ?? "", default: 0] += tokens
                     daily[eventDay]!.projectCost[event.project ?? "", default: 0] += cost
+                    if let project = event.project, !project.isEmpty {
+                        let slot = Int(event.timestamp.timeIntervalSince(eventDay)) / (Self.activitySlotMinutes * 60)
+                        slots[eventDay, default: [:]][project, default: []].insert(slot)
+                    }
                 }
                 if event.timestamp > now.addingTimeInterval(-60) {
                     last60s += tokens
@@ -133,7 +143,8 @@ public final class UsageStore {
                 dailyTotals: daily
                     .map { DailyTotal(dayStart: $0.key, tokens: $0.value.tokens, costUSD: $0.value.cost,
                                       modelTokens: $0.value.models, projectTokens: $0.value.projects,
-                                      projectCostUSD: $0.value.projectCost) }
+                                      projectCostUSD: $0.value.projectCost,
+                                      projectActiveMinutes: (slots[$0.key] ?? [:]).mapValues { $0.count * Self.activitySlotMinutes }) }
                     .sorted { $0.dayStart > $1.dayStart },
                 latestClientVersion: events.last { $0.clientVersion != nil }?.clientVersion
             )

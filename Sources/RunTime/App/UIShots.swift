@@ -5,6 +5,26 @@ import SwiftUI
 /// `ImageRenderer`는 Form·Toggle 같은 AppKit 컨트롤을 그리지 못해서 창에 올린 뒤 그 뷰를 찍는다.
 @MainActor
 enum UIShots {
+    private static func workLogPage(_ mode: WorkLogPage.Mode, preview: WorkLogPage.Preview = .report,
+                                    search: String = "", newProject: String? = nil) -> WorkLogPage {
+        let page = WorkLogPage()
+        page.mode = mode
+        page.preview = preview
+        page.search = search
+        // 줄이 없는 새 프로젝트도 카드와 목록에 보이는지 본다
+        if let newProject {
+            WorkLogStore.shared.addProject(newProject)
+            page.openProjects.insert(newProject)
+        }
+        return page
+    }
+
+    private static func settingsPage(_ section: WorkLogPage.SettingsSection) -> WorkLogPage {
+        let page = WorkLogPage()
+        page.settingsSection = section
+        return page
+    }
+
     static func run(to directory: URL, engine: UsageEngine) {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -48,6 +68,19 @@ enum UIShots {
             ("leaderboard", .darkAqua, nil, AnyView(LeaderboardView().background(windowBackground))),
             ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, close: {}).background(windowBackground))),
             ("leaderboard-light", .aqua, nil, AnyView(LeaderboardView().background(windowBackground))),
+            // 업무 일지는 RUNTIME_WORKLOG로 예시 파일을 가리키고 찍는다 (내 일지가 그림에 남지 않게)
+            ("worklog-day", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
+            ("worklog-day-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
+            ("worklog-redmine", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
+            ("worklog-week", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.week)))),
+            ("worklog-project", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.project)))),
+            ("worklog-month", .aqua, 700, AnyView(WorkLogView(store: .shared, page: workLogPage(.month)))),
+            ("worklog-search", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, search: "ㄷㅇㅌ")))),
+            ("worklog-new-project", .aqua, 700, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, newProject: "회의·보고")))),
+            ("worklog-settings", .aqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: WorkLogPage(), store: .shared))),
+            ("worklog-settings-dark", .darkAqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: WorkLogPage(), store: .shared))),
+            ("worklog-settings-redmine", .aqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: settingsPage(.redmine), store: .shared))),
+            ("worklog-settings-teams", .darkAqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: settingsPage(.teams), store: .shared))),
         ]
         let windows = screens.map { screen -> NSWindow in
             let window = NSWindow(contentViewController: NSHostingController(rootView: screen.view))

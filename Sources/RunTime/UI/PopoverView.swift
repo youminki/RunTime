@@ -10,6 +10,7 @@ struct PopoverView: View {
     /// 팝오버를 닫고 그림 파일을 골라 내 러너를 만든다 (팝오버 안에서는 파일 창을 띄울 수 없어서).
     var importRunner: () -> Void = {}
     var openDailyDetail: () -> Void = {}
+    var openWorkLog: () -> Void = {}
     var openLeaderboard: () -> Void = {}
     /// 무대에서 러너를 누르거나 메뉴에서 동작을 고르면 메뉴바 러너도 같은 동작을 한다.
     var performTrick: (Trick) -> Void = { _ in }
@@ -487,6 +488,9 @@ struct PopoverView: View {
             .buttonStyle(.plain)
             .help("설정 열기")
             Spacer(minLength: 8)
+            Button(action: openWorkLog) { Image(systemName: "checklist") }
+                .help("업무 일지")
+                .accessibilityLabel("업무 일지")
             Button(action: openDailyDetail) { Image(systemName: "chart.bar") }
                 .help("일별 사용량")
                 .accessibilityLabel("일별 사용량")

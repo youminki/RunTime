@@ -1,7 +1,36 @@
 import AppKit
 import UsageCore
+import WorkLogCore
 
 LegacyMigration.run()
+
+// 업무 일지: Claude가 일지 JSON을 통째로 읽지 않고 보고서·레드마인 글만 받거나 한 줄씩 넣게 한다.
+// 예: RunTime --worklog day, RunTime --worklog add VeloX "삭제 API 연동" 70% #1234
+if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    // 앱 창을 열지 않고 GitLab MR과 로컬 커밋을 지금 가져온다
+    if args.first == "capture" {
+        WorkLogSync.shared.capture {
+            WorkLogStore.shared.saveNow()
+            let sync = WorkLogSync.shared
+            print(sync.captureError.map { "가져오지 못함: \($0)" } ?? "\(sync.lastAdded)줄 넣거나 고침")
+            exit(sync.captureError == nil ? 0 : 1)
+        }
+        RunLoop.main.run()
+    }
+    do {
+        var log = try WorkLogFile.load()
+        let result = WorkLogCommand.run(args, log: &log) {
+            String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
+        }
+        if result.changed { try WorkLogFile.save(log) }
+        print(result.output)
+        exit(result.failed ? 1 : 0)
+    } catch {
+        print("일지 파일을 읽거나 쓰지 못했습니다: \(error)")
+        exit(1)
+    }
+}
 
 // 디버그/수용기준 검증용: GUI 없이 1회 풀스캔 집계를 출력하고 종료.
 // ccusage blocks 결과와 대조하는 데 사용 (§7 오차 2% 기준).

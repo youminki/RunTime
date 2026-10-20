@@ -1,0 +1,184 @@
+import SwiftUI
+import WorkLogCore
+
+/// 업무 일지 창 상태. `@State` 대신 쓴다 (HoverFlag 참고).
+final class WorkLogPage: ObservableObject {
+    enum Mode: String, CaseIterable { case day = "하루", week = "주간", month = "월간", project = "프로젝트" }
+    enum Preview { case report, redmine }
+
+    @Published var mode = Mode.day
+    /// 고른 날. 바꾸면 왼쪽 달력도 그 달로 간다.
+    @Published var day = WorkDay.today() { didSet { calendarMonth = WorkDay.month(of: day).lowerBound } }
+    /// 왼쪽 달력에 보이는 달의 1일. 달력 화살표로는 고른 날을 두고 달력만 넘긴다.
+    @Published var calendarMonth = WorkDay.month(of: WorkDay.today()).lowerBound
+    @Published var search = ""
+    @Published var project: String?
+    @Published var preview = Preview.report
+    @Published var editing: UUID?
+    @Published var statusPicking: UUID?
+    @Published var drafts: [String: String] = [:]
+    /// 기록은 없지만 적으려고 열어 둔 프로젝트 묶음.
+    @Published var openProjects: Set<String> = []
+    @Published var addingProject = false
+    @Published var newProject = ""
+    @Published var renaming: String?
+    @Published var renameText = ""
+    @Published var importing = false
+    @Published var importText = ""
+    @Published var showsSettings = false
+    /// 저장하기 전 API 키·웹훅. 저장하면 비운다.
+    @Published var keyDraft = ""
+    @Published var teamsDraft = ""
+    /// 고정 업무 새로 만들기 칸.
+    @Published var recurringProject = ""
+    @Published var recurringTitle = ""
+    @Published var recurringDays: Set<Int> = [2]
+    @Published var confirmingTeams = false
+    /// 접어 둔 묶음 (프로젝트 이름, 날짜).
+    @Published var collapsed: Set<String> = []
+    /// 설정 창에서 고른 칸.
+    @Published var settingsSection = SettingsSection.gitlab
+
+    enum SettingsSection: String, CaseIterable {
+        case gitlab = "GitLab", redmine = "레드마인", teams = "팀즈", recurring = "고정 업무", shortcuts = "단축키·알림"
+
+        var icon: String {
+            switch self {
+            case .gitlab: return "arrow.triangle.merge"
+            case .redmine: return "paperplane"
+            case .teams: return "bubble.left.and.text.bubble.right"
+            case .recurring: return "repeat"
+            case .shortcuts: return "keyboard"
+            }
+        }
+    }
+
+    /// 프로젝트 이름을 바꾸면 창에 열어 둔 묶음·쓰던 글·접힘도 새 이름으로 옮긴다 (기록 없는 묶음이 사라지지 않게).
+    func renamed(_ old: String, to new: String) {
+        let name = new.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, name != old else { return }
+        if openProjects.remove(old) != nil { openProjects.insert(name) }
+        if let draft = drafts.removeValue(forKey: old) { drafts[name] = draft }
+        if collapsed.remove("day:" + old) != nil { collapsed.insert("day:" + name) }
+        if project == old { project = name }
+    }
+
+    func toggle(_ key: String) {
+        if collapsed.contains(key) { collapsed.remove(key) } else { collapsed.insert(key) }
+    }
+    @Published var toast: String?
+    private var toastWork: DispatchWorkItem?
+
+    /// 지금 보기 단위로 앞뒤로 간다 (하루·주·달).
+    func step(_ direction: Int) {
+        switch mode {
+        case .week: day = WorkDay.adding(7 * direction, to: day)
+        case .month: day = WorkDay.addingMonths(direction, to: WorkDay.month(of: day).lowerBound)
+        default: day = WorkDay.adding(direction, to: day)
+        }
+    }
+
+    func flash(_ message: String) {
+        withAnimation(.easeOut(duration: 0.15)) { toast = message }
+        toastWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            withAnimation(.easeIn(duration: 0.2)) { self?.toast = nil }
+        }
+        toastWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
+    }
+
+    /// 창을 다시 열면 오늘로 돌아온다. 자정을 넘겨 켜 둔 창이 어제에 머물지 않게.
+    func resetToToday() {
+        day = WorkDay.today()
+        editing = nil
+        statusPicking = nil
+    }
+}
+
+// MARK: - 글·날짜
+
+enum WorkLogFormat {
+    static let quickStatuses: [WorkStatus] = [.done, .percent(100), .percent(80), .percent(50), .percent(30), .inProgress, .ongoing]
+
+    static func color(_ project: String) -> Color { WL.projectColor(project) }
+
+    static func same(_ a: String, _ b: String) -> Bool {
+        a.lowercased().filter { !$0.isWhitespace } == b.lowercased().filter { !$0.isWhitespace }
+    }
+
+    /// 새 줄 끝의 `(60%)`, `(상시)`를 상태로 읽는다.
+    static func splitStatus(_ text: String) -> (title: String, status: WorkStatus) {
+        guard text.hasSuffix(")"), let open = text.lastIndex(of: "("),
+              let status = WorkStatus(label: String(text[text.index(after: open)..<text.index(before: text.endIndex)]))
+        else { return (text, .done) }
+        return (String(text[..<open]).trimmingCharacters(in: .whitespaces), status)
+    }
+
+    static func template(for entry: WorkEntry) -> String {
+        "[작업 내용]\n- \(entry.title)\n\n[연동 API]\n- \n\n[비고]\n- "
+    }
+
+    private static func formatter(_ format: String) -> DateFormatter {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = format
+        return f
+    }
+
+    private static let dayFormatter = formatter("M월 d일 (E)")
+    private static let longDayFormatter = formatter("M월 d일 EEEE")
+    private static let weekdayFormatter = formatter("E")
+    private static let numberFormatter = formatter("d")
+    private static let timeFormatter = formatter("M/d HH:mm")
+    private static let clockFormatter = formatter("HH:mm")
+
+    static func dayTitle(_ key: String) -> String {
+        WorkDay.date(key).map { dayFormatter.string(from: $0) } ?? key
+    }
+
+    /// 머리 제목: `10월 20일 화요일`
+    static func longDay(_ key: String) -> String {
+        WorkDay.date(key).map { longDayFormatter.string(from: $0) } ?? key
+    }
+
+    static func weekday(_ key: String) -> String {
+        WorkDay.date(key).map { weekdayFormatter.string(from: $0) } ?? ""
+    }
+
+    static func dayNumber(_ key: String) -> String {
+        WorkDay.date(key).map { numberFormatter.string(from: $0) } ?? ""
+    }
+
+    static func time(_ date: Date) -> String { timeFormatter.string(from: date) }
+
+    /// 오늘이면 `14:20`, 아니면 `10/19 14:20`.
+    static func when(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date) ? clockFormatter.string(from: date) : timeFormatter.string(from: date)
+    }
+
+    /// `2026년 10월`
+    static func monthTitle(_ key: String) -> String {
+        let parts = key.split(separator: "-")
+        guard parts.count == 3, let month = Int(parts[1]) else { return key }
+        return "\(parts[0])년 \(month)월"
+    }
+
+    /// `10.20 (화)`
+    static func shortDay(_ key: String) -> String {
+        "\(WorkReport.shortDate(key)) (\(weekday(key)))"
+    }
+
+    /// `10월 19일 ~ 25일`, 달이 바뀌면 `9월 29일 ~ 10월 5일`.
+    static func weekTitle(_ key: String) -> String {
+        let week = WorkDay.week(of: key)
+        let start = dayTitle(week.lowerBound).components(separatedBy: " (").first ?? ""
+        let endParts = (dayTitle(week.upperBound).components(separatedBy: " (").first ?? "").components(separatedBy: " ")
+        let sameMonth = week.lowerBound.prefix(7) == week.upperBound.prefix(7)
+        return "\(start) ~ \(sameMonth ? endParts.last ?? "" : endParts.joined(separator: " "))"
+    }
+
+    /// 요일 이름 (그레고리력 1 일요일 … 7 토요일), 월요일부터.
+    static let weekdays: [(number: Int, name: String)] = [(2, "월"), (3, "화"), (4, "수"), (5, "목"), (6, "금"), (7, "토"), (1, "일")]
+}

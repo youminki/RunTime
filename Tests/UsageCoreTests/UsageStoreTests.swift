@@ -32,6 +32,21 @@ struct UsageStoreTests {
         #expect(store.snapshot(now: now).tokensLast60s == 300)
     }
 
+    /// 업무 일지 작업 시간 어림에 쓰는 폴더별 활동 분: 기록이 있는 5분 칸 수 × 5.
+    @Test func countsActiveMinutesPerProjectFolder() {
+        let store = UsageStore()
+        let now = Calendar.current.startOfDay(for: Date()).addingTimeInterval(10 * 3600)   // 오늘 10:00
+        func at(_ minutesAgo: Double, _ id: String, _ project: String) -> UsageEvent {
+            UsageEvent(timestamp: now.addingTimeInterval(-minutesAgo * 60), model: "claude-sonnet-5",
+                       requestId: "req_\(id)", messageId: "msg_\(id)", inputTokens: 10, outputTokens: 0,
+                       cacheCreationTokens: 0, cacheReadTokens: 0, project: project)
+        }
+        store.add([at(1, "a", "velox-web-portal"), at(2, "b", "velox-web-portal"),   // 같은 5분 칸
+                   at(12, "c", "velox-web-portal"), at(30, "d", "cdh-web-admin")])
+        let today = store.snapshot(now: now).dailyTotals.first
+        #expect(today?.projectActiveMinutes == ["velox-web-portal": 10, "cdh-web-admin": 5])
+    }
+
     @Test func todayTokensExcludesYesterday() {
         let store = UsageStore()
         let calendar = Calendar.current

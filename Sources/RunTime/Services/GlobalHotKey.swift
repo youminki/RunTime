@@ -17,6 +17,14 @@ final class GlobalHotKey {
     }
 
     var action: () -> Void = {}
+    /// 업무 일지 한 줄 적기 (⌃⌥L). 사용량 단축키와 같은 처리기에서 번호로 가른다.
+    var quickAction: () -> Void = {}
+    static let quickCombo = Combo(keyCode: UInt32(kVK_ANSI_L), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥L")
+    private var quickHotKey: EventHotKeyRef?
+    private(set) var quickFailed = false
+    /// 사용량 단축키와 같은 조합이라 등록하지 않았다.
+    private(set) var quickClashes = false
+    private var quickEnabled = false
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     var isRegistered: Bool { hotKey != nil }
@@ -47,6 +55,7 @@ final class GlobalHotKey {
     /// 새 조합을 저장하고, 켜져 있으면 바로 다시 등록한다.
     func setCombo(_ combo: Combo) {
         self.combo = combo
+        defer { setQuickAdd(quickEnabled) }   // 사용량 단축키를 ⌃⌥L로 바꾸면 한 줄 적기를 비킨다
         let defaults = UserDefaults.standard
         defaults.set(Int(combo.keyCode), forKey: Key.code)
         defaults.set(Int(combo.modifiers), forKey: Key.modifiers)
@@ -56,18 +65,48 @@ final class GlobalHotKey {
     }
 
     /// 새 조합을 기록하는 동안 잠깐 끈다. 켜 두면 같은 조합을 눌렀을 때 Carbon이 먼저 가져가 기록되지 않는다.
-    func suspend() { unregister() }
-    func resume() { if enabled { register() } }
+    func suspend() {
+        unregister()
+        // 새 조합을 기록하는 동안 ⌃⌥L도 비켜 둔다
+        if let quickHotKey { UnregisterEventHotKey(quickHotKey) }
+        quickHotKey = nil
+    }
+
+    func resume() {
+        if enabled { register() }
+        setQuickAdd(quickEnabled)
+    }
+
+    func setQuickAdd(_ enabled: Bool) {
+        quickEnabled = enabled
+        if let quickHotKey { UnregisterEventHotKey(quickHotKey) }
+        quickHotKey = nil
+        quickFailed = false
+        quickClashes = enabled && combo.keyCode == Self.quickCombo.keyCode && combo.modifiers == Self.quickCombo.modifiers
+        guard enabled, !quickClashes else { return }
+        installHandler()
+        let id = EventHotKeyID(signature: OSType(0x5254_494D), id: 2)
+        let combo = Self.quickCombo
+        quickFailed = RegisterEventHotKey(combo.keyCode, combo.modifiers, id, GetApplicationEventTarget(), 0, &quickHotKey) != noErr
+        if quickFailed { quickHotKey = nil }
+    }
+
+    private func installHandler() {
+        guard handler == nil else { return }
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            var pressed = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &pressed)
+            let quick = pressed.id == 2
+            DispatchQueue.main.async { quick ? GlobalHotKey.shared.quickAction() : GlobalHotKey.shared.action() }
+            return noErr
+        }, 1, &spec, nil, &handler)
+    }
 
     private func register() {
         guard hotKey == nil else { return }
-        if handler == nil {
-            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-                DispatchQueue.main.async { GlobalHotKey.shared.action() }
-                return noErr
-            }, 1, &spec, nil, &handler)
-        }
+        installHandler()
         let id = EventHotKeyID(signature: OSType(0x5254_494D), id: 1)   // 'RTIM'
         let status = RegisterEventHotKey(combo.keyCode, combo.modifiers, id, GetApplicationEventTarget(), 0, &hotKey)
         failed = status != noErr
