@@ -59,7 +59,15 @@ final class WorkLogStore: ObservableObject {
         pendingSave = nil
         guard loadError == nil else { return }
         // 저장을 기다리는 사이 명령이나 Claude가 파일을 고쳤으면, 그 내용 위에 이 창에서 고친 줄만 얹는다
-        if modificationDate() != lastWritten, let disk = try? WorkLogFile.load(url) {
+        if modificationDate() != lastWritten {
+            // 바깥에서 깨진 채로(또는 쓰는 도중에) 저장한 파일은 이 창의 옛 내용으로 덮어쓰지 않고, 고쳐질 때까지 다시 본다
+            guard let disk = try? WorkLogFile.load(url) else {
+                saveError = "\(url.lastPathComponent)이 깨져 있어 저장을 미뤘습니다. 파일이 고쳐지면 바로 저장합니다."
+                let retry = DispatchWorkItem { [weak self] in self?.saveNow() }
+                pendingSave = retry
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: retry)
+                return
+            }
             log = WorkLog.merge(mine: log, base: base, disk: disk)
         }
         do {
@@ -188,6 +196,8 @@ final class WorkLogStore: ObservableObject {
             // 고정 업무가 옛 이름을 다시 만들지 않게
             for index in log.recurring.indices where log.recurring[index].project == old { log.recurring[index].project = name }
             if log.hiddenProjects.remove(old) != nil { log.hiddenProjects.insert(name) }
+            // 레드마인 일감을 옛 이름 아래에 적어 옛 프로젝트를 되살리지 않게
+            for (redmine, report) in log.redmineProjects where report == old { log.redmineProjects[redmine] = name }
         }
     }
 
@@ -281,6 +291,7 @@ final class WorkLogStore: ObservableObject {
                         info.statusID = old.statusID ?? info.statusID
                         info.startDate = old.startDate ?? info.startDate
                         info.dueDate = old.dueDate ?? info.dueDate
+                        info.assignee = old.assignee ?? info.assignee
                     }
                 }
                 log.issues[key] = info
@@ -302,6 +313,7 @@ final class WorkLogStore: ObservableObject {
             }
             if let start = fields.startDate { log.issues[key]?.startDate = start }
             if let due = fields.dueDate { log.issues[key]?.dueDate = due }
+            if let assignee = fields.assignee { log.issues[key]?.assignee = assignee }
             log.issues[key]?.fetchedAt = Date()
         }
     }

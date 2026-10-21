@@ -345,7 +345,7 @@ public enum WorkReport {
         guard let source = entry.source, source.hasPrefix("mr:"), !entry.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               entry.note != entry.autoNote else { return entry }
         let base = String(source.split(separator: "#").first ?? Substring(source))
-        let siblings = Set(log.entries.filter { $0.source?.hasPrefix(base) == true && $0.day == entry.day }.compactMap(\.issue))
+        let siblings = Set(log.entries.filter { ($0.source == base || $0.source?.hasPrefix(base + "#") == true) && $0.day == entry.day }.compactMap(\.issue))
         var copy = entry
         copy.note = RedmineComment.fromMR(entry.note, mr: WorkCapture.mrNumber(source), issue: entry.issue,
                                           subjects: WorkCapture.subjects(for: Array(siblings), in: log), siblings: siblings)

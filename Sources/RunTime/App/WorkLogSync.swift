@@ -765,6 +765,8 @@ final class WorkLogSync: ObservableObject {
 
     private func apply(_ result: SendResult, update: WorkReport.RedmineUpdate) {
         guard let record = result.record else { return }
+        // 보낸 뒤 줄을 고쳐 다시 보낼 목록에 오르면, 방금 올린 댓글과 겹치는지 다시 보게 한다
+        checkedNotes[update.issue] = nil
         store.markPosted(update.entryIDs)
         // 보낸 값을 장부에도 적어 다시 받기 전에도 화면이 새 값을 보이게
         store.setIssueState(update.issue, ratio: update.doneRatio, fields: Self.fields(record.after, statuses: statuses))

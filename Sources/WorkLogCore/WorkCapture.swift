@@ -338,7 +338,7 @@ public enum WorkCapture {
             guard let raw = entry.mrBody, entry.autoNote == nil || entry.note == entry.autoNote || entry.note.isEmpty,
                   let source = entry.source else { continue }
             let base = String(source.split(separator: "#").first ?? Substring(source))
-            let siblings = Set(log.entries.filter { $0.day == entry.day && ($0.source?.hasPrefix(base) == true) }.compactMap(\.issue))
+            let siblings = Set(log.entries.filter { $0.day == entry.day && ($0.source == base || $0.source?.hasPrefix(base + "#") == true) }.compactMap(\.issue))
             let refs = RedmineComment.allIssueRefs([raw])
             let listed = listedTitles(raw)
             // [일감]에 적은 이름이 장부의 잎 이름(`API 연동`)보다 화면 낱말이 많아 줄 주인을 더 잘 가른다

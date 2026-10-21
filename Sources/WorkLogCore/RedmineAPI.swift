@@ -225,7 +225,8 @@ public enum RedmineAPI {
         components.queryItems = [
             URLQueryItem(name: "assigned_to_id", value: "me"),
             URLQueryItem(name: "status_id", value: "open"),
-            URLQueryItem(name: "sort", value: "updated_on:desc"),
+            // 받는 사이 고친 일감이 앞으로 옮겨 쪽 경계의 일감을 건너뛰지 않게, 바뀌지 않는 번호 순으로 받는다
+            URLQueryItem(name: "sort", value: "id:desc"),
             URLQueryItem(name: "limit", value: "100"),
         ]
         var request = URLRequest(url: components.url!)

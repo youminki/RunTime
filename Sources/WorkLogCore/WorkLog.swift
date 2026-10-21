@@ -308,17 +308,27 @@ public struct WorkLog: Codable, Equatable {
         projects.append(name)
     }
 
-    /// 앞선 날에서 끝나지 않은 일을 이어 쓴다. 이미 같은 제목이 있으면 건너뛴다.
+    /// 앞선 날에서 이어 쓸 줄: 끝나지 않았고, 그날 같은 제목이 없고, 고정 업무가 아닌 것.
+    /// 고정 업무는 정한 요일에만 들어가야 해서 옮기지 않는다.
+    public func carryCandidates(from source: String, to target: String) -> [WorkEntry] {
+        let existing = Set(entries(on: target).map { $0.project + "\u{1F}" + $0.title })
+        return entries(on: source).filter {
+            !$0.status.isFinished && $0.source?.hasPrefix("recurring:") != true
+                && !existing.contains($0.project + "\u{1F}" + $0.title)
+        }
+    }
+
+    /// 앞선 날에서 끝나지 않은 일을 이어 쓴다.
     @discardableResult
     public mutating func carryOver(from source: String, to target: String, now: Date = Date()) -> Int {
-        let existing = Set(entries(on: target).map { $0.project + "\u{1F}" + $0.title })
-        let carried = entries(on: source).filter {
-            !$0.status.isFinished && !existing.contains($0.project + "\u{1F}" + $0.title)
-        }
+        let carried = carryCandidates(from: source, to: target)
         entries += carried.map {
+            // 이미 보낸 댓글을 옮기면 같은 댓글이 다시 보낼 목록에 오른다. 보내지 않은 댓글만 옮긴다
+            let posted = $0.postedAt != nil
             // 출처도 옮겨야 그 브랜치를 다시 가져오거나 머지됐을 때 이 줄을 찾는다
-            WorkEntry(day: target, project: $0.project, title: $0.title, status: $0.status,
-                      issue: $0.issue, note: $0.note, updatedAt: now, source: $0.source, autoNote: $0.autoNote)
+            return WorkEntry(day: target, project: $0.project, title: $0.title, status: $0.status,
+                             issue: $0.issue, note: posted ? "" : $0.note, updatedAt: now, source: $0.source,
+                             autoNote: posted ? nil : $0.autoNote)
         }
         return carried.count
     }

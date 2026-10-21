@@ -100,6 +100,20 @@ private let sample = """
         #expect(log.entries(on: "2026-10-22").map(\.title) == ["진행", "상시"])
     }
 
+    @Test func carryOverSkipsRecurringAndPostedNotes() {
+        var log = WorkLog(entries: [
+            WorkEntry(day: "2026-10-19", project: "A", title: "주간 회의", status: .ongoing, source: "recurring:1"),
+            WorkEntry(day: "2026-10-19", project: "A", title: "보냄", status: .percent(60), issue: 3,
+                      note: "[작업 내용]\n- 목록 연결", postedAt: Date(timeIntervalSince1970: 20),
+                      updatedAt: Date(timeIntervalSince1970: 10)),
+            WorkEntry(day: "2026-10-19", project: "A", title: "안 보냄", status: .percent(30), note: "메모"),
+        ])
+        #expect(log.carryOver(from: "2026-10-19", to: "2026-10-20") == 2)
+        let carried = log.entries(on: "2026-10-20")
+        #expect(carried.map(\.title) == ["보냄", "안 보냄"])
+        #expect(carried.map(\.note) == ["", "메모"])
+    }
+
     @Test func statusRoundTripsAsReportLabel() throws {
         let entry = WorkEntry(day: "2026-10-20", project: "A", title: "a", status: .percent(30))
         let json = String(decoding: try JSONEncoder().encode(entry), as: UTF8.self)
