@@ -34,7 +34,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
         let today = WorkDay.today()
         let report = args.dropFirst().first == "report"
             ? WorkReport.daily(log.entries(on: today), in: log, doneFirst: true, byIssue: true)
-            : "[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 이어졌습니다 (완료)"
+            : "[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 연결됐습니다 (완료)"
         let title = args.dropFirst().first == "report" ? "일일보고 · \(WorkReport.shortDate(today))" : "RunTime 연결 시험"
         WorkLogSync.shared.postTeams(report.isEmpty ? "오늘 기록 없음" : report, title: title) { error in
             print(error.map { "보내지 못함: \($0)" } ?? "보냄")

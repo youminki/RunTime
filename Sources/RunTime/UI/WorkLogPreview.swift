@@ -53,7 +53,7 @@ struct WorkLogPreview: View {
             Button("보내기") { postTeams() }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("\(reportTitle)를 이어 둔 팀즈 채팅에 보냅니다. 보낸 글은 팀즈에서 지워야 합니다.")
+            Text("\(reportTitle)를 연결한 팀즈 채팅에 보냅니다. 보낸 글은 팀즈에서 지워야 합니다.")
         }
     }
 
@@ -167,7 +167,7 @@ struct WorkLogPreview: View {
                     .buttonStyle(NotionButtonStyle(fill: true))
                     .disabled(text.isEmpty || sync.postingTeams)
                 } else {
-                    Button("팀즈 채팅 잇기") { page.settingsSection = .teams; page.showsSettings = true }
+                    Button("팀즈 채팅 연결") { page.settingsSection = .teams; page.showsSettings = true }
                         .buttonStyle(TextLinkButtonStyle())
                         .frame(maxWidth: .infinity)
                 }
@@ -253,7 +253,7 @@ struct WorkLogPreview: View {
                         .disabled(sync.sending || chosen.isEmpty)
                     } else {
                         Button { page.settingsSection = .redmine; page.showsSettings = true } label: {
-                            Label("레드마인 잇고 바로 보내기", systemImage: "link")
+                            Label("레드마인 연결하고 보내기", systemImage: "link")
                         }
                         .buttonStyle(NotionButtonStyle(kind: .primary, fill: true))
                     }

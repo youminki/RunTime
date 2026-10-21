@@ -434,6 +434,6 @@ private struct AccountSection: View {
     }
 
     private var footer: String {
-        "Claude Code에서 /login으로 다른 계정에 들어가면 여기에 저절로 추가됩니다. 바꾸기를 누르면 Claude Code의 로그인 정보를 그 계정 것으로 바꾸고, 열려 있는 세션도 곧 그 계정을 씁니다. 자동으로 바꾸기를 켜면 Claude Code가 한도에 막히거나 사용률이 \(Int(AccountSwitcher.autoSwitchLimit))%에 닿을 때 여유가 가장 많은 계정으로 바로 바꾸고, 바꿀 계정이 없으면 언제 풀리는지 알립니다. 쓰지 않는 계정의 사용률은 10분마다 받고, 저장한 토큰이 만료됐으면 마지막으로 받은 값을 보여 줍니다. 로그인 정보는 이 Mac의 키체인에만 둡니다."
+        "Claude Code에서 /login으로 다른 계정에 들어가면 여기에 자동으로 추가됩니다. 바꾸기를 누르면 Claude Code의 로그인 정보를 그 계정 것으로 바꾸고, 열려 있는 세션도 곧 그 계정을 씁니다. 자동으로 바꾸기를 켜면 Claude Code가 한도에 막히거나 사용률이 \(Int(AccountSwitcher.autoSwitchLimit))%에 닿을 때 여유가 가장 많은 계정으로 바로 바꾸고, 바꿀 계정이 없으면 언제 풀리는지 알립니다. 쓰지 않는 계정의 사용률은 10분마다 받고, 저장한 토큰이 만료됐으면 마지막으로 받은 값을 보여 줍니다. 로그인 정보는 이 Mac의 키체인에만 둡니다."
     }
 }

@@ -21,8 +21,8 @@ struct IssueBoard: View {
             if !settings.redmineReady && all.isEmpty {
                 Callout {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("레드마인을 이으면 나에게 배정된 일감이 여기 모입니다").font(.system(size: 13, weight: .semibold))
-                        Button("레드마인 잇기") { page.settingsSection = .redmine; page.showsSettings = true }
+                        Text("레드마인을 연결하면 나에게 배정된 일감이 여기 모입니다").font(.system(size: 13, weight: .semibold))
+                        Button("레드마인 연결") { page.settingsSection = .redmine; page.showsSettings = true }
                             .buttonStyle(NotionButtonStyle(kind: .primary))
                     }
                 }

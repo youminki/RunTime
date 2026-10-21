@@ -36,7 +36,7 @@ struct WorkLogView: View {
                         }
                     }
                     .frame(maxWidth: 760, alignment: .leading)
-                    .padding(.horizontal, 44)
+                    .padding(.horizontal, 36)
                     .padding(.top, 32)
                     .padding(.bottom, 60)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -146,8 +146,7 @@ struct WorkLogView: View {
 
     private var carryable: Int {
         guard let source = store.log.previousDay(before: page.day) else { return 0 }
-        let existing = Set(dayEntries.map { $0.project + "\u{1F}" + $0.title })
-        return store.log.entries(on: source).filter { !$0.status.isFinished && !existing.contains($0.project + "\u{1F}" + $0.title) }.count
+        return store.log.carryCandidates(from: source, to: page.day).count
     }
 
     private var carryHelp: String {
@@ -188,7 +187,7 @@ struct WorkLogView: View {
         guard settings.captureEnabled else { return "GitLab 가져오기를 켜려면 누르세요" }
         if let error = sync.captureError { return "가져오지 못함: \(error)" }
         guard let last = sync.lastCapture else { return "GitLab MR과 커밋 가져오기 (⌘R)" }
-        return "지금 가져오기 (⌘R) · 마지막 \(WorkLogFormat.when(last)) · 10분마다 저절로"
+        return "지금 가져오기 (⌘R) · 마지막 \(WorkLogFormat.when(last)) · 10분마다 자동"
     }
 
     // MARK: 페이지 머리
@@ -274,7 +273,7 @@ struct WorkLogView: View {
     }
 
     private var gitlabState: String {
-        guard settings.captureEnabled else { return "꺼짐 · 설정에서 켜면 MR과 커밋이 저절로 들어옵니다" }
+        guard settings.captureEnabled else { return "꺼짐 · 설정에서 켜면 MR과 커밋이 자동으로 들어옵니다" }
         if let error = sync.captureError { return error }
         return sync.lastCapture.map { "10분마다 · \(WorkLogFormat.when($0)) 가져옴" } ?? "10분마다"
     }
@@ -292,14 +291,14 @@ struct WorkLogView: View {
                 Text(page.day == WorkDay.today() ? "오늘 적은 일이 아직 없습니다" : "이 날은 기록이 없습니다")
                     .font(.system(size: 13, weight: .semibold))
                 Text(settings.captureEnabled
-                     ? "머지한 MR과 머지 전 커밋은 10분마다 저절로 들어옵니다. 회의처럼 git에 남지 않는 일만 아래에서 프로젝트를 골라 적거나 ⌃⌥L로 적으세요."
-                     : "GitLab을 이으면 머지한 MR과 커밋이 저절로 들어옵니다. 지금은 프로젝트를 골라 직접 적거나 써 둔 보고서를 붙여 넣을 수 있습니다.")
+                     ? "머지한 MR과 머지 전 커밋은 10분마다 자동으로 들어옵니다. 회의처럼 git에 남지 않는 일만 아래에서 프로젝트를 골라 적으세요.\(quickAddHint)"
+                     : "GitLab을 연결하면 머지한 MR과 커밋이 자동으로 들어옵니다. 지금은 프로젝트를 골라 직접 적거나 써 둔 보고서를 붙여 넣을 수 있습니다.")
                     .font(.system(size: 12.5)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     if settings.captureEnabled {
                         Button("지금 가져오기") { sync.capture() }.buttonStyle(NotionButtonStyle())
                     } else {
-                        Button("GitLab 잇기") { page.settingsSection = .gitlab; page.showsSettings = true }
+                        Button("GitLab 연결") { page.settingsSection = .gitlab; page.showsSettings = true }
                             .buttonStyle(NotionButtonStyle(kind: .primary))
                     }
                     Button("보고서 붙여넣기") { page.importText = ""; page.importing = true }.buttonStyle(NotionButtonStyle())
@@ -307,6 +306,11 @@ struct WorkLogView: View {
             }
         }
         .padding(.bottom, 20)
+    }
+
+    /// 한 줄 적기 단축키는 설정에서 끌 수 있어 켜져 있을 때만 알린다.
+    private var quickAddHint: String {
+        settings.quickAddEnabled ? " 다른 앱에서는 \(GlobalHotKey.quickCombo.label)로 바로 적을 수 있습니다." : ""
     }
 
     private func projectSection(_ project: String, entries: [WorkEntry]) -> some View {
@@ -342,7 +346,8 @@ struct WorkLogView: View {
             }
             if !collapsed {
                 VStack(alignment: .leading, spacing: 1) {
-                    ForEach(entries) { entry in EntryRow(store: store, page: page, entry: entry) }
+                    let reserve = entries.contains { $0.issue != nil }
+                    ForEach(entries) { entry in EntryRow(store: store, page: page, entry: entry, reservesIssue: reserve) }
                     addField(project)
                 }
                 .padding(.leading, 16)
@@ -491,7 +496,8 @@ struct WorkLogView: View {
             } trailing: { EmptyView() }
             if !collapsed {
                 VStack(alignment: .leading, spacing: 1) {
-                    ForEach(merged) { entry in MergedRow(page: page, entry: entry, entries: entries) }
+                    let reserve = merged.contains { $0.issue != nil }
+                    ForEach(merged) { entry in MergedRow(page: page, entry: entry, entries: entries, reservesIssue: reserve) }
                 }
                 .padding(.leading, 16)
             }
@@ -533,7 +539,9 @@ struct WorkLogView: View {
             }
             if !open.isEmpty {
                 section(key: "project-open", title: "진행 중인 일") {
-                    ForEach(open) { entry in MergedRow(page: page, entry: entry, entries: entries) }
+                    ForEach(open) { entry in
+                        MergedRow(page: page, entry: entry, entries: entries, reservesIssue: open.contains { $0.issue != nil })
+                    }
                 }
             }
             ForEach(days, id: \.self) { day in
@@ -542,7 +550,8 @@ struct WorkLogView: View {
                         HStack(spacing: 10) {
                             StatusGlyph(status: entry.status)
                             Text(entry.title).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
-                            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine)
+                            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine,
+                                      reserve: entries.contains { $0.issue != nil })
                             StatusText(status: entry.status)
                         }
                         .padding(.horizontal, 6)
@@ -555,7 +564,7 @@ struct WorkLogView: View {
         } else {
             pageHeader("프로젝트") { EmptyView() }
             Callout {
-                Text("하루 보기에서 일을 적거나 GitLab을 이으면 프로젝트별로 모입니다.").font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                Text("하루 보기에서 일을 적거나 GitLab을 연결하면 프로젝트별로 모입니다.").font(.system(size: 12.5)).foregroundStyle(WL.muted)
             }
         }
     }

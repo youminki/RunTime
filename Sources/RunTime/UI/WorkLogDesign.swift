@@ -192,12 +192,16 @@ struct IssueLabel: View {
 struct IssueSlot: View {
     let issue: Int?
     var posted: Bool? = nil
+    /// 번호가 없어도 자리를 비워 둘지. 묶음에 일감이 하나도 없으면 비워 두지 않아 내용이 그만큼 넓게 쓴다.
+    var reserve = true
 
     var body: some View {
-        Group {
-            if let issue { IssueLabel(issue: issue, posted: posted) } else { Color.clear }
+        if issue != nil || reserve {
+            Group {
+                if let issue { IssueLabel(issue: issue, posted: posted) } else { Color.clear }
+            }
+            .frame(width: 72, height: 16, alignment: .trailing)
         }
-        .frame(width: 72, height: 16, alignment: .trailing)
     }
 }
 

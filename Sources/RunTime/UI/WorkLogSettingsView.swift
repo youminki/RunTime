@@ -118,10 +118,10 @@ struct WorkLogSettingsView: View {
 
     private var sectionNote: String {
         switch page.settingsSection {
-        case .gitlab: return "머지한 내 MR은 머지한 날에 완료로, 아직 main·dev·release에 들어가지 않은 내 커밋은 브랜치마다 진행중으로 들어옵니다. MR 설명은 레드마인 댓글 꼴로 다듬어 씁니다: [확인 방법]과 일감 번호를 빼고, 일감 여럿을 다룬 MR은 일감마다 나눕니다."
-        case .redmine: return "앱이 레드마인 API로 진척률과 댓글을 직접 보내 Claude 토큰을 쓰지 않습니다. 보내기는 레드마인 탭에서 눌러야 나가고, 상태와 날짜는 아래에서 켠 만큼만 맞춥니다."
-        case .teams: return "일일·주간·월간 보고를 팀즈 채팅에 카드로 보냅니다. 처음에는 나에게 오는 채팅으로 이어 시험해 보세요. 보내기 전에 한 번 더 묻습니다."
-        case .recurring: return "정한 요일이 되면 그날 일지에 저절로 들어갑니다. 그날 지우면 다시 넣지 않습니다."
+        case .gitlab: return "머지한 MR은 머지한 날 완료로, main·dev·release에 들어가지 않은 커밋은 브랜치마다 진행중으로 들어옵니다. MR 설명은 일감별 레드마인 댓글로 나눠 씁니다."
+        case .redmine: return "진척률과 댓글을 레드마인 API로 직접 보내 Claude 토큰을 쓰지 않습니다. 레드마인 탭에서 보내기를 눌러야 나갑니다."
+        case .teams: return "일일·주간·월간 보고를 팀즈 채팅에 카드로 보냅니다. 처음에는 나와의 채팅으로 시험해 보세요."
+        case .recurring: return "정한 요일이 되면 그날 일지에 자동으로 들어갑니다. 그날 지우면 다시 넣지 않습니다."
         case .shortcuts: return "어디서든 한 줄 적기와 퇴근 무렵 알림."
         }
     }
@@ -167,7 +167,7 @@ struct WorkLogSettingsView: View {
 
     private var redmine: some View {
         VStack(spacing: 0) {
-            SettingRow("빠르게 잇기", "Claude Code의 redmine MCP에 넣어 둔 주소와 키를 옮겨 옵니다. 키는 키체인에 두고 그 레드마인에만 보냅니다.") {
+            SettingRow("Claude 설정 가져오기", "Claude Code의 redmine MCP에 넣어 둔 주소와 키를 옮겨 옵니다. 키는 키체인에 두고 그 레드마인에만 보냅니다.") {
                 Button("Claude 설정에서 가져오기") {
                     if settings.importFromClaude() {
                         page.flash("redmine MCP의 주소와 키를 가져왔습니다")
@@ -195,15 +195,15 @@ struct WorkLogSettingsView: View {
                     .buttonStyle(NotionButtonStyle())
                     .disabled(!settings.redmineReady)
             }
-            SettingRow("댓글을 HTML로 보내기", "웹 편집기를 쓰는 레드마인은 줄바꿈을 HTML로 받아야 섹션과 줄이 나뉩니다. 손으로 쓴 댓글처럼 [작업 내용]마다 문단, 줄마다 줄바꿈으로 보냅니다.") {
+            SettingRow("댓글을 HTML로 보내기", "웹 편집기를 쓰는 레드마인은 HTML로 보내야 줄바꿈이 살아납니다.") {
                 Toggle("", isOn: $settings.redmineHTML).toggleStyle(.switch).labelsHidden()
             }
-            SettingRow("상태·날짜도 맞추기", "진행으로 적으면 할일 상태의 일감을 진행 상태로, 완료로 적으면 완료 상태로 옮깁니다. 시작일과 완료 기한은 비어 있을 때만 일지 날짜로 채우고, 테스트·반려처럼 다른 상태의 일감은 건드리지 않습니다.") {
+            SettingRow("상태·날짜도 맞추기", "할일 일감은 일지 상태에 맞춰 진행·완료로 옮기고, 비어 있는 시작일·완료 기한은 일지 날짜로 채웁니다. 테스트·반려 같은 다른 상태는 그대로 둡니다.") {
                 Toggle("", isOn: $settings.syncIssueFields).toggleStyle(.switch).labelsHidden()
                     .onChange(of: settings.syncIssueFields) { if $0 { sync.loadStatuses() } }
             }
             if settings.syncIssueFields {
-                SettingRow("진행 · 완료 상태", sync.statuses.isEmpty ? "레드마인을 이으면 상태 목록을 받습니다." : "일지가 진행·완료일 때 옮길 상태입니다.") {
+                SettingRow("진행 · 완료 상태", sync.statuses.isEmpty ? "레드마인을 연결하면 상태 목록을 받습니다." : "일지가 진행·완료일 때 옮길 상태입니다.") {
                     HStack(spacing: 6) {
                         statusPicker($settings.progressStatusID)
                         Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.faint)
@@ -226,8 +226,8 @@ struct WorkLogSettingsView: View {
 
     private var redmineStatus: String {
         if let error = sync.issuesError { return error }
-        guard settings.redmineReady else { return "아직 잇지 않았습니다." }
-        return sync.myIssues.isEmpty ? "이어졌습니다." : "이어졌습니다 · 나에게 배정된 열린 일감 \(sync.myIssues.count)개"
+        guard settings.redmineReady else { return "연결하지 않았습니다." }
+        return sync.myIssues.isEmpty ? "연결됐습니다." : "연결됐습니다 · 나에게 배정된 열린 일감 \(sync.myIssues.count)개"
     }
 
     private func saveKey(_ text: String) -> String? {
@@ -278,11 +278,11 @@ struct WorkLogSettingsView: View {
 
     private var teamsTestNote: String {
         if let result = page.teamsTestResult { return result }
-        return settings.hasTeamsWebhook ? "이어 둔 채팅에 짧은 시험 카드를 보냅니다." : "웹훅 주소를 먼저 넣으세요."
+        return settings.hasTeamsWebhook ? "연결한 채팅에 짧은 시험 카드를 보냅니다." : "웹훅 주소를 먼저 넣으세요."
     }
 
     private func sendTest() {
-        sync.postTeams("[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 이어졌습니다 (완료)",
+        sync.postTeams("[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 연결됐습니다 (완료)",
                        title: "RunTime 연결 시험 · \(WorkLogFormat.when(Date()))") { error in
             page.teamsTestFailed = error != nil
             page.teamsTestResult = error.map { "보내지 못했습니다: \($0)" } ?? "보냈습니다. 팀즈 채팅에 카드가 왔는지 보세요."

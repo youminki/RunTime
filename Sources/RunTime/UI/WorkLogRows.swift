@@ -8,6 +8,7 @@ struct EntryRow: View {
     @ObservedObject var store: WorkLogStore
     @ObservedObject var page: WorkLogPage
     let entry: WorkEntry
+    var reservesIssue = true
     @StateObject private var hover = HoverFlag()
     @StateObject private var drop = HoverFlag()
 
@@ -35,7 +36,7 @@ struct EntryRow: View {
             // 빈칸을 두면 글 칸과 너비를 반씩 나눠 제목이 잘려, 글 칸이 남은 너비를 다 쓰게 한다
             .frame(maxWidth: .infinity)
             Group { if let source = entry.source { SourceMark(source: source) } }.frame(width: 14)
-            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine)
+            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine, reserve: reservesIssue)
             StatusText(status: entry.status)
             Button { page.editing = entry.id } label: {
                 Image(systemName: entry.note.isEmpty ? "text.bubble" : "text.bubble.fill")
@@ -308,6 +309,7 @@ struct MergedRow: View {
     @ObservedObject var page: WorkLogPage
     let entry: WorkEntry
     let entries: [WorkEntry]
+    var reservesIssue = true
     @StateObject private var hover = HoverFlag()
 
     var body: some View {
@@ -335,7 +337,7 @@ struct MergedRow: View {
                     .font(WL.caption).foregroundStyle(WL.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                IssueSlot(issue: entry.issue)
+                IssueSlot(issue: entry.issue, reserve: reservesIssue)
                 StatusText(status: entry.status)
             }
             .padding(.horizontal, 6)

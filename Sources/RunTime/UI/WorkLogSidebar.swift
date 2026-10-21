@@ -199,7 +199,7 @@ struct WorkLogSidebar: View {
                 .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.accent.opacity(0.6), lineWidth: 1))
             }
             if names.isEmpty && !page.addingProject {
-                Text("+로 만들거나, GitLab을 이으면 저절로 생깁니다")
+                Text("+로 만들거나 GitLab을 연결하면 자동으로 생깁니다")
                     .font(WL.caption).foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 4)
             }
