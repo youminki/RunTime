@@ -167,6 +167,8 @@ struct SettingsView: View {
                 .help(officialStatusText)
             }
 
+            AccountSection(switcher: AccountSwitcher.shared)
+
             GroupedSection("속도", footer: "민감도가 높을수록 적은 사용량에도 빨리 달립니다. 확인 주기가 짧을수록 러너가 빨리 반응합니다.") {
                 GroupedRow("민감도", icon: "hare.fill", tint: Palette.orange) {
                     segmented("민감도", $settings.sensitivity, Thresholds.Sensitivity.allCases) { $0.displayName }
@@ -393,5 +395,45 @@ final class SettingsTabState: ObservableObject {
 
     init(_ selection: SettingsView.Tab) {
         self.selection = selection
+    }
+}
+
+/// Claude Code 계정 목록. 고르면 바꾸고, 쓰지 않는 계정은 지운다.
+private struct AccountSection: View {
+    @ObservedObject var switcher: AccountSwitcher
+
+    var body: some View {
+        GroupedSection("Claude 계정", footer: footer) {
+            ForEach(switcher.accounts) { account in
+                GroupedRow(account.label, icon: account.id == switcher.activeID ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle",
+                           tint: account.id == switcher.activeID ? Palette.green : Palette.gray) {
+                    HStack(spacing: 6) {
+                        if let usage = account.lastUsage {
+                            Text("\(Int(usage.effectivePercent(now: Date())))%").foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        if account.id == switcher.activeID {
+                            Text("사용 중").foregroundStyle(.secondary)
+                        } else {
+                            Button("지우기") { switcher.remove(account.id) }
+                            Button("바꾸기") { switcher.switchTo(account.id) }
+                                .disabled(switcher.switching)
+                        }
+                    }
+                }
+            }
+            if switcher.accounts.isEmpty {
+                GroupedRow("기억한 계정 없음", icon: "person.crop.circle.badge.questionmark", tint: Palette.gray) { EmptyView() }
+            }
+            ToggleRow(title: "한도에 닿으면 자동으로 바꾸기", icon: "arrow.left.arrow.right", tint: Palette.blue,
+                      isOn: $switcher.autoSwitch)
+                .disabled(switcher.accounts.count < 2)
+            if let error = switcher.lastError {
+                GroupedRow(error, icon: "exclamationmark.triangle.fill", tint: Palette.orange) { EmptyView() }
+            }
+        }
+    }
+
+    private var footer: String {
+        "Claude Code에서 /login으로 다른 계정에 들어가면 여기에 저절로 추가됩니다. 바꾸기를 누르면 Claude Code의 로그인 정보를 그 계정 것으로 바꾸고, 열려 있는 세션도 곧 그 계정을 씁니다. 자동으로 바꾸기를 켜면 Claude Code가 한도에 막히거나 사용률이 \(Int(AccountSwitcher.autoSwitchLimit))%에 닿을 때 여유가 가장 많은 계정으로 바로 바꾸고, 바꿀 계정이 없으면 언제 풀리는지 알립니다. 쓰지 않는 계정의 사용률은 10분마다 받고, 저장한 토큰이 만료됐으면 마지막으로 받은 값을 보여 줍니다. 로그인 정보는 이 Mac의 키체인에만 둡니다."
     }
 }

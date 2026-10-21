@@ -206,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .store(in: &cancellables)
         Notifier.shared.requestAuthorization()
         engine.start()
+        startAccountSwitcher()
         WorkLogSync.shared.start()
         GlobalHotKey.shared.quickAction = { QuickAddPanel.shared.toggle() }
         GlobalHotKey.shared.setQuickAdd(WorkLogSettings.shared.quickAddEnabled)
@@ -243,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         add(WorkLogSettings.shared.quickAddEnabled ? "업무 한 줄 적기 (\(GlobalHotKey.quickCombo.label))" : "업무 한 줄 적기") {
             QuickAddPanel.shared.show()
         }
+        addAccountMenu(to: menu)
         add("일별 사용량") { [weak self] in self?.openDailyDetail() }
         add("토큰 러너 순위") { [weak self] in self?.openLeaderboard() }
         add("새로고침") { [weak self] in self?.engine.refreshNow(forceOfficial: true) }
@@ -259,6 +261,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
     }
+
+    /// Claude 계정이 둘 이상이면 고를 수 있는 하위 메뉴. 하나뿐이면 늘리는 법을 설정에서 보여 준다.
+    private func addAccountMenu(to menu: NSMenu) {
+        let switcher = AccountSwitcher.shared
+        let parent = NSMenuItem(title: switcher.active.map { "Claude 계정: \($0.email)" } ?? "Claude 계정",
+                                action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for account in switcher.accounts {
+            let item = NSMenuItem(title: account.label + Self.usageNote(account.lastUsage),
+                                  action: #selector(runMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = account.id == switcher.activeID ? .on : .off
+            item.isEnabled = !switcher.switching
+            item.representedObject = MenuAction { switcher.switchTo(account.id) }
+            sub.addItem(item)
+        }
+        if !switcher.accounts.isEmpty { sub.addItem(.separator()) }
+        let manage = NSMenuItem(title: "계정 관리…", action: #selector(runMenuAction(_:)), keyEquivalent: "")
+        manage.target = self
+        manage.representedObject = MenuAction { [weak self] in self?.openSettings(tab: .usage) }
+        sub.addItem(manage)
+        parent.submenu = sub
+        menu.addItem(parent)
+    }
+
+    /// 계정 옆에 붙일 마지막 사용률 (리셋이 지났으면 0%).
+    private static func usageNote(_ usage: ClaudeLogin.LastUsage?) -> String {
+        guard let usage else { return "" }
+        return "  (\(Int(usage.effectivePercent(now: Date())))%)"
+    }
+
+    private func startAccountSwitcher() {
+        let switcher = AccountSwitcher.shared
+        switcher.captureCurrent()
+        engine.$official.compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { usage in
+                // /login으로 다른 계정에 들어왔으면 누구 값인지 모르니 적지 않고 계정부터 맞춘다
+                if ClaudeLogin.currentAccount()?.uuid == switcher.activeID { switcher.record(usage) }
+                switcher.captureCurrent()
+                switcher.refreshOthers()
+            }
+            .store(in: &cancellables)
+        engine.limitReached
+            .sink { hit in switcher.limitReached(hit) }
+            .store(in: &cancellables)
+        switcher.willActivate = { [engine] in engine.accountChanged() }
+        switcher.onExhausted = { account, resetsAt in
+            let when = resetsAt.map { " \(Self.clockFormatter.string(from: $0))에 \(account?.email ?? "")부터 다시 쓸 수 있습니다." } ?? ""
+            Notifier.shared.send(title: "모든 Claude 계정이 한도에 닿았습니다", body: "바꿀 계정이 없습니다." + when)
+        }
+        switcher.onSwitched = { account, automatic in
+            Notifier.shared.send(title: automatic ? "Claude 계정을 자동으로 바꿨습니다" : "Claude 계정을 바꿨습니다",
+                                 body: "\(account.email)로 바꿨습니다. 새로 여는 Claude Code 세션부터 이 계정을 씁니다.")
+        }
+    }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = "M월 d일 a h:mm"
+        return f
+    }()
 
     @objc private func runMenuAction(_ sender: NSMenuItem) {
         (sender.representedObject as? MenuAction)?.run()

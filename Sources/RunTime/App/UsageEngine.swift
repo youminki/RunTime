@@ -59,6 +59,10 @@ final class UsageEngine: ObservableObject {
     let turnEnded = PassthroughSubject<TurnEndDetector.FinishedTurn, Never>()
     /// 사용량 흐름에서 러너가 반응할 순간 (부스트, 다시 시작, 세션 단계, 동시 작업, 새 세션). 메인 스레드에서 보낸다.
     let reacted = PassthroughSubject<UsageReactions.Reaction, Never>()
+    /// Claude Code 요청이 방금 한도에 막혔다. 메인 스레드에서 보낸다.
+    let limitReached = PassthroughSubject<LimitHit, Never>()
+    /// 이보다 오래된 막힘 기록은 지난 일이라 알리지 않는다 (켠 직후 첫 scan은 8일치를 읽는다).
+    static let limitHitFreshness: TimeInterval = 120
     /// 마지막 기록과 마지막으로 차례가 끝난 때. 메인 스레드에서 읽고 쓴다.
     static private(set) var lastActivity: Date?
     static private(set) var lastTurnEnd: Date?
@@ -92,6 +96,8 @@ final class UsageEngine: ObservableObject {
     private var lastTickAt: Date?
     private var lastOfficialAttempt: Date?
     private var officialInFlight = false
+    /// 계정을 바꿀 때마다 1 늘린다. 바꾸기 전에 보낸 조회 결과를 가려낸다.
+    private var accountGeneration = 0
     private var officialBackoffUntil: Date?
     private var lastOfficialFailure = ""
     /// 켠 뒤 공식 조회 결과를 한 번이라도 받았는지. 그 전에는 주간 경계를 모른다.
@@ -148,6 +154,24 @@ final class UsageEngine: ObservableObject {
         workQueue.async { [weak self] in
             self?.tick()
             self?.fetchOfficial(minInterval: forceOfficial ? 5 : Self.officialRefreshThrottle)
+        }
+    }
+
+    /// Claude Code 계정을 바꿨다. 앞 계정의 공식 값과 오름세를 버리고 새 토큰으로 바로 다시 받는다.
+    /// 세대는 바로 올려서, 돌아온 뒤에는 앞 계정 토큰으로 보낸 조회 결과가 쓰이지 않는다. workQueue에서 부르지 않는다.
+    func accountChanged() {
+        workQueue.sync {
+            accountGeneration += 1
+            provider.invalidateCachedToken()
+        }
+        workQueue.async { [weak self] in
+            guard let self else { return }
+            self.officialValue = nil
+            self.sessionTrend = OfficialTrend()
+            self.officialBackoffUntil = nil
+            self.publishOfficial(nil, status: .waiting)
+            self.tick()
+            self.fetchOfficial(minInterval: 0)
         }
     }
 
@@ -255,6 +279,12 @@ final class UsageEngine: ObservableObject {
             if weeklyBoundaryKnown {
                 checkWeeklySummary(nextReset: nextWeeklyReset, now: now, enabled: config.weeklySummaryEnabled)
             }
+        }
+        if let hit = watcher.limitHits.filter({ now.timeIntervalSince($0.timestamp) < Self.limitHitFreshness })
+            .max(by: { $0.timestamp < $1.timestamp }) {
+            DispatchQueue.main.async { self.limitReached.send(hit) }
+            // 게이지도 100%로 바로 맞춘다
+            fetchOfficial(minInterval: 5)
         }
         let finished = turnDetector.finishedTurns(in: scanned, now: now)
         store.add(scanned)
@@ -424,6 +454,7 @@ final class UsageEngine: ObservableObject {
         officialInFlight = true
 
         let version = clientVersion
+        let generation = accountGeneration
         Task { [weak self] in
             guard let self else { return }
             let result: Result<OfficialUsage, Error>
@@ -432,13 +463,18 @@ final class UsageEngine: ObservableObject {
             } catch {
                 result = .failure(error)
             }
-            self.workQueue.async { self.handleOfficial(result) }
+            self.workQueue.async { self.handleOfficial(result, generation: generation) }
         }
         return true
     }
 
-    private func handleOfficial(_ result: Result<OfficialUsage, Error>) {
+    private func handleOfficial(_ result: Result<OfficialUsage, Error>, generation: Int) {
         officialInFlight = false
+        // 계정을 바꾸기 전에 보낸 조회면 앞 계정 값이라 버리고 다시 받는다
+        guard generation == accountGeneration else {
+            fetchOfficial(minInterval: 0)
+            return
+        }
         officialAnswered = true
         switch result {
         case .success(let usage):

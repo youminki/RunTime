@@ -78,4 +78,44 @@ public enum JSONLParser {
     public static func parse(line: String) -> UsageEvent? {
         parse(line: Data(line.utf8))
     }
+
+    private static let limitMarker = Data("usage_limit_reached".utf8)
+
+    private struct LimitRecord: Decodable {
+        let timestamp: String?
+        let apiError: String?
+        let quotaLimits: Quota?
+        struct Quota: Decodable {
+            let resetsAt: Double?
+            let rateLimitType: String?
+        }
+    }
+
+    /// Claude Code가 한도에 막혀 남긴 줄(`"apiError":"usage_limit_reached"`). 아니면 nil.
+    /// 거의 모든 줄이 아니므로 표시 문자열이 없으면 디코딩하지 않는다.
+    public static func parseLimitHit(line: Data) -> LimitHit? {
+        guard line.range(of: limitMarker) != nil,
+              let record = try? decoder.decode(LimitRecord.self, from: line),
+              record.apiError == "usage_limit_reached",
+              let timestamp = record.timestamp.flatMap(ISODate.parse)
+        else { return nil }
+        let kind = record.quotaLimits?.rateLimitType ?? ""
+        return LimitHit(timestamp: timestamp,
+                        window: kind.hasPrefix("seven_day") ? .weekly : .session,
+                        resetsAt: record.quotaLimits?.resetsAt.map { Date(timeIntervalSince1970: $0) })
+    }
+}
+
+/// Claude Code 요청이 사용 한도에 막힌 순간.
+public struct LimitHit: Equatable, Sendable {
+    public enum Window: Sendable { case session, weekly }
+    public let timestamp: Date
+    public let window: Window
+    public let resetsAt: Date?
+
+    public init(timestamp: Date, window: Window, resetsAt: Date?) {
+        self.timestamp = timestamp
+        self.window = window
+        self.resetsAt = resetsAt
+    }
 }

@@ -165,9 +165,9 @@ final class WorkLogSettings: ObservableObject {
 
 /// 키체인. 앱이 직접 만든 항목이라 고정 서명으로 다시 빌드해도 묻지 않는다.
 enum Keychain {
-    private static let service = "dev.runtime.RunTime.worklog"
+    static let worklogService = "dev.runtime.RunTime.worklog"
 
-    static func read(_ account: String) -> String? {
+    static func read(_ account: String, service: String = worklogService) -> String? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account, kSecReturnData as String: true]
         var result: AnyObject?
@@ -177,7 +177,7 @@ enum Keychain {
 
     /// 있으면 값만 바꾸고 없을 때만 새로 만든다. 지우고 다시 만들면 만들기가 실패할 때 옛 키까지 잃는다.
     @discardableResult
-    static func write(_ value: String, account: String) -> Bool {
+    static func write(_ value: String, account: String, service: String = worklogService) -> Bool {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account]
         let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
@@ -189,13 +189,13 @@ enum Keychain {
     }
 
     /// 값을 읽지 않고 항목이 있는지만 본다. 값을 읽을 때와 달리 키체인 허용 창이 뜨지 않는다.
-    static func exists(_ account: String) -> Bool {
+    static func exists(_ account: String, service: String = worklogService) -> Bool {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account, kSecReturnAttributes as String: true]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    static func delete(_ account: String) {
+    static func delete(_ account: String, service: String = worklogService) {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account]
         SecItemDelete(query as CFDictionary)

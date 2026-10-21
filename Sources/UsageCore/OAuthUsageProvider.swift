@@ -35,7 +35,7 @@ public struct OfficialUsage: Equatable, Sendable {
 }
 
 /// 비문서화 OAuth usage 엔드포인트 폴링 (180초 간격 준수).
-/// 토큰은 읽기 전용, Anthropic 외 어디에도 전송·로깅 금지.
+/// 토큰은 Anthropic 외 어디에도 전송·로깅 금지. 바꿔 쓰는 일은 계정 전환(`ClaudeLogin`)에서만 한다.
 /// 실패하면 엔진이 유예 시간 동안 직전 값을 쓰고, 그 뒤로는 게이지를 비운다.
 ///
 /// 키체인 접근 설계 (프롬프트 최소화):
@@ -60,7 +60,7 @@ public final class OAuthUsageProvider {
     /// expiresAt이 없을 때의 보수적 토큰 수명 (~60분 만료 가정).
     static let defaultTokenLifetime: TimeInterval = 55 * 60
     /// 만료 이만큼 전부터는 새로 읽는다.
-    static let expiryMargin: TimeInterval = 5 * 60
+    public static let expiryMargin: TimeInterval = 5 * 60
 
     private struct CachedToken {
         let token: String
@@ -87,7 +87,7 @@ public final class OAuthUsageProvider {
     }
 
     /// 버전 문자열은 로그 파일에서 온 값이라 숫자와 점으로만 된 경우에만 헤더에 넣는다.
-    static func userAgent(clientVersion: String?) -> String {
+    public static func userAgent(clientVersion: String?) -> String {
         let valid = clientVersion.flatMap { version -> String? in
             guard !version.isEmpty, version.count <= 20,
                   version.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") })
@@ -99,7 +99,12 @@ public final class OAuthUsageProvider {
 
     private func fetchOnce(userAgent: String) async throws -> OfficialUsage {
         guard let token = await accessToken() else { throw ProviderError.tokenNotFound }
-        var request = URLRequest(url: Self.endpoint)
+        return try await Self.fetch(token: token, userAgent: userAgent)
+    }
+
+    /// 주어진 액세스 토큰으로 한 번 조회한다. 계정 점검에서 저장해 둔 다른 계정 토큰으로도 쓴다.
+    public static func fetch(token: String, userAgent: String) async throws -> OfficialUsage {
+        var request = URLRequest(url: endpoint)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -109,7 +114,7 @@ public final class OAuthUsageProvider {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ProviderError.badResponse }
         guard http.statusCode == 200 else { throw ProviderError.http(http.statusCode) }
-        guard let usage = Self.parse(data: data, fetchedAt: Date()) else { throw ProviderError.badResponse }
+        guard let usage = parse(data: data, fetchedAt: Date()) else { throw ProviderError.badResponse }
         return usage
     }
 
@@ -135,8 +140,8 @@ public final class OAuthUsageProvider {
         return parsed.token
     }
 
-    /// 직렬 큐라 뒤이어 들어오는 accessToken()보다 먼저 처리된다.
-    private func invalidateCachedToken() {
+    /// 직렬 큐라 뒤이어 들어오는 accessToken()보다 먼저 처리된다. 계정을 바꾼 뒤에도 부른다.
+    public func invalidateCachedToken() {
         credentialQueue.async { self.cachedToken = nil }
     }
 
@@ -188,7 +193,7 @@ public final class OAuthUsageProvider {
     // MARK: - 자격증명 로드 (파일 우선 → 키체인 서브프로세스, docs/usage-endpoint.md)
 
     /// credentials JSON → (액세스 토큰, 만료 시각). expiresAt(epoch ms)이 없으면 ~60분 가정.
-    static func parseCredentials(_ data: Data, now: Date = Date()) -> (token: String, expiresAt: Date)? {
+    public static func parseCredentials(_ data: Data, now: Date = Date()) -> (token: String, expiresAt: Date)? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty
@@ -206,14 +211,14 @@ public final class OAuthUsageProvider {
     /// `/usr/bin/security find-generic-password -s "Claude Code-credentials" -a $USER -w`
     /// Security.framework 직접 호출 금지 — ACL이 앱 서명이 아닌 security 바이너리에 걸려
     /// 리빌드해도 "항상 허용" 승인이 유지된다.
-    static func keychainCredentials() -> Data? {
-        let base = ["find-generic-password", "-s", "Claude Code-credentials"]
+    static func keychainCredentials(service: String = "Claude Code-credentials") -> Data? {
+        let base = ["find-generic-password", "-s", service]
         // 계정 지정 조회 → 실패 시 계정 생략 폴백 (관용)
         return runSecurity(base + ["-a", NSUserName(), "-w"])
             ?? runSecurity(base + ["-w"])
     }
 
-    private static func runSecurity(_ arguments: [String]) -> Data? {
+    static func runSecurity(_ arguments: [String]) -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         process.arguments = arguments

@@ -9,6 +9,8 @@ public final class JSONLWatcher {
     public var maxFileAge: TimeInterval = 8 * 24 * 60 * 60
 
     private var offsets: [String: UInt64] = [:]   // 파일 경로 → 읽은 바이트 수
+    /// 마지막 scan에서 새로 읽은 줄 가운데 한도에 막힌 기록. 켠 직후 첫 scan에는 지난 기록도 들어 있다.
+    public private(set) var limitHits: [LimitHit] = []
     private let fileManager = FileManager.default
 
     public init(rootDirectory: URL? = nil) {
@@ -18,6 +20,7 @@ public final class JSONLWatcher {
     /// 1회 스캔: 새로 추가된 줄에서 파싱된 이벤트를 반환. (중복 제거는 UsageStore 담당)
     public func scan(now: Date = Date()) -> [UsageEvent] {
         var events: [UsageEvent] = []
+        limitHits = []
         // 폴더 자체가 심볼릭 링크면 enumerator가 아무것도 돌려주지 않는다 (기록을 다른 디스크로 옮긴 경우)
         guard let enumerator = fileManager.enumerator(
             at: rootDirectory.resolvingSymlinksInPath(),
@@ -60,8 +63,13 @@ public final class JSONLWatcher {
         while index < chunk.endIndex {
             if chunk[index] == newline {
                 let line = chunk[lineStart..<index]
-                if !line.isEmpty, let event = JSONLParser.parse(line: Data(line)) {
-                    events.append(event)
+                if !line.isEmpty {
+                    let data = Data(line)
+                    if let event = JSONLParser.parse(line: data) {
+                        events.append(event)
+                    } else if let hit = JSONLParser.parseLimitHit(line: data) {
+                        limitHits.append(hit)
+                    }
                 }
                 lineStart = chunk.index(after: index)
                 consumed = chunk.distance(from: chunk.startIndex, to: lineStart)
