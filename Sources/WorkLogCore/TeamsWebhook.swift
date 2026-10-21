@@ -15,6 +15,9 @@ public enum TeamsWebhook {
                 body.append(["type": "TextBlock", "text": line, "weight": "Bolder", "spacing": "Medium", "wrap": true])
             } else if line.first?.isNumber == true {
                 body.append(["type": "TextBlock", "text": line, "weight": "Bolder", "spacing": "Small", "wrap": true])
+            } else if raw.first?.isWhitespace == true {
+                // 묶어 쓴 하위 줄은 카드가 앞 빈칸을 지우므로 넓은 빈칸으로 들여 쓴다
+                body.append(["type": "TextBlock", "text": "\u{2003}" + line, "spacing": "None", "wrap": true])
             } else {
                 body.append(["type": "TextBlock", "text": line, "spacing": "None", "wrap": true])
             }

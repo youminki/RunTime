@@ -268,96 +268,39 @@ private struct IssueRow: View {
         let written = store.log.entries(on: page.day).filter { $0.issue == info.id }
         let entry = written.first
         let status = entry?.status ?? redmineStatus
+        // 제목·적음·상태·진척률·기간·번호를 한 줄에 두고, 칸 너비를 고정해 줄마다 같은 자리에서 읽히게 한다
         HStack(spacing: 10) {
             StatusGlyph(status: status)
                 .opacity(entry == nil ? 0.55 : 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(IssueInfo.isWorkName(leaf) ? info.reportTitle.components(separatedBy: " > ").last ?? leaf : leaf)
-                    .font(.system(size: 14))
-                    .foregroundStyle(WL.text)
-                    .lineLimit(1)
-                HStack(spacing: 8) {
-                    Text("#" + String(info.id)).monospacedDigit()
-                    Text(info.status)
-                    if info.doneRatio > 0 { Text("레드마인 \(info.doneRatio)%").monospacedDigit() }
-                    if let start = info.startDate { Text("시작 \(WorkReport.shortDate(start))").monospacedDigit() }
-                    if let due = info.dueDate { dueLabel(due) }
-                }
-                .font(.system(size: 11.5))
-                .foregroundStyle(WL.faint)
-            }
+            Text(title)
+                .font(.system(size: 13.5))
+                .foregroundStyle(WL.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .tip(fullTitle)
             Spacer(minLength: 8)
             if let entry {
                 // 상태는 왼쪽 표시로 보여, 완료가 아닐 때만 진척률을 덧붙인다
                 Text(dayLabel + (written.count > 1 ? " \(written.count)줄" : "") + " 적음"
                      + (entry.status == .done ? "" : " · " + entry.status.label))
-                    .font(.system(size: 12, weight: .medium)).foregroundStyle(WL.done).monospacedDigit()
+                    .font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.done).monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
             }
-            HStack(spacing: 2) {
-                // 이미 적은 일감도 한 줄 더 넣을 수 있다 (같은 일감에 따로 적을 일이 여럿인 날)
-                Button { add(entry?.status ?? defaultStatus, again: entry != nil) } label: {
-                    Image(systemName: entry == nil ? "plus" : "plus.square.on.square")
-                }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .tip(entry == nil ? "\(dayLabel) 일지에 넣기" : "\(dayLabel) 일지에 한 줄 더 넣기")
-                Menu {
-                    Button("완료") { add(.done) }
-                    ForEach(Array(stride(from: 100, through: 10, by: -10)), id: \.self) { value in
-                        Button("\(value)%") { add(.percent(value)) }
-                    }
-                    Button("진행중") { add(.inProgress) }
-                } label: {
-                    Image(systemName: "gauge.with.dots.needle.50percent")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .tip("진척률을 정해 \(dayLabel) 일지에 넣기")
-                Button { startEditing() } label: { Image(systemName: "slider.horizontal.3") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .tip("상태·시작일·완료 기한·담당자 고치기")
-                    .disabled(!settings.redmineReady)
-                    .popover(isPresented: Binding(
-                        get: { page.boardEditing == info.id },
-                        set: { if !$0 { page.boardEditing = nil } }
-                    ), arrowEdge: .trailing) {
-                        IssueFieldEditor(current: info, edit: $page.boardDraft, sync: sync, locked: page.boardConfirming) {
-                            let fields = WorkReport.IssueFields.merged(auto: .init(), edit: page.boardDraft, current: info,
-                                                                       statuses: sync.statuses)
-                            if page.boardConfirming {
-                                // 레드마인에 바로 반영되므로 바뀔 칸을 한 번 더 보이고 저장한다
-                                VStack(alignment: .trailing, spacing: 8) {
-                                    Text("#\(String(info.id))에 " + WorkLogFormat.fieldChanges(fields, current: info).joined(separator: " · ")
-                                         + "을(를) 저장할까요?")
-                                        .font(.system(size: 12)).foregroundStyle(WL.text)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    HStack(spacing: 8) {
-                                        Button("돌아가기") { page.boardConfirming = false }.buttonStyle(NotionButtonStyle())
-                                            .keyboardShortcut(.cancelAction)
-                                        // Return 두 번으로 바로 저장되지 않게 확인 단추는 눌러야만 저장한다
-                                        Button(sync.sending ? "저장 중…" : "저장") { save() }
-                                            .buttonStyle(NotionButtonStyle(kind: .primary))
-                                            .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
-                                    }
-                                }
-                            } else {
-                                Button("취소") { page.boardEditing = nil }.buttonStyle(NotionButtonStyle())
-                                Button("레드마인에 저장…") { page.boardConfirming = true }
-                                    .buttonStyle(NotionButtonStyle(kind: .primary))
-                                    .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
-                                    .keyboardShortcut(.defaultAction)
-                            }
-                        }
-                    }
-                Button { open() } label: { Image(systemName: "arrow.up.right.square") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .tip("레드마인에서 열기")
+            ZStack(alignment: .trailing) {
+                columns
+                actions
+                    .padding(.leading, 18)
+                    // 단추가 칸 글자 위에 겹쳐 보이지 않게 줄 배경색으로 왼쪽을 흐려 덮는다
+                    .background(ZStack { WL.canvas; WL.hover }
+                        .mask(LinearGradient(colors: [.clear, .black], startPoint: .leading,
+                                             endPoint: UnitPoint(x: 0.3, y: 0.5))))
+                    // 노션처럼 줄에 올렸을 때만 단추를 보인다 (고치는 창이 열려 있으면 그대로 둔다)
+                    .opacity(hover.on || page.boardEditing == info.id ? 1 : 0)
             }
-            // 노션처럼 줄에 올렸을 때만 단추를 보인다 (고치는 창이 열려 있으면 그대로 둔다)
-            .opacity(hover.on || page.boardEditing == info.id ? 1 : 0)
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .frame(minHeight: 30)
         .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(hover.on ? WL.hover : .clear))
         .onHover { hover.on = $0 }
         .contextMenu {
@@ -370,6 +313,119 @@ private struct IssueRow: View {
             }
             Button("상태·날짜·담당자 고치기…") { startEditing() }.disabled(!settings.redmineReady)
             Button("레드마인에서 열기") { open() }
+        }
+    }
+
+    /// 줄에 보이는 이름. 메뉴·화면 경로는 묶음 제목에 있어 끝 이름만 쓴다.
+    private var title: String {
+        IssueInfo.isWorkName(leaf) ? info.reportTitle.components(separatedBy: " > ").last ?? leaf : leaf
+    }
+
+    /// 제목에 마우스를 올리면 보이는 전체 이름과 날짜.
+    private var fullTitle: String {
+        var lines = [info.reportTitle, "#\(info.id) · \(info.status)" + (info.doneRatio > 0 ? " · 레드마인 \(info.doneRatio)%" : "")]
+        let dates = [info.startDate.map { "시작 " + WorkLogFormat.shortDay($0) }, info.dueDate.map { "기한 " + WorkLogFormat.shortDay($0) }]
+            .compactMap { $0 }
+        if !dates.isEmpty { lines.append(dates.joined(separator: " · ")) }
+        return lines.joined(separator: "\n")
+    }
+
+    /// 상태, 레드마인 진척률, 기간, 번호. 비어도 자리를 지켜 아래위 줄과 칸이 맞는다.
+    private var columns: some View {
+        HStack(spacing: 10) {
+            Text(info.status)
+                .lineLimit(1)
+                .frame(width: 52, alignment: .leading)
+            Text(info.doneRatio > 0 ? "\(info.doneRatio)%" : "")
+                .frame(width: 34, alignment: .trailing)
+            period
+                .frame(width: 104, alignment: .trailing)
+            Text("#" + String(info.id))
+                .frame(width: 50, alignment: .trailing)
+        }
+        .font(.system(size: 11.5).monospacedDigit())
+        .foregroundStyle(WL.faint)
+        .lineLimit(1)
+    }
+
+    /// 시작~기한. 기한이 지났거나 3일 안이면 색으로 알린다.
+    @ViewBuilder
+    private var period: some View {
+        let today = WorkDay.today()
+        if let due = info.dueDate {
+            let color: Color = due < today ? Palette.red : due <= WorkDay.adding(3, to: today) ? WL.waiting : WL.faint
+            HStack(spacing: 0) {
+                if let start = info.startDate { Text(WorkReport.shortDate(start) + " ~ ") }
+                Text(WorkLogFormat.shortDay(due)).foregroundStyle(color)
+            }
+        } else if let start = info.startDate {
+            Text(WorkReport.shortDate(start) + " ~")
+        } else {
+            Text("")
+        }
+    }
+
+    private var actions: some View {
+        let entry = store.log.entries(on: page.day).first { $0.issue == info.id }
+        return HStack(spacing: 2) {
+            // 이미 적은 일감도 한 줄 더 넣을 수 있다 (같은 일감에 따로 적을 일이 여럿인 날)
+            Button { add(entry?.status ?? defaultStatus, again: entry != nil) } label: {
+                Image(systemName: entry == nil ? "plus" : "plus.square.on.square")
+            }
+                .buttonStyle(GhostIconButtonStyle())
+                .tip(entry == nil ? "\(dayLabel) 일지에 넣기" : "\(dayLabel) 일지에 한 줄 더 넣기")
+            Menu {
+                Button("완료") { add(.done) }
+                ForEach(Array(stride(from: 100, through: 10, by: -10)), id: \.self) { value in
+                    Button("\(value)%") { add(.percent(value)) }
+                }
+                Button("진행중") { add(.inProgress) }
+            } label: {
+                Image(systemName: "gauge.with.dots.needle.50percent")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .tip("진척률을 정해 \(dayLabel) 일지에 넣기")
+            Button { startEditing() } label: { Image(systemName: "slider.horizontal.3") }
+                .buttonStyle(GhostIconButtonStyle())
+                .tip("상태·시작일·완료 기한·담당자 고치기")
+                .disabled(!settings.redmineReady)
+                .popover(isPresented: Binding(
+                    get: { page.boardEditing == info.id },
+                    set: { if !$0 { page.boardEditing = nil } }
+                ), arrowEdge: .trailing) {
+                    IssueFieldEditor(current: info, edit: $page.boardDraft, sync: sync, locked: page.boardConfirming) {
+                        let fields = WorkReport.IssueFields.merged(auto: .init(), edit: page.boardDraft, current: info,
+                                                                   statuses: sync.statuses)
+                        if page.boardConfirming {
+                            // 레드마인에 바로 반영되므로 바뀔 칸을 한 번 더 보이고 저장한다
+                            VStack(alignment: .trailing, spacing: 8) {
+                                Text("#\(String(info.id))에 " + WorkLogFormat.fieldChanges(fields, current: info).joined(separator: " · ")
+                                     + "을(를) 저장할까요?")
+                                    .font(.system(size: 12)).foregroundStyle(WL.text)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                HStack(spacing: 8) {
+                                    Button("돌아가기") { page.boardConfirming = false }.buttonStyle(NotionButtonStyle())
+                                        .keyboardShortcut(.cancelAction)
+                                    // Return 두 번으로 바로 저장되지 않게 확인 단추는 눌러야만 저장한다
+                                    Button(sync.sending ? "저장 중…" : "저장") { save() }
+                                        .buttonStyle(NotionButtonStyle(kind: .primary))
+                                        .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
+                                }
+                            }
+                        } else {
+                            Button("취소") { page.boardEditing = nil }.buttonStyle(NotionButtonStyle())
+                            Button("레드마인에 저장…") { page.boardConfirming = true }
+                                .buttonStyle(NotionButtonStyle(kind: .primary))
+                                .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
+                                .keyboardShortcut(.defaultAction)
+                        }
+                    }
+                }
+            Button { open() } label: { Image(systemName: "arrow.up.right.square") }
+                .buttonStyle(GhostIconButtonStyle())
+                .tip("레드마인에서 열기")
         }
     }
 
@@ -408,12 +464,6 @@ private struct IssueRow: View {
         if let entry = store.addIssue(info, day: page.day, status: status, again: again) {
             page.flash("\(entry.project) · \(WorkReport.line(entry))")
         }
-    }
-
-    private func dueLabel(_ due: String) -> some View {
-        let today = WorkDay.today()
-        let color: Color = due < today ? Palette.red : due <= WorkDay.adding(3, to: today) ? WL.waiting : WL.faint
-        return Text("기한 \(WorkLogFormat.shortDay(due))").foregroundStyle(color).monospacedDigit()
     }
 
     private func open() {

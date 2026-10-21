@@ -19,6 +19,8 @@ struct RunnerStage: View {
     var tempo: Double = 1
     /// 사용량 흐름에서 반응할 순간.
     var reactions: AnyPublisher<UsageReactions.Reaction, Never> = Empty().eraseToAnyPublisher()
+    /// 게임 화면처럼 크게 띄울 때의 높이. 장면은 높이 150 기준으로 계산하고 그릴 때만 키운다.
+    var height: CGFloat = RunnerStage.height
 
     @StateObject private var model = StageModel()
     /// 무대를 누르고 있는지. 제스처가 취소돼도 저절로 풀려 게임 입력이 눌린 채 남지 않는다.
@@ -32,14 +34,18 @@ struct RunnerStage: View {
         TimelineView(.animation(minimumInterval: 1.0 / (model.game == nil ? AppSettings.shared.smoothness.fps : 60),
                                 paused: model.reduceMotion && model.game == nil)) { timeline in
             Canvas { context, size in
+                // 크게 띄우면 좌표계를 늘려 같은 장면을 다시 그린다. 그림을 늘리는 것과 달리 흐려지지 않는다
+                let scale = size.height / Self.height
+                let scene = CGSize(width: size.width / scale, height: Self.height)
+                context.scaleBy(x: scale, y: scale)
                 context.withCGContext { cg in
-                    model.draw(cg, size: size, date: timeline.date, display: display, character: character,
+                    model.draw(cg, size: scene, date: timeline.date, display: display, character: character,
                                theme: character.theme(theme), tempo: tempo)
                 }
-                if let game = model.game { Self.drawOverlay(game.overlay(size: size), in: &context) }
+                if let game = model.game { Self.drawOverlay(game.overlay(size: scene), in: &context) }
             }
         }
-        .frame(height: Self.height)
+        .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.07)))
         .overlay { bubbleLayer }
@@ -121,8 +127,11 @@ struct RunnerStage: View {
     private var bubbleLayer: some View {
         GeometryReader { geo in
             if let text = model.bubble {
+                // 크게 띄운 무대에서도 러너 머리 옆에 오게 장면 배율만큼 옮기고 키운다
+                let scale = geo.size.height / Self.height
                 SpeechBubble(text: text)
-                    .position(x: min(geo.size.width * StageModel.runnerAnchor + 74, geo.size.width - 64), y: 24)
+                    .scaleEffect(scale)
+                    .position(x: min(geo.size.width * StageModel.runnerAnchor + 74 * scale, geo.size.width - 64 * scale), y: 24 * scale)
                     .transition(.opacity.combined(with: .offset(y: 3)))
             }
         }
@@ -283,7 +292,8 @@ final class StageModel: ObservableObject {
 
     func popoverClosed() {
         endGame()
-        if activatedForGame, NSApp.isActive { NSApp.deactivate() }
+        // 무대가 닫히며 다른 창(앱 창)을 누른 것이면 그 창이 앞에 있어야 해서 앱을 물리지 않는다
+        if activatedForGame, NSApp.isActive, NSApp.keyWindow == nil || NSApp.keyWindow === window { NSApp.deactivate() }
         activatedForGame = false
     }
 

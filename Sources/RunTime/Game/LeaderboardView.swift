@@ -1,51 +1,36 @@
 import SwiftUI
 
-/// 미니게임 순위표 창. 순위 참여와 닉네임도 여기서 정한다.
+/// 미니게임 순위표. 게임 화면 오른쪽에 한 칸으로 두고, 순위 참여와 닉네임도 여기서 정한다.
 struct LeaderboardView: View {
     @ObservedObject private var board = Leaderboard.shared
     @StateObject private var state = LeaderboardState()
 
     var body: some View {
-        // 넓은 창이라 왼쪽에 시상대와 순위를, 오른쪽에 기간·참여 설정을 둔다
-        HStack(alignment: .top, spacing: 32) {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                ranking
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            Picker("기간", selection: $state.period) {
+                ForEach(Leaderboard.Period.allCases, id: \.self) { Text($0.title).tag($0) }
             }
-            .frame(maxWidth: .infinity)
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("기간").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                    Picker("기간", selection: $state.period) {
-                        ForEach(Leaderboard.Period.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-                participation
-                Spacer(minLength: 0)
-            }
-            .frame(width: 340)
-            .padding(.top, 52)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            ranking
+            participation
         }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 28)
-        .frame(width: AppWindow.size.width, height: AppWindow.size.height)
-        .background(Palette.groupedBackground)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { state.start() }
         .onDisappear { state.stop() }
     }
 
     private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("토큰 러너 순위").font(.system(size: 22, weight: .bold))
-                Text("팝오버 무대의 장애물 피하기 게임").font(.system(size: 12)).foregroundStyle(.secondary)
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("순위").font(.system(size: 15, weight: .bold))
+                Text("장애물 피하기 최고 점수").font(.system(size: 11.5)).foregroundStyle(.secondary)
             }
             Spacer()
             Button { state.load(keepVisible: true) } label: {
-                Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
-                    .frame(width: 26, height: 26)
+                Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold))
+                    .frame(width: 24, height: 24)
                     .background(Circle().fill(Palette.groupedRow))
             }
             .buttonStyle(.plain)

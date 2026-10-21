@@ -803,3 +803,55 @@ private struct TipLabel: View {
             .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
     }
 }
+
+/// 같은 메뉴 경로로 묶은 줄들의 작은 제목 (내 일감의 메뉴·화면 제목과 같은 꼴).
+struct PathHeading: View {
+    let path: String
+
+    var body: some View {
+        Text(path)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(WL.muted)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+            .padding(.bottom, 1)
+            .tip(path)
+    }
+}
+
+/// 경로 묶음마다 제목을 달고 줄을 늘어놓는다. `row`는 줄과, 묶음 안이면 그 경로를 받는다.
+/// 줄은 묶음에 들어가고 나와도 같은 id로 두어, 고치던 글 칸이 새로 만들어지지 않게 한다.
+struct PathGroupedRows<Row: View>: View {
+    let entries: [WorkEntry]
+    var pinned: [UUID: String] = [:]
+    @ViewBuilder let row: (WorkEntry, String?) -> Row
+
+    private enum Item: Identifiable {
+        case heading(String)
+        case row(WorkEntry, String?)
+
+        var id: String {
+            switch self {
+            case .heading(let path): return "path:" + path
+            case .row(let entry, _): return entry.id.uuidString
+            }
+        }
+    }
+
+    var body: some View {
+        ForEach(items) { item in
+            switch item {
+            case .heading(let path): PathHeading(path: path)
+            case .row(let entry, let path): row(entry, path)
+            }
+        }
+    }
+
+    private var items: [Item] {
+        WorkLogFormat.pathGroups(entries, pinned: pinned).flatMap { group -> [Item] in
+            (group.path.map { [Item.heading($0)] } ?? []) + group.entries.map { Item.row($0, group.path) }
+        }
+    }
+}

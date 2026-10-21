@@ -8,34 +8,43 @@ struct SettingsView: View {
     @ObservedObject var engine: UsageEngine
     /// 앱이 들고 있는 탭 상태. 다른 화면에서 특정 구역을 열 수 있게 바깥에서 받는다.
     @ObservedObject var tab: SettingsTabState
+    /// 업무 일지 연동 칸(GitLab·레드마인…)은 업무 일지 화면과 같은 상태를 쓴다. 고른 칸도 거기 둔다.
+    @ObservedObject var workLog: WorkLogPage
+    @ObservedObject private var workLogSettings = WorkLogSettings.shared
+    @ObservedObject private var workLogSync = WorkLogSync.shared
     @StateObject private var hotKeyRecorder = HotKeyRecorder()
 
-    enum Tab: Hashable { case general, runner, usage }
+    enum Tab: Hashable { case general, runner, usage, workLog }
 
-    init(settings: AppSettings, engine: UsageEngine, tab: SettingsTabState) {
+    init(settings: AppSettings, engine: UsageEngine, tab: SettingsTabState, workLog: WorkLogPage) {
         self.settings = settings
         self.engine = engine
         self.tab = tab
+        self.workLog = workLog
     }
 
     var body: some View {
         // 창이 넓어 위 세그먼트 대신 왼쪽에 구역 목록을 두고, 설정 글은 읽기 좋은 너비로 가운데에 둔다
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("설정").font(.system(size: 20, weight: .bold)).padding(.horizontal, 10).padding(.bottom, 12)
+                navHeader("앱")
                 navRow(.general, "일반", icon: "gearshape", tint: Palette.gray)
                 navRow(.runner, "러너", icon: "hare.fill", tint: Palette.orange)
                 navRow(.usage, "사용량", icon: "chart.bar.fill", tint: Palette.blue)
+                navHeader("업무 일지").padding(.top, 14)
+                ForEach(WorkLogPage.SettingsSection.allCases, id: \.self) { section in
+                    workLogRow(section)
+                }
                 Spacer()
             }
             .padding(.horizontal, 12)
-            .padding(.top, 20)
+            .padding(.top, 12)
             .frame(width: 220)
             .frame(maxHeight: .infinity, alignment: .top)
             .background(Palette.groupedRow.opacity(0.5))
             Rectangle().fill(Palette.separator.opacity(0.5)).frame(width: 1)
             VStack(alignment: .leading, spacing: 0) {
-                Text(tab.selection == .general ? "일반" : tab.selection == .runner ? "러너" : "사용량")
+                Text(title)
                     .font(.system(size: 20, weight: .bold))
                     .padding(.horizontal, 20)
                     .padding(.top, 22)
@@ -43,14 +52,57 @@ struct SettingsView: View {
                 case .general: general
                 case .runner: runner
                 case .usage: usage
+                case .workLog:
+                    WorkLogSettingsView(settings: workLogSettings, sync: workLogSync, page: workLog, store: .shared)
+                        .padding(.leading, -12)
                 }
             }
             .padding(.leading, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.groupedBackground)
+            .background(tab.selection == .workLog ? WL.canvas : Palette.groupedBackground)
         }
         .background(Palette.groupedBackground)
-        .frame(width: AppWindow.size.width, height: AppWindow.size.height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var title: String {
+        switch tab.selection {
+        case .general: return "일반"
+        case .runner: return "러너"
+        case .usage: return "사용량"
+        case .workLog: return workLog.settingsSection.rawValue
+        }
+    }
+
+    private func navHeader(_ text: String) -> some View {
+        Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            .padding(.horizontal, 10).padding(.bottom, 2)
+    }
+
+    /// 업무 일지 연동 칸. 오른쪽 점은 켜짐(초록)·확인 필요(주황).
+    private func workLogRow(_ section: WorkLogPage.SettingsSection) -> some View {
+        let on = tab.selection == .workLog && workLog.settingsSection == section
+        let dot = WorkLogSettingsView.dot(section, settings: workLogSettings, sync: workLogSync, store: .shared)
+        return Button {
+            workLog.settingsSection = section
+            tab.selection = .workLog
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: section.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Palette.indigo))
+                Text(section.rawValue).font(.system(size: 13, weight: on ? .semibold : .regular))
+                Spacer()
+                Circle().fill(dot).frame(width: 6, height: 6)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Color.primary.opacity(0.08) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func navRow(_ value: Tab, _ title: String, icon: String, tint: Color) -> some View {

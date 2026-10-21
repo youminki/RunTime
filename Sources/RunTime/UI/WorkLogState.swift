@@ -47,6 +47,9 @@ final class WorkLogPage: ObservableObject {
     @Published var renameText = ""
     @Published var importing = false
     @Published var importText = ""
+    /// 하루 보기에서 글을 고치는 줄과 그 줄이 있던 경로 묶음 ("" = 묶음 없음).
+    @Published var pinnedPaths: [UUID: String] = [:]
+    /// 연동 설정을 열어 달라는 신호. 앱 창이 받아 설정 화면의 업무 일지 칸으로 옮기고 다시 끈다.
     @Published var showsSettings = false
     /// 저장하기 전 API 키·웹훅. 저장하면 비운다.
     @Published var keyDraft = ""
@@ -106,6 +109,8 @@ final class WorkLogPage: ObservableObject {
         if collapsed.contains(key) { collapsed.remove(key) } else { collapsed.insert(key) }
     }
     @Published var toast: String?
+    /// 업무 일지를 열며 GitLab·레드마인을 마지막으로 받은 때.
+    var lastAutoSync: Date?
     private var toastWork: DispatchWorkItem?
 
     /// 지금 보기 단위로 앞뒤로 간다 (하루·주·달).
@@ -160,6 +165,43 @@ enum WorkLogFormat {
         let leaf = title[range.upperBound...].trimmingCharacters(in: .whitespaces)
         let path = title[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
         return leaf.isEmpty || path.isEmpty ? (nil, title) : (path, leaf)
+    }
+
+    /// 같은 메뉴 경로를 쓰는 줄 묶음. 둘 이상이 같은 경로면 경로를 묶음 제목으로 올리고(`path`), 혼자면 경로 없이 둔다.
+    struct PathGroup: Identifiable {
+        let id: String
+        let path: String?
+        let entries: [WorkEntry]
+    }
+
+    /// 보고서의 "같은 메뉴는 묶어 쓰기"와 같은 규칙으로 화면 줄도 묶는다. 묶음은 첫 줄이 있던 자리에 둔다.
+    /// `pinned`는 글을 고치고 있는 줄의 묶음 경로("" = 묶음 없음). 치는 도중 다른 묶음으로 옮겨 가 초점이 풀리지 않게 고정한다.
+    static func pathGroups(_ entries: [WorkEntry], pinned: [UUID: String] = [:]) -> [PathGroup] {
+        func pathOf(_ entry: WorkEntry) -> String? {
+            if let fixed = pinned[entry.id] { return fixed.isEmpty ? nil : fixed }
+            return breadcrumb(entry.title).path
+        }
+        var counts: [String: Int] = [:]
+        for entry in entries { if let path = pathOf(entry) { counts[path, default: 0] += 1 } }
+        // 고친 줄이 묶음을 떠나 혼자 남은 경로도 고치는 동안은 묶음 제목을 지킨다
+        // 지운 줄의 고정은 세지 않는다 (고치다 지우면 초점 해제 소식이 오지 않을 수 있다)
+        let present = Set(entries.map(\.id))
+        for (id, path) in pinned where !path.isEmpty && present.contains(id) { counts[path, default: 0] += 1 }
+        var groups: [PathGroup] = []
+        var index: [String: Int] = [:]
+        for entry in entries {
+            guard let path = pathOf(entry), counts[path, default: 0] > 1 else {
+                groups.append(PathGroup(id: entry.id.uuidString, path: nil, entries: [entry]))
+                continue
+            }
+            if let at = index[path] {
+                groups[at] = PathGroup(id: groups[at].id, path: path, entries: groups[at].entries + [entry])
+            } else {
+                index[path] = groups.count
+                groups.append(PathGroup(id: "path:" + path, path: path, entries: [entry]))
+            }
+        }
+        return groups
     }
 
     /// 레드마인에서 함께 바뀔 칸을 짧은 말로: `할일 → 완료`, `시작 10.21`, `담당 홍길동`.

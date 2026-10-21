@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import WorkLogCore
 
-/// 업무 일지 연동 설정. 노션 설정 창처럼 왼쪽에서 칸을 고르고, 오른쪽은 "이름·설명 | 조작" 줄로 둔다.
-/// 키·주소는 붙여넣기 한 번에 확인하고 저장까지 한다.
+/// 업무 일지 연동 설정. 앱 창 설정 화면의 "업무 일지" 묶음에서 고른 칸을 "이름·설명 | 조작" 줄로 둔다.
+/// 키·주소는 붙여넣기 한 번에 확인하고 저장까지 한다. 바뀐 값은 바로 저장되고, 떠날 때 연동을 다시 받는다.
 struct WorkLogSettingsView: View {
     @ObservedObject var settings: WorkLogSettings
     @ObservedObject var sync: WorkLogSync
@@ -11,102 +11,63 @@ struct WorkLogSettingsView: View {
     @ObservedObject var store: WorkLogStore
 
     var body: some View {
-        HStack(spacing: 0) {
-            nav
-            Rectangle().fill(WL.border).frame(width: 1)
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(page.settingsSection.rawValue).font(WL.title).padding(.bottom, 4)
-                        Text(sectionNote).font(.system(size: 12.5)).foregroundStyle(WL.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.bottom, 18)
-                        Rectangle().fill(WL.border).frame(height: 1)
-                        switch page.settingsSection {
-                        case .gitlab: gitlab
-                        case .redmine: redmine
-                        case .teams: teams
-                        case .recurring: recurring
-                        case .shortcuts: shortcuts
-                        }
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.top, 28)
-                    .padding(.bottom, 24)
-                }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(sectionNote).font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 18)
                 Rectangle().fill(WL.border).frame(height: 1)
-                HStack {
-                    Text("바뀐 값은 바로 저장됩니다").font(.system(size: 12)).foregroundStyle(WL.faint)
-                    Spacer()
-                    // Return은 칸의 저장에 쓰여 완료에 걸지 않는다
-                    Button("완료") { finish() }
-                        .buttonStyle(NotionButtonStyle(kind: .primary))
-                        .keyboardShortcut(.cancelAction)
+                switch page.settingsSection {
+                case .gitlab: gitlab
+                case .redmine: redmine
+                case .teams: teams
+                case .recurring: recurring
+                case .shortcuts: shortcuts
                 }
-                .padding(.horizontal, 20)
-                .frame(height: 56)
             }
-            .background(WL.canvas)
+            .frame(maxWidth: 680, alignment: .leading)
+            .padding(.horizontal, 32)
+            .padding(.top, 10)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: 820, height: 580)
         .foregroundStyle(WL.text)
+        // 저장·가져오기 결과 알림. 업무 일지 화면 밖이라 여기에도 띄운다
+        .overlay(alignment: .bottom) {
+            if let message = page.toast {
+                Toast(message: message).padding(.bottom, 18).transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
         .onAppear {
+            // 화면을 열자마자 첫 글 칸(GitLab 주소)이 글자를 통째로 고른 채 잡히지 않게 초점을 푼다
+            DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
             page.keyDraft = ""
             page.teamsDraft = ""
             if settings.redmineReady { sync.loadStatuses() }
         }
+        .onDisappear { finish() }
     }
 
+    /// 설정을 떠날 때. 칸에 써 두고 저장을 누르지 않은 키·주소도 맞으면 저장하고, 바뀐 연동으로 다시 받는다.
     private func finish() {
-        // 칸에 써 두고 저장을 누르지 않은 키·주소도 저장한다. 맞지 않으면 닫지 않고 그 칸을 보여 준다
-        if !page.keyDraft.isEmpty, let problem = saveKey(page.keyDraft) {
-            page.settingsSection = .redmine
-            page.flash(problem)
-            return
+        // 맞지 않는 값은 저장하지 않고 알린다 (예전 완료 단추처럼 그 칸으로 돌려보낼 수 없어 알림만)
+        if !page.keyDraft.isEmpty {
+            if let problem = saveKey(page.keyDraft) { page.flash("레드마인 API 키를 저장하지 못했습니다: \(problem)") }
+            else { page.keyDraft = "" }
         }
-        if !page.teamsDraft.isEmpty, let problem = saveTeams(page.teamsDraft) {
-            page.settingsSection = .teams
-            page.flash(problem)
-            return
+        if !page.teamsDraft.isEmpty {
+            if let problem = saveTeams(page.teamsDraft) { page.flash("팀즈 웹훅을 저장하지 못했습니다: \(problem)") }
+            else { page.teamsDraft = "" }
         }
         settings.normalizeRedmineURL()
-        page.showsSettings = false
         if settings.captureEnabled { sync.capture() }
         if settings.redmineReady { sync.loadMyIssues() }
         GlobalHotKey.shared.setQuickAdd(settings.quickAddEnabled)
     }
 
-    // MARK: 왼쪽
-
-    private var nav: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("연동 설정").font(.system(size: 12, weight: .medium)).foregroundStyle(WL.muted)
-                .padding(.horizontal, 10).padding(.bottom, 6)
-            ForEach(WorkLogPage.SettingsSection.allCases, id: \.self) { section in
-                Button { page.settingsSection = section } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: section.icon).font(.system(size: 12)).foregroundStyle(WL.muted).frame(width: 18)
-                        Text(section.rawValue).font(.system(size: 13, weight: page.settingsSection == section ? .semibold : .regular))
-                        Spacer()
-                        Circle().fill(dot(section)).frame(width: 6, height: 6)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(page.settingsSection == section ? WL.hover.opacity(1.8) : .clear))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 24)
-        .frame(width: 200)
-        .background(WL.sidebar)
-    }
-
-    /// 칸마다 켜짐(초록)·문제(주황)·꺼짐(빈) 점.
-    private func dot(_ section: WorkLogPage.SettingsSection) -> Color {
+    /// 칸마다 켜짐(초록)·문제(주황)·꺼짐(빈) 점. 설정 화면 왼쪽 목록에 붙는다.
+    static func dot(_ section: WorkLogPage.SettingsSection, settings: WorkLogSettings, sync: WorkLogSync,
+                    store: WorkLogStore) -> Color {
         switch section {
         case .gitlab: return sync.captureError != nil ? WL.waiting : settings.captureEnabled ? WL.done : .clear
         case .redmine: return sync.issuesError != nil ? WL.waiting : settings.redmineReady ? WL.done : .clear

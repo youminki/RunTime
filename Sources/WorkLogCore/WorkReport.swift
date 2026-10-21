@@ -12,9 +12,11 @@ public enum WorkReport {
     /// ```
     /// `doneFirst`면 프로젝트마다 상시 → 완료 → 진행 중 순서로 놓는다 (회의·보고를 먼저 적는 관례).
     /// `byIssue`면 레드마인 일감 이름으로 적고 QA 건은 `QA 수정사항 N건 반영` 한 줄로 모은다.
-    public static func daily(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool = false, byIssue: Bool = false) -> String {
+    /// `grouped`면 같은 메뉴 경로(`데이터 수집 > 공유 파일 관리 > …`) 줄을 경로 한 줄 아래로 묶는다 (`grouping` 참고).
+    public static func daily(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool = false, byIssue: Bool = false,
+                             grouped: Bool = false) -> String {
         let lines = byIssue ? issueLines(entries, in: log) : entries
-        return numbered(doneFirst ? ordered(lines) : lines, in: log)
+        return numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped)
     }
 
     /// 레드마인 일감 기준 보고 줄. 같은 일감은 한 줄(가장 많이 한 상태), QA 건은 프로젝트마다 한 줄로 앞에 둔다.
@@ -100,26 +102,29 @@ public enum WorkReport {
     /// 한 주 동안 같은 일은 한 줄로 모으고 마지막 상태를 적는다. 화요일 60%, 목요일 완료면 완료 한 줄만 남는다.
     /// `nextWeekPlan`이면 끝나지 않은 일을 `[차주 계획]`으로 한 번 더 적는다.
     public static func weekly(_ entries: [WorkEntry], in log: WorkLog, week: ClosedRange<String>,
-                              doneFirst: Bool = false, nextWeekPlan: Bool = false, byIssue: Bool = false) -> String {
-        let body = period(entries, in: log, doneFirst: doneFirst, byIssue: byIssue,
+                              doneFirst: Bool = false, nextWeekPlan: Bool = false, byIssue: Bool = false,
+                              grouped: Bool = false) -> String {
+        let body = period(entries, in: log, doneFirst: doneFirst, byIssue: byIssue, grouped: grouped,
                           header: "[주간 진행 사항] \(shortDate(week.lowerBound)) ~ \(shortDate(week.upperBound))")
         guard nextWeekPlan, !body.isEmpty else { return body }
         let lines = byIssue ? issueLines(merged(entries), in: log) : merged(entries)
         let open = lines.filter { !$0.status.isFinished && $0.status != .ongoing }
         guard !open.isEmpty else { return body }
-        return body + "\n\n[차주 계획]\n" + numbered(open, in: log)
+        return body + "\n\n[차주 계획]\n" + numbered(open, in: log, grouped: grouped)
     }
 
     /// 한 달치를 주간 보고와 같은 규칙으로 모은다. 머리는 `[월간 진행 사항] 2026년 10월`.
-    public static func monthly(_ entries: [WorkEntry], in log: WorkLog, month: ClosedRange<String>, byIssue: Bool = false) -> String {
+    public static func monthly(_ entries: [WorkEntry], in log: WorkLog, month: ClosedRange<String>, byIssue: Bool = false,
+                               grouped: Bool = false) -> String {
         let parts = month.lowerBound.split(separator: "-")
         let title = parts.count == 3 ? "\(parts[0])년 \(Int(parts[1]) ?? 0)월" : month.lowerBound
-        return period(entries, in: log, doneFirst: false, byIssue: byIssue, header: "[월간 진행 사항] \(title)")
+        return period(entries, in: log, doneFirst: false, byIssue: byIssue, grouped: grouped, header: "[월간 진행 사항] \(title)")
     }
 
-    private static func period(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool, byIssue: Bool, header: String) -> String {
+    private static func period(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool, byIssue: Bool, grouped: Bool,
+                               header: String) -> String {
         let lines = byIssue ? issueLines(merged(entries), in: log) : merged(entries)
-        let body = numbered(doneFirst ? ordered(lines) : lines, in: log)
+        let body = numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped)
         return body.isEmpty ? "" : header + "\n" + body
     }
 
@@ -148,14 +153,59 @@ public enum WorkReport {
         return steps
     }
 
-    private static func numbered(_ entries: [WorkEntry], in log: WorkLog) -> String {
+    private static func numbered(_ entries: [WorkEntry], in log: WorkLog, grouped: Bool = false) -> String {
         // 막 지운 빈 줄은 보고서에 넣지 않는다
         let entries = entries.filter { !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }
         return log.orderedProjects(of: entries).enumerated().map { index, project in
-            let lines = entries.filter { $0.project == project }.map { "- \(line($0))" }
+            let rows = entries.filter { $0.project == project }
+            let lines = grouped ? groupedLines(rows) : rows.map { "- \(line($0))" }
             return (["\(index + 1). \(project)"] + lines).joined(separator: "\n")
         }
         .joined(separator: "\n")
+    }
+
+    /// 경로 앞부분이 같은 줄이 둘 이상이면 경로를 한 번만 적고 끝 이름을 그 아래 `  · `로 늘어놓는다.
+    /// ```
+    /// - 데이터 수집 > 수집 파이프라인 관리
+    ///   · 작업 제어 API 연동 (100%)
+    ///   · 로그 조회 API 연동 (100%)
+    /// ```
+    /// 묶음은 첫 줄이 있던 자리에 두어 상시 → 완료 → 진행 순서를 되도록 지킨다.
+    static func groupedLines(_ rows: [WorkEntry]) -> [String] {
+        let groups = grouping(rows)
+        var printed: Set<String> = []
+        var lines: [String] = []
+        for row in rows {
+            guard let (path, _) = split(row.title), let members = groups[path], members.count > 1 else {
+                lines.append("- \(line(row))")
+                continue
+            }
+            guard printed.insert(path).inserted else { continue }
+            lines.append("- \(path)")
+            for member in members {
+                let leaf = split(member.title)?.leaf ?? member.title
+                lines.append("  · \(leaf) (\(member.status.label))")
+            }
+        }
+        return lines
+    }
+
+    /// 경로 앞부분마다 그 경로를 쓰는 줄 (원래 순서).
+    private static func grouping(_ rows: [WorkEntry]) -> [String: [WorkEntry]] {
+        var groups: [String: [WorkEntry]] = [:]
+        for row in rows {
+            if let (path, _) = split(row.title) { groups[path, default: []].append(row) }
+        }
+        return groups
+    }
+
+    /// `A > B > 끝 이름` → (`A > B`, `끝 이름`). 경로가 없으면 nil.
+    private static func split(_ title: String) -> (path: String, leaf: String)? {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        guard let range = trimmed.range(of: " > ", options: .backwards) else { return nil }
+        let path = String(trimmed[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+        let leaf = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        return path.isEmpty || leaf.isEmpty ? nil : (path, leaf)
     }
 
     public static func line(_ entry: WorkEntry) -> String {
@@ -388,18 +438,37 @@ public enum WorkReport {
 
     /// 이미 써 둔 보고서를 읽는다. `1.uxhub`, `2. VeloX` 같은 번호 줄이 프로젝트, `- 내용 (완료)`가 일이다.
     /// 줄 안의 `#12345`는 일감 번호로 떼어 낸다. `[금일 진행 사항]` 같은 머리줄은 건너뛴다.
+    /// 묶어 쓴 보고서(`- 경로` 아래 들여 쓴 `· 끝 이름 (상태)`)는 경로를 다시 붙여 한 줄씩 읽는다.
     public static func parse(_ text: String, day: String, now: Date = Date()) -> [WorkEntry] {
         var project: String?
         var entries: [WorkEntry] = []
-        for raw in text.components(separatedBy: .newlines) {
+        let rawLines = text.components(separatedBy: .newlines)
+        var group: String?
+        for (index, raw) in rawLines.enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("[") else { continue }
             if let name = projectName(line) {
                 project = name
+                group = nil
                 continue
             }
             guard let first = line.first, "-•·*".contains(first), let project else { continue }
+            let indented = raw.first?.isWhitespace == true
+            if !indented {
+                group = nil
+                // 묶어 쓴 꼴(`- 경로` 다음 줄이 들여 쓴 `· `)일 때만 경로 머리로 읽는다.
+                // 상태나 일감 번호가 붙은 줄 아래의 `  - 세부` 같은 하위 글머리는 그대로 따로 읽는다
+                let head = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+                let next = rawLines[(index + 1)...].first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                if let next, next.first?.isWhitespace == true,
+                   next.trimmingCharacters(in: .whitespaces).hasPrefix("·"),
+                   !head.hasSuffix(")"), splitIssue(head).issue == nil {
+                    group = head
+                    continue
+                }
+            }
             var body = String(line.dropFirst()).trimmingCharacters(in: .whitespaces)
+            if indented, let group { body = group + " > " + body }
             var status = WorkStatus.done
             if body.hasSuffix(")"), let open = body.lastIndex(of: "(") {
                 let inside = String(body[body.index(after: open)..<body.index(before: body.endIndex)])

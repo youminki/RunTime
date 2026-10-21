@@ -25,6 +25,8 @@ final class WorkLogSettings: ObservableObject {
     @Published var dailyHeader: Bool { didSet { defaults.set(dailyHeader, forKey: "workLogReportHeader") } }
     /// 보고서를 레드마인 일감 이름으로 쓰고 QA 건은 `QA 수정사항 N건 반영`으로 모은다.
     @Published var reportByIssue: Bool { didSet { defaults.set(reportByIssue, forKey: "workLog.reportByIssue") } }
+    /// 같은 메뉴 경로 줄을 경로 한 줄 아래로 묶어 쓴다.
+    @Published var reportGrouped: Bool { didSet { defaults.set(reportGrouped, forKey: "workLog.reportGrouped") } }
     /// ⌃⌥L로 어디서든 한 줄 적기.
     @Published var quickAddEnabled: Bool { didSet { defaults.set(quickAddEnabled, forKey: "workLog.quickAdd") } }
     /// 보낼 때 일감 상태·시작일·완료 기한도 일지에 맞춘다. 진행·완료로 쓸 상태는 레드마인마다 달라 고른다.
@@ -49,6 +51,7 @@ final class WorkLogSettings: ObservableObject {
         weeklyPlan = defaults.object(forKey: "workLog.weeklyPlan") as? Bool ?? false
         dailyHeader = defaults.object(forKey: "workLogReportHeader") as? Bool ?? false
         reportByIssue = defaults.object(forKey: "workLog.reportByIssue") as? Bool ?? true
+        reportGrouped = defaults.object(forKey: "workLog.reportGrouped") as? Bool ?? true
         quickAddEnabled = defaults.object(forKey: "workLog.quickAdd") as? Bool ?? true
         syncIssueFields = defaults.object(forKey: "workLog.syncIssueFields") as? Bool ?? true
         redmineHTML = defaults.object(forKey: "workLog.redmineHTML") as? Bool ?? true

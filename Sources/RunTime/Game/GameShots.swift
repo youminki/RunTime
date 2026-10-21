@@ -28,14 +28,17 @@ enum GameShots {
         }
 
         func shot(_ name: String) throws {
-            let view = Canvas { context, size in
+            // RUNTIME_GAME_SCALE=3이면 앱 창 게임 화면처럼 같은 장면을 키워 그린다
+            let zoom = ProcessInfo.processInfo.environment["RUNTIME_GAME_SCALE"].flatMap(Double.init).map { CGFloat($0) } ?? 1
+            let view = Canvas { context, _ in
+                context.scaleBy(x: zoom, y: zoom)
                 context.withCGContext { cg in
                     model.draw(cg, size: size, date: date, display: .normal(.running), character: character,
                                theme: character.theme(.natural))
                 }
                 if let game = model.game { RunnerStage.drawOverlay(game.overlay(size: size), in: &context) }
             }
-            .frame(width: size.width, height: size.height)
+            .frame(width: size.width * zoom, height: size.height * zoom)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             guard let image = renderer.cgImage else { return }
@@ -217,14 +220,17 @@ enum GameFrames {
         var index = 0
         let capture = {
             index += 1
-            let view = Canvas { context, size in
+            // RUNTIME_GAME_SCALE=3이면 앱 창 게임 화면처럼 같은 장면을 키워 그린다
+            let zoom = ProcessInfo.processInfo.environment["RUNTIME_GAME_SCALE"].flatMap(Double.init).map { CGFloat($0) } ?? 1
+            let view = Canvas { context, _ in
+                context.scaleBy(x: zoom, y: zoom)
                 context.withCGContext { cg in
                     model.draw(cg, size: size, date: date, display: .normal(.running), character: character,
                                theme: character.theme(.natural))
                 }
                 if let game = model.game { RunnerStage.drawOverlay(game.overlay(size: size), in: &context) }
             }
-            .frame(width: size.width, height: size.height)
+            .frame(width: size.width * zoom, height: size.height * zoom)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             guard let image = renderer.cgImage else { return }

@@ -34,15 +34,22 @@ final class LeaderboardFeed {
         if Leaderboard.shared.isOn { refresh() }
     }
 
+    /// 보이는 무대 수. 앱 창에서 화면을 바꾸면 새 무대가 옛 무대보다 먼저 나타나기도 해서,
+    /// 마지막 무대가 사라질 때만 타이머를 끈다.
+    private var visibleStages = 0
+
     func stageAppeared() {
+        visibleStages += 1
         refresh()
-        stageTimer?.invalidate()
+        guard stageTimer == nil else { return }
         let timer = Timer(timeInterval: Self.stageInterval, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(timer, forMode: .common)
         stageTimer = timer
     }
 
     func stageDisappeared() {
+        visibleStages = max(0, visibleStages - 1)
+        guard visibleStages == 0 else { return }
         stageTimer?.invalidate()
         stageTimer = nil
     }

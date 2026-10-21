@@ -89,18 +89,22 @@ struct WorkLogPreview: View {
     }
 
     private var reportText: String {
+        let grouped = settings.reportGrouped
         switch page.mode {
         case .day, .issues:
-            let body = WorkReport.daily(scopeEntries, in: store.log, doneFirst: settings.doneFirst, byIssue: settings.reportByIssue)
+            let body = WorkReport.daily(scopeEntries, in: store.log, doneFirst: settings.doneFirst, byIssue: settings.reportByIssue,
+                                        grouped: grouped)
             return body.isEmpty || !settings.dailyHeader ? body : "[금일 진행 사항]\n" + body
         case .week:
             return WorkReport.weekly(scopeEntries, in: store.log, week: WorkDay.week(of: page.day),
-                                     doneFirst: settings.doneFirst, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue)
+                                     doneFirst: settings.doneFirst, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue,
+                                     grouped: grouped)
         case .month:
-            return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: settings.reportByIssue)
+            return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: settings.reportByIssue,
+                                      grouped: grouped)
         case .project:
             return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: settings.doneFirst,
-                                    byIssue: settings.reportByIssue)
+                                    byIssue: settings.reportByIssue, grouped: grouped)
         }
     }
 
@@ -120,6 +124,8 @@ struct WorkLogPreview: View {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("레드마인 일감 이름으로, QA는 건수로 모아 쓰기", isOn: $settings.reportByIssue)
                     .tip("일감 줄은 `데이터 수집 > 공유 파일 관리 API 연동 (100%)`처럼, QA 건은 `QA 수정사항 N건 반영`으로 적습니다")
+                Toggle("같은 메뉴는 묶어 쓰기", isOn: $settings.reportGrouped)
+                    .tip("`데이터 수집 > 수집 관리`처럼 앞 경로가 같은 줄이 둘 이상이면 경로를 한 번만 적고 그 아래 `· 끝 이름 (상태)`로 늘어놓습니다")
                 if page.mode == .day || page.mode == .issues {
                     Toggle("맨 위에 [금일 진행 사항] 붙이기", isOn: $settings.dailyHeader)
                 }
@@ -740,8 +746,9 @@ private struct ReportText: NSViewRepresentable {
             // AppKit은 한글을 글자 사이에서도 꺾어 `연동`이 `연/동`으로 갈린다
             style.lineBreakStrategy = .hangulWordPriority
             let indent = line.prefix { $0 == " " }
-            if line.dropFirst(indent.count).hasPrefix("- ") {
-                style.headIndent = (String(indent) + "- " as NSString).size(withAttributes: [.font: font]).width
+            // `- `와 묶음 하위 줄의 `· `는 꺾인 줄이 글머리 뒤에서 시작하게 한다
+            if let bullet = ["- ", "· "].first(where: { line.dropFirst(indent.count).hasPrefix($0) }) {
+                style.headIndent = (String(indent) + bullet as NSString).size(withAttributes: [.font: font]).width
             }
             result.append(NSAttributedString(string: line + (index < lines.count - 1 ? "\n" : ""),
                                              attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style]))

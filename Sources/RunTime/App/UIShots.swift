@@ -93,6 +93,29 @@ enum UIShots {
         return page
     }
 
+    /// 앱 창을 기본 크기로, 고른 화면을 띄운 채 찍는다 (사용량에서 들어온 것처럼 뒤로 단추가 켜진다).
+    private static func mainPage(_ page: MainPage, engine: UsageEngine, workLog: WorkLogPage.Mode = .day) -> AnyView {
+        let navigator = MainNavigator()
+        navigator.start(at: page)
+        return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                      workLogPage: workLogPage(workLog), settingsTab: SettingsTabState(.general))
+            .frame(width: mainSize.width, height: mainSize.height))
+    }
+
+    /// 앱 창 화면을 찍을 크기. RUNTIME_SHOT_MIN=1이면 최소 크기로 찍어 잘리는 곳을 본다.
+    private static var mainSize: CGSize {
+        ProcessInfo.processInfo.environment["RUNTIME_SHOT_MIN"] == "1" ? AppWindow.minSize : AppWindow.size
+    }
+
+    /// 앱 창 설정 화면에서 업무 일지 연동 칸을 고른 채 찍는다.
+    private static func mainSettings(_ section: WorkLogPage.SettingsSection, engine: UsageEngine) -> AnyView {
+        let navigator = MainNavigator()
+        navigator.start(at: .settings)
+        return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                      workLogPage: settingsPage(section), settingsTab: SettingsTabState(.workLog))
+            .frame(width: mainSize.width, height: mainSize.height))
+    }
+
     static func run(to directory: URL, engine: UsageEngine) {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -110,8 +133,14 @@ enum UIShots {
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .shop))),
             ("popover-storage", .darkAqua, nil,
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .storage))),
-            ("usage-window", .darkAqua, nil,
-             AnyView(PopoverView(engine: engine, settings: engine.settings, windowed: true))),
+            ("main-usage", .darkAqua, nil, mainPage(.usage, engine: engine)),
+            ("main-game", .darkAqua, nil, mainPage(.game, engine: engine)),
+            ("main-runners", .darkAqua, nil, mainPage(.runners, engine: engine)),
+            ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),
+            ("main-worklog-dark", .darkAqua, nil, mainPage(.workLog, engine: engine)),
+            ("main-worklog-issues", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .issues)),
+            ("main-worklog-week", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .week)),
+            ("main-settings", .aqua, nil, mainPage(.settings, engine: engine)),
             ("storage", .darkAqua, nil, AnyView(StorageView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),
             ("popover-quests", .darkAqua, nil,
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .quests))),
@@ -125,19 +154,7 @@ enum UIShots {
             ("shop-crash", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .crash).padding(14).frame(width: 376).background(Theme.background))),
             ("welcome", .darkAqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("welcome-light", .aqua, nil, AnyView(WelcomeView(settings: engine.settings))),
-            ("settings-general", .darkAqua, 720, AnyView(SettingsView(settings: engine.settings, engine: engine, tab: SettingsTabState(.general)).background(windowBackground))),
-            ("settings-general-light", .aqua, 720, AnyView(SettingsView(settings: engine.settings, engine: engine, tab: SettingsTabState(.general)).background(windowBackground))),
-            ("settings-runner", .darkAqua, 720,
-             AnyView(SettingsView(settings: engine.settings, engine: engine, tab: SettingsTabState(.runner)).background(windowBackground))),
-            ("settings-usage", .darkAqua, 720,
-             AnyView(SettingsView(settings: engine.settings, engine: engine, tab: SettingsTabState(.usage)).background(windowBackground))),
-            ("settings-runner-light", .aqua, 720,
-             AnyView(SettingsView(settings: engine.settings, engine: engine, tab: SettingsTabState(.runner)).background(windowBackground))),
-            ("daily", .darkAqua, nil, AnyView(DailyDetailView(engine: engine).background(windowBackground))),
-            ("daily-light", .aqua, nil, AnyView(DailyDetailView(engine: engine).background(windowBackground))),
-            ("leaderboard", .darkAqua, nil, AnyView(LeaderboardView().background(windowBackground))),
             ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, close: {}).background(windowBackground))),
-            ("leaderboard-light", .aqua, nil, AnyView(LeaderboardView().background(windowBackground))),
             // 업무 일지는 RUNTIME_WORKLOG로 예시 파일을 가리키고 찍는다 (내 일지가 그림에 남지 않게)
             ("worklog-day", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
             ("worklog-day-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
@@ -193,9 +210,9 @@ enum UIShots {
             })),
             ("worklog-status", .aqua, nil, AnyView(StatusPicker(current: .percent(60)) { _ in }.background(WL.canvas))),
             ("worklog-import", .aqua, nil, AnyView(WorkLogImportSheet(store: .shared, page: importPage()))),
-            ("worklog-settings", .aqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: WorkLogPage(), store: .shared))),
-            ("worklog-settings-dark", .darkAqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: WorkLogPage(), store: .shared))),
-            ("worklog-settings-redmine", .aqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: settingsPage(.redmine), store: .shared))),
+            ("main-settings-worklog", .aqua, nil, mainSettings(.gitlab, engine: engine)),
+            ("main-settings-worklog-dark", .darkAqua, nil, mainSettings(.gitlab, engine: engine)),
+            ("main-settings-redmine", .aqua, nil, mainSettings(.redmine, engine: engine)),
             // 긴 웹훅 호스트가 저장된 뒤에도 제목·설명이 세로로 서지 않는지 본다
             ("worklog-secret-saved", .darkAqua, nil, AnyView(
                 SettingRow("웹훅 주소", "아래 순서로 만든 주소를 복사해 두고 붙여넣기를 누르세요. 주소는 키체인에 둡니다.") {
@@ -203,15 +220,21 @@ enum UIShots {
                                 placeholder: "", draft: .constant(""), save: { _ in nil }, clear: {})
                 }
                 .padding(.horizontal, 32).frame(width: 600).background(WL.canvas))),
-            ("worklog-settings-redmine-dark", .darkAqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: settingsPage(.redmine), store: .shared))),
-            ("worklog-settings-teams", .darkAqua, nil, AnyView(WorkLogSettingsView(settings: .shared, sync: .shared, page: settingsPage(.teams), store: .shared))),
+            ("main-settings-redmine-dark", .darkAqua, nil, mainSettings(.redmine, engine: engine)),
+            ("main-settings-teams", .darkAqua, nil, mainSettings(.teams, engine: engine)),
         ]
-        let windows = screens.map { screen -> NSWindow in
+        // RUNTIME_SHOTS=main-,worklog-day처럼 이름 앞부분을 주면 그 화면만 찍는다
+        let only = ProcessInfo.processInfo.environment["RUNTIME_SHOTS"].flatMap { $0.isEmpty ? nil : $0.split(separator: ",").map(String.init) }
+        let picked = only.map { prefixes in screens.filter { screen in prefixes.contains { screen.name.hasPrefix($0) } } } ?? screens
+        let windows = picked.map { screen -> NSWindow in
             let window = NSWindow(contentViewController: NSHostingController(rootView: screen.view))
             window.styleMask = [.titled]
             window.appearance = NSAppearance(named: screen.appearance)
             // 설정처럼 스크롤되는 창은 최대 높이로 펼쳐 한 장에 담는다
-            if let height = screen.height { window.setContentSize(NSSize(width: window.frame.width, height: height)) }
+            // 업무 일지는 창 너비를 따라 칸을 나누므로 앱 창 안에서의 너비(아이콘 막대를 뺀 값)로 찍는다
+            let width = screen.name.hasPrefix("worklog-") && screen.height != nil
+                ? AppWindow.size.width - MainWindowView.railWidth - 1 : window.frame.width
+            if let height = screen.height { window.setContentSize(NSSize(width: width, height: height)) }
             // 화면 밖에 두어 사용자 작업을 가리지 않는다
             window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
             window.orderBack(nil)
@@ -232,9 +255,9 @@ enum UIShots {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-            for (screen, window) in zip(screens, windows) { shot(screen.name, window) }
+            for (screen, window) in zip(picked, windows) { shot(screen.name, window) }
             // 무대 하늘은 시각마다 달라 글자·러너 대비를 시간대별로 본다 (아침·낮·노을)
-            var hours = [7, 12, 18]
+            var hours = picked.first?.name == "popover" ? [7, 12, 18] : []
             func next() {
                 guard let hour = hours.first else { exit(0) }
                 hours.removeFirst()

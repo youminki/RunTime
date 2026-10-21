@@ -21,12 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popover: NSPopover?
     /// 앱이 일부러 닫는 중인지. 아니면 팝오버 안을 누른 순간에는 닫지 않는다 (popoverShouldClose).
     private var closingPopover = false
-    private var settingsWindow: NSWindow?
-    private var dailyDetailWindow: NSWindow?
-    private var usageWindow: NSWindow?
-    private var workLogWindow: NSWindow?
+    /// 사용량·게임·업무 일지·설정을 한 창에서 오간다. 화면마다 창을 따로 띄우지 않는다.
+    private var mainWindow: NSWindow?
+    private let navigator = MainNavigator()
+    private var mainToolbar: MainToolbar?
     private let workLogPage = WorkLogPage()
-    private var leaderboardWindow: NSWindow?
     private var welcomeWindow: NSWindow?
     private var cancellables: Set<AnyCancellable> = []
     private let settingsTab = SettingsTabState(.general)
@@ -86,22 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         AppUpdater.shared.openWindows = { [weak self] in
             guard let self else { return [] }
-            return [("workLog", workLogWindow), ("settings", settingsWindow), ("dailyDetail", dailyDetailWindow),
-                    ("leaderboard", leaderboardWindow), ("usage", usageWindow)]
-                .filter { $0.1?.isVisible == true }.map(\.0)
+            return mainWindow?.isVisible == true ? ["main:" + navigator.page.rawValue] : []
         }
         AppUpdater.shared.start()
         // 자동 업데이트는 다른 앱을 쓰는 동안 일어나므로, 다시 연 창이 그 앱의 초점을 빼앗지 않게 뒤에 둔다
         reopening = true
         for name in AppUpdater.shared.takeWindowsToReopen() {
-            switch name {
-            case "workLog": openWorkLog()
-            case "settings": openSettings()
-            case "dailyDetail": openDailyDetail()
-            case "leaderboard": openLeaderboard()
-            case "usage": openUsageWindow()
-            default: break
-            }
+            // 예전 버전이 남긴 창 이름(workLog 등)도 같은 화면으로 연다
+            let key = name.hasPrefix("main:") ? String(name.dropFirst(5)) : name
+            if let page = MainPage(windowName: key) { showMain(page) }
         }
         reopening = false
         NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
@@ -186,7 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard let self else { return }
                 _ = self.animator.perform(.celebrate)
                 guard self.engine.settings.claudeDoneAlertEnabled, turn.duration >= Self.claudeDoneMinimum,
-                      self.popover?.isShown != true, self.usageWindow?.isVisible != true else { return }
+                      self.popover?.isShown != true,
+                      // 무대가 보이면 러너가 말풍선으로 알리니 알림은 보내지 않는다
+                      !(self.mainWindow?.isVisible == true && self.navigator.page.hasStage) else { return }
                 let minutes = Int((turn.duration / 60).rounded())
                 Notifier.shared.send(title: "Claude 작업이 끝났어요",
                                      body: [turn.project, "\(minutes)분 걸림"].compactMap { $0 }.joined(separator: " · "))
@@ -221,8 +215,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard let self else { return }
             switch destination {
             case .usage:
-                NSApp.activate(ignoringOtherApps: true)
-                if self.popover?.isShown != true { self.togglePopover() }
+                // 앱 창을 띄워 두었으면 그 창의 사용량으로, 아니면 팝오버로
+                if self.mainWindow?.isVisible == true {
+                    self.showMain(.usage)
+                } else {
+                    NSApp.activate(ignoringOtherApps: true)
+                    if self.popover?.isShown != true { self.togglePopover() }
+                }
             case .daily:
                 self.openDailyDetail()
             case .workLog:
@@ -369,10 +368,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             closePopover()
             return
         }
-        // 사용량 창을 띄워 두었으면 같은 화면을 팝오버로 또 열지 않고 그 창을 앞으로 가져온다.
-        // 무대가 둘이면 순위 소식과 갱신 타이머가 한쪽 무대만 따른다
-        if let usageWindow, usageWindow.isVisible {
-            usageWindow.makeKeyAndOrderFront(nil)
+        // 앱 창이 무대가 있는 화면(게임·러너)을 띄우고 있으면 팝오버를 또 열지 않고 그 창을 앞으로 가져온다.
+        // 무대가 둘이면 메뉴바 러너 동작과 게임 입력이 두 무대에 갈린다
+        if let mainWindow, mainWindow.isVisible, navigator.page.hasStage {
+            mainWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
@@ -514,10 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func openSettings(tab: SettingsView.Tab? = nil) {
         if let tab { settingsTab.selection = tab }
         engine.settings.reloadLaunchAtLogin()
-        settingsWindow = showWindow(settingsWindow, title: "RunTime 설정",
-                                    style: [.titled, .closable], size: AppWindow.size) {   // 세로 드래그로 크기 조절
-            SettingsView(settings: engine.settings, engine: engine, tab: settingsTab)
-        }
+        showMain(.settings)
     }
 
     /// 팝오버에서 누른 그림 불러오기. 팝오버를 닫은 뒤 파일 창을 띄우고, 결과는 알림 창으로 알린다.
@@ -535,41 +531,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    /// 팝오버와 같은 화면을 창으로. 다른 앱을 눌러도 닫히지 않아 옆에 띄워 두고 본다.
-    private func openUsageWindow() {
-        let created = usageWindow == nil
-        // 팝오버와 같은 어두운 무대 색으로, 첫 장면이 밝게 그려지지 않게 띄우기 전에 정한다
-        usageWindow = showWindow(usageWindow, title: "사용량", style: [.titled, .closable, .miniaturizable],
-                                 size: AppWindow.size, appearance: NSAppearance(named: .darkAqua)) {
-            PopoverView(engine: engine, settings: engine.settings,
-                        openSettings: { [weak self] in self?.openSettings() },
-                        importRunner: { [weak self] in self?.importRunner() },
-                        openDailyDetail: { [weak self] in self?.openDailyDetail() },
-                        openWorkLog: { [weak self] in self?.openWorkLog() },
-                        openLeaderboard: { [weak self] in self?.openLeaderboard() },
-                        performTrick: { [weak self] trick in self?.animator.perform(trick) }, windowed: true)
+    private func openUsageWindow() { showMain(.usage) }
+    private func openDailyDetail() { showMain(.usage) }
+    private func openWorkLog() { showMain(.workLog) }
+    private func openLeaderboard() { showMain(.game) }
+
+    /// 앱 창을 열고 그 화면으로 간다. 이미 떠 있으면 지금 화면을 뒤로 가기 기록에 남기고 옮긴다.
+    private func showMain(_ page: MainPage) {
+        closePopover()
+        let created = mainWindow == nil
+        let window = mainWindow ?? makeMainWindow()
+        // 최소화한 창은 보이지 않아도 쓰던 중이라 기록을 지우지 않는다
+        if window.isVisible || window.isMiniaturized {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            navigator.go(page)
+        } else {
+            navigator.start(at: page)
+            // 자정을 넘겨 다시 열어도 업무 일지가 어제에 머물지 않게
+            workLogPage.resetToToday()
         }
-        // 닫으면 놓아 준다 (무대 애니메이션이 보이지 않는 채로 돌지 않게, 다시 열면 사용량 화면부터 보이게)
-        if created, let usageWindow {
-            NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: usageWindow)
-                .first()
-                .sink { [weak self] _ in self?.usageWindow = nil }
-                .store(in: &cancellables)
+        if reopening {
+            window.orderFront(nil)
+            return
         }
+        window.makeKeyAndOrderFront(nil)
+        // 처음 열 때 글 칸(순위표 닉네임)에 커서가 가서 글자가 통째로 선택되지 않게 한다. SwiftUI가 초점을 잡은 뒤에 푼다
+        if created { DispatchQueue.main.async { window.makeFirstResponder(nil) } }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func openDailyDetail() {
-        dailyDetailWindow = showWindow(dailyDetailWindow, title: "일별 사용량", style: [.titled, .closable], size: AppWindow.size) {
-            DailyDetailView(engine: engine)
+    /// 처음엔 기본 크기로 열고, 사용자가 바꾼 크기와 자리는 macOS가 기억한다.
+    /// 닫으면 창을 놓아 준다. 화면들이 사라져야 무대 애니메이션과 순위 갱신이 멈춘다 (이동 기록은 남는다).
+    private func makeMainWindow() -> NSWindow {
+        let controller = NSHostingController(rootView: MainWindowView(
+            engine: engine, settings: engine.settings, navigator: navigator, workLogPage: workLogPage,
+            settingsTab: settingsTab,
+            importRunner: { [weak self] in self?.importRunner() },
+            performTrick: { [weak self] trick in self?.animator.perform(trick) }))
+        // 내용 크기로 창을 묶지 않고 최소 크기만 지키게 해야 창을 늘이고 줄일 수 있다
+        controller.sizingOptions = [.minSize]
+        let window = NSWindow(contentViewController: controller)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.isReleasedWhenClosed = false
+        // minSize는 제목·도구 막대까지 친 바깥 크기라, 내용 기준으로 막아야 최소창에서 화면 위아래가 잘리지 않는다
+        window.contentMinSize = AppWindow.minSize
+        window.setContentSize(AppWindow.size)
+        window.center()
+        window.setFrameAutosaveName("RunTime.main")
+        mainToolbar = MainToolbar(navigator: navigator, window: window)
+        // 도구 막대가 붙은 뒤 내용이 줄어든 만큼과, 예전 버전이 기억해 둔 더 작은 크기를 최소 크기까지 늘린다
+        let content = window.contentLayoutRect.size
+        if content.width < AppWindow.minSize.width || content.height < AppWindow.minSize.height {
+            window.setContentSize(NSSize(width: max(content.width, AppWindow.minSize.width),
+                                         height: max(content.height, AppWindow.minSize.height)))
         }
-    }
-
-    private func openWorkLog() {
-        if workLogWindow?.isVisible != true { workLogPage.resetToToday() }
-        workLogWindow = showWindow(workLogWindow, title: "업무 일지",
-                                   style: [.titled, .closable, .resizable, .miniaturizable], size: AppWindow.size) {
-            WorkLogView(store: .shared, page: workLogPage)
-        }
+        NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: window)
+            .first()
+            .sink { [weak self] _ in
+                self?.mainWindow = nil
+                self?.mainToolbar = nil
+            }
+            .store(in: &cancellables)
+        mainWindow = window
+        return window
     }
 
     private func openWelcome() {
@@ -587,24 +611,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func openLeaderboard() {
-        leaderboardWindow = showWindow(leaderboardWindow, title: "토큰 러너 순위", style: [.titled, .closable], size: AppWindow.size) {
-            LeaderboardView()
-        }
-    }
-
     /// 창은 한 번만 만들고 다시 열 때는 앞으로 가져온다.
     private func showWindow<Content: View>(_ existing: NSWindow?, title: String, style: NSWindow.StyleMask,
-                                           size: CGSize? = nil, appearance: NSAppearance? = nil,
                                            content: () -> Content) -> NSWindow {
         closePopover()
         let window = existing ?? {
             let window = NSWindow(contentViewController: NSHostingController(rootView: content()))
             window.title = title
             window.styleMask = style
-            // 크기를 조절할 수 있는 창(설정)도 처음에는 다른 창과 같은 크기로 연다
-            if let size { window.setContentSize(size) }
-            if let appearance { window.appearance = appearance }
             window.isReleasedWhenClosed = false
             window.center()
             return window

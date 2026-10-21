@@ -1,43 +1,34 @@
 import SwiftUI
 import UsageCore
 
-/// 일별 사용량 (iOS 스크린 타임처럼): 왼쪽에 하루 평균과 날짜별 막대·평균선, 오른쪽에 날짜별 목록.
-/// 최근 8일, 이 Mac의 Claude Code 기록 기준.
+/// 일별 사용량 (iOS 스크린 타임처럼): 왼쪽에 하루 평균과 날짜별 막대·평균선, 오른쪽에 날짜별 목록과 프로젝트별.
+/// 최근 8일, 이 Mac의 Claude Code 기록 기준. 앱 창 사용량 화면의 아래쪽 구역으로 들어간다.
 struct DailyDetailView: View {
     @ObservedObject var engine: UsageEngine
     @StateObject private var hover = HoveredDay()
 
     var body: some View {
         let totals = engine.snapshot?.dailyTotals ?? []
-        // 넓은 창이라 왼쪽에 평균·막대·프로젝트를, 오른쪽에 날짜별 목록을 나란히 두어 스크롤 없이 한눈에 본다
-        Group {
-            if totals.isEmpty {
-                Text("아직 기록이 없습니다.").foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                HStack(alignment: .top, spacing: 28) {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 22) {
-                            summary(totals)
-                            chart(totals)
-                            projects(totals)
-                        }
-                        .padding(.vertical, 28)
-                    }
-                    .frame(maxWidth: .infinity)
-                    ScrollView {
-                        GroupedSection("날짜별", footer: "비용은 API 단가로 환산한 참고값입니다. 날짜에 마우스를 올리면 모델과 프로젝트별로 나눠 보여 줍니다.") {
-                            ForEach(totals, id: \.dayStart) { row($0) }
-                        }
-                        .padding(.vertical, 28)
-                    }
-                    .frame(width: 440)
+        if totals.isEmpty {
+            Text("아직 기록이 없습니다.").font(.system(size: 12)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 120)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.groupedRow))
+        } else {
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
+                    summary(totals)
+                    chart(totals)
                 }
-                .padding(.horizontal, 32)
+                .frame(maxWidth: .infinity)
+                VStack(alignment: .leading, spacing: 18) {
+                    GroupedSection("날짜별", footer: "비용은 API 단가로 환산한 참고값입니다. 날짜에 마우스를 올리면 모델과 프로젝트별로 나눠 보여 줍니다.") {
+                        ForEach(totals, id: \.dayStart) { row($0) }
+                    }
+                    projects(totals)
+                }
+                .frame(width: 360)
             }
         }
-        .frame(width: AppWindow.size.width, height: AppWindow.size.height)
-        .background(Palette.groupedBackground)
     }
 
     // MARK: 요약
@@ -129,7 +120,7 @@ struct DailyDetailView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .frame(height: 260)
+            .frame(height: 220)
             HStack(spacing: 8) {
                 ForEach(days, id: \.dayStart) { day in
                     Text(weekday(day.dayStart))

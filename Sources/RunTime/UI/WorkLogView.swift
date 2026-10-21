@@ -14,7 +14,6 @@ struct WorkLogView: View {
 
     var body: some View {
         GeometryReader { geo in columns(WorkLogColumns(width: geo.size.width)) }
-        .frame(minWidth: 1140, minHeight: 700)
         .background(WL.canvas)
         .foregroundStyle(WL.text)
         .overlay(alignment: .bottom) {
@@ -23,9 +22,11 @@ struct WorkLogView: View {
             }
         }
         .sheet(isPresented: $page.importing) { WorkLogImportSheet(store: store, page: page) }
-        .sheet(isPresented: $page.showsSettings) { WorkLogSettingsView(settings: settings, sync: sync, page: page, store: store) }
         .onAppear {
             store.applyRecurringToday()
+            // 앱 창 안에서 다른 화면을 오갈 때마다 GitLab·레드마인을 다시 부르지 않게 5분에 한 번만 받는다
+            if let last = page.lastAutoSync, Date().timeIntervalSince(last) < 300 { return }
+            page.lastAutoSync = Date()
             if settings.captureEnabled { sync.capture() }
             if settings.redmineReady {
                 sync.loadMyIssues()
@@ -74,39 +75,17 @@ struct WorkLogView: View {
 
     // MARK: 위 막대
 
-    /// 보기 탭과 날짜 이동, 할 일 단추. 노션 페이지 위 막대처럼 얇게.
-    /// 탭을 바꿔도 단추 자리가 그대로이게, 그 보기에서 못 쓰는 단추는 빼지 않고 숨긴다.
+    /// 보기 탭, 하루 보기 도구, 새로고침. 노션 페이지 위 막대처럼 얇게.
+    /// 날 이동은 왼쪽 달력에서 고르고, 단추 대신 ⌘[ ⌘] ⌘T 단축키만 둔다 (좁은 창에서 새로고침이 밀려 잘리지 않게).
     private func topBar(gutter: CGFloat) -> some View {
-        let navigable = page.mode != .project
-        let dayTools = page.mode == .day
-        return HStack(spacing: 4) {
+        HStack(spacing: 4) {
             PageTabs(items: WorkLogPage.Mode.allCases.map { ($0, $0.rawValue) }, selection: Binding(
                 get: { page.mode },
                 set: { page.search = ""; page.mode = $0 }
             ))
-            Spacer(minLength: 12)
-            HStack(spacing: 4) {
-                Button { page.search = ""; page.step(-1) } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .keyboardShortcut("[", modifiers: .command)
-                    .tip(previousTip)
-                Button(todayTitle) { page.search = ""; page.day = WorkDay.today() }
-                    .buttonStyle(TopBarTextStyle())
-                    .frame(width: 58)
-                    .keyboardShortcut("t", modifiers: .command)
-                    .tip("\(todayTitle)로 가기 (⌘T)")
-                Button { page.search = ""; page.step(1) } label: { Image(systemName: "chevron.right") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .keyboardShortcut("]", modifiers: .command)
-                    .tip(nextTip)
-            }
-            .opacity(navigable ? 1 : 0)
-            .disabled(!navigable)
-            .allowsHitTesting(navigable)
-            // 양옆 단추를 다 숨기는 보기(프로젝트)에서는 나눔 선만 떠 보여 함께 숨긴다
-            Rectangle().fill(WL.border).frame(width: 1, height: 16).padding(.horizontal, 6)
-                .opacity(navigable || dayTools ? 1 : 0)
-            HStack(spacing: 4) {
+            .layoutPriority(1)
+            Spacer(minLength: 8)
+            if page.mode == .day {
                 Button { carryOver() } label: { Image(systemName: "arrow.turn.down.right") }
                     .buttonStyle(GhostIconButtonStyle())
                     .disabled(carryable == 0)
@@ -116,46 +95,27 @@ struct WorkLogView: View {
                     .buttonStyle(GhostIconButtonStyle())
                     .tip("보고서 붙여넣기: 써 둔 일일보고를 한 번에 넣기")
             }
-            .opacity(dayTools ? 1 : 0)
-            .disabled(!dayTools)
-            .allowsHitTesting(dayTools)
-            .background {
-                Button("") { newEntry() }.keyboardShortcut("n", modifiers: .command).hidden()
-            }
-            Button { captureNow() } label: {
-                if sync.capturing {
-                    ProgressView().controlSize(.small).scaleEffect(0.6)
-                } else {
-                    Image(systemName: sync.captureError == nil ? "arrow.triangle.2.circlepath" : "exclamationmark.triangle")
-                        .foregroundStyle(sync.captureError == nil ? WL.muted : WL.waiting)
-                }
-            }
-            .buttonStyle(GhostIconButtonStyle())
-            .disabled(sync.capturing)
-            .keyboardShortcut("r", modifiers: .command)
-            .tip(captureHelp)
-            Button { page.showsSettings = true } label: { Image(systemName: "gearshape") }
-                .buttonStyle(GhostIconButtonStyle())
-                .keyboardShortcut(",", modifiers: .command)
-                .tip("연동 설정 (⌘,)")
+            refreshButton
+                .layoutPriority(2)
         }
         // 탭 글자 안쪽 여백만큼 덜 띄워 탭 글자가 아래 페이지 제목과 같은 줄에서 시작하게 한다
         .padding(.leading, gutter - 8)
         .padding(.trailing, 14)
         .frame(height: 46)
         .background(WL.canvas)
+        .background { keyboardNavigation }
     }
 
-    private var previousTip: String {
-        page.mode == .week ? "지난주 (⌘[)" : page.mode == .month ? "지난달 (⌘[)" : "전날 (⌘[)"
-    }
-
-    private var nextTip: String {
-        page.mode == .week ? "다음 주 (⌘])" : page.mode == .month ? "다음 달 (⌘])" : "다음 날 (⌘])"
-    }
-
-    private var todayTitle: String {
-        page.mode == .week ? "이번 주" : page.mode == .month ? "이번 달" : "오늘"
+    /// 보이지 않는 단축키: 앞뒤 날(주·달), 오늘, 할 일 추가.
+    private var keyboardNavigation: some View {
+        ZStack {
+            Button("") { page.search = ""; page.step(-1) }.keyboardShortcut("[", modifiers: .command)
+            Button("") { page.search = ""; page.step(1) }.keyboardShortcut("]", modifiers: .command)
+            Button("") { page.search = ""; page.day = WorkDay.today() }.keyboardShortcut("t", modifiers: .command)
+        }
+        .disabled(page.mode == .project)
+        .overlay { Button("") { newEntry() }.keyboardShortcut("n", modifiers: .command) }
+        .hidden()
     }
 
     private var carryable: Int {
@@ -188,20 +148,77 @@ struct WorkLogView: View {
         page.flash(count > 0 ? "진행 중이던 일 \(count)개를 가져왔습니다" : "가져올 일이 없습니다")
     }
 
-    private func captureNow() {
-        guard settings.captureEnabled else {
+    /// 새로고침: GitLab MR·커밋과 레드마인 내 일감을 한 번에 다시 받는다. 아이콘만 두면 잘 보이지 않아 글자와 받은 때를 함께 둔다.
+    private var refreshButton: some View {
+        let busy = sync.capturing || sync.loadingIssues
+        let failed = sync.captureError != nil || sync.issuesError != nil
+        return Button { refreshNow() } label: {
+            // 좁으면 받은 때, 그다음 글자를 빼고 아이콘만 남긴다
+            ViewThatFits(in: .horizontal) {
+                refreshLabel(busy: busy, failed: failed, title: true, time: true)
+                refreshLabel(busy: busy, failed: failed, title: true, time: false)
+                refreshLabel(busy: busy, failed: failed, title: false, time: false)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .keyboardShortcut("r", modifiers: .command)
+        .tip(refreshHelp)
+        .padding(.leading, 4)
+    }
+
+    private func refreshLabel(busy: Bool, failed: Bool, title: Bool, time: Bool) -> some View {
+            HStack(spacing: 6) {
+                Group {
+                    if busy {
+                        ProgressView().controlSize(.small).scaleEffect(0.55)
+                    } else {
+                        Image(systemName: failed ? "exclamationmark.triangle.fill" : "arrow.clockwise")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(failed ? WL.waiting : WL.accent)
+                    }
+                }
+                .frame(width: 14, height: 14)
+                if title { Text(busy ? "받는 중" : "새로고침").font(.system(size: 12.5, weight: .semibold)) }
+                if time, !busy, let last = lastRefresh {
+                    Text(WorkLogFormat.when(last)).font(.system(size: 11.5)).foregroundStyle(WL.faint).monospacedDigit()
+                }
+            }
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, title ? 10 : 7)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            .contentShape(Rectangle())
+    }
+
+    /// GitLab·레드마인 가운데 늦게 받은 쪽이 아니라 마지막으로 받은 때.
+    private var lastRefresh: Date? {
+        [settings.captureEnabled ? sync.lastCapture : nil, settings.redmineReady ? sync.issuesLoadedAt : nil]
+            .compactMap { $0 }.max()
+    }
+
+    private func refreshNow() {
+        guard settings.captureEnabled || settings.redmineReady else {
             page.settingsSection = .gitlab
             page.showsSettings = true
             return
         }
-        sync.capture { page.flash(sync.lastAdded > 0 ? "\(sync.lastAdded)줄을 가져왔습니다" : "새로 가져온 줄이 없습니다") }
+        if settings.redmineReady { sync.loadMyIssues() }
+        if settings.captureEnabled {
+            sync.capture { page.flash(sync.lastAdded > 0 ? "\(sync.lastAdded)줄을 가져왔습니다" : "새로 가져온 줄이 없습니다") }
+        } else {
+            page.flash("레드마인 내 일감을 다시 받습니다")
+        }
     }
 
-    private var captureHelp: String {
-        guard settings.captureEnabled else { return "GitLab 가져오기를 켜려면 누르세요" }
-        if let error = sync.captureError { return "가져오지 못함: \(error)" }
-        guard let last = sync.lastCapture else { return "GitLab MR과 커밋 가져오기 (⌘R)" }
-        return "지금 가져오기 (⌘R) · 마지막 \(WorkLogFormat.when(last)) · 10분마다 자동"
+    private var refreshHelp: String {
+        guard settings.captureEnabled || settings.redmineReady else { return "GitLab·레드마인을 연결하려면 누르세요" }
+        var lines = ["GitLab MR·커밋과 레드마인 내 일감 다시 받기 (⌘R) · 10분마다 자동"]
+        if let error = sync.captureError { lines.append("GitLab 가져오지 못함: \(error)") }
+        if let error = sync.issuesError { lines.append("레드마인 받지 못함: \(error)") }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: 페이지 머리
@@ -335,7 +352,9 @@ struct WorkLogView: View {
             if !collapsed {
                 VStack(alignment: .leading, spacing: 1) {
                     let reserve = entries.contains { $0.issue != nil }
-                    ForEach(entries) { entry in EntryRow(store: store, page: page, entry: entry, reservesIssue: reserve) }
+                    PathGroupedRows(entries: entries, pinned: page.pinnedPaths) { entry, path in
+                        EntryRow(store: store, page: page, entry: entry, reservesIssue: reserve, path: path)
+                    }
                     addField(project)
                 }
                 .padding(.leading, 16)
@@ -482,7 +501,9 @@ struct WorkLogView: View {
             if !collapsed {
                 VStack(alignment: .leading, spacing: 1) {
                     let reserve = merged.contains { $0.issue != nil }
-                    ForEach(merged) { entry in MergedRow(page: page, entry: entry, entries: entries, reservesIssue: reserve) }
+                    PathGroupedRows(entries: merged) { entry, path in
+                        MergedRow(page: page, entry: entry, entries: entries, reservesIssue: reserve, path: path)
+                    }
                 }
                 .padding(.leading, 16)
             }
@@ -518,33 +539,18 @@ struct WorkLogView: View {
             }
             if !open.isEmpty {
                 section(key: "project-open", title: "진행 중인 일") {
-                    ForEach(open) { entry in
-                        MergedRow(page: page, entry: entry, entries: entries, reservesIssue: open.contains { $0.issue != nil })
+                    PathGroupedRows(entries: open) { entry, path in
+                        MergedRow(page: page, entry: entry, entries: entries, reservesIssue: open.contains { $0.issue != nil },
+                                  path: path)
                     }
                 }
             }
             ForEach(days, id: \.self) { day in
                 section(key: "project:" + day, title: WorkLogFormat.dayTitle(day), jump: day) {
-                    ForEach(entries.filter { $0.day == day }) { entry in
-                        let crumb = WorkLogFormat.breadcrumb(entry.title)
-                        HStack(spacing: 10) {
-                            StatusGlyph(status: entry.status)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(crumb.leaf).font(.system(size: 14)).fixedSize(horizontal: false, vertical: true)
-                                if let path = crumb.path {
-                                    Text(path).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1).truncationMode(.middle)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, crumb.path == nil ? 0 : 4)
-                            .tip(entry.title)
-                            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine,
-                                      reserve: entries.contains { $0.issue != nil })
-                            StatusText(status: entry.status)
-                        }
-                        .padding(.horizontal, 6)
-                        .frame(minHeight: WL.rowHeight)
-                        .hoverRow()
+                    let dayRows = entries.filter { $0.day == day }
+                    PathGroupedRows(entries: dayRows) { entry, path in
+                        MergedRow(page: page, entry: entry, entries: dayRows,
+                                  reservesIssue: entries.contains { $0.issue != nil }, path: path, showsDays: false)
                     }
                 }
             }
@@ -608,7 +614,7 @@ struct WorkLogView: View {
     }
 }
 
-/// 창 너비에 따른 세 칸 너비. 창을 처음 열면 최소 너비라, 양옆을 줄여 가운데 할 일이 한 줄에 들어오게 하고
+/// 업무 일지 칸 너비에 따른 세 칸 너비. 좁을수록 양옆을 줄여 가운데 할 일이 한 줄에 들어오게 하고
 /// 넓은 창에서는 남는 너비를 보고서 칸에 준다 (가운데는 760에서 더 넓어지지 않는다).
 struct WorkLogColumns {
     let sidebar: CGFloat
@@ -617,6 +623,7 @@ struct WorkLogColumns {
 
     init(width: CGFloat) {
         switch width {
+        case ..<1100: (sidebar, preview, gutter) = (200, 300, 20)
         case ..<1280: (sidebar, preview, gutter) = (220, 320, 24)
         case ..<1480: (sidebar, preview, gutter) = (240, 340, 36)
         default: (sidebar, preview, gutter) = (240, 400, 36)

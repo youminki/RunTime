@@ -9,8 +9,11 @@ struct EntryRow: View {
     @ObservedObject var page: WorkLogPage
     let entry: WorkEntry
     var reservesIssue = true
+    /// 같은 경로 묶음 안이면 그 경로. 글 칸에는 끝 이름만 두고, 고친 이름 앞에 경로를 다시 붙여 저장한다.
+    var path: String? = nil
     @StateObject private var hover = HoverFlag()
     @StateObject private var drop = HoverFlag()
+    @FocusState private var editing: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -23,13 +26,24 @@ struct EntryRow: View {
                         page.statusPicking = nil
                     }
                 }
-            // 긴 내용은 자르지 않고 세 줄까지 꺾는다. 보고서는 한 줄이라 줄바꿈은 빈칸으로 바꾼다
+            // 긴 내용은 자르지 않고 두 줄까지 꺾는다. 보고서는 한 줄이라 줄바꿈은 빈칸으로 바꾼다
             TextField("내용", text: Binding(
-                get: { store.entry(entry.id)?.title ?? entry.title },
-                set: { value in store.update(entry.id) { $0.title = value.replacingOccurrences(of: "\n", with: " ") } }
+                get: { leaf(store.entry(entry.id)?.title ?? entry.title) },
+                set: { value in
+                    let text = value.replacingOccurrences(of: "\n", with: " ")
+                    // 글 칸이 끝 이름만 보이고 있었을 때만 경로를 다시 붙인다 (보이던 그대로 저장해 경로가 두 번 붙지 않게).
+                    // 끝 이름을 다 지우면 경로만 남기지 않고 빈 줄로 둔다 (Return이면 줄이 지워진다)
+                    let current = store.entry(entry.id)?.title ?? entry.title
+                    store.update(entry.id) {
+                        $0.title = text.isEmpty ? "" : showsLeaf(current) ? path! + " > " + text : text
+                    }
+                }
             ), axis: .vertical)
+            .focused($editing)
+            // 고치는 동안은 지금 묶음에 붙잡아 둔다. 치다가 다른 경로와 같아져도 줄이 옮겨 가지 않는다
+            .onChange(of: editing) { on in page.pinnedPaths[entry.id] = on ? (path ?? "") : nil }
             .onSubmit { store.commitTitle(entry.id) }
-            .lineLimit(1...3)
+            .lineLimit(1...2)
             .textFieldStyle(.plain)
             .font(.system(size: 14))
             .padding(.vertical, 6)
@@ -92,6 +106,18 @@ struct EntryRow: View {
             Divider()
             Button("지우기", role: .destructive) { store.delete(entry.id) }
         }
+    }
+
+    /// 묶음 안이면 경로를 뗀 끝 이름. 경로 앞뒤 빈칸이 달라도 같은 경로면 뗀다.
+    private func leaf(_ title: String) -> String {
+        guard let path, showsLeaf(title) else { return title }
+        if title.hasPrefix(path + " > ") { return String(title.dropFirst(path.count + 3)) }
+        return WorkLogFormat.breadcrumb(title).leaf
+    }
+
+    private func showsLeaf(_ title: String) -> Bool {
+        guard let path else { return false }
+        return title.hasPrefix(path + " > ") || WorkLogFormat.breadcrumb(title).path == path
     }
 
     private func flag(_ key: ReferenceWritableKeyPath<WorkLogPage, UUID?>) -> Binding<Bool> {
@@ -307,11 +333,16 @@ struct EntryEditor: View {
 }
 
 /// 주간·월간·프로젝트 보기의 모은 줄. 누르면 마지막으로 적은 날로 간다.
+/// 한 줄에 이름, 상태 흐름, 적은 날, 일감 번호, 상태를 두고 오른쪽 칸 너비를 맞춰 아래위로 읽히게 한다.
 struct MergedRow: View {
     @ObservedObject var page: WorkLogPage
     let entry: WorkEntry
     let entries: [WorkEntry]
     var reservesIssue = true
+    /// 같은 경로 묶음 안이면 그 경로 (이름만 보인다). 혼자인 줄은 경로를 옅게 앞에 붙인다.
+    var path: String? = nil
+    /// 적은 날 칸을 보일지. 하루씩 나눈 묶음 안에서는 같은 날이라 뺀다.
+    var showsDays = true
     @StateObject private var hover = HoverFlag()
 
     var body: some View {
@@ -325,37 +356,44 @@ struct MergedRow: View {
         } label: {
             HStack(spacing: 10) {
                 StatusGlyph(status: entry.status)
-                // 날짜와 화면 경로는 제목 아래에 두어 좁은 창에서도 할 일 이름이 한 줄에 들어오게 한다
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(crumb.leaf).font(.system(size: 14)).foregroundStyle(WL.text).multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 6) {
-                        Text(days.count > 1 ? "\(WorkLogFormat.shortDay(days[0])) 외 \(days.count - 1)일" : WorkLogFormat.shortDay(entry.day))
-                            .monospacedDigit()
-                            .fixedSize()
-                        if steps.count > 1 {
-                            Text("·")
-                            Text(steps.map(\.label).joined(separator: " → ")).fixedSize()
-                        }
-                        if let path = crumb.path {
-                            Text("·")
-                            Text(path).lineLimit(1).truncationMode(.middle)
-                        }
-                    }
-                    .font(WL.caption).foregroundStyle(WL.muted)
+                title(crumb)
+                    .font(.system(size: 14))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .tip(tip(days: days, steps: steps))
+                if steps.count > 1 {
+                    Text(steps.map(\.label).joined(separator: " → "))
+                        .font(WL.caption).foregroundStyle(WL.muted).monospacedDigit()
+                        .lineLimit(1).fixedSize()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .tip(entry.title)
-                IssueSlot(issue: entry.issue, reserve: reservesIssue)
+                if showsDays {
+                    Text(days.count > 1 ? "\(WorkReport.shortDate(days[0])) 외 \(days.count - 1)일" : WorkLogFormat.shortDay(entry.day))
+                        .font(WL.caption).foregroundStyle(WL.faint).monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize()
+                        .frame(minWidth: 64, alignment: .trailing)
+                }
+                IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine, reserve: reservesIssue)
                 StatusText(status: entry.status)
             }
             .padding(.horizontal, 6)
-            .padding(.vertical, 6)
             .frame(minHeight: 32)
             .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(hover.on ? WL.hover : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hover.on = $0 }
+    }
+
+    private func title(_ crumb: (path: String?, leaf: String)) -> Text {
+        guard path == nil, let prefix = crumb.path else { return Text(crumb.leaf).foregroundColor(WL.text) }
+        return Text(prefix + " > ").foregroundColor(WL.faint) + Text(crumb.leaf).foregroundColor(WL.text)
+    }
+
+    private func tip(days: [String], steps: [WorkStatus]) -> String {
+        var lines = [entry.title]
+        if !days.isEmpty { lines.append(days.map(WorkLogFormat.shortDay).joined(separator: ", ")) }
+        if steps.count > 1 { lines.append(steps.map(\.label).joined(separator: " → ")) }
+        return lines.joined(separator: "\n")
     }
 }

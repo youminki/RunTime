@@ -34,6 +34,45 @@ private let sample = """
         """)
     }
 
+    @Test func groupsLinesThatShareAPath() {
+        let entries = [
+            WorkEntry(day: "2026-10-20", project: "VeloX", title: "QA 수정사항 3건 반영"),
+            WorkEntry(day: "2026-10-20", project: "VeloX", title: "데이터 수집 > 수집 관리 > 작업 제어 API 연동", status: .percent(100)),
+            WorkEntry(day: "2026-10-20", project: "VeloX", title: "공유 > 파일 목록 마크업", status: .percent(60)),
+            WorkEntry(day: "2026-10-20", project: "VeloX", title: "데이터 수집 > 수집 관리 > 로그 조회 API 연동", status: .percent(100)),
+        ]
+        let log = WorkLog(projects: ["VeloX"], entries: entries)
+        let text = WorkReport.daily(entries, in: log, grouped: true)
+        #expect(text == """
+        1. VeloX
+        - QA 수정사항 3건 반영 (완료)
+        - 데이터 수집 > 수집 관리
+          · 작업 제어 API 연동 (100%)
+          · 로그 조회 API 연동 (100%)
+        - 공유 > 파일 목록 마크업 (60%)
+        """)
+        // 묶어 쓴 보고서를 붙여 넣어도 원래 줄로 읽는다
+        let parsed = WorkReport.parse(text, day: "2026-10-20")
+        #expect(parsed.map(\.title) == ["QA 수정사항 3건 반영", "데이터 수집 > 수집 관리 > 작업 제어 API 연동",
+                                        "데이터 수집 > 수집 관리 > 로그 조회 API 연동", "공유 > 파일 목록 마크업"])
+        #expect(parsed[1].status == .percent(100))
+        #expect(parsed[3].status == .percent(60))
+    }
+
+    @Test func keepsPlainSubBulletsApart() {
+        let text = """
+        1. VeloX
+        - 로그인 개선 #123 (60%)
+          - 세부 내용 (완료)
+        - 회의
+          · 주간 회의 (완료)
+        """
+        let parsed = WorkReport.parse(text, day: "2026-10-20")
+        #expect(parsed.map(\.title) == ["로그인 개선", "세부 내용", "회의 > 주간 회의"])
+        #expect(parsed[0].issue == 123)
+        #expect(parsed[0].status == .percent(60))
+    }
+
     @Test func followsRegisteredProjectOrder() {
         let entries = [
             WorkEntry(day: "2026-10-20", project: "B", title: "b"),

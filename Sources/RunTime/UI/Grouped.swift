@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// 메뉴에서 여는 창(사용량·업무 일지·일별 사용량·순위·설정)의 크기. 창마다 크기가 달라 열 때마다 자리가 바뀌어 보여 하나로 맞춘다.
-/// 업무 일지가 세 칸을 나란히 두려면 이 너비가 필요해 나머지 창도 이 크기에 맞춰 넓게 배치한다.
+/// 앱 창 크기. 사용량·게임·업무 일지·설정을 한 창에서 오가며, 처음엔 이 크기로 열고 늘이고 줄일 수 있다.
+/// 업무 일지가 왼쪽 아이콘 막대 옆에 세 칸을 나란히 두려면 이만큼 필요하다.
 enum AppWindow {
-    static let size = CGSize(width: 1140, height: 720)
+    static let size = CGSize(width: 1240, height: 760)
+    static let minSize = CGSize(width: 1100, height: 660)
 }
 
 /// iOS 시스템 색. 다크·라이트에서 각각 iOS가 쓰는 값을 그대로 쓴다.
