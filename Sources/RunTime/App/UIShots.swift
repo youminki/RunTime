@@ -139,6 +139,8 @@ enum UIShots {
             ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),
             ("main-worklog-dark", .darkAqua, nil, mainPage(.workLog, engine: engine)),
             ("main-worklog-issues", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .issues)),
+            ("main-calendar", .aqua, nil, mainPage(.calendar, engine: engine)),
+            ("main-calendar-dark", .darkAqua, nil, mainPage(.calendar, engine: engine)),
             ("main-worklog-week", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .week)),
             ("main-settings", .aqua, nil, mainPage(.settings, engine: engine)),
             ("storage", .darkAqua, nil, AnyView(StorageView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),

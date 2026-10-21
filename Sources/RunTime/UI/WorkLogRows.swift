@@ -26,7 +26,8 @@ struct EntryRow: View {
                         page.statusPicking = nil
                     }
                 }
-            // 긴 내용은 자르지 않고 두 줄까지 꺾는다. 보고서는 한 줄이라 줄바꿈은 빈칸으로 바꾼다
+            // 다른 일지 보기처럼 한 줄로 두고 넘치면 …로 줄인다. 고치지 않을 때는 글 칸 글자를 감추고 같은 자리에
+            // 잘린 글을 덮어 보이며, 누르면 아래 글 칸이 초점을 받아 전체 글을 고친다
             TextField("내용", text: Binding(
                 get: { leaf(store.entry(entry.id)?.title ?? entry.title) },
                 set: { value in
@@ -38,17 +39,31 @@ struct EntryRow: View {
                         $0.title = text.isEmpty ? "" : showsLeaf(current) ? path! + " > " + text : text
                     }
                 }
-            ), axis: .vertical)
+            ))
             .focused($editing)
             // 고치는 동안은 지금 묶음에 붙잡아 둔다. 치다가 다른 경로와 같아져도 줄이 옮겨 가지 않는다
             .onChange(of: editing) { on in page.pinnedPaths[entry.id] = on ? (path ?? "") : nil }
             .onSubmit { store.commitTitle(entry.id) }
-            .lineLimit(1...2)
+            .lineLimit(1)
             .textFieldStyle(.plain)
             .font(.system(size: 14))
+            .foregroundStyle(editing ? WL.text : .clear)
+            .overlay(alignment: .leading) {
+                if !editing {
+                    let shown = leaf(store.entry(entry.id)?.title ?? entry.title)
+                    // 글 칸 글자를 감추면 비어 있을 때의 자리표시자도 함께 사라져 여기서 대신 쓴다
+                    Text(shown.isEmpty ? "내용" : shown)
+                        .font(.system(size: 14))
+                        .foregroundStyle(shown.isEmpty ? WL.faint : WL.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .allowsHitTesting(false)
+                }
+            }
             .padding(.vertical, 6)
             // 빈칸을 두면 글 칸과 너비를 반씩 나눠 제목이 잘려, 글 칸이 남은 너비를 다 쓰게 한다
             .frame(maxWidth: .infinity)
+            .tip(editing ? "" : entry.title)
             IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine, reserve: reservesIssue,
                       showsSource: true, source: entry.source)
             StatusText(status: entry.status)

@@ -270,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         add(engine.settings.globalHotKeyEnabled && GlobalHotKey.shared.isRegistered
             ? "사용량 보기 (\(GlobalHotKey.displayName))" : "사용량 보기") { [weak self] in self?.togglePopover() }
         add("업무 일지") { [weak self] in self?.openWorkLog() }
+        add("캘린더") { [weak self] in self?.showMain(.calendar) }
         add(WorkLogSettings.shared.quickAddEnabled ? "업무 한 줄 적기 (\(GlobalHotKey.quickCombo.label))" : "업무 한 줄 적기") {
             QuickAddPanel.shared.show()
         }

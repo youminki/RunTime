@@ -9,6 +9,8 @@ struct WorkLogView: View {
     @ObservedObject var page: WorkLogPage
     @ObservedObject var sync: WorkLogSync = .shared
     @ObservedObject var settings: WorkLogSettings = .shared
+    /// 앱 창이 다른 화면을 띄운 동안 숨겨 둔 업무 일지인지. 다시 보일 때 처음 열 때처럼 받아 온다.
+    var isActive = true
     /// 할 일 추가 칸 가운데 글을 쓰고 있는 프로젝트 (⌘N으로 옮긴다).
     @FocusState private var focusedDraft: String?
 
@@ -22,16 +24,19 @@ struct WorkLogView: View {
             }
         }
         .sheet(isPresented: $page.importing) { WorkLogImportSheet(store: store, page: page) }
-        .onAppear {
-            store.applyRecurringToday()
-            // 앱 창 안에서 다른 화면을 오갈 때마다 GitLab·레드마인을 다시 부르지 않게 5분에 한 번만 받는다
-            if let last = page.lastAutoSync, Date().timeIntervalSince(last) < 300 { return }
-            page.lastAutoSync = Date()
-            if settings.captureEnabled { sync.capture() }
-            if settings.redmineReady {
-                sync.loadMyIssues()
-                sync.loadStatuses()
-            }
+        .onAppear { if isActive { appeared() } }
+        .onChange(of: isActive) { active in if active { appeared() } }
+    }
+
+    private func appeared() {
+        store.applyRecurringToday()
+        // 앱 창 안에서 다른 화면을 오갈 때마다 GitLab·레드마인을 다시 부르지 않게 5분에 한 번만 받는다
+        if let last = page.lastAutoSync, Date().timeIntervalSince(last) < 300 { return }
+        page.lastAutoSync = Date()
+        if settings.captureEnabled { sync.capture() }
+        if settings.redmineReady {
+            sync.loadMyIssues()
+            sync.loadStatuses()
         }
     }
 

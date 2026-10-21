@@ -855,3 +855,39 @@ struct PathGroupedRows<Row: View>: View {
         }
     }
 }
+
+/// 달력 칸: 일곱 칸을 정수 너비로 똑같이 나누고 남는 몇 pt는 양옆에 나눠 둔다.
+/// HStack에 maxWidth를 주면 칸이 소수점 너비가 되어 숫자가 반 픽셀씩 어긋나 간격이 들쭉날쭉해 보인다.
+struct SevenColumns: Layout {
+    var rowSpacing: CGFloat = 0
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 7 * 28
+        let cell = (width / 7).rounded(.down)
+        let rows = rowHeights(subviews, cell: cell)
+        return CGSize(width: width, height: rows.reduce(0, +) + rowSpacing * CGFloat(max(rows.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let cell = (bounds.width / 7).rounded(.down)
+        let inset = ((bounds.width - cell * 7) / 2).rounded(.down)
+        let rows = rowHeights(subviews, cell: cell)
+        var y = bounds.minY
+        for (row, height) in rows.enumerated() {
+            for column in 0..<7 {
+                let index = row * 7 + column
+                guard index < subviews.count else { break }
+                subviews[index].place(at: CGPoint(x: bounds.minX + inset + cell * CGFloat(column), y: y),
+                                      proposal: ProposedViewSize(width: cell, height: height))
+            }
+            y += height + rowSpacing
+        }
+    }
+
+    private func rowHeights(_ subviews: Subviews, cell: CGFloat) -> [CGFloat] {
+        stride(from: 0, to: subviews.count, by: 7).map { start in
+            subviews[start..<min(start + 7, subviews.count)]
+                .map { $0.sizeThatFits(ProposedViewSize(width: cell, height: nil)).height }.max() ?? 0
+        }
+    }
+}

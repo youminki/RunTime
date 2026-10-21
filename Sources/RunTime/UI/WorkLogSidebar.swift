@@ -75,11 +75,11 @@ struct WorkLogSidebar: View {
                     .tip("다음 달")
             }
             .buttonStyle(GhostIconButtonStyle())
-            HStack(spacing: 0) {
+            SevenColumns {
                 ForEach(WorkLogFormat.weekdays, id: \.number) { day in
                     Text(day.name)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(day.number == 1 || day.number == 7 ? Color.secondary.opacity(0.6) : Color.secondary)
+                        .foregroundStyle(WorkLogFormat.weekdayTint(day.number)?.opacity(0.8) ?? Color.secondary)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -100,7 +100,7 @@ struct WorkLogSidebar: View {
     private func weekRow(_ week: [String], byDay: [String: [WorkEntry]], inMonth: ClosedRange<String>) -> some View {
         let range = selectedRange
         let selected = week.filter { range.contains($0) }
-        return HStack(spacing: 0) {
+        return SevenColumns {
             ForEach(week, id: \.self) { day in
                 dayCell(day, entries: byDay[day] ?? [], inMonth: inMonth.contains(day))
             }
@@ -109,11 +109,12 @@ struct WorkLogSidebar: View {
             // 월간은 달력 전체가 고른 범위라 띠를 깔면 달력이 통째로 파래져, 주간에만 깐다
             if page.mode == .week, let first = selected.first, let index = week.firstIndex(of: first) {
                 GeometryReader { geo in
-                    let cell = geo.size.width / 7
+                    // 칸과 같은 정수 너비로 띠를 놓는다 (SevenColumns 참고)
+                    let cell = (geo.size.width / 7).rounded(.down)
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(WL.selected)
                         .frame(width: cell * CGFloat(selected.count))
-                        .offset(x: cell * CGFloat(index))
+                        .offset(x: ((geo.size.width - cell * 7) / 2).rounded(.down) + cell * CGFloat(index))
                 }
             }
         }
@@ -131,6 +132,8 @@ struct WorkLogSidebar: View {
         let isToday = day == WorkDay.today()
         let isSelected = day == page.day && (page.mode == .day || page.mode == .project)
         let projects = Array(store.log.orderedProjects(of: entries).filter { !store.log.hiddenProjects.contains($0) }.prefix(3))
+        let holiday = KoreanHolidays.name(on: day)
+        let tint = WorkLogFormat.dayTint(day)
         return Button {
             page.search = ""
             page.day = day
@@ -147,7 +150,7 @@ struct WorkLogSidebar: View {
                         .font(.system(size: 11.5, weight: isToday || isSelected ? .semibold : .regular).monospacedDigit())
                         .foregroundStyle(isSelected ? Color.white
                                          : isToday ? WL.accent
-                                         : inMonth ? WL.text : WL.faint)
+                                         : (tint ?? WL.text).opacity(inMonth ? 1 : 0.4))
                 }
                 .frame(width: 24, height: 24)
                 HStack(spacing: 2) {
@@ -163,8 +166,8 @@ struct WorkLogSidebar: View {
         }
         .buttonStyle(.plain)
         .onHover { hover.update(day, $0) }
-        .tip(entries.isEmpty ? WorkLogFormat.dayTitle(day)
-              : "\(WorkLogFormat.dayTitle(day)) · \(entries.count)줄 · " + projects.joined(separator: ", "))
+        .tip([WorkLogFormat.dayTitle(day), holiday, entries.isEmpty ? nil : "\(entries.count)줄 · " + projects.joined(separator: ", ")]
+              .compactMap { $0 }.joined(separator: " · "))
     }
 
     // MARK: 프로젝트

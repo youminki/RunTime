@@ -280,4 +280,20 @@ enum WorkLogFormat {
 
     /// 요일 이름 (그레고리력 1 일요일 … 7 토요일), 월요일부터.
     static let weekdays: [(number: Int, name: String)] = [(2, "월"), (3, "화"), (4, "수"), (5, "목"), (6, "금"), (7, "토"), (1, "일")]
+
+    /// 달력 날짜 색: 공휴일·일요일은 빨강, 토요일은 파랑 (macOS 달력처럼). 평일은 nil.
+    static func dayTint(_ key: String) -> Color? {
+        if KoreanHolidays.name(on: key) != nil { return Palette.red }
+        guard let date = WorkDay.date(key) else { return nil }
+        switch Calendar(identifier: .gregorian).component(.weekday, from: date) {
+        case 1: return Palette.red
+        case 7: return Palette.blue
+        default: return nil
+        }
+    }
+
+    /// 요일 머리 색 (`weekdays`의 number: 1 일요일, 7 토요일).
+    static func weekdayTint(_ number: Int) -> Color? {
+        number == 1 ? Palette.red : number == 7 ? Palette.blue : nil
+    }
 }
