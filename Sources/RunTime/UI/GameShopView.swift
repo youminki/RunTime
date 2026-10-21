@@ -80,7 +80,7 @@ struct GameShopView: View {
             Text("\(owned)/\(items.count) 모음").font(Theme.caption.monospacedDigit()).foregroundStyle(Theme.tertiary)
         }
         .padding(.horizontal, 2)
-        .help("도감 \(wallet.collection.owned)/\(wallet.collection.total)")
+        .tip("도감 \(wallet.collection.owned)/\(wallet.collection.total)")
     }
 
     /// 오늘의 특가 타일. 행운 상자 옆에 같은 크기로 두고, 물건이 게임에서 보일 모습을 위에 돌린다.
@@ -119,7 +119,7 @@ struct GameShopView: View {
                     Spacer(minLength: 2)
                     Text(QuestView.untilTomorrow().replacingOccurrences(of: " 뒤 바뀜", with: " 남음"))
                         .font(.system(size: 9.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
-                        .help("내일 다른 물건으로 바뀝니다")
+                        .tip("내일 다른 물건으로 바뀝니다")
                 }
                 HStack(spacing: 5) {
                     if asking {
@@ -140,7 +140,7 @@ struct GameShopView: View {
         }
         .buttonStyle(.plain)
         .onHover { tryOn(item, $0) }
-        .help(affordable ? "\(item.rarity.title) \(item.slot.title). 두 번 누르면 삽니다. 내일 다른 물건으로 바뀝니다"
+        .tip(affordable ? "\(item.rarity.title) \(item.slot.title). 두 번 누르면 삽니다. 내일 다른 물건으로 바뀝니다"
               : "코인 \(price - wallet.coins)개가 더 필요해요")
         .accessibilityLabel("오늘의 특가 \(item.name), \(price)코인")
     }
@@ -286,7 +286,7 @@ struct GameShopView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(affordable ? (owned ? name : "\(price)코인. 두 번 누르면 삽니다") : "코인 \(price - wallet.coins)개가 더 필요해요")
+        .tip(affordable ? (owned ? name : "\(price)코인. 두 번 누르면 삽니다") : "코인 \(price - wallet.coins)개가 더 필요해요")
         .accessibilityLabel("\(name)\(rarity.map { ", \($0.title)" } ?? ""), \(status)")
     }
 
@@ -312,7 +312,7 @@ struct GameShopView: View {
             if level > 0 {
                 Toggle("", isOn: Binding(get: { wallet.isOn(ability) }, set: { _ in wallet.toggle(ability) }))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                    .help("이번 판에 쓸지")
+                    .tip("이번 판에 쓸지")
                     .accessibilityLabel("\(ability.name) 쓰기")
             }
             if let next {
@@ -337,7 +337,7 @@ struct GameShopView: View {
                 }
                 .buttonStyle(GameButtonStyle(kind: asking ? .warning : .gold, height: 22))
                 .disabled(!affordable && !asking)
-                .help(affordable ? (level == 0 ? "두 번 누르면 삽니다" : "다음 단계. 두 번 누르면 삽니다")
+                .tip(affordable ? (level == 0 ? "두 번 누르면 삽니다" : "다음 단계. 두 번 누르면 삽니다")
                       : "코인 \(next - wallet.coins)개가 더 필요해요")
                 .accessibilityLabel(level == 0 ? "\(ability.name) 사기, \(next)코인" : "\(ability.name) 올리기, \(next)코인")
             } else {
@@ -576,7 +576,7 @@ private struct LuckyBoxCard<Deal: View>: View {
         .padding(7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .rarityFrame(nil, highlight: wallet.canOpenBox ? GameKit.gold : nil, radius: 10)
-        .help(wallet.canOpenBox ? "아직 없는 꾸미기 하나. 등급 확률: \(odds)"
+        .tip(wallet.canOpenBox ? "아직 없는 꾸미기 하나. 등급 확률: \(odds)"
               : wallet.hasUncollected ? "코인 \(GameWallet.boxPrice - wallet.coins)개가 더 필요해요" : "모두 모았어요")
     }
 
@@ -856,7 +856,7 @@ private struct CompanionPicker: View {
                     .contextMenu {
                         Button("이름 바꾸기") { rename.start(id, name: pet.name) { petdex.rename(pet, to: $0) } }
                     }
-                    .help(on ? "다시 누르면 혼자 달립니다. 오른쪽 클릭으로 이름 바꾸기"
+                    .tip(on ? "다시 누르면 혼자 달립니다. 오른쪽 클릭으로 이름 바꾸기"
                           : "\(pet.name)을(를) 동료로 데려가기. 오른쪽 클릭으로 이름 바꾸기")
                     .accessibilityLabel(pet.name)
                     .accessibilityAddTraits(on ? .isSelected : [])
@@ -875,7 +875,7 @@ private struct CompanionPicker: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("petdex.dev에서 펫을 받아 바로 동료로 데려가기")
+            .tip("petdex.dev에서 펫을 받아 바로 동료로 데려가기")
         }
     }
 

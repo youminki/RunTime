@@ -12,10 +12,14 @@ struct PopoverView: View {
     var openDailyDetail: () -> Void = {}
     var openWorkLog: () -> Void = {}
     var openLeaderboard: () -> Void = {}
+    /// 팝오버를 닫고 같은 화면을 창으로 띄운다. 창 안에서는 비워 두어 단추를 숨긴다.
+    var openAsWindow: (() -> Void)?
     /// 무대에서 러너를 누르거나 메뉴에서 동작을 고르면 메뉴바 러너도 같은 동작을 한다.
     var performTrick: (Trick) -> Void = { _ in }
     /// 화면 점검에서 러너·상점·퀘스트 화면을 바로 띄울 때.
     var startSection: PopoverPage.Section?
+    /// 창으로 띄웠는지. 창은 넓어 러너·상점과 사용량을 나란히 둔다.
+    var windowed = false
 
     @StateObject private var sparklineHover = HoverIndex()
     @StateObject private var page = PopoverPage()
@@ -52,20 +56,9 @@ struct PopoverView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            RunnerStage(display: display, character: settings.character, theme: settings.spriteTheme,
-                        onPet: performTrick, openLeaderboard: openLeaderboard, trickRequest: page.trick,
-                        claudeFinished: engine.turnEnded.eraseToAnyPublisher(), tempo: engine.tempo,
-                        reactions: engine.reacted.eraseToAnyPublisher())
-            stageCaption.padding(.top, 10).padding(.horizontal, 2)
-            if page.showsRunners {
-                runnerPage.padding(.top, 10)
-            } else {
-                usageContent
-            }
+        Group {
+            if windowed { wideBody } else { narrowBody }
         }
-        .padding(14)
-        .frame(width: 376)
         .background(Theme.background)
         .onAppear {
             if let startSection {
@@ -75,8 +68,57 @@ struct PopoverView: View {
         }
     }
 
+    private var stage: some View {
+        RunnerStage(display: display, character: settings.character, theme: settings.spriteTheme,
+                    onPet: performTrick, openLeaderboard: openLeaderboard, trickRequest: page.trick,
+                    claudeFinished: engine.turnEnded.eraseToAnyPublisher(), tempo: engine.tempo,
+                    reactions: engine.reacted.eraseToAnyPublisher())
+    }
+
+    private var narrowBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            stage
+            stageCaption.padding(.top, 10).padding(.horizontal, 2)
+            if page.showsRunners {
+                runnerPage.padding(.top, 10)
+            } else {
+                usageContent
+            }
+        }
+        .padding(14)
+        .frame(width: 376)
+    }
+
+    /// 창: 왼쪽에 무대와 러너·상점·창고·퀘스트를 늘 펼쳐 두고, 오른쪽에 사용량을 둔다.
+    /// 팝오버는 좁아 둘을 오가지만, 창에서는 둘을 함께 보여 전환 단추가 필요 없다.
+    private var wideBody: some View {
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 0) {
+                stage
+                stageCaption.padding(.top, 10).padding(.horizontal, 2)
+                runnerPage.padding(.top, 12)
+            }
+            .frame(width: 560)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("사용량").font(.system(size: 20, weight: .bold)).foregroundStyle(Theme.primary)
+                usageCards
+                Spacer(minLength: 12)
+                footer
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .padding(24)
+        .frame(width: AppWindow.size.width, height: AppWindow.size.height)
+    }
+
     @ViewBuilder
     private var usageContent: some View {
+        usageCards
+        footer.padding(.top, 10)
+    }
+
+    @ViewBuilder
+    private var usageCards: some View {
         // 세션과 주간을 나란히 두어 두 값을 한눈에 견준다
         Card(padding: 0) {
             HStack(alignment: .top, spacing: 0) {
@@ -95,13 +137,21 @@ struct PopoverView: View {
             }
         }
         .padding(.top, 8)
-        footer.padding(.top, 10)
     }
 
     // MARK: 무대 아래 한 줄
 
     private var stageCaption: some View {
         HStack(spacing: 8) {
+            if windowed {
+                // 창에서는 러너 화면이 늘 펼쳐져 있어 이름은 누르는 단추가 아니다
+                HStack(spacing: 4) {
+                    Text(settings.character.name).foregroundStyle(Theme.primary)
+                    Text("·").foregroundStyle(Theme.tertiary)
+                    Text(stateLabel).foregroundStyle(display.isCritical ? Theme.critical : Theme.secondary)
+                }
+                .font(Theme.label)
+            } else {
             Button { page.showsRunners.toggle() } label: {
                 HStack(spacing: 4) {
                     Text(settings.character.name).foregroundStyle(Theme.primary)
@@ -115,7 +165,8 @@ struct PopoverView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(page.showsRunners ? "사용량으로 돌아가기" : "러너 바꾸기")
+            .tip(page.showsRunners ? "사용량으로 돌아가기" : "러너 바꾸기")
+            }
             Spacer(minLength: 8)
             tricksMenu
         }
@@ -155,7 +206,7 @@ struct PopoverView: View {
         .accessibilityLabel("동작")
         // 지쳤거나 한도 경고 중에는 메뉴바 러너가 그 모습을 유지해야 해서 동작을 받지 않는다
         .disabled(display.isLimited)
-        .help(display.isLimited ? "한도에 가까워 경고를 보이는 중이라 동작을 하지 않아요" : "동작 해보기")
+        .tip(display.isLimited ? "한도에 가까워 경고를 보이는 중이라 동작을 하지 않아요" : "동작 해보기")
     }
 
     private func play(_ trick: Trick) {
@@ -185,17 +236,21 @@ struct PopoverView: View {
                 .padding(.horizontal, 2)
                 .padding(.bottom, 4)
             }
-            .frame(height: 304)   // 사용량 화면과 높이를 맞춰 전환할 때 팝오버가 출렁이지 않게
+            // 팝오버는 사용량 화면과 높이를 맞춰 전환할 때 출렁이지 않게 고정하고, 창에서는 남은 높이를 다 쓴다
+            .frame(height: windowed ? nil : 304)
+            .frame(maxHeight: windowed ? .infinity : nil)
             // 시스템 단추 대신 상점·창고와 같은 단추로 둔다
             HStack(spacing: 6) {
-                Button { page.showsRunners = false } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
-                        Text("사용량")
+                if !windowed {
+                    Button { page.showsRunners = false } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
+                            Text("사용량")
+                        }
                     }
+                    .buttonStyle(GameButtonStyle(kind: .plain, height: 22))
+                    .keyboardShortcut(.cancelAction)
                 }
-                .buttonStyle(GameButtonStyle(kind: .plain, height: 22))
-                .keyboardShortcut(.cancelAction)
                 Spacer()
                 if page.section == .runners {
                     Menu {
@@ -217,7 +272,7 @@ struct PopoverView: View {
                     .buttonStyle(.plain)
                     .menuIndicator(.hidden)
                     .fixedSize()
-                    .help("러너 색상")
+                    .tip("러너 색상")
                     Button(action: pickRandomRunner) {
                         HStack(spacing: 3) {
                             Image(systemName: "shuffle").font(.system(size: 9, weight: .bold))
@@ -225,7 +280,7 @@ struct PopoverView: View {
                         }
                     }
                     .buttonStyle(GameButtonStyle(kind: .plain, height: 22))
-                    .help("다른 러너 하나를 아무거나 고르기")
+                    .tip("다른 러너 하나를 아무거나 고르기")
                 }
             }
             .padding(.bottom, 2)
@@ -285,7 +340,7 @@ struct PopoverView: View {
         .background(Capsule().fill(GameKit.slot))
         .overlay(Capsule().strokeBorder(GameKit.gold.opacity(0.3)))
         .animation(.easeOut(duration: 0.25), value: wallet.coins)
-        .help("미니게임에서 먹은 코인과 퀘스트 보상. Claude가 일하는 동안 한 판은 두 배")
+        .tip("미니게임에서 먹은 코인과 퀘스트 보상. Claude가 일하는 동안 한 판은 두 배")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("코인 \(wallet.coins)개")
     }
@@ -307,7 +362,7 @@ struct PopoverView: View {
         }
         return limitRow(title: "세션", window: "5시간", gauge: gauge, elapsed: elapsed, detail: detail,
                         reachesLimit: sessionReachesLimit) { sessionOutlook }
-            .help("이번 세션에 이 Mac의 Claude Code가 쓴 토큰: \(Format.tokens(engine.snapshot?.currentBlock?.totalTokens ?? 0))"
+            .tip("이번 세션에 이 Mac의 Claude Code가 쓴 토큰: \(Format.tokens(engine.snapshot?.currentBlock?.totalTokens ?? 0))"
                   + elapsedNote(elapsed))
     }
 
@@ -325,7 +380,7 @@ struct PopoverView: View {
         return limitRow(title: "주간", window: "7일", gauge: gauge, elapsed: elapsed, detail: detail, reachesLimit: false) {
             if let shares = weeklyShares { caption(shares, color: Theme.tertiary) }
         }
-        .help(elapsedNote(elapsed).trimmingCharacters(in: .newlines))
+        .tip(elapsedNote(elapsed).trimmingCharacters(in: .newlines))
     }
 
     /// 한도 한 칸: 이름과 속도 배지, 큰 %, 시간 눈금이 있는 막대, 초기화 시각.
@@ -398,7 +453,7 @@ struct PopoverView: View {
         if let gauge, gauge.source != .rolledOver, let elapsed {
             let pace = GaugeMath.pace(percent: gauge.percent, elapsed: elapsed)
             PaceBadge(pace: reachesLimit && (pace == .relaxed || pace == .steady) ? .fast : pace)
-                .help("사용 \(gauge.displayPercent)% · 시간 \(Int((elapsed * 100).rounded()))% 지남"
+                .tip("사용 \(gauge.displayPercent)% · 시간 \(Int((elapsed * 100).rounded()))% 지남"
                       + (reachesLimit ? "\n최근 속도로는 초기화 전에 한도에 닿습니다" : ""))
         }
     }
@@ -449,7 +504,7 @@ struct PopoverView: View {
                     caption("쓴 기록 없음", color: Theme.tertiary)
                 }
             }
-            Sparkline(values: values, hoverIndex: $sparklineHover.index)
+            Sparkline(values: values, hoverIndex: $sparklineHover.index, height: windowed ? 230 : 44)
             HStack {
                 Text("30분 전")
                 Spacer()
@@ -466,13 +521,13 @@ struct PopoverView: View {
         let programmatic = engine.snapshot?.todayProgrammaticTokens ?? 0
         return HStack(spacing: 0) {
             StatColumn(label: programmatic > 0 ? "오늘 (SDK 포함)" : "오늘", value: Format.tokens(today), unit: "토큰")
-                .help(programmatic > 0 ? "SDK 사용 \(Format.tokens(programmatic)) 토큰 포함 (별도 한도)" : "이 Mac의 Claude Code 기록 기준")
+                .tip(programmatic > 0 ? "SDK 사용 \(Format.tokens(programmatic)) 토큰 포함 (별도 한도)" : "이 Mac의 Claude Code 기록 기준")
             Rectangle().fill(Theme.hairline).frame(width: 1)
             StatColumn(label: "추정 비용", value: Format.usd(engine.snapshot?.todayCostUSD ?? 0))
-                .help("오늘 쓴 토큰을 API 단가로 환산한 참고값")
+                .tip("오늘 쓴 토큰을 API 단가로 환산한 참고값")
             Rectangle().fill(Theme.hairline).frame(width: 1)
             StatColumn(label: "지금 속도", value: engine.burnRate >= 1 ? Format.tokens(Int(engine.burnRate)) : "0", unit: "/분")
-                .help("최근 1분 동안 쓴 토큰")
+                .tip("최근 1분 동안 쓴 토큰")
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -491,26 +546,31 @@ struct PopoverView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("설정 열기")
+            .tip("설정 열기")
             Spacer(minLength: 8)
+            if let openAsWindow {
+                Button(action: openAsWindow) { Image(systemName: "macwindow") }
+                    .tip("창으로 보기: 다른 곳을 눌러도 닫히지 않는 창으로 엽니다")
+                    .accessibilityLabel("창으로 보기")
+            }
             Button(action: openWorkLog) { Image(systemName: "checklist") }
-                .help("업무 일지")
+                .tip("업무 일지")
                 .accessibilityLabel("업무 일지")
             Button(action: openDailyDetail) { Image(systemName: "chart.bar") }
-                .help("일별 사용량")
+                .tip("일별 사용량")
                 .accessibilityLabel("일별 사용량")
             Button { engine.refreshNow(forceOfficial: true) } label: { Image(systemName: "arrow.clockwise") }
                 .keyboardShortcut("r")
-                .help("새로고침 (⌘R)")
+                .tip("새로고침 (⌘R)")
                 .accessibilityLabel("새로고침")
             Button(action: openSettings) { Image(systemName: "gearshape") }
                 .keyboardShortcut(",")
-                .help("설정 (⌘,)")
+                .tip("설정 (⌘,)")
                 .accessibilityLabel("설정")
             Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
                 .buttonStyle(ToolbarButtonStyle(tint: Theme.critical))
                 .keyboardShortcut("q")
-                .help("RunTime 종료 (⌘Q)")
+                .tip("RunTime 종료 (⌘Q)")
                 .accessibilityLabel("RunTime 종료")
         }
         .buttonStyle(ToolbarButtonStyle())

@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// 메뉴에서 여는 창(사용량·업무 일지·일별 사용량·순위·설정)의 크기. 창마다 크기가 달라 열 때마다 자리가 바뀌어 보여 하나로 맞춘다.
+/// 업무 일지가 세 칸을 나란히 두려면 이 너비가 필요해 나머지 창도 이 크기에 맞춰 넓게 배치한다.
+enum AppWindow {
+    static let size = CGSize(width: 1140, height: 720)
+}
+
 /// iOS 시스템 색. 다크·라이트에서 각각 iOS가 쓰는 값을 그대로 쓴다.
 enum Palette {
     static let blue = dynamic(light: 0x007AFF, dark: 0x0A84FF)
@@ -140,9 +146,12 @@ struct GroupedList<Content: View>: View {
 
     var body: some View {
         ScrollView {
+            // 넓은 창에서 줄이 끝없이 늘어나지 않게 너비를 두되, 스크롤 막대는 창 오른쪽 끝에 남긴다
             VStack(alignment: .leading, spacing: 22) { content }
+                .frame(maxWidth: 680, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 18)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Palette.groupedBackground)
     }

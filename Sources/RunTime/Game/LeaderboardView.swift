@@ -6,18 +6,31 @@ struct LeaderboardView: View {
     @StateObject private var state = LeaderboardState()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header
-            Picker("기간", selection: $state.period) {
-                ForEach(Leaderboard.Period.allCases, id: \.self) { Text($0.title).tag($0) }
+        // 넓은 창이라 왼쪽에 시상대와 순위를, 오른쪽에 기간·참여 설정을 둔다
+        HStack(alignment: .top, spacing: 32) {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                ranking
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            ranking
-            participation
+            .frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("기간").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                    Picker("기간", selection: $state.period) {
+                        ForEach(Leaderboard.Period.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                participation
+                Spacer(minLength: 0)
+            }
+            .frame(width: 340)
+            .padding(.top, 52)
         }
-        .padding(20)
-        .frame(width: 380, height: 600)
+        .padding(.horizontal, 32)
+        .padding(.vertical, 28)
+        .frame(width: AppWindow.size.width, height: AppWindow.size.height)
         .background(Palette.groupedBackground)
         .onAppear { state.start() }
         .onDisappear { state.stop() }
@@ -37,7 +50,7 @@ struct LeaderboardView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("새로고침")
-            .help("새로고침 (열려 있는 동안 30초마다 새로 받습니다)")
+            .tip("새로고침 (열려 있는 동안 30초마다 새로 받습니다)")
         }
     }
 
@@ -208,7 +221,7 @@ struct LeaderboardView: View {
         VStack(alignment: .leading, spacing: 6) {
             GroupedSection(footer: "무작위 ID, 닉네임, 점수와 플레이 기록을 순위 서버로 보냅니다. 사용량과 Claude 계정 정보는 보내지 않습니다.") {
                 ToggleRow(title: "순위에 참여", icon: "person.crop.circle.fill", tint: Palette.blue, isOn: $board.isOn)
-                    .help("참여하면 최근 7일 동안 보낸 점수보다 높을 때 무작위 ID, 닉네임, 점수, 코인 수, 플레이 시간, 앱 버전을 보내고, 순위 소식을 받으려고 10분마다 ID와 함께 순위 요약을 받습니다. 참여하지 않으면 ID 없이 공개 순위만 받습니다.")
+                    .tip("참여하면 최근 7일 동안 보낸 점수보다 높을 때 무작위 ID, 닉네임, 점수, 코인 수, 플레이 시간, 앱 버전을 보내고, 순위 소식을 받으려고 10분마다 ID와 함께 순위 요약을 받습니다. 참여하지 않으면 ID 없이 공개 순위만 받습니다.")
                 if board.isOn {
                     GroupedRow("닉네임", icon: "character.cursor.ibeam", tint: Palette.indigo) {
                         TextField("닉네임", text: $board.nickname, prompt: Text("2~12자"))
@@ -219,7 +232,7 @@ struct LeaderboardView: View {
                         Button("바꾸기") { state.rename() }
                             .controlSize(.small)
                             .disabled(!Leaderboard.isValid(nickname: board.nickname))
-                            .help("이미 올린 기록의 닉네임도 바꿉니다")
+                            .tip("이미 올린 기록의 닉네임도 바꿉니다")
                     }
                 }
                 Button { state.confirmingForget = true } label: {
@@ -228,7 +241,7 @@ struct LeaderboardView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("서버에서 내 점수와 닉네임을 지우고 참여를 끕니다")
+                .tip("서버에서 내 점수와 닉네임을 지우고 참여를 끕니다")
                 .confirmationDialog("서버에서 내 기록을 지울까요?", isPresented: $state.confirmingForget) {
                     Button("지우기", role: .destructive) { state.forget() }
                 } message: {

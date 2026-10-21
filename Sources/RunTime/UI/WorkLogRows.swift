@@ -16,7 +16,7 @@ struct EntryRow: View {
         HStack(spacing: 10) {
             Button { page.statusPicking = entry.id } label: { StatusGlyph(status: entry.status) }
                 .buttonStyle(.plain)
-                .help("상태 바꾸기")
+                .tip("상태·진척률 바꾸기")
                 .popover(isPresented: flag(\.statusPicking), arrowEdge: .bottom) {
                     StatusPicker(current: entry.status) { status in
                         store.update(entry.id) { $0.status = status }
@@ -35,16 +35,18 @@ struct EntryRow: View {
             .padding(.vertical, 6)
             // 빈칸을 두면 글 칸과 너비를 반씩 나눠 제목이 잘려, 글 칸이 남은 너비를 다 쓰게 한다
             .frame(maxWidth: .infinity)
-            Group { if let source = entry.source { SourceMark(source: source) } }.frame(width: 14)
-            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine, reserve: reservesIssue)
+            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine, reserve: reservesIssue,
+                      showsSource: true, source: entry.source)
             StatusText(status: entry.status)
             Button { page.editing = entry.id } label: {
+                // 댓글이 있는 줄이 많아 늘 진하면 줄마다 눈에 걸려, 올렸을 때만 진하게 한다
                 Image(systemName: entry.note.isEmpty ? "text.bubble" : "text.bubble.fill")
+                    .foregroundStyle(hover.on || page.editing == entry.id ? WL.muted : WL.faint)
             }
             .buttonStyle(GhostIconButtonStyle())
             // 댓글이 있으면 늘 보이고, 없으면 올렸을 때만 (노션처럼 손잡이는 숨겨 둔다)
             .opacity(hover.on || page.editing == entry.id || !entry.note.isEmpty ? 1 : 0)
-            .help("일감 번호·레드마인 댓글")
+            .tip("일감 번호·레드마인 댓글 고치기")
             .popover(isPresented: flag(\.editing), arrowEdge: .trailing) {
                 EntryEditor(store: store, page: page, id: entry.id)
             }
@@ -64,7 +66,7 @@ struct EntryRow: View {
                 .draggable(entry.id.uuidString) {
                     Text(entry.title).font(.system(size: 13)).padding(6).background(WL.surface)
                 }
-                .help("끌어서 순서 바꾸기")
+                .tip("끌어서 순서 바꾸기")
         }
         .overlay(alignment: .top) {
             if drop.on { Rectangle().fill(WL.accent).frame(height: 2).offset(y: -1) }
@@ -111,7 +113,7 @@ struct SourceMark: View {
         Image(systemName: icon)
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(.tertiary)
-            .help(help)
+            .tip(help)
     }
 }
 
@@ -247,7 +249,7 @@ struct EntryEditor: View {
                             Button("양식 넣기") { store.update(id) { $0.note = WorkLogFormat.template(for: $0) } }
                                 .buttonStyle(TextLinkButtonStyle())
                                 .disabled(!entry.note.isEmpty)
-                                .help("[작업 내용]·[연동 API]·[비고] 머리를 넣습니다")
+                                .tip("[작업 내용]·[연동 API]·[비고] 머리를 넣습니다")
                             Spacer()
                             if entry.note.isEmpty {
                                 Text("비우면 내용 한 줄로 [작업 내용]을 만듭니다").font(WL.caption).foregroundStyle(.tertiary)
@@ -258,9 +260,9 @@ struct EntryEditor: View {
                 Rectangle().fill(WL.border.opacity(0.7)).frame(height: 0.5)
                 HStack(spacing: 6) {
                     Button { store.move(id, by: -1) } label: { Image(systemName: "arrow.up") }
-                        .buttonStyle(GhostIconButtonStyle()).help("위로")
+                        .buttonStyle(GhostIconButtonStyle()).tip("위로 옮기기")
                     Button { store.move(id, by: 1) } label: { Image(systemName: "arrow.down") }
-                        .buttonStyle(GhostIconButtonStyle()).help("아래로")
+                        .buttonStyle(GhostIconButtonStyle()).tip("아래로 옮기기")
                     Spacer()
                     if entry.issue != nil {
                         Button(entry.needsRedmine ? "보낸 것으로 표시" : "다시 보내기") {
@@ -315,6 +317,7 @@ struct MergedRow: View {
     var body: some View {
         let steps = WorkReport.progression(of: entry, in: entries)
         let days = Array(Set(entries.filter { $0.project == entry.project && WorkLogFormat.same($0.title, entry.title) }.map(\.day))).sorted()
+        let crumb = WorkLogFormat.breadcrumb(entry.title)
         Button {
             page.search = ""
             page.day = entry.day
@@ -322,21 +325,27 @@ struct MergedRow: View {
         } label: {
             HStack(spacing: 10) {
                 StatusGlyph(status: entry.status)
-                // 날짜는 제목 아래에 두어 좁은 창에서도 제목이 넓게 쓴다
+                // 날짜와 화면 경로는 제목 아래에 두어 좁은 창에서도 할 일 이름이 한 줄에 들어오게 한다
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title).font(.system(size: 14)).foregroundStyle(WL.text).multilineTextAlignment(.leading)
+                    Text(crumb.leaf).font(.system(size: 14)).foregroundStyle(WL.text).multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
                         Text(days.count > 1 ? "\(WorkLogFormat.shortDay(days[0])) 외 \(days.count - 1)일" : WorkLogFormat.shortDay(entry.day))
                             .monospacedDigit()
+                            .fixedSize()
                         if steps.count > 1 {
                             Text("·")
-                            Text(steps.map(\.label).joined(separator: " → "))
+                            Text(steps.map(\.label).joined(separator: " → ")).fixedSize()
+                        }
+                        if let path = crumb.path {
+                            Text("·")
+                            Text(path).lineLimit(1).truncationMode(.middle)
                         }
                     }
                     .font(WL.caption).foregroundStyle(WL.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .tip(entry.title)
                 IssueSlot(issue: entry.issue, reserve: reservesIssue)
                 StatusText(status: entry.status)
             }

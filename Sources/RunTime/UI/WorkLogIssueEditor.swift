@@ -9,6 +9,8 @@ struct IssueFieldEditor<Footer: View>: View {
     var auto = WorkReport.IssueFields()
     @Binding var edit: WorkReport.IssueEdit
     @ObservedObject var sync: WorkLogSync
+    /// 저장 확인 중에는 칸을 막아, 확인 문구와 다른 값이 저장되지 않게 한다.
+    var locked = false
     @ViewBuilder let footer: () -> Footer
 
     var body: some View {
@@ -20,28 +22,31 @@ struct IssueFieldEditor<Footer: View>: View {
                     Text("#\(String(current.id)) · \(current.project)").font(WL.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-            row("상태", now: current?.status) {
-                Picker("", selection: Binding(
-                    get: { edit.statusID ?? 0 },
-                    set: { edit.statusID = $0 == 0 ? nil : $0 }
-                )) {
-                    Text(auto.status.map { "자동 · \($0.name)" } ?? "그대로").tag(0)
-                    ForEach(sync.statuses) { Text($0.name).tag($0.id) }
+            Group {
+                row("상태", now: current?.status) {
+                    Picker("", selection: Binding(
+                        get: { edit.statusID ?? 0 },
+                        set: { edit.statusID = $0 == 0 ? nil : $0 }
+                    )) {
+                        Text(auto.status.map { "자동 · \($0.name)" } ?? "그대로").tag(0)
+                        ForEach(sync.statuses) { Text($0.name).tag($0.id) }
+                    }
+                    .disabled(sync.statuses.isEmpty)
                 }
-                .disabled(sync.statuses.isEmpty)
-            }
-            DateRow(title: "시작일", now: current?.startDate, auto: auto.startDate, value: $edit.startDate)
-            DateRow(title: "완료 기한", now: current?.dueDate, auto: auto.dueDate, value: $edit.dueDate)
-            row("담당자", now: current?.assignee?.name) {
-                Picker("", selection: Binding(
-                    get: { edit.assignee?.id ?? 0 },
-                    set: { id in edit.assignee = members.first { $0.id == id } }
-                )) {
-                    Text("그대로").tag(0)
-                    ForEach(members) { Text($0.name).tag($0.id) }
+                DateRow(title: "시작일", now: current?.startDate, auto: auto.startDate, value: $edit.startDate)
+                DateRow(title: "완료 기한", now: current?.dueDate, auto: auto.dueDate, value: $edit.dueDate)
+                row("담당자", now: current?.assignee?.name) {
+                    Picker("", selection: Binding(
+                        get: { edit.assignee?.id ?? 0 },
+                        set: { id in edit.assignee = members.first { $0.id == id } }
+                    )) {
+                        Text("그대로").tag(0)
+                        ForEach(members) { Text($0.name).tag($0.id) }
+                    }
+                    .disabled(members.isEmpty)
                 }
-                .disabled(members.isEmpty)
             }
+            .disabled(locked)
             if let problem = fields.problem(current: current) {
                 Text(problem).font(WL.caption).foregroundStyle(WL.waiting)
             }
@@ -49,7 +54,7 @@ struct IssueFieldEditor<Footer: View>: View {
             HStack(spacing: 10) {
                 Button("고른 것 지우기") { edit = .init() }
                     .buttonStyle(TextLinkButtonStyle(tint: WL.muted))
-                    .disabled(edit.isEmpty)
+                    .disabled(edit.isEmpty || locked)
                 Spacer()
                 footer()
             }

@@ -13,42 +13,7 @@ struct WorkLogView: View {
     @FocusState private var focusedDraft: String?
 
     var body: some View {
-        HStack(spacing: 0) {
-            WorkLogSidebar(store: store, page: page, sync: sync, settings: settings)
-                .frame(width: 240)
-            Rectangle().fill(WL.border).frame(width: 1)
-            VStack(spacing: 0) {
-                topBar
-                Rectangle().fill(WL.border).frame(height: 1)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if let error = store.loadError ?? store.saveError { notice(error).padding(.bottom, 16) }
-                        if !page.search.trimmingCharacters(in: .whitespaces).isEmpty {
-                            searchPage
-                        } else {
-                            switch page.mode {
-                            case .day: dayPage
-                            case .week: periodPage(weekEntries, span: "이 주")
-                            case .month: periodPage(monthEntries, span: "이 달")
-                            case .project: projectPage
-                            case .issues: IssueBoard(store: store, page: page, sync: sync, settings: settings)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .padding(.horizontal, 36)
-                    .padding(.top, 32)
-                    .padding(.bottom, 60)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .disabled(store.loadError != nil)
-                }
-                .background(WL.canvas)
-            }
-            .frame(minWidth: 540)
-            Rectangle().fill(WL.border).frame(width: 1)
-            WorkLogPreview(store: store, page: page, sync: sync, settings: settings)
-                .frame(width: 340)
-        }
+        GeometryReader { geo in columns(WorkLogColumns(width: geo.size.width)) }
         .frame(minWidth: 1140, minHeight: 700)
         .background(WL.canvas)
         .foregroundStyle(WL.text)
@@ -69,11 +34,49 @@ struct WorkLogView: View {
         }
     }
 
+    private func columns(_ layout: WorkLogColumns) -> some View {
+        HStack(spacing: 0) {
+            WorkLogSidebar(store: store, page: page, sync: sync, settings: settings)
+                .frame(width: layout.sidebar)
+            Rectangle().fill(WL.border).frame(width: 1)
+            VStack(spacing: 0) {
+                topBar(gutter: layout.gutter)
+                Rectangle().fill(WL.border).frame(height: 1)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if let error = store.loadError ?? store.saveError { notice(error).padding(.bottom, 16) }
+                        if !page.search.trimmingCharacters(in: .whitespaces).isEmpty {
+                            searchPage
+                        } else {
+                            switch page.mode {
+                            case .day: dayPage
+                            case .week: periodPage(weekEntries, span: "이 주")
+                            case .month: periodPage(monthEntries, span: "이 달")
+                            case .project: projectPage
+                            case .issues: IssueBoard(store: store, page: page, sync: sync, settings: settings)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.horizontal, layout.gutter)
+                    .padding(.top, 32)
+                    .padding(.bottom, 60)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(store.loadError != nil)
+                }
+                .background(WL.canvas)
+            }
+            Rectangle().fill(WL.border).frame(width: 1)
+            WorkLogPreview(store: store, page: page, sync: sync, settings: settings)
+                .frame(width: layout.preview)
+        }
+    }
+
     // MARK: 위 막대
 
     /// 보기 탭과 날짜 이동, 할 일 단추. 노션 페이지 위 막대처럼 얇게.
     /// 탭을 바꿔도 단추 자리가 그대로이게, 그 보기에서 못 쓰는 단추는 빼지 않고 숨긴다.
-    private var topBar: some View {
+    private func topBar(gutter: CGFloat) -> some View {
         let navigable = page.mode != .project
         let dayTools = page.mode == .day
         return HStack(spacing: 4) {
@@ -86,30 +89,32 @@ struct WorkLogView: View {
                 Button { page.search = ""; page.step(-1) } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(GhostIconButtonStyle())
                     .keyboardShortcut("[", modifiers: .command)
-                    .help("이전 (⌘[)")
+                    .tip(previousTip)
                 Button(todayTitle) { page.search = ""; page.day = WorkDay.today() }
                     .buttonStyle(TopBarTextStyle())
                     .frame(width: 58)
                     .keyboardShortcut("t", modifiers: .command)
-                    .help("⌘T")
+                    .tip("\(todayTitle)로 가기 (⌘T)")
                 Button { page.search = ""; page.step(1) } label: { Image(systemName: "chevron.right") }
                     .buttonStyle(GhostIconButtonStyle())
                     .keyboardShortcut("]", modifiers: .command)
-                    .help("다음 (⌘])")
+                    .tip(nextTip)
             }
             .opacity(navigable ? 1 : 0)
             .disabled(!navigable)
             .allowsHitTesting(navigable)
+            // 양옆 단추를 다 숨기는 보기(프로젝트)에서는 나눔 선만 떠 보여 함께 숨긴다
             Rectangle().fill(WL.border).frame(width: 1, height: 16).padding(.horizontal, 6)
+                .opacity(navigable || dayTools ? 1 : 0)
             HStack(spacing: 4) {
                 Button { carryOver() } label: { Image(systemName: "arrow.turn.down.right") }
                     .buttonStyle(GhostIconButtonStyle())
                     .disabled(carryable == 0)
                     .opacity(carryable == 0 ? 0.4 : 1)
-                    .help(carryHelp)
+                    .tip(carryHelp)
                 Button { page.importText = ""; page.importing = true } label: { Image(systemName: "doc.on.clipboard") }
                     .buttonStyle(GhostIconButtonStyle())
-                    .help("보고서 붙여넣기: 써 둔 일일보고를 한 번에 넣습니다")
+                    .tip("보고서 붙여넣기: 써 둔 일일보고를 한 번에 넣기")
             }
             .opacity(dayTools ? 1 : 0)
             .disabled(!dayTools)
@@ -128,16 +133,25 @@ struct WorkLogView: View {
             .buttonStyle(GhostIconButtonStyle())
             .disabled(sync.capturing)
             .keyboardShortcut("r", modifiers: .command)
-            .help(captureHelp)
+            .tip(captureHelp)
             Button { page.showsSettings = true } label: { Image(systemName: "gearshape") }
                 .buttonStyle(GhostIconButtonStyle())
                 .keyboardShortcut(",", modifiers: .command)
-                .help("연동 설정 (⌘,)")
+                .tip("연동 설정 (⌘,)")
         }
-        .padding(.leading, 28)
+        // 탭 글자 안쪽 여백만큼 덜 띄워 탭 글자가 아래 페이지 제목과 같은 줄에서 시작하게 한다
+        .padding(.leading, gutter - 8)
         .padding(.trailing, 14)
         .frame(height: 46)
         .background(WL.canvas)
+    }
+
+    private var previousTip: String {
+        page.mode == .week ? "지난주 (⌘[)" : page.mode == .month ? "지난달 (⌘[)" : "전날 (⌘[)"
+    }
+
+    private var nextTip: String {
+        page.mode == .week ? "다음 주 (⌘])" : page.mode == .month ? "다음 달 (⌘])" : "다음 날 (⌘])"
     }
 
     private var todayTitle: String {
@@ -192,15 +206,6 @@ struct WorkLogView: View {
 
     // MARK: 페이지 머리
 
-    private func pageHeader(_ title: String, @ViewBuilder properties: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title).font(WL.pageTitle).monospacedDigit().foregroundStyle(WL.text)
-            VStack(alignment: .leading, spacing: 0) { properties() }
-            Rectangle().fill(WL.border).frame(height: 1).padding(.top, 6)
-        }
-        .padding(.bottom, 20)
-    }
-
     // MARK: 하루
 
     private var dayEntries: [WorkEntry] { store.log.entries(on: page.day) }
@@ -210,33 +215,22 @@ struct WorkLogView: View {
         let entries = dayEntries
         let today = WorkDay.today()
         let pending = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
-        pageHeader(WorkLogFormat.longDay(page.day)) {
-            PropertyRow("날짜", icon: "calendar") {
-                Text(page.day == today ? "오늘" : page.day == WorkDay.adding(-1, to: today) ? "어제" : WorkLogFormat.shortDay(page.day))
+        PageHeading(WorkLogFormat.longDay(page.day)) {
+            if page.day == today { DayBadge(text: "오늘") }
+            else if page.day == WorkDay.adding(-1, to: today) { DayBadge(text: "어제", tint: WL.muted) }
+            if entries.isEmpty {
+                Text("기록 없음")
+            } else {
+                Tally(title: "완료", value: entries.filter(\.status.isFinished).count, tint: WL.done)
+                Tally(title: "진행", value: entries.filter { !$0.status.isFinished && $0.status != .ongoing }.count, tint: WL.accent)
+                Tally(title: "상시", value: entries.filter { $0.status == .ongoing }.count, tint: WL.quiet)
             }
-            PropertyRow("진행", icon: "circle.dashed") {
-                if entries.isEmpty {
-                    Text("기록 없음").foregroundStyle(WL.muted)
-                } else {
-                    HStack(spacing: 14) {
-                        Tally(title: "완료", value: entries.filter(\.status.isFinished).count, tint: WL.done)
-                        Tally(title: "진행", value: entries.filter { !$0.status.isFinished && $0.status != .ongoing }.count, tint: WL.accent)
-                        Tally(title: "상시", value: entries.filter { $0.status == .ongoing }.count, tint: WL.quiet)
-                    }
-                }
-            }
-            PropertyRow("레드마인", icon: "paperplane") {
-                if pending > 0 {
-                    HStack(spacing: 8) {
-                        Text("보낼 일감 \(pending)개").foregroundStyle(WL.waiting)
-                        Button("보내기 →") { page.preview = .redmine }.buttonStyle(TextLinkButtonStyle())
-                    }
-                } else {
-                    Text(entries.contains { $0.issue != nil } ? "모두 보냄" : "일감 없음").foregroundStyle(WL.muted)
-                }
-            }
-            PropertyRow("GitLab", icon: "arrow.triangle.merge") {
-                Text(gitlabState).foregroundStyle(sync.captureError == nil ? WL.muted : WL.waiting).lineLimit(1)
+        } accessory: {
+            if pending > 0 {
+                HeadingAction(title: "레드마인 \(pending)건 보내기", icon: "paperplane", tint: WL.waiting) { page.preview = .redmine }
+                    .tip("오른쪽 레드마인 탭에서 보낼 내용을 확인합니다")
+            } else if entries.contains(where: { $0.issue != nil }) {
+                Label("레드마인 모두 보냄", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(WL.muted)
             }
         }
         let projects = shownProjects(dayProjects)
@@ -270,12 +264,6 @@ struct WorkLogView: View {
             .buttonStyle(GhostTextButtonStyle())
             .padding(.bottom, 12)
         }
-    }
-
-    private var gitlabState: String {
-        guard settings.captureEnabled else { return "꺼짐 · 설정에서 켜면 MR과 커밋이 자동으로 들어옵니다" }
-        if let error = sync.captureError { return error }
-        return sync.lastCapture.map { "10분마다 · \(WorkLogFormat.when($0)) 가져옴" } ?? "10분마다"
     }
 
     /// 이 날 기록이 있는 프로젝트와, 방금 열어 둔 빈 프로젝트.
@@ -382,6 +370,7 @@ struct WorkLogView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .tip("이름 바꾸기·보고서 순서·숨기기")
     }
 
     private func addField(_ project: String) -> some View {
@@ -403,7 +392,7 @@ struct WorkLogView: View {
             .textFieldStyle(.plain)
             .font(.system(size: 14))
             .focused($focusedDraft, equals: project)
-            .help("끝에 (60%)·(상시)를 붙이면 상태로, #1234를 붙이면 일감 번호로 저장합니다 (⌘N)")
+            .tip("끝에 (60%)·(상시)를 붙이면 상태로, #1234를 붙이면 일감 번호로 저장합니다 (⌘N)")
         }
         .padding(.horizontal, 6)
         .frame(height: 32)
@@ -436,7 +425,7 @@ struct WorkLogView: View {
                         .foregroundStyle(WL.muted)
                     }
                     .buttonStyle(GhostTextButtonStyle())
-                    .help("왼쪽 프로젝트 목록에 이름 칸이 열립니다")
+                    .tip("왼쪽 프로젝트 목록에 이름 칸이 열립니다")
                 }
             }
             .padding(.top, 4)
@@ -451,20 +440,16 @@ struct WorkLogView: View {
     @ViewBuilder
     private func periodPage(_ entries: [WorkEntry], span: String) -> some View {
         let merged = WorkReport.merged(entries)
-        pageHeader(page.mode == .week ? WorkLogFormat.weekTitle(page.day) : WorkLogFormat.monthTitle(page.day)) {
-            PropertyRow("기간", icon: "calendar") {
-                let range = page.mode == .week ? WorkDay.week(of: page.day) : WorkDay.month(of: page.day)
-                Text("\(WorkLogFormat.shortDay(range.lowerBound)) ~ \(WorkLogFormat.shortDay(range.upperBound))").monospacedDigit()
-            }
-            PropertyRow("한 일", icon: "list.bullet") {
-                HStack(spacing: 14) {
-                    Tally(title: "전체", value: merged.count)
-                    Tally(title: "완료", value: merged.filter(\.status.isFinished).count, tint: WL.done)
-                    Tally(title: "진행", value: merged.filter { !$0.status.isFinished && $0.status != .ongoing }.count, tint: WL.accent)
-                }
-            }
-            PropertyRow("기록한 날", icon: "checkmark.circle") {
-                Text("\(Set(entries.map(\.day)).count)일").monospacedDigit()
+        PageHeading(page.mode == .week ? WorkLogFormat.weekTitle(page.day) : WorkLogFormat.monthTitle(page.day)) {
+            Tally(title: "한 일", value: merged.count)
+            Tally(title: "완료", value: merged.filter(\.status.isFinished).count, tint: WL.done)
+            Tally(title: "진행", value: merged.filter { !$0.status.isFinished && $0.status != .ongoing }.count, tint: WL.accent)
+            Text("\(Set(entries.map(\.day)).count)일 기록").monospacedDigit()
+        } accessory: {
+            let pending = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
+            if pending > 0 {
+                HeadingAction(title: "레드마인 \(pending)건 보내기", icon: "paperplane", tint: WL.waiting) { page.preview = .redmine }
+                    .tip("\(span) 아직 보내지 않은 일감을 오른쪽 레드마인 탭에서 확인합니다")
             }
         }
         if merged.isEmpty {
@@ -523,19 +508,13 @@ struct WorkLogView: View {
             let merged = WorkReport.merged(entries)
             let open = merged.filter { !$0.status.isFinished && $0.status != .ongoing }
             let days = Array(Set(entries.map(\.day))).sorted(by: >)
-            pageHeader(project) {
-                PropertyRow("기록", icon: "list.bullet") {
-                    Text("\(entries.count)줄 · \(days.count)일").monospacedDigit()
-                }
-                PropertyRow("기간", icon: "calendar") {
-                    Text("\(WorkLogFormat.shortDay(days.last ?? "")) ~ \(WorkLogFormat.shortDay(days.first ?? ""))").monospacedDigit()
-                }
-                PropertyRow("진행 중", icon: "circle.dashed") {
-                    Text(open.isEmpty ? "없음" : "\(open.count)개").foregroundStyle(open.isEmpty ? WL.muted : WL.text)
-                }
-                PropertyRow("일감", icon: "number") {
-                    Text("\(Set(entries.compactMap(\.issue)).count)개").monospacedDigit()
-                }
+            PageHeading(project) {
+                Text("\(WorkLogFormat.shortDay(days.last ?? "")) ~ \(WorkLogFormat.shortDay(days.first ?? ""))").monospacedDigit()
+                Text("\(days.count)일 · \(entries.count)줄").monospacedDigit()
+                Tally(title: "진행 중", value: open.count, tint: WL.accent)
+                Tally(title: "일감", value: Set(entries.compactMap(\.issue)).count)
+            } accessory: {
+                EmptyView()
             }
             if !open.isEmpty {
                 section(key: "project-open", title: "진행 중인 일") {
@@ -547,9 +526,18 @@ struct WorkLogView: View {
             ForEach(days, id: \.self) { day in
                 section(key: "project:" + day, title: WorkLogFormat.dayTitle(day), jump: day) {
                     ForEach(entries.filter { $0.day == day }) { entry in
+                        let crumb = WorkLogFormat.breadcrumb(entry.title)
                         HStack(spacing: 10) {
                             StatusGlyph(status: entry.status)
-                            Text(entry.title).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(crumb.leaf).font(.system(size: 14)).fixedSize(horizontal: false, vertical: true)
+                                if let path = crumb.path {
+                                    Text(path).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1).truncationMode(.middle)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, crumb.path == nil ? 0 : 4)
+                            .tip(entry.title)
                             IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine,
                                       reserve: entries.contains { $0.issue != nil })
                             StatusText(status: entry.status)
@@ -562,7 +550,7 @@ struct WorkLogView: View {
             }
             .id(project)
         } else {
-            pageHeader("프로젝트") { EmptyView() }
+            PageHeading("프로젝트") { EmptyView() } accessory: { EmptyView() }
             Callout {
                 Text("하루 보기에서 일을 적거나 GitLab을 연결하면 프로젝트별로 모입니다.").font(.system(size: 12.5)).foregroundStyle(WL.muted)
             }
@@ -592,14 +580,10 @@ struct WorkLogView: View {
     @ViewBuilder
     private var searchPage: some View {
         let results = store.log.search(page.search)
-        pageHeader("찾기") {
-            PropertyRow("찾는 말", icon: "magnifyingglass") { Text(page.search) }
-            PropertyRow("결과", icon: "list.bullet") {
-                HStack(spacing: 10) {
-                    Text("\(results.count)줄 · \(Set(results.map(\.day)).count)일").monospacedDigit()
-                    Button("지우기") { page.search = "" }.buttonStyle(TextLinkButtonStyle(tint: WL.muted))
-                }
-            }
+        PageHeading("‘\(page.search)’ 찾기") {
+            Text("\(results.count)줄 · \(Set(results.map(\.day)).count)일").monospacedDigit()
+        } accessory: {
+            Button("지우기") { page.search = "" }.buttonStyle(NotionButtonStyle())
         }
         if results.isEmpty {
             Callout {
@@ -621,6 +605,22 @@ struct WorkLogView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 6).fill(Palette.red.opacity(0.08)))
+    }
+}
+
+/// 창 너비에 따른 세 칸 너비. 창을 처음 열면 최소 너비라, 양옆을 줄여 가운데 할 일이 한 줄에 들어오게 하고
+/// 넓은 창에서는 남는 너비를 보고서 칸에 준다 (가운데는 760에서 더 넓어지지 않는다).
+struct WorkLogColumns {
+    let sidebar: CGFloat
+    let preview: CGFloat
+    let gutter: CGFloat
+
+    init(width: CGFloat) {
+        switch width {
+        case ..<1280: (sidebar, preview, gutter) = (220, 320, 24)
+        case ..<1480: (sidebar, preview, gutter) = (240, 340, 36)
+        default: (sidebar, preview, gutter) = (240, 400, 36)
+        }
     }
 }
 
@@ -678,15 +678,22 @@ private struct SearchResultRow: View {
                     .font(.system(size: 12.5).monospacedDigit()).foregroundStyle(WL.muted)
                     .frame(width: 74, alignment: .leading)
                 StatusGlyph(status: entry.status)
+                let crumb = WorkLogFormat.breadcrumb(entry.title)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title).font(.system(size: 14)).foregroundStyle(WL.text).multilineTextAlignment(.leading)
+                    Text(crumb.leaf).font(.system(size: 14)).foregroundStyle(WL.text).multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 5) {
                         ProjectSwatch(name: entry.project, size: 7)
-                        Text(entry.project).font(.system(size: 12)).foregroundStyle(WL.muted)
+                        Text(entry.project).fixedSize()
+                        if let path = crumb.path {
+                            Text("·")
+                            Text(path).lineLimit(1).truncationMode(.middle)
+                        }
                     }
+                    .font(.system(size: 12)).foregroundStyle(WL.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .tip(entry.title)
                 IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine)
                 StatusText(status: entry.status)
             }

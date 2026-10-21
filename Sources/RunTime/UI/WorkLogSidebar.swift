@@ -38,6 +38,7 @@ struct WorkLogSidebar: View {
             if !page.search.isEmpty {
                 Button { page.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                     .buttonStyle(.plain)
+                    .tip("찾는 말 지우기 (esc)")
             } else if !searching {
                 Text("⌘F").font(WL.caption).foregroundStyle(.tertiary)
             }
@@ -50,7 +51,7 @@ struct WorkLogSidebar: View {
         .frame(height: 28)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
-        .help("내용·댓글·프로젝트·#일감번호, 초성(ㄷㅇㅌ)으로도")
+        .tip("내용·댓글·프로젝트·#일감번호, 초성(ㄷㅇㅌ)으로도")
     }
 
     // MARK: 달력
@@ -67,11 +68,11 @@ struct WorkLogSidebar: View {
                 Text(monthName(month)).font(WL.heading).monospacedDigit()
                 Spacer()
                 Button { page.calendarMonth = WorkDay.addingMonths(-1, to: month) } label: { Image(systemName: "chevron.left") }
-                    .help("지난달")
+                    .tip("지난달")
                 Button { page.search = ""; page.day = WorkDay.today() } label: { Image(systemName: "circle.fill").font(.system(size: 5)) }
-                    .help("오늘")
+                    .tip("오늘로 가기")
                 Button { page.calendarMonth = WorkDay.addingMonths(1, to: month) } label: { Image(systemName: "chevron.right") }
-                    .help("다음 달")
+                    .tip("다음 달")
             }
             .buttonStyle(GhostIconButtonStyle())
             HStack(spacing: 0) {
@@ -105,7 +106,8 @@ struct WorkLogSidebar: View {
             }
         }
         .background(alignment: .leading) {
-            if page.mode == .week || page.mode == .month, let first = selected.first, let index = week.firstIndex(of: first) {
+            // 월간은 달력 전체가 고른 범위라 띠를 깔면 달력이 통째로 파래져, 주간에만 깐다
+            if page.mode == .week, let first = selected.first, let index = week.firstIndex(of: first) {
                 GeometryReader { geo in
                     let cell = geo.size.width / 7
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -161,7 +163,7 @@ struct WorkLogSidebar: View {
         }
         .buttonStyle(.plain)
         .onHover { hover.update(day, $0) }
-        .help(entries.isEmpty ? WorkLogFormat.dayTitle(day)
+        .tip(entries.isEmpty ? WorkLogFormat.dayTitle(day)
               : "\(WorkLogFormat.dayTitle(day)) · \(entries.count)줄 · " + projects.joined(separator: ", "))
     }
 
@@ -181,7 +183,7 @@ struct WorkLogSidebar: View {
                     page.addingProject = true
                 } label: { Image(systemName: "plus") }
                 .buttonStyle(GhostIconButtonStyle())
-                .help("새 프로젝트")
+                .tip("새 프로젝트 만들기")
             }
             .padding(.leading, 6)
             if page.addingProject {
@@ -192,6 +194,7 @@ struct WorkLogSidebar: View {
                         .font(WL.meta)
                     Button { page.addingProject = false } label: { Image(systemName: "xmark") }
                         .buttonStyle(GhostIconButtonStyle())
+                        .tip("만들지 않고 닫기")
                 }
                 .padding(.horizontal, 8)
                 .frame(height: 28)
@@ -236,7 +239,7 @@ struct WorkLogSidebar: View {
         }
         .buttonStyle(.plain)
         .onHover { hover.update("p:" + name, $0) }
-        .help("이 달 \(count)줄 · 누르면 프로젝트 기록")
+        .tip("이 달 \(count)줄 · 누르면 프로젝트 기록")
         .contextMenu {
             Button("고른 날에 적기") {
                 page.openProjects.insert(name)
@@ -289,7 +292,7 @@ struct WorkLogSidebar: View {
                         Spacer(minLength: 4)
                         Button { store.setHidden(name, false) } label: { Image(systemName: "eye") }
                             .buttonStyle(GhostIconButtonStyle())
-                            .help("다시 보이기")
+                            .tip("다시 보이기")
                     }
                     .padding(.leading, 8)
                     .frame(height: 28)
@@ -332,10 +335,10 @@ struct WorkLogSidebar: View {
                 status("GitLab", on: settings.captureEnabled, error: sync.captureError != nil,
                        detail: sync.captureError != nil ? "확인 필요"
                            : sync.lastCapture.map { "\(WorkLogFormat.when($0)) 가져옴" } ?? (settings.captureEnabled ? "대기" : "꺼짐"))
-                    .help(sync.captureError ?? "")
+                    .tip(sync.captureError ?? "")
                 status("레드마인", on: settings.redmineReady, error: sync.issuesError != nil,
                        detail: sync.issuesError != nil ? "확인 필요" : settings.redmineReady ? "연결됨" : "꺼짐")
-                    .help(sync.issuesError ?? "")
+                    .tip(sync.issuesError ?? "")
                 status("팀즈", on: settings.hasTeamsWebhook, error: false, detail: settings.hasTeamsWebhook ? "연결됨" : "복사로 올림")
             }
             .padding(8)
@@ -346,7 +349,7 @@ struct WorkLogSidebar: View {
         }
         .buttonStyle(.plain)
         .onHover { hover.update("footer", $0) }
-        .help("연동 설정")
+        .tip("연동 설정")
     }
 
     private func status(_ name: String, on: Bool, error: Bool, detail: String) -> some View {

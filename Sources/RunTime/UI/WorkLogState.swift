@@ -21,8 +21,8 @@ final class WorkLogPage: ObservableObject {
     /// 레드마인 칸에서 댓글을 다 펼쳐 본 일감과, 댓글을 고치려고 연 일감.
     @Published var expandedNotes: Set<Int> = []
     @Published var noteEditing: Int?
-    /// 진척률이 내려가는 일감이 있어 한 번 더 묻는 동안 보내려던 일감 전부 (확인하면 이것을 다 보낸다).
-    @Published var confirmingLower: [Int]?
+    /// 보내기 전에 확인 창에 띄운 일감 (확인하면 이것을 다 보낸다). 진척률이 내려가는 일감도 이 창에서 알린다.
+    @Published var confirmingSend: [Int]?
     /// 레드마인 칸에서 보낸 기록을 보는 중인지와, 되돌릴지 묻는 중인 기록.
     @Published var redmineHistory = false
     /// 카드에서 직접 고른 상태·날짜·담당자 (일감 번호 → 고른 칸). 보내면 비운다.
@@ -31,6 +31,8 @@ final class WorkLogPage: ObservableObject {
     /// 내 일감에서 바로 고치는 일감과 고르는 중인 칸.
     @Published var boardEditing: Int?
     @Published var boardDraft = WorkReport.IssueEdit()
+    /// 내 일감 고치기 창에서 저장 전에 바뀔 칸을 한 번 더 보여 주는 중인지.
+    @Published var boardConfirming = false
     @Published var confirmingUndo: RedmineSent?
     @Published var editing: UUID?
     @Published var statusPicking: UUID?
@@ -150,6 +152,24 @@ enum WorkLogFormat {
               let status = WorkStatus(label: String(text[text.index(after: open)..<text.index(before: text.endIndex)]))
         else { return (text, .done) }
         return (String(text[..<open]).trimmingCharacters(in: .whitespaces), status)
+    }
+
+    /// `화면 > 기능 > 할 일`을 앞 경로와 마지막 이름으로 나눈다. 읽기 전용 줄에서 이름만 크게 보이고 경로는 아래 작은 글로 둔다.
+    static func breadcrumb(_ title: String) -> (path: String?, leaf: String) {
+        guard let range = title.range(of: " > ", options: .backwards) else { return (nil, title) }
+        let leaf = title[range.upperBound...].trimmingCharacters(in: .whitespaces)
+        let path = title[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+        return leaf.isEmpty || path.isEmpty ? (nil, title) : (path, leaf)
+    }
+
+    /// 레드마인에서 함께 바뀔 칸을 짧은 말로: `할일 → 완료`, `시작 10.21`, `담당 홍길동`.
+    static func fieldChanges(_ fields: WorkReport.IssueFields, current: IssueInfo?) -> [String] {
+        var parts: [String] = []
+        if let status = fields.status { parts.append("\(current?.status ?? "") → \(status.name)") }
+        if let start = fields.startDate { parts.append(start.isEmpty ? "시작일 비움" : "시작 \(WorkReport.shortDate(start))") }
+        if let due = fields.dueDate { parts.append(due.isEmpty ? "기한 비움" : "기한 \(WorkReport.shortDate(due))") }
+        if let assignee = fields.assignee { parts.append("담당 \(assignee.name)") }
+        return parts
     }
 
     static func template(for entry: WorkEntry) -> String {

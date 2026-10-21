@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var closingPopover = false
     private var settingsWindow: NSWindow?
     private var dailyDetailWindow: NSWindow?
+    private var usageWindow: NSWindow?
     private var workLogWindow: NSWindow?
     private let workLogPage = WorkLogPage()
     private var leaderboardWindow: NSWindow?
@@ -86,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         AppUpdater.shared.openWindows = { [weak self] in
             guard let self else { return [] }
             return [("workLog", workLogWindow), ("settings", settingsWindow), ("dailyDetail", dailyDetailWindow),
-                    ("leaderboard", leaderboardWindow)]
+                    ("leaderboard", leaderboardWindow), ("usage", usageWindow)]
                 .filter { $0.1?.isVisible == true }.map(\.0)
         }
         AppUpdater.shared.start()
@@ -98,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             case "settings": openSettings()
             case "dailyDetail": openDailyDetail()
             case "leaderboard": openLeaderboard()
+            case "usage": openUsageWindow()
             default: break
             }
         }
@@ -184,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard let self else { return }
                 _ = self.animator.perform(.celebrate)
                 guard self.engine.settings.claudeDoneAlertEnabled, turn.duration >= Self.claudeDoneMinimum,
-                      self.popover?.isShown != true else { return }
+                      self.popover?.isShown != true, self.usageWindow?.isVisible != true else { return }
                 let minutes = Int((turn.duration / 60).rounded())
                 Notifier.shared.send(title: "Claude 작업이 끝났어요",
                                      body: [turn.project, "\(minutes)분 걸림"].compactMap { $0 }.joined(separator: " · "))
@@ -367,6 +369,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             closePopover()
             return
         }
+        // 사용량 창을 띄워 두었으면 같은 화면을 팝오버로 또 열지 않고 그 창을 앞으로 가져온다.
+        // 무대가 둘이면 순위 소식과 갱신 타이머가 한쪽 무대만 따른다
+        if let usageWindow, usageWindow.isVisible {
+            usageWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         let popover = NSPopover()
         popover.behavior = .transient
         popover.delegate = self
@@ -379,6 +388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   openDailyDetail: { [weak self] in self?.openDailyDetail() },
                                   openWorkLog: { [weak self] in self?.openWorkLog() },
                                   openLeaderboard: { [weak self] in self?.openLeaderboard() },
+                                  openAsWindow: { [weak self] in self?.openUsageWindow() },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))
         // 내용 크기가 바뀌면 창 제약 대신 팝오버에 알려서, 팝오버가 메뉴바 쪽 자리를 지킨 채 크기를 바꾸게 한다
         content.sizingOptions = [.preferredContentSize]
@@ -505,7 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if let tab { settingsTab.selection = tab }
         engine.settings.reloadLaunchAtLogin()
         settingsWindow = showWindow(settingsWindow, title: "RunTime 설정",
-                                    style: [.titled, .closable, .resizable]) {   // 세로 드래그로 크기 조절
+                                    style: [.titled, .closable], size: AppWindow.size) {   // 세로 드래그로 크기 조절
             SettingsView(settings: engine.settings, engine: engine, tab: settingsTab)
         }
     }
@@ -525,8 +535,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// 팝오버와 같은 화면을 창으로. 다른 앱을 눌러도 닫히지 않아 옆에 띄워 두고 본다.
+    private func openUsageWindow() {
+        let created = usageWindow == nil
+        // 팝오버와 같은 어두운 무대 색으로, 첫 장면이 밝게 그려지지 않게 띄우기 전에 정한다
+        usageWindow = showWindow(usageWindow, title: "사용량", style: [.titled, .closable, .miniaturizable],
+                                 size: AppWindow.size, appearance: NSAppearance(named: .darkAqua)) {
+            PopoverView(engine: engine, settings: engine.settings,
+                        openSettings: { [weak self] in self?.openSettings() },
+                        importRunner: { [weak self] in self?.importRunner() },
+                        openDailyDetail: { [weak self] in self?.openDailyDetail() },
+                        openWorkLog: { [weak self] in self?.openWorkLog() },
+                        openLeaderboard: { [weak self] in self?.openLeaderboard() },
+                        performTrick: { [weak self] trick in self?.animator.perform(trick) }, windowed: true)
+        }
+        // 닫으면 놓아 준다 (무대 애니메이션이 보이지 않는 채로 돌지 않게, 다시 열면 사용량 화면부터 보이게)
+        if created, let usageWindow {
+            NotificationCenter.default.publisher(for: NSWindow.willCloseNotification, object: usageWindow)
+                .first()
+                .sink { [weak self] _ in self?.usageWindow = nil }
+                .store(in: &cancellables)
+        }
+    }
+
     private func openDailyDetail() {
-        dailyDetailWindow = showWindow(dailyDetailWindow, title: "일별 사용량", style: [.titled, .closable]) {
+        dailyDetailWindow = showWindow(dailyDetailWindow, title: "일별 사용량", style: [.titled, .closable], size: AppWindow.size) {
             DailyDetailView(engine: engine)
         }
     }
@@ -534,7 +567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func openWorkLog() {
         if workLogWindow?.isVisible != true { workLogPage.resetToToday() }
         workLogWindow = showWindow(workLogWindow, title: "업무 일지",
-                                   style: [.titled, .closable, .resizable, .miniaturizable]) {
+                                   style: [.titled, .closable, .resizable, .miniaturizable], size: AppWindow.size) {
             WorkLogView(store: .shared, page: workLogPage)
         }
     }
@@ -555,19 +588,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func openLeaderboard() {
-        leaderboardWindow = showWindow(leaderboardWindow, title: "토큰 러너 순위", style: [.titled, .closable]) {
+        leaderboardWindow = showWindow(leaderboardWindow, title: "토큰 러너 순위", style: [.titled, .closable], size: AppWindow.size) {
             LeaderboardView()
         }
     }
 
     /// 창은 한 번만 만들고 다시 열 때는 앞으로 가져온다.
     private func showWindow<Content: View>(_ existing: NSWindow?, title: String, style: NSWindow.StyleMask,
+                                           size: CGSize? = nil, appearance: NSAppearance? = nil,
                                            content: () -> Content) -> NSWindow {
         closePopover()
         let window = existing ?? {
             let window = NSWindow(contentViewController: NSHostingController(rootView: content()))
             window.title = title
             window.styleMask = style
+            // 크기를 조절할 수 있는 창(설정)도 처음에는 다른 창과 같은 크기로 연다
+            if let size { window.setContentSize(size) }
+            if let appearance { window.appearance = appearance }
             window.isReleasedWhenClosed = false
             window.center()
             return window

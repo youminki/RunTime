@@ -4,6 +4,8 @@ import SwiftUI
 struct Sparkline: View {
     let values: [Int]
     @Binding var hoverIndex: Int?
+    /// 팝오버는 44, 창은 남는 높이를 채우려고 더 크게 그린다.
+    var height: CGFloat = 44
 
     var body: some View {
         GeometryReader { geo in
@@ -44,7 +46,7 @@ struct Sparkline: View {
                 }
             }
         }
-        .frame(height: 44)
+        .frame(height: height)
     }
 
     /// Catmull-Rom 곡선. 제어점은 그래프 높이 안으로 묶어 0 아래로 출렁이지 않게 한다.

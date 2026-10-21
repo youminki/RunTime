@@ -36,7 +36,7 @@ struct GaugeBar: View {
         }
         .frame(height: 12)
         .animation(.easeOut(duration: 0.25), value: percent)
-        .help(helpText)
+        .tip(helpText)
         .accessibilityElement()
         .accessibilityValue(accessibilityText)
     }

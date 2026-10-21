@@ -312,7 +312,7 @@ struct WorkLogSettingsView: View {
                     Spacer()
                     Button { store.setRecurring(store.log.recurring.filter { $0.id != item.id }) } label: { Image(systemName: "trash") }
                         .buttonStyle(GhostIconButtonStyle())
-                        .help("빼기")
+                        .tip("이 고정 업무 빼기")
                 }
                 .padding(.vertical, 10)
                 Rectangle().fill(WL.border).frame(height: 1)
@@ -462,12 +462,15 @@ struct SecretInput: View {
         VStack(alignment: .trailing, spacing: 6) {
             if saved && !state.editing {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(WL.done).font(.system(size: 12))
-                    // 웹훅 호스트처럼 긴 값은 가운데를 줄여 설명 칸을 밀어내지 않게 한다
-                    Text(hint ?? "저장됨").font(.system(size: 12.5).monospacedDigit()).foregroundStyle(WL.muted)
-                        .lineLimit(1).truncationMode(.middle)
-                        .frame(maxWidth: 180, alignment: .trailing)
-                        .help(hint ?? "")
+                    // 체크와 글을 한 묶음으로 오른쪽에 붙여, 글이 짧을 때 체크만 왼쪽에 떨어져 있지 않게 한다
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(WL.done).font(.system(size: 12))
+                        // 웹훅 호스트처럼 긴 값은 가운데를 줄여 설명 칸을 밀어내지 않게 한다
+                        Text(hint ?? "저장됨").font(.system(size: 12.5).monospacedDigit()).foregroundStyle(WL.muted)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    .frame(maxWidth: 196, alignment: .trailing)
+                    .tip(hint ?? "")
                     Button("바꾸기") { state.editing = true; state.problem = nil }.buttonStyle(NotionButtonStyle())
                     Button("지우기") { clear() }.buttonStyle(NotionButtonStyle())
                 }
@@ -481,7 +484,7 @@ struct SecretInput: View {
                         if draft.isEmpty { state.problem = "클립보드가 비어 있습니다." } else { commit() }
                     }
                     .buttonStyle(NotionButtonStyle(kind: .primary))
-                    .help("복사해 둔 값을 넣고 바로 저장합니다")
+                    .tip("복사해 둔 값을 넣고 바로 저장합니다")
                     if saved {
                         Button("취소") { state.editing = false; draft = ""; state.problem = nil }.buttonStyle(NotionButtonStyle())
                     }

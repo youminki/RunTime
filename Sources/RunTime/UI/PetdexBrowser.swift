@@ -33,7 +33,7 @@ struct PetdexBrowser: View {
                     ForEach(results) { entry in
                         Button { install(entry) } label: { tile(entry) }
                             .buttonStyle(.plain)
-                            .help("\(entry.displayName) · 올린 사람 \(entry.submittedBy ?? "알 수 없음")")
+                            .tip("\(entry.displayName) · 올린 사람 \(entry.submittedBy ?? "알 수 없음")")
                             .contextMenu {
                                 if let page = entry.pageURL { Button("Petdex에서 보기") { NSWorkspace.shared.open(page) } }
                             }

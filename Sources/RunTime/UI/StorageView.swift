@@ -125,7 +125,7 @@ struct StorageView: View {
             guard item.slot == .track || item.slot == .weather else { return }
             wallet.tryingOn = inside ? item : nil
         }
-        .help(on ? "다시 누르면 뗍니다" : "\(item.name) 쓰기")
+        .tip(on ? "다시 누르면 뗍니다" : "\(item.name) 쓰기")
         .accessibilityLabel("\(item.name), \(item.rarity.title), \(on ? "쓰는 중" : "쓰지 않음")")
     }
 

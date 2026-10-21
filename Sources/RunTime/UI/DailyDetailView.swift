@@ -1,7 +1,7 @@
 import SwiftUI
 import UsageCore
 
-/// 일별 사용량 (iOS 스크린 타임처럼): 하루 평균을 크게, 그 아래 날짜별 막대와 평균선, 맨 아래 날짜별 목록.
+/// 일별 사용량 (iOS 스크린 타임처럼): 왼쪽에 하루 평균과 날짜별 막대·평균선, 오른쪽에 날짜별 목록.
 /// 최근 8일, 이 Mac의 Claude Code 기록 기준.
 struct DailyDetailView: View {
     @ObservedObject var engine: UsageEngine
@@ -9,21 +9,34 @@ struct DailyDetailView: View {
 
     var body: some View {
         let totals = engine.snapshot?.dailyTotals ?? []
-        VStack(alignment: .leading, spacing: 18) {
+        // 넓은 창이라 왼쪽에 평균·막대·프로젝트를, 오른쪽에 날짜별 목록을 나란히 두어 스크롤 없이 한눈에 본다
+        Group {
             if totals.isEmpty {
                 Text("아직 기록이 없습니다.").foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                summary(totals)
-                chart(totals)
-                projects(totals)
-                GroupedSection("날짜별", footer: "비용은 API 단가로 환산한 참고값입니다. 날짜에 마우스를 올리면 모델과 프로젝트별로 나눠 보여 줍니다.") {
-                    ForEach(totals, id: \.dayStart) { row($0) }
+                HStack(alignment: .top, spacing: 28) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 22) {
+                            summary(totals)
+                            chart(totals)
+                            projects(totals)
+                        }
+                        .padding(.vertical, 28)
+                    }
+                    .frame(maxWidth: .infinity)
+                    ScrollView {
+                        GroupedSection("날짜별", footer: "비용은 API 단가로 환산한 참고값입니다. 날짜에 마우스를 올리면 모델과 프로젝트별로 나눠 보여 줍니다.") {
+                            ForEach(totals, id: \.dayStart) { row($0) }
+                        }
+                        .padding(.vertical, 28)
+                    }
+                    .frame(width: 440)
                 }
+                .padding(.horizontal, 32)
             }
         }
-        .padding(20)
-        .frame(width: 400)
+        .frame(width: AppWindow.size.width, height: AppWindow.size.height)
         .background(Palette.groupedBackground)
     }
 
@@ -116,7 +129,7 @@ struct DailyDetailView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .frame(height: 120)
+            .frame(height: 260)
             HStack(spacing: 8) {
                 ForEach(days, id: \.dayStart) { day in
                     Text(weekday(day.dayStart))
@@ -142,7 +155,7 @@ struct DailyDetailView: View {
         }
         .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-        .help(breakdown(day))
+        .tip(breakdown(day))
     }
 
     private func legend(_ families: [String]) -> some View {
@@ -207,7 +220,8 @@ struct DailyDetailView: View {
                     }
                 }
                 Text(share < 0.005 ? "<1%" : "\(Int((share * 100).rounded()))%").foregroundStyle(.secondary)
-                    .frame(width: 32, alignment: .trailing)
+                    .lineLimit(1).fixedSize()
+                    .frame(width: 38, alignment: .trailing)
                 Text(Format.tokens(tokens))
                     .frame(width: 58, alignment: .trailing)
                 Text(Format.usd(cost)).foregroundStyle(.secondary)
@@ -217,7 +231,7 @@ struct DailyDetailView: View {
             .lineLimit(1)
             .fixedSize()
         }
-        .help(name)
+        .tip(name)
     }
 
     // MARK: 목록
@@ -231,7 +245,7 @@ struct DailyDetailView: View {
             }
             .font(.system(size: 13, weight: isToday(day.dayStart) ? .semibold : .regular))
         }
-        .help(breakdown(day))
+        .tip(breakdown(day))
     }
 
     // MARK: 날짜

@@ -14,7 +14,7 @@ enum WL {
     static let inner: CGFloat = 6
 
     // 글자
-    static let pageTitle = Font.system(size: 30, weight: .bold)
+    static let pageTitle = Font.system(size: 26, weight: .bold)
     static let title = Font.system(size: 20, weight: .semibold)
     static let section = Font.system(size: 15, weight: .semibold)
     static let heading = Font.system(size: 13, weight: .semibold)
@@ -161,9 +161,11 @@ struct StatusText: View {
     let status: WorkStatus
 
     var body: some View {
-        Text(status.label)
+        // 완료는 초록 체크로 이미 보여 글을 비운다. 줄마다 초록 글이 서면 아직 안 끝난 일이 묻힌다.
+        // 보고서에 `(100%)`로 나가는 줄은 `완료`와 달리 적히니 옅게 남긴다
+        Text(status == .done ? "" : status.label)
             .font(WL.number)
-            .foregroundStyle(status.isFinished ? WL.done : status == .ongoing ? WL.muted : WL.accent)
+            .foregroundStyle(status.isFinished ? WL.muted : status == .ongoing ? WL.muted : WL.accent)
             .frame(width: 44, alignment: .trailing)
     }
 }
@@ -184,7 +186,7 @@ struct IssueLabel: View {
             }
             Text("#" + String(issue)).font(WL.number).foregroundStyle(WL.muted)
         }
-        .help(posted == true ? "레드마인에 보냄" : posted == false ? "레드마인에 아직 보내지 않음" : "레드마인 일감")
+        .tip(posted == true ? "레드마인에 보냄" : posted == false ? "레드마인에 아직 보내지 않음" : "레드마인 일감")
     }
 }
 
@@ -194,13 +196,18 @@ struct IssueSlot: View {
     var posted: Bool? = nil
     /// 번호가 없어도 자리를 비워 둘지. 묶음에 일감이 하나도 없으면 비워 두지 않아 내용이 그만큼 넓게 쓴다.
     var reserve = true
+    /// 하루 보기 줄처럼 출처 표시를 둘 줄인지와 그 출처. 출처는 따로 칸을 두면 좁은 창에서 내용이 그만큼 꺾여 번호 앞에 작게 붙인다.
+    var showsSource = false
+    var source: String? = nil
 
     var body: some View {
-        if issue != nil || reserve {
-            Group {
-                if let issue { IssueLabel(issue: issue, posted: posted) } else { Color.clear }
+        HStack(spacing: 5) {
+            // 출처 자리는 늘 같은 너비로 두어 출처 아이콘이 번호 자리로 밀리지 않게 한다
+            if showsSource { Group { if let source { SourceMark(source: source) } }.frame(width: 12) }
+            if issue != nil || reserve {
+                Group { if let issue { IssueLabel(issue: issue, posted: posted) } else { Color.clear } }
+                    .frame(width: 72, height: 16, alignment: .trailing)
             }
-            .frame(width: 72, height: 16, alignment: .trailing)
         }
     }
 }
@@ -449,33 +456,64 @@ struct PageTabs<Value: Hashable>: View {
     }
 }
 
-/// 페이지 속성 한 줄: 회색 이름 칸과 값 (노션 페이지 머리의 속성처럼).
-struct PropertyRow<Value: View>: View {
-    let icon: String
+/// 페이지 머리: 큰 제목, 그 아래 요약 한 줄, 오른쪽에 이 페이지에서 바로 할 일.
+/// 속성 표를 두면 제목과 같은 말(날짜·기간)이 되풀이되고 목록이 화면 아래로 밀려, 요약은 한 줄로 끝낸다.
+struct PageHeading<Meta: View, Accessory: View>: View {
     let title: String
-    let value: Value
+    let meta: Meta
+    let accessory: Accessory
 
-    init(_ title: String, icon: String, @ViewBuilder value: () -> Value) {
+    init(_ title: String, @ViewBuilder meta: () -> Meta, @ViewBuilder accessory: () -> Accessory) {
         self.title = title
-        self.icon = icon
-        self.value = value()
+        self.meta = meta()
+        self.accessory = accessory()
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 11)).foregroundStyle(WL.faint).frame(width: 16)
-                Text(title).font(.system(size: 13)).foregroundStyle(WL.muted)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(WL.pageTitle).monospacedDigit().foregroundStyle(WL.text).lineLimit(1)
+            // 좁은 창에서 요약 글이 `열…`처럼 잘리지 않게, 한 줄에 다 들어가지 않으면 할 일 단추를 다음 줄로 내린다
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    summary
+                    Spacer(minLength: 12)
+                    accessory
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    summary
+                    accessory
+                }
             }
-            .frame(width: 128, alignment: .leading)
-            value.font(.system(size: 13)).foregroundStyle(WL.text)
-            Spacer(minLength: 0)
+            .frame(minHeight: 28)
         }
-        .frame(minHeight: 30)
+        .padding(.bottom, 26)
+    }
+
+    private var summary: some View {
+        HStack(spacing: 14) { meta }
+            .font(.system(size: 13))
+            .foregroundStyle(WL.muted)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
-/// 숫자와 이름을 붙여 쓰는 속성 값 조각: `● 완료 6`.
+/// 요약 줄의 작은 꼬리표 (`오늘`, `어제`).
+struct DayBadge: View {
+    let text: String
+    var tint: Color = WL.accent
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(Capsule().fill(tint.opacity(0.12)))
+    }
+}
+
+/// 숫자와 이름을 붙여 쓰는 요약 조각: `● 완료 6`. 0이면 점과 숫자를 옅게 해 눈이 가지 않게 한다.
 struct Tally: View {
     let title: String
     let value: Int
@@ -483,10 +521,35 @@ struct Tally: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            if let tint { Circle().fill(tint).frame(width: 6, height: 6) }
+            if let tint { Circle().fill(value == 0 ? WL.faint : tint).frame(width: 6, height: 6) }
             Text(title).foregroundStyle(WL.muted)
-            Text("\(value)").fontWeight(.medium).monospacedDigit()
+            Text("\(value)").fontWeight(.semibold).monospacedDigit().foregroundStyle(value == 0 ? WL.faint : WL.text)
         }
+    }
+}
+
+/// 머리 오른쪽의 할 일 단추. 할 일이 있으면 색을 채우고, 없으면 옅은 글로 상태만 알린다.
+struct HeadingAction: View {
+    let title: String
+    var icon: String?
+    var tint: Color = WL.accent
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon { Image(systemName: icon).font(.system(size: 11, weight: .semibold)) }
+                Text(title).font(.system(size: 12.5, weight: .semibold)).monospacedDigit()
+                Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(tint.opacity(0.12)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
     }
 }
 
@@ -581,4 +644,162 @@ struct HoverRow: ViewModifier {
 
 extension View {
     func hoverRow() -> some View { modifier(HoverRow()) }
+}
+
+// MARK: - 빠른 도움말
+
+extension View {
+    /// 아이콘 단추에 올리면 0.35초 뒤 이름표를 띄운다. macOS 기본 도움말(.help)은 1~2초 뒤에야 떠서 아이콘만으로는 무슨 단추인지 알기 어렵다.
+    func tip(_ text: String) -> some View { modifier(QuickTip(text: text)) }
+}
+
+private struct QuickTip: ViewModifier {
+    let text: String
+    @StateObject private var anchor = TipAnchor()
+
+    func body(content: Content) -> some View {
+        content
+            .background(TipAnchorView(anchor: anchor))
+            .onHover { inside in if inside { anchor.schedule(text) } else { anchor.cancel() } }
+            .accessibilityHint(text)
+    }
+}
+
+/// 이름표를 붙일 자리. 화면 좌표를 얻으려고 뒤에 빈 NSView를 깐다.
+final class TipAnchor: ObservableObject {
+    weak var view: NSView?
+    private var work: DispatchWorkItem?
+    private var press: Any?
+
+    func schedule(_ text: String) {
+        work?.cancel()
+        // 조건에 따라 비워 둔 도움말(오류가 없을 때 등)은 띄우지 않는다
+        guard !text.isEmpty else { return }
+        let item = DispatchWorkItem { [weak self] in
+            // 누르는 중이거나 이미 마우스가 떠났으면 띄우지 않는다. 메뉴를 열면 메뉴가 마우스를 가져가
+            // 올림이 끝났다는 소식이 오지 않아, 이 확인이 없으면 열린 메뉴 위에 이름표가 뜬다
+            guard let view = self?.view, let window = view.window, window.isVisible, NSEvent.pressedMouseButtons == 0,
+                  view.bounds.contains(view.convert(window.mouseLocationOutsideOfEventStream, from: nil)),
+                  window.attachedSheet == nil else { return }
+            TipWindow.shared.show(text, below: window.convertToScreen(view.convert(view.bounds, to: nil)),
+                                  appearance: window.effectiveAppearance)
+        }
+        work = item
+        // 이름표가 뜨기 전에 누르면 띄우지 않는다 (누른 단추가 연 팝오버 위에 겹치지 않게)
+        if press == nil {
+            press = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                self?.work?.cancel()
+                return event
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
+    }
+
+    func cancel() {
+        removePress()
+        guard work != nil else { return }
+        work?.cancel()
+        work = nil
+        TipWindow.shared.hide()
+    }
+
+    private func removePress() {
+        if let press { NSEvent.removeMonitor(press) }
+        press = nil
+    }
+
+    deinit {
+        work?.cancel()
+        removePress()
+    }
+}
+
+private struct TipAnchorView: NSViewRepresentable {
+    let anchor: TipAnchor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.view = view
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) { anchor.view = view }
+}
+
+/// 이름표 창 하나를 돌려 쓴다. 따로 띄운 창에 그려 스크롤 칸·옆 칸·팝오버에 가려지지 않는다.
+final class TipWindow {
+    static let shared = TipWindow()
+    private let panel: NSPanel
+    private let host = NSHostingView(rootView: TipLabel(text: "", width: 0))
+    private var monitor: Any?
+    private var autoHide: DispatchWorkItem?
+
+    private init() {
+        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        // 팝오버 위에서도 보이게 메뉴보다 한 단 위에 둔다
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 1)
+        panel.collectionBehavior = [.transient, .ignoresCycle]
+        // 메뉴바 앱이라 다른 앱이 앞에 있을 때도 일지 창에 올리면 보이게 한다
+        panel.hidesOnDeactivate = false
+        panel.contentView = host
+    }
+
+    func show(_ text: String, below rect: NSRect, appearance: NSAppearance) {
+        // 긴 설명은 280pt에서 줄을 바꾼다. 짧은 이름표는 글 너비만큼만 쓴다
+        let natural = text.components(separatedBy: "\n").map {
+            ($0 as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11.5, weight: .medium)]).width
+        }.max() ?? 0
+        host.rootView = TipLabel(text: text, width: min(ceil(natural) + 1, 280))
+        panel.appearance = appearance
+        let size = host.fittingSize
+        var origin = NSPoint(x: rect.midX - size.width / 2, y: rect.minY - size.height - 6)
+        if let screen = (NSScreen.screens.first { $0.frame.intersects(rect) } ?? NSScreen.main)?.visibleFrame {
+            origin.x = min(max(origin.x, screen.minX + 4), screen.maxX - size.width - 4)
+            // 화면 아래 끝이면 단추 위로 올린다
+            if origin.y < screen.minY + 4 { origin.y = rect.maxY + 6 }
+        }
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.orderFront(nil)
+        // 누르거나 굴리면 바로 숨긴다. 단추가 사라져 올림이 끝났다는 소식이 오지 않아도 남지 않게 시간이 지나면 숨긴다
+        if monitor == nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]) { [weak self] event in
+                self?.hide()
+                return event
+            }
+        }
+        autoHide?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.hide() }
+        autoHide = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: item)
+    }
+
+    func hide() {
+        autoHide?.cancel()
+        autoHide = nil
+        panel.orderOut(nil)
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+}
+
+private struct TipLabel: View {
+    let text: String
+    let width: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(WL.text)
+            .lineSpacing(2)
+            .frame(width: width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.surface))
+            .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+    }
 }

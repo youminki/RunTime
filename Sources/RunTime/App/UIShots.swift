@@ -110,6 +110,8 @@ enum UIShots {
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .shop))),
             ("popover-storage", .darkAqua, nil,
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .storage))),
+            ("usage-window", .darkAqua, nil,
+             AnyView(PopoverView(engine: engine, settings: engine.settings, windowed: true))),
             ("storage", .darkAqua, nil, AnyView(StorageView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),
             ("popover-quests", .darkAqua, nil,
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .quests))),
@@ -147,6 +149,12 @@ enum UIShots {
                 return page
             }()))),
             ("worklog-redmine-fields", .aqua, 640, AnyView(WorkLogView(store: .shared, page: fieldsPage()))),
+            ("worklog-send-confirm", .aqua, nil, AnyView({
+                // 보내기 전 확인 창: 일감마다 진척률·함께 바뀔 칸·댓글이 보이는지 본다
+                let page = fieldsPage()
+                let issues = Set(WorkLogStore.shared.log.entries(on: page.day).compactMap(\.issue))
+                return WorkLogPreview(store: .shared, page: page, sync: .shared, settings: .shared).sendConfirm(issues)
+            }())),
             ("worklog-redmine-history", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: historyPage()))),
             ("worklog-field-editor", .aqua, nil, AnyView(Group {
                 if let info = WorkLogStore.shared.log.issues.values.filter(\.assigned).sorted(by: { $0.id < $1.id }).first {

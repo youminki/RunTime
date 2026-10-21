@@ -2,7 +2,7 @@ import SwiftUI
 import UsageCore
 
 /// 설정 창. iOS 설정 앱처럼 색 아이콘 줄을 둥근 묶음으로 모으고, 설명은 묶음 아래 각주로 둔다.
-/// 위쪽 세그먼트로 일반·러너·사용량을 고른다. 변경은 UserDefaults에 바로 저장되고 메뉴바와 팝오버에 바로 반영된다.
+/// 왼쪽 목록으로 일반·러너·사용량을 고른다. 변경은 UserDefaults에 바로 저장되고 메뉴바와 팝오버에 바로 반영된다.
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var engine: UsageEngine
@@ -19,26 +19,58 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("설정 구역", selection: $tab.selection) {
-                Text("일반").tag(Tab.general)
-                Text("러너").tag(Tab.runner)
-                Text("사용량").tag(Tab.usage)
+        // 창이 넓어 위 세그먼트 대신 왼쪽에 구역 목록을 두고, 설정 글은 읽기 좋은 너비로 가운데에 둔다
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("설정").font(.system(size: 20, weight: .bold)).padding(.horizontal, 10).padding(.bottom, 12)
+                navRow(.general, "일반", icon: "gearshape", tint: Palette.gray)
+                navRow(.runner, "러너", icon: "hare.fill", tint: Palette.orange)
+                navRow(.usage, "사용량", icon: "chart.bar.fill", tint: Palette.blue)
+                Spacer()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 260)
-            .padding(.top, 12)
-            .padding(.bottom, 4)
-            switch tab.selection {
-            case .general: general
-            case .runner: runner
-            case .usage: usage
+            .padding(.horizontal, 12)
+            .padding(.top, 20)
+            .frame(width: 220)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Palette.groupedRow.opacity(0.5))
+            Rectangle().fill(Palette.separator.opacity(0.5)).frame(width: 1)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(tab.selection == .general ? "일반" : tab.selection == .runner ? "러너" : "사용량")
+                    .font(.system(size: 20, weight: .bold))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 22)
+                switch tab.selection {
+                case .general: general
+                case .runner: runner
+                case .usage: usage
+                }
             }
+            .padding(.leading, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Palette.groupedBackground)
         }
         .background(Palette.groupedBackground)
-        .frame(width: 460)
-        .frame(minHeight: 420, idealHeight: 600, maxHeight: 800)
+        .frame(width: AppWindow.size.width, height: AppWindow.size.height)
+    }
+
+    private func navRow(_ value: Tab, _ title: String, icon: String, tint: Color) -> some View {
+        let on = tab.selection == value
+        return Button { tab.selection = value } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(tint))
+                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? Color.primary.opacity(0.08) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: 일반
@@ -59,7 +91,7 @@ struct SettingsView: View {
                             Button(hotKeyRecorder.recording ? "새 조합을 누르세요 (esc 취소)" : GlobalHotKey.displayName) {
                                 hotKeyRecorder.toggle()
                             }
-                            .help("누른 뒤 원하는 조합을 누르면 바뀝니다")
+                            .tip("누른 뒤 원하는 조합을 누르면 바뀝니다")
                         }
                         .controlSize(.small)
                     }
@@ -98,7 +130,7 @@ struct SettingsView: View {
                     Button("열기") { NSWorkspace.shared.open(Self.projectsDirectory) }
                         .controlSize(.small)
                 }
-                .help(Self.projectsDirectory.path)
+                .tip(Self.projectsDirectory.path)
                 Link(destination: URL(string: "https://github.com/youminki/RunTime")!) {
                     GroupedRow("GitHub 저장소", icon: "chevron.left.forwardslash.chevron.right", tint: Color(white: 0.2)) {
                         Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
@@ -164,7 +196,7 @@ struct SettingsView: View {
                 GroupedRow("상태", icon: "antenna.radiowaves.left.and.right", tint: officialStatusColor) {
                     Text(officialStatusText).foregroundStyle(.secondary).lineLimit(1)
                 }
-                .help(officialStatusText)
+                .tip(officialStatusText)
             }
 
             AccountSection(switcher: AccountSwitcher.shared)
@@ -196,7 +228,7 @@ struct SettingsView: View {
                     .controlSize(.small)
                     .disabled(!Notifier.shared.available)
                 }
-                .help("알림이 오지 않으면 시스템 설정 > 알림 > RunTime에서 허용을 확인하세요.")
+                .tip("알림이 오지 않으면 시스템 설정 > 알림 > RunTime에서 허용을 확인하세요.")
             }
             if !Notifier.shared.available { devOnlyNote("알림") }
         }
@@ -281,17 +313,17 @@ private struct DiagnosticsRows: View {
                     model.markCopied()
                 }
                 .controlSize(.small)
-                .help("빌드, macOS, 화면 구성, 업데이트 상태와 최근 기록을 클립보드에 담습니다")
+                .tip("빌드, macOS, 화면 구성, 업데이트 상태와 최근 기록을 클립보드에 담습니다")
             }
         }
-        .help(Diagnostics.logURL.path)
+        .tip(Diagnostics.logURL.path)
         // 최근 세 건은 바로 보이게 한다
         ForEach(Array(model.recent.suffix(3).reversed().enumerated()), id: \.offset) { _, line in
             GroupedRow(line) { EmptyView() }
                 .font(.system(size: 11.5).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
-                .help(line)
+                .tip(line)
         }
     }
 }
@@ -339,7 +371,7 @@ private struct UpdateRows: View {
                 }
             }
         }
-        .help(helpText)
+        .tip(helpText)
         // 받을 변경을 최근 것부터 몇 줄 보여 준다
         if case .available = updater.state {
             if let blocked = updater.blocked {

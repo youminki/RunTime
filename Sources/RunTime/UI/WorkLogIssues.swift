@@ -57,45 +57,31 @@ struct IssueBoard: View {
         let overdue = all.filter { ($0.dueDate ?? "9999") < today }.count
         let dueSoon = all.filter { ($0.dueDate ?? "9999") >= today && ($0.dueDate ?? "9999") <= soon }.count
         let statuses = Dictionary(grouping: all, by: \.status).map { ($0.key, $0.value.count) }.sorted { $0.1 > $1.1 }
-        return VStack(alignment: .leading, spacing: 14) {
-            Text("내 일감").font(WL.pageTitle)
-            VStack(alignment: .leading, spacing: 0) {
-                PropertyRow("열린 일감", icon: "tray") {
-                    HStack(spacing: 14) {
-                        Text("\(all.count)개").monospacedDigit()
-                        ForEach(statuses.prefix(4), id: \.0) { name, count in Tally(title: name, value: count) }
-                    }
+        return PageHeading("내 일감") {
+            Tally(title: "열린 일감", value: all.count)
+            // 상태가 하나뿐이면 열린 일감 수와 같은 말이라 나누어 보이지 않는다
+            if statuses.count > 1 { ForEach(statuses.prefix(3), id: \.0) { name, count in Tally(title: name, value: count) } }
+            if overdue > 0 { Tally(title: "기한 지남", value: overdue, tint: Palette.red) }
+            if dueSoon > 0 { Tally(title: "3일 안", value: dueSoon, tint: WL.waiting) }
+            // 다른 날을 골랐을 때만 적을 날을 알린다 (오늘이면 따로 말하지 않는다)
+            if page.day != today { DayBadge(text: WorkReport.shortDate(page.day) + "에 적기", tint: WL.muted) }
+        } accessory: {
+            HStack(spacing: 8) {
+                if !settings.redmineReady {
+                    Text("레드마인 꺼짐").font(.system(size: 12)).foregroundStyle(WL.faint)
+                } else if sync.loadingIssues {
+                    ProgressView().controlSize(.small).scaleEffect(0.6)
+                } else if let error = sync.issuesError {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(WL.waiting).tip(error)
+                } else if let loaded = sync.issuesLoadedAt {
+                    Text(WorkLogFormat.when(loaded) + " 받음").font(.system(size: 12)).foregroundStyle(WL.faint).monospacedDigit()
                 }
-                PropertyRow("기한", icon: "calendar.badge.exclamationmark") {
-                    HStack(spacing: 14) {
-                        Tally(title: "지남", value: overdue, tint: overdue > 0 ? Palette.red : nil)
-                        Tally(title: "3일 안", value: dueSoon, tint: dueSoon > 0 ? WL.waiting : nil)
-                    }
-                }
-                PropertyRow("적을 날", icon: "square.and.pencil") {
-                    HStack(spacing: 8) {
-                        Text(page.day == today ? "오늘" : WorkLogFormat.dayTitle(page.day))
-                        Text("왼쪽 달력에서 바꿉니다").foregroundStyle(WL.faint)
-                    }
-                }
-                PropertyRow("받은 때", icon: "arrow.down.circle") {
-                    HStack(spacing: 8) {
-                        if sync.loadingIssues {
-                            ProgressView().controlSize(.small).scaleEffect(0.6)
-                            Text("받는 중").foregroundStyle(WL.muted)
-                        } else {
-                            Text(sync.issuesError ?? sync.issuesLoadedAt.map { "\(WorkLogFormat.when($0)) · 30분마다" } ?? "아직")
-                                .foregroundStyle(sync.issuesError == nil ? WL.muted : WL.waiting)
-                        }
-                        Button("새로 받기") { sync.loadMyIssues() }
-                            .buttonStyle(TextLinkButtonStyle())
-                            .disabled(sync.loadingIssues || !settings.redmineReady)
-                    }
-                }
+                Button { sync.loadMyIssues() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(GhostIconButtonStyle())
+                    .disabled(sync.loadingIssues || !settings.redmineReady)
+                    .tip("레드마인에서 새로 받기 (30분마다 저절로 받음)")
             }
-            Rectangle().fill(WL.border).frame(height: 1).padding(.top, 6)
         }
-        .padding(.bottom, 16)
     }
 
     /// 찾기 칸은 한 줄을 다 쓰고, 거르기는 그 아래 칩으로 둔다 (좁은 창에서 찾는 말이 잘리지 않게).
@@ -109,7 +95,7 @@ struct IssueBoard: View {
                 if !page.issueQuery.isEmpty {
                     Button { page.issueQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.faint) }
                         .buttonStyle(.plain)
-                        .help("지우기")
+                        .tip("찾는 말 지우기")
                 }
             }
             .padding(.horizontal, 10)
@@ -190,7 +176,7 @@ struct IssueBoard: View {
                     page.flash("‘\(project)’ 일감을 숨겼습니다. 맨 아래에서 다시 보입니다")
                 } label: { Image(systemName: "eye.slash") }
                 .buttonStyle(GhostIconButtonStyle())
-                .help("이 프로젝트 일감 숨기기")
+                .tip("이 프로젝트 일감 숨기기")
             }
             reportNameRow(project, current: reportName)
             if !collapsed {
@@ -227,7 +213,7 @@ struct IssueBoard: View {
                         .foregroundStyle(WL.muted)
                     }
                     .buttonStyle(GhostTextButtonStyle())
-                    .help("다시 보이기")
+                    .tip("다시 보이기")
                 }
             }
         }
@@ -262,7 +248,7 @@ struct IssueBoard: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("이 레드마인 프로젝트의 일감을 보고서에서 이 이름 아래에 적습니다")
+                .tip("이 레드마인 프로젝트의 일감을 보고서에서 이 이름 아래에 적습니다")
             }
         }
         .frame(height: 24)
@@ -302,8 +288,10 @@ private struct IssueRow: View {
             }
             Spacer(minLength: 8)
             if let entry {
-                Text(dayLabel + (written.count > 1 ? " \(written.count)줄" : "") + " 적음 · " + entry.status.label)
-                    .font(.system(size: 12)).foregroundStyle(WL.done)
+                // 상태는 왼쪽 표시로 보여, 완료가 아닐 때만 진척률을 덧붙인다
+                Text(dayLabel + (written.count > 1 ? " \(written.count)줄" : "") + " 적음"
+                     + (entry.status == .done ? "" : " · " + entry.status.label))
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(WL.done).monospacedDigit()
             }
             HStack(spacing: 2) {
                 // 이미 적은 일감도 한 줄 더 넣을 수 있다 (같은 일감에 따로 적을 일이 여럿인 날)
@@ -311,7 +299,7 @@ private struct IssueRow: View {
                     Image(systemName: entry == nil ? "plus" : "plus.square.on.square")
                 }
                     .buttonStyle(GhostIconButtonStyle())
-                    .help(entry == nil ? "\(dayLabel) 일지에 넣기" : "\(dayLabel) 일지에 한 줄 더 넣기")
+                    .tip(entry == nil ? "\(dayLabel) 일지에 넣기" : "\(dayLabel) 일지에 한 줄 더 넣기")
                 Menu {
                     Button("완료") { add(.done) }
                     ForEach(Array(stride(from: 100, through: 10, by: -10)), id: \.self) { value in
@@ -324,28 +312,46 @@ private struct IssueRow: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("진척률을 정해 \(dayLabel) 일지에 넣기")
+                .tip("진척률을 정해 \(dayLabel) 일지에 넣기")
                 Button { startEditing() } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(GhostIconButtonStyle())
-                    .help("상태·시작일·완료 기한·담당자 고치기")
+                    .tip("상태·시작일·완료 기한·담당자 고치기")
                     .disabled(!settings.redmineReady)
                     .popover(isPresented: Binding(
                         get: { page.boardEditing == info.id },
                         set: { if !$0 { page.boardEditing = nil } }
                     ), arrowEdge: .trailing) {
-                        IssueFieldEditor(current: info, edit: $page.boardDraft, sync: sync) {
-                            Button("취소") { page.boardEditing = nil }.buttonStyle(NotionButtonStyle())
-                            Button(sync.sending ? "저장 중…" : "레드마인에 저장") { save() }
-                                .buttonStyle(NotionButtonStyle(kind: .primary))
-                                .disabled(sync.sending || page.boardDraft.isEmpty
-                                          || WorkReport.IssueFields.merged(auto: .init(), edit: page.boardDraft, current: info,
-                                                                           statuses: sync.statuses).problem(current: info) != nil)
-                                .keyboardShortcut(.defaultAction)
+                        IssueFieldEditor(current: info, edit: $page.boardDraft, sync: sync, locked: page.boardConfirming) {
+                            let fields = WorkReport.IssueFields.merged(auto: .init(), edit: page.boardDraft, current: info,
+                                                                       statuses: sync.statuses)
+                            if page.boardConfirming {
+                                // 레드마인에 바로 반영되므로 바뀔 칸을 한 번 더 보이고 저장한다
+                                VStack(alignment: .trailing, spacing: 8) {
+                                    Text("#\(String(info.id))에 " + WorkLogFormat.fieldChanges(fields, current: info).joined(separator: " · ")
+                                         + "을(를) 저장할까요?")
+                                        .font(.system(size: 12)).foregroundStyle(WL.text)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    HStack(spacing: 8) {
+                                        Button("돌아가기") { page.boardConfirming = false }.buttonStyle(NotionButtonStyle())
+                                            .keyboardShortcut(.cancelAction)
+                                        // Return 두 번으로 바로 저장되지 않게 확인 단추는 눌러야만 저장한다
+                                        Button(sync.sending ? "저장 중…" : "저장") { save() }
+                                            .buttonStyle(NotionButtonStyle(kind: .primary))
+                                            .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
+                                    }
+                                }
+                            } else {
+                                Button("취소") { page.boardEditing = nil }.buttonStyle(NotionButtonStyle())
+                                Button("레드마인에 저장…") { page.boardConfirming = true }
+                                    .buttonStyle(NotionButtonStyle(kind: .primary))
+                                    .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
+                                    .keyboardShortcut(.defaultAction)
+                            }
                         }
                     }
                 Button { open() } label: { Image(systemName: "arrow.up.right.square") }
                     .buttonStyle(GhostIconButtonStyle())
-                    .help("레드마인에서 열기")
+                    .tip("레드마인에서 열기")
             }
             // 노션처럼 줄에 올렸을 때만 단추를 보인다 (고치는 창이 열려 있으면 그대로 둔다)
             .opacity(hover.on || page.boardEditing == info.id ? 1 : 0)
@@ -369,6 +375,7 @@ private struct IssueRow: View {
 
     private func startEditing() {
         page.boardDraft = .init()
+        page.boardConfirming = false
         page.boardEditing = info.id
     }
 
@@ -380,6 +387,7 @@ private struct IssueRow: View {
                 page.flash("#\(info.id) 저장하지 못했습니다: \(problem)")
             } else {
                 page.boardEditing = nil
+                page.boardConfirming = false
                 page.flash("#\(info.id)에 저장했습니다. 레드마인 탭 > 보낸 기록에서 되돌릴 수 있습니다")
             }
         }

@@ -85,14 +85,14 @@ struct RunnerPicker: View {
                                 petdex.delete(pet)
                             }
                         }
-                        .help("오른쪽 클릭: 이름 바꾸기, Petdex에서 보기, 삭제")
+                        .tip("오른쪽 클릭: 이름 바꾸기, Petdex에서 보기, 삭제")
                     }
                 }
                 Button { PetdexWindow.shared.show(settings: settings) } label: {
                     actionTile(icon: "magnifyingglass", title: "Petdex에서 찾기")
                 }
                 .buttonStyle(.plain)
-                .help("petdex.dev에 올라온 펫 수천 개 중에서 골라 러너로 받기")
+                .tip("petdex.dev에 올라온 펫 수천 개 중에서 골라 러너로 받기")
             }
             groupTitle("내 러너")
             LazyVGrid(columns: columns, spacing: 8) {
@@ -104,7 +104,7 @@ struct RunnerPicker: View {
                     }
                     .onHover { hover.update(custom.id, $0) }
                     .contextMenu { customMenu(custom) }
-                    .help("오른쪽 클릭: 이름 바꾸기, 실루엣, 삭제")
+                    .tip("오른쪽 클릭: 이름 바꾸기, 실루엣, 삭제")
                 }
                 Button {
                     if let importInPlace { importInPlace() } else { RunnerImport.choose(settings: settings, report: importState.show) }
@@ -112,7 +112,7 @@ struct RunnerPicker: View {
                     actionTile(icon: "plus", title: "그림 불러오기")
                 }
                     .buttonStyle(.plain)
-                    .help("GIF나 PNG(여러 장이면 파일 이름 순서가 프레임 순서)로 러너 만들기")
+                    .tip("GIF나 PNG(여러 장이면 파일 이름 순서가 프레임 순서)로 러너 만들기")
             }
             if let message = importState.message {
                 Text(message).font(.caption).foregroundStyle(importState.isError ? .orange : .secondary)

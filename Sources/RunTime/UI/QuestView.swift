@@ -314,7 +314,7 @@ private struct AttendanceDay: View {
         .background(shape.fill(reached ? GameKit.gold.opacity(0.16) : Color.white.opacity(0.04)))
         .overlay(shape.strokeBorder(next ? GameKit.gold : reached ? GameKit.gold.opacity(0.45) : Theme.hairline,
                                     lineWidth: next ? 1.5 : 1))
-        .help("\(day)일째 \(coins)코인\(last ? "과 행운 상자" : "")")
+        .tip("\(day)일째 \(coins)코인\(last ? "과 행운 상자" : "")")
     }
 }
 

@@ -70,7 +70,7 @@ struct RunnerStage: View {
             model.popoverClosed()
             LeaderboardFeed.shared.stageDisappeared()
         }
-        .help(model.game == nil ? "러너를 누르면 장난을 쳐요"
+        .tip(model.game == nil ? "러너를 누르면 장난을 쳐요"
               : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓·오른쪽 클릭 숙이기, ←→ 이동, G·1·2 고스트와 겨루기, esc 나가기")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(character.name)
@@ -82,19 +82,19 @@ struct RunnerStage: View {
     private var controls: some View {
         HStack(spacing: 4) {
             if Leaderboard.shared.isAvailable {
-                StageButton(systemImage: "trophy.fill", label: "순위", action: openLeaderboard).help("순위")
+                StageButton(systemImage: "trophy.fill", label: "순위", action: openLeaderboard).tip("순위")
             }
             if model.game == nil {
                 StageButton(systemImage: "gamecontroller.fill", title: "게임") { model.startGame(character: character) }
-                    .help("장애물 피하기 게임 (최고 \(GameRecords.best)점)")
+                    .tip("장애물 피하기 게임 (최고 \(GameRecords.best)점)")
             } else {
                 StageButton(systemImage: model.soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill",
                             label: model.soundOn ? "효과음 끄기" : "효과음 켜기") {
                     model.toggleSound()
                 }
-                .help(model.soundOn ? "효과음 끄기" : "효과음 켜기")
+                .tip(model.soundOn ? "효과음 끄기" : "효과음 켜기")
                 StageButton(systemImage: "xmark", label: "게임 나가기") { model.endGame() }
-                    .help("게임 나가기 (esc)")
+                    .tip("게임 나가기 (esc)")
             }
         }
         .padding(7)
