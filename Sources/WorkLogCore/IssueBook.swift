@@ -14,6 +14,11 @@ public struct IssueInfo: Codable, Equatable, Identifiable {
     public var status: String
     public var doneRatio: Int
     public var dueDate: String?
+    /// `yyyy-MM-dd`. 옛 일지 파일에는 없다.
+    public var startDate: String?
+    public var statusID: Int?
+    public var projectID: Int?
+    public var assignee: RedmineAPI.Member?
     public var priority: String
     /// 맨 위 묶음을 뺀 조상 일감 이름 (위에서 아래로). `["데이터 수집", "공유 파일 관리"]`
     public var path: [String]
@@ -24,7 +29,12 @@ public struct IssueInfo: Codable, Equatable, Identifiable {
 
     public init(id: Int, subject: String, project: String, tracker: String = "", status: String = "", doneRatio: Int = 0,
                 dueDate: String? = nil, priority: String = "", path: [String] = [], isQA: Bool = false,
-                assigned: Bool = false, fetchedAt: Date = Date()) {
+                assigned: Bool = false, fetchedAt: Date = Date(), startDate: String? = nil, statusID: Int? = nil,
+                projectID: Int? = nil, assignee: RedmineAPI.Member? = nil) {
+        self.projectID = projectID
+        self.assignee = assignee
+        self.startDate = startDate
+        self.statusID = statusID
         self.id = id
         self.subject = subject
         self.project = project
@@ -81,7 +91,8 @@ public struct IssueInfo: Codable, Equatable, Identifiable {
         let qa = issue.tracker == "결함" || chain.contains { $0.tracker == "시험" || $0.subject.contains("테스트") || $0.subject.uppercased().contains("QA") }
         return IssueInfo(id: issue.id, subject: issue.subject, project: issue.project, tracker: issue.tracker,
                          status: issue.status, doneRatio: issue.doneRatio, dueDate: issue.dueDate, priority: issue.priority,
-                         path: rootless.map { cleanSubject($0.subject) }, isQA: qa, assigned: assigned, fetchedAt: now)
+                         path: rootless.map { cleanSubject($0.subject) }, isQA: qa, assigned: assigned, fetchedAt: now,
+                         startDate: issue.startDate, statusID: issue.statusID, projectID: issue.projectID, assignee: issue.assignee)
     }
 }
 

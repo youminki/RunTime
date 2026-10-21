@@ -188,6 +188,19 @@ struct IssueLabel: View {
     }
 }
 
+/// 줄 오른쪽 일감 번호 칸. 번호가 없는 줄도 같은 너비를 비워 두어 상태 글자 세로줄이 맞는다.
+struct IssueSlot: View {
+    let issue: Int?
+    var posted: Bool? = nil
+
+    var body: some View {
+        Group {
+            if let issue { IssueLabel(issue: issue, posted: posted) } else { Color.clear }
+        }
+        .frame(width: 72, height: 16, alignment: .trailing)
+    }
+}
+
 // MARK: - 숫자 묶음
 
 struct Metric: Identifiable {
@@ -394,9 +407,11 @@ struct ChipButtonStyle: ButtonStyle {
 // MARK: - 노션식 부품
 
 /// 밑줄 탭 (노션 데이터베이스 보기 탭처럼). 고른 것만 진한 글자와 2pt 밑줄.
+/// `fill`이 아니면 탭마다 글자 너비만 쓴다. 굵은 글자 너비를 미리 잡아 두어 골라도 옆 탭이 밀리지 않는다.
 struct PageTabs<Value: Hashable>: View {
     let items: [(value: Value, title: String)]
     @Binding var selection: Value
+    var fill = false
     @StateObject private var hover = HoveredKey()
 
     var body: some View {
@@ -405,17 +420,22 @@ struct PageTabs<Value: Hashable>: View {
                 let on = item.value == selection
                 Button { selection = item.value } label: {
                     VStack(spacing: 0) {
-                        Text(item.title)
-                            .font(.system(size: 13, weight: on ? .semibold : .regular))
-                            .foregroundStyle(on ? WL.text : WL.muted)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, 7)
-                            .frame(height: 28)
-                            .background(RoundedRectangle(cornerRadius: 4)
-                                .fill(hover.key == item.title && !on ? WL.hover : .clear))
+                        ZStack {
+                            Text(item.title).font(.system(size: 13, weight: .semibold)).hidden()
+                            Text(item.title)
+                                .font(.system(size: 13, weight: on ? .semibold : .regular))
+                                .foregroundStyle(on ? WL.text : WL.muted)
+                        }
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 7)
+                        .frame(maxWidth: fill ? .infinity : nil)
+                        .frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 4)
+                            .fill(hover.key == item.title && !on ? WL.hover : .clear))
                         Rectangle().fill(on ? WL.text : .clear).frame(height: 2)
                     }
+                    .fixedSize(horizontal: !fill, vertical: false)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

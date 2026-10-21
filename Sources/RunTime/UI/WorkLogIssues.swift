@@ -11,7 +11,10 @@ struct IssueBoard: View {
     @ObservedObject var settings: WorkLogSettings
 
     var body: some View {
-        let all = sync.myIssues
+        // 숨긴 레드마인 프로젝트는 머리 숫자와 거르기에서도 뺀다
+        let hiddenNames = store.log.hiddenRedmineProjects
+        let all = sync.myIssues.filter { !hiddenNames.contains($0.project) }
+        let hidden = sync.myIssues.filter { hiddenNames.contains($0.project) }
         let shown = filtered(all)
         VStack(alignment: .leading, spacing: 0) {
             header(all)
@@ -23,7 +26,7 @@ struct IssueBoard: View {
                             .buttonStyle(NotionButtonStyle(kind: .primary))
                     }
                 }
-            } else if all.isEmpty {
+            } else if sync.myIssues.isEmpty {
                 Callout {
                     Text(sync.loadingIssues ? "일감을 받는 중입니다…" : "열린 일감이 없습니다.")
                         .font(.system(size: 12.5)).foregroundStyle(WL.muted)
@@ -33,13 +36,14 @@ struct IssueBoard: View {
                     Text("레드마인이 이어지지 않아 마지막으로 받은 목록을 보입니다.")
                         .font(.system(size: 12)).foregroundStyle(WL.waiting).padding(.bottom, 10)
                 }
-                filterBar
+                filterBar(all)
                 if shown.isEmpty {
                     Text("맞는 일감이 없습니다.").font(.system(size: 12.5)).foregroundStyle(WL.muted).padding(.vertical, 12)
                 }
                 ForEach(projects(of: shown), id: \.self) { project in
                     projectSection(project, issues: shown.filter { $0.project == project })
                 }
+                if !hidden.isEmpty { hiddenFooter(hidden) }
             }
         }
         .onAppear { if settings.redmineReady && sync.issuesLoadedAt == nil { sync.loadMyIssues() } }
@@ -94,34 +98,66 @@ struct IssueBoard: View {
         .padding(.bottom, 16)
     }
 
-    private var filterBar: some View {
-        HStack(spacing: 8) {
+    /// 찾기 칸은 한 줄을 다 쓰고, 거르기는 그 아래 칩으로 둔다 (좁은 창에서 찾는 말이 잘리지 않게).
+    private func filterBar(_ all: [IssueInfo]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(WL.faint)
-                TextField("일감 찾기 (제목·화면·#번호)", text: $page.issueQuery).textFieldStyle(.plain).font(.system(size: 13))
+                TextField("제목·화면·#번호로 일감 찾기", text: $page.issueQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                if !page.issueQuery.isEmpty {
+                    Button { page.issueQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.faint) }
+                        .buttonStyle(.plain)
+                        .help("지우기")
+                }
             }
-            .padding(.horizontal, 8)
-            .frame(minWidth: 120, maxWidth: 260)
-            .frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 6).fill(WL.callout))
-            Spacer(minLength: 8)
-            PageTabs(items: WorkLogPage.IssueFilter.allCases.map { ($0, $0.rawValue) }, selection: $page.issueFilter)
-                .layoutPriority(1)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.callout))
+            .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.border, lineWidth: 0.5))
+            HStack(spacing: 6) {
+                ForEach(WorkLogPage.IssueFilter.allCases, id: \.self) { filter in
+                    let on = page.issueFilter == filter
+                    Button { page.issueFilter = filter } label: {
+                        HStack(spacing: 5) {
+                            Text(label(filter))
+                            Text("\(count(all, filter))").monospacedDigit().opacity(on ? 0.85 : 0.55)
+                        }
+                    }
+                    .buttonStyle(ChipButtonStyle(selected: on))
+                }
+            }
         }
         .padding(.bottom, 14)
     }
 
+    /// `오늘 적은`은 고른 날에 맞춰 `10.20 적은`처럼 바꿔 부른다.
+    private func label(_ filter: WorkLogPage.IssueFilter) -> String {
+        guard filter == .logged, page.day != WorkDay.today() else { return filter.rawValue }
+        return WorkReport.shortDate(page.day) + " 적은"
+    }
+
+    private func count(_ all: [IssueInfo], _ filter: WorkLogPage.IssueFilter) -> Int {
+        let logged = Set(store.log.entries(on: page.day).compactMap(\.issue))
+        return all.filter { matches($0, filter, logged: logged) }.count
+    }
+
+    private func matches(_ info: IssueInfo, _ filter: WorkLogPage.IssueFilter, logged: Set<Int>) -> Bool {
+        switch filter {
+        case .all: return true
+        case .working: return info.doneRatio > 0 || logged.contains(info.id)
+        case .due: return (info.dueDate ?? "9999") <= WorkDay.adding(3, to: WorkDay.today())
+        case .logged: return logged.contains(info.id)
+        }
+    }
+
     private func filtered(_ all: [IssueInfo]) -> [IssueInfo] {
-        let today = WorkDay.today()
         let logged = Set(store.log.entries(on: page.day).compactMap(\.issue))
         let query = page.issueQuery.trimmingCharacters(in: .whitespaces).lowercased()
         return all.filter { info in
-            switch page.issueFilter {
-            case .all: break
-            case .working: if info.doneRatio == 0 && !logged.contains(info.id) { return false }
-            case .due: if (info.dueDate ?? "9999") > WorkDay.adding(3, to: today) { return false }
-            case .logged: if !logged.contains(info.id) { return false }
-            }
+            guard matches(info, page.issueFilter, logged: logged) else { return false }
             guard !query.isEmpty else { return true }
             let text = ([info.subject, info.reportTitle, "#\(info.id)"] + info.path).joined(separator: " ").lowercased()
             return query.split(separator: " ").allSatisfy { text.contains($0) }
@@ -148,7 +184,14 @@ struct IssueBoard: View {
                     Text(project).font(WL.section)
                     Text("\(issues.count)").font(.system(size: 13)).foregroundStyle(WL.faint).monospacedDigit()
                 }
-            } trailing: { EmptyView() }
+            } trailing: {
+                Button {
+                    store.setRedmineHidden(project, true)
+                    page.flash("‘\(project)’ 일감을 숨겼습니다. 맨 아래에서 다시 보입니다")
+                } label: { Image(systemName: "eye.slash") }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("이 프로젝트 일감 숨기기")
+            }
             reportNameRow(project, current: reportName)
             if !collapsed {
                 VStack(alignment: .leading, spacing: 10) {
@@ -157,7 +200,7 @@ struct IssueBoard: View {
                             Text(group).font(.system(size: 12, weight: .medium)).foregroundStyle(WL.muted)
                                 .padding(.horizontal, 6).padding(.bottom, 2)
                             ForEach(groups[group] ?? []) { info in
-                                IssueRow(store: store, page: page, settings: settings, info: info)
+                                IssueRow(store: store, page: page, settings: settings, sync: sync, info: info)
                             }
                         }
                     }
@@ -167,6 +210,28 @@ struct IssueBoard: View {
             }
         }
         .padding(.bottom, 22)
+    }
+
+    /// 숨긴 레드마인 프로젝트를 이름 칩으로 모아 두고, 누르면 다시 보인다.
+    private func hiddenFooter(_ hidden: [IssueInfo]) -> some View {
+        let names = projects(of: hidden)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("숨긴 프로젝트 \(names.count)개 · 일감 \(hidden.count)개").font(.system(size: 12)).foregroundStyle(WL.faint)
+            FlowLayout(spacing: 4) {
+                ForEach(names, id: \.self) { name in
+                    Button { store.setRedmineHidden(name, false) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "eye").font(.system(size: 10))
+                            Text(name)
+                        }
+                        .foregroundStyle(WL.muted)
+                    }
+                    .buttonStyle(GhostTextButtonStyle())
+                    .help("다시 보이기")
+                }
+            }
+        }
+        .padding(.top, 8)
     }
 
     /// 보고서에 쓸 프로젝트 이름 (예: 경북대학교 빅데이터플랫폼 구축 → VeloX).
@@ -184,7 +249,7 @@ struct IssueBoard: View {
                 .onExitCommand { page.renamingRedmine = nil }
             } else {
                 Menu {
-                    ForEach(store.log.allProjects, id: \.self) { name in
+                    ForEach(store.log.visibleProjects, id: \.self) { name in
                         Button(name) { store.setReportProject(name, for: project) }
                     }
                     Divider()
@@ -209,6 +274,7 @@ private struct IssueRow: View {
     @ObservedObject var store: WorkLogStore
     @ObservedObject var page: WorkLogPage
     @ObservedObject var settings: WorkLogSettings
+    @ObservedObject var sync: WorkLogSync
     let info: IssueInfo
     @StateObject private var hover = HoverFlag()
 
@@ -227,6 +293,7 @@ private struct IssueRow: View {
                     Text("#" + String(info.id)).monospacedDigit()
                     Text(info.status)
                     if info.doneRatio > 0 { Text("레드마인 \(info.doneRatio)%").monospacedDigit() }
+                    if let start = info.startDate { Text("시작 \(WorkReport.shortDate(start))").monospacedDigit() }
                     if let due = info.dueDate { dueLabel(due) }
                 }
                 .font(.system(size: 11.5))
@@ -254,12 +321,30 @@ private struct IssueRow: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("진척률을 정해 \(dayLabel) 일지에 넣기")
+                Button { startEditing() } label: { Image(systemName: "slider.horizontal.3") }
+                    .buttonStyle(GhostIconButtonStyle())
+                    .help("상태·시작일·완료 기한·담당자 고치기")
+                    .disabled(!settings.redmineReady)
+                    .popover(isPresented: Binding(
+                        get: { page.boardEditing == info.id },
+                        set: { if !$0 { page.boardEditing = nil } }
+                    ), arrowEdge: .trailing) {
+                        IssueFieldEditor(current: info, edit: $page.boardDraft, sync: sync) {
+                            Button("취소") { page.boardEditing = nil }.buttonStyle(NotionButtonStyle())
+                            Button(sync.sending ? "저장 중…" : "레드마인에 저장") { save() }
+                                .buttonStyle(NotionButtonStyle(kind: .primary))
+                                .disabled(sync.sending || page.boardDraft.isEmpty
+                                          || WorkReport.IssueFields.merged(auto: .init(), edit: page.boardDraft, current: info,
+                                                                           statuses: sync.statuses).problem(current: info) != nil)
+                                .keyboardShortcut(.defaultAction)
+                        }
+                    }
                 Button { open() } label: { Image(systemName: "arrow.up.right.square") }
                     .buttonStyle(GhostIconButtonStyle())
                     .help("레드마인에서 열기")
             }
-            // 노션처럼 줄에 올렸을 때만 단추를 보인다
-            .opacity(hover.on ? 1 : 0)
+            // 노션처럼 줄에 올렸을 때만 단추를 보인다 (고치는 창이 열려 있으면 그대로 둔다)
+            .opacity(hover.on || page.boardEditing == info.id ? 1 : 0)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 5)
@@ -272,7 +357,26 @@ private struct IssueRow: View {
                 NSPasteboard.general.setString(info.reportTitle, forType: .string)
                 page.flash("보고서 이름을 복사했습니다")
             }
+            Button("상태·날짜·담당자 고치기…") { startEditing() }.disabled(!settings.redmineReady)
             Button("레드마인에서 열기") { open() }
+        }
+    }
+
+    private func startEditing() {
+        page.boardDraft = .init()
+        page.boardEditing = info.id
+    }
+
+    /// 댓글 없이 칸만 바로 저장한다. 보낸 기록에 남아 되돌릴 수 있다.
+    private func save() {
+        let edit = page.boardDraft
+        sync.saveFields(issue: info.id, edit: edit) { problem in
+            if let problem {
+                page.flash("#\(info.id) 저장하지 못했습니다: \(problem)")
+            } else {
+                page.boardEditing = nil
+                page.flash("#\(info.id)에 저장했습니다. 레드마인 탭 > 보낸 기록에서 되돌릴 수 있습니다")
+            }
         }
     }
 

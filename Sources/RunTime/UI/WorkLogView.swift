@@ -9,6 +9,8 @@ struct WorkLogView: View {
     @ObservedObject var page: WorkLogPage
     @ObservedObject var sync: WorkLogSync = .shared
     @ObservedObject var settings: WorkLogSettings = .shared
+    /// 할 일 추가 칸 가운데 글을 쓰고 있는 프로젝트 (⌘N으로 옮긴다).
+    @FocusState private var focusedDraft: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -62,7 +64,7 @@ struct WorkLogView: View {
             if settings.captureEnabled { sync.capture() }
             if settings.redmineReady {
                 sync.loadMyIssues()
-                if settings.logTime { sync.loadActivities() }
+                sync.loadStatuses()
             }
         }
     }
@@ -70,29 +72,36 @@ struct WorkLogView: View {
     // MARK: 위 막대
 
     /// 보기 탭과 날짜 이동, 할 일 단추. 노션 페이지 위 막대처럼 얇게.
+    /// 탭을 바꿔도 단추 자리가 그대로이게, 그 보기에서 못 쓰는 단추는 빼지 않고 숨긴다.
     private var topBar: some View {
-        HStack(spacing: 4) {
+        let navigable = page.mode != .project
+        let dayTools = page.mode == .day
+        return HStack(spacing: 4) {
             PageTabs(items: WorkLogPage.Mode.allCases.map { ($0, $0.rawValue) }, selection: Binding(
                 get: { page.mode },
                 set: { page.search = ""; page.mode = $0 }
             ))
             Spacer(minLength: 12)
-            if page.mode != .project {
+            HStack(spacing: 4) {
                 Button { page.search = ""; page.step(-1) } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(GhostIconButtonStyle())
                     .keyboardShortcut("[", modifiers: .command)
                     .help("이전 (⌘[)")
                 Button(todayTitle) { page.search = ""; page.day = WorkDay.today() }
                     .buttonStyle(TopBarTextStyle())
+                    .frame(width: 58)
                     .keyboardShortcut("t", modifiers: .command)
                     .help("⌘T")
                 Button { page.search = ""; page.step(1) } label: { Image(systemName: "chevron.right") }
                     .buttonStyle(GhostIconButtonStyle())
                     .keyboardShortcut("]", modifiers: .command)
                     .help("다음 (⌘])")
-                Rectangle().fill(WL.border).frame(width: 1, height: 16).padding(.horizontal, 6)
             }
-            if page.mode == .day {
+            .opacity(navigable ? 1 : 0)
+            .disabled(!navigable)
+            .allowsHitTesting(navigable)
+            Rectangle().fill(WL.border).frame(width: 1, height: 16).padding(.horizontal, 6)
+            HStack(spacing: 4) {
                 Button { carryOver() } label: { Image(systemName: "arrow.turn.down.right") }
                     .buttonStyle(GhostIconButtonStyle())
                     .disabled(carryable == 0)
@@ -101,6 +110,12 @@ struct WorkLogView: View {
                 Button { page.importText = ""; page.importing = true } label: { Image(systemName: "doc.on.clipboard") }
                     .buttonStyle(GhostIconButtonStyle())
                     .help("보고서 붙여넣기: 써 둔 일일보고를 한 번에 넣습니다")
+            }
+            .opacity(dayTools ? 1 : 0)
+            .disabled(!dayTools)
+            .allowsHitTesting(dayTools)
+            .background {
+                Button("") { newEntry() }.keyboardShortcut("n", modifiers: .command).hidden()
             }
             Button { captureNow() } label: {
                 if sync.capturing {
@@ -138,6 +153,21 @@ struct WorkLogView: View {
     private var carryHelp: String {
         guard let source = store.log.previousDay(before: page.day) else { return "이어 쓰기: 앞선 기록이 없습니다" }
         return "이어 쓰기: \(WorkLogFormat.dayTitle(source))에 끝나지 않은 일 \(carryable)개를 가져옵니다"
+    }
+
+    /// ⌘N: 하루 보기로 가서 첫 프로젝트의 할 일 추가 칸에 들어간다. 프로젝트가 없으면 새 프로젝트 칸을 연다.
+    private func newEntry() {
+        page.search = ""
+        page.mode = .day
+        guard let project = shownProjects(dayProjects).first ?? store.log.visibleProjects.first else {
+            page.newProject = ""
+            page.addingProject = true
+            return
+        }
+        page.openProjects.insert(project)
+        page.collapsed.remove("day:" + project)
+        // 묶음이 그려진 다음에 칸에 들어가야 한다
+        DispatchQueue.main.async { focusedDraft = project }
     }
 
     private func carryOver() {
@@ -180,8 +210,7 @@ struct WorkLogView: View {
     private var dayPage: some View {
         let entries = dayEntries
         let today = WorkDay.today()
-        let pending = Set(entries.filter { $0.needsRedmine || (settings.logTime && $0.needsTime) }.compactMap(\.issue)).count
-        let hours = entries.compactMap(\.hours).reduce(0, +)
+        let pending = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
         pageHeader(WorkLogFormat.longDay(page.day)) {
             PropertyRow("날짜", icon: "calendar") {
                 Text(page.day == today ? "오늘" : page.day == WorkDay.adding(-1, to: today) ? "어제" : WorkLogFormat.shortDay(page.day))
@@ -207,19 +236,41 @@ struct WorkLogView: View {
                     Text(entries.contains { $0.issue != nil } ? "모두 보냄" : "일감 없음").foregroundStyle(WL.muted)
                 }
             }
-            if hours > 0 {
-                PropertyRow("작업 시간", icon: "clock") { Text(WorkTime.label(hours)).monospacedDigit() }
-            }
             PropertyRow("GitLab", icon: "arrow.triangle.merge") {
                 Text(gitlabState).foregroundStyle(sync.captureError == nil ? WL.muted : WL.waiting).lineLimit(1)
             }
         }
-        let projects = dayProjects
+        let projects = shownProjects(dayProjects)
         ForEach(projects, id: \.self) { project in
             projectSection(project, entries: entries.filter { $0.project == project })
         }
-        if entries.isEmpty && page.openProjects.isEmpty { emptyDay }
+        // 숨긴 프로젝트 줄만 있는 날도 빈 날 안내를 보인다 (아래에 숨긴 줄 보기가 함께 나온다)
+        if projects.isEmpty { emptyDay }
+        hiddenToggle(entries)
         otherProjects(excluding: projects)
+    }
+
+    /// 숨긴 프로젝트는 펼쳐 보기 전까지 빼고 보인다. 보고서에는 그대로 들어간다.
+    private func shownProjects(_ projects: [String]) -> [String] {
+        page.showsHidden ? projects : projects.filter { !store.log.hiddenProjects.contains($0) }
+    }
+
+    @ViewBuilder
+    private func hiddenToggle(_ entries: [WorkEntry]) -> some View {
+        let hidden = entries.filter { store.log.hiddenProjects.contains($0.project) }
+        if !hidden.isEmpty {
+            Button { page.showsHidden.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: page.showsHidden ? "eye.slash" : "eye").font(.system(size: 10.5))
+                    Text(page.showsHidden ? "숨긴 프로젝트 가리기"
+                         : "숨긴 프로젝트 \(Set(hidden.map(\.project)).count)개 · \(hidden.count)줄 보기")
+                    Text("보고서에는 들어갑니다").foregroundStyle(WL.faint)
+                }
+                .foregroundStyle(WL.muted)
+            }
+            .buttonStyle(GhostTextButtonStyle())
+            .padding(.bottom, 12)
+        }
     }
 
     private var gitlabState: String {
@@ -307,6 +358,11 @@ struct WorkLogView: View {
             Button("보고서에서 아래로") { store.moveProject(project, by: 1) }
             Divider()
             Button("이 프로젝트 기록 모두 보기") { page.project = project; page.mode = .project }
+            Button("목록에서 숨기기") {
+                page.openProjects.remove(project)
+                store.setHidden(project, true)
+                page.flash("‘\(project)’를 숨겼습니다. 왼쪽 아래 숨긴 프로젝트에서 다시 보입니다")
+            }
             if isEmpty {
                 Divider()
                 Button("닫기") { page.openProjects.remove(project) }
@@ -341,7 +397,8 @@ struct WorkLogView: View {
             })
             .textFieldStyle(.plain)
             .font(.system(size: 14))
-            .help("끝에 (60%)·(상시)를 붙이면 상태로, #1234를 붙이면 일감 번호로 저장합니다")
+            .focused($focusedDraft, equals: project)
+            .help("끝에 (60%)·(상시)를 붙이면 상태로, #1234를 붙이면 일감 번호로 저장합니다 (⌘N)")
         }
         .padding(.horizontal, 6)
         .frame(height: 32)
@@ -350,7 +407,7 @@ struct WorkLogView: View {
 
     @ViewBuilder
     private func otherProjects(excluding shown: [String]) -> some View {
-        let others = store.log.allProjects.filter { !shown.contains($0) }
+        let others = store.log.visibleProjects.filter { !shown.contains($0) }
         if !others.isEmpty || shown.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text(shown.isEmpty ? "프로젝트를 골라 적기" : "다른 프로젝트에도 적기")
@@ -389,7 +446,6 @@ struct WorkLogView: View {
     @ViewBuilder
     private func periodPage(_ entries: [WorkEntry], span: String) -> some View {
         let merged = WorkReport.merged(entries)
-        let hours = entries.compactMap(\.hours).reduce(0, +)
         pageHeader(page.mode == .week ? WorkLogFormat.weekTitle(page.day) : WorkLogFormat.monthTitle(page.day)) {
             PropertyRow("기간", icon: "calendar") {
                 let range = page.mode == .week ? WorkDay.week(of: page.day) : WorkDay.month(of: page.day)
@@ -405,9 +461,6 @@ struct WorkLogView: View {
             PropertyRow("기록한 날", icon: "checkmark.circle") {
                 Text("\(Set(entries.map(\.day)).count)일").monospacedDigit()
             }
-            if hours > 0 {
-                PropertyRow("작업 시간", icon: "clock") { Text(WorkTime.label(hours)).monospacedDigit() }
-            }
         }
         if merged.isEmpty {
             Callout {
@@ -415,9 +468,10 @@ struct WorkLogView: View {
                     .font(.system(size: 12.5)).foregroundStyle(WL.muted)
             }
         } else {
-            ForEach(store.log.orderedProjects(of: merged), id: \.self) { project in
+            ForEach(shownProjects(store.log.orderedProjects(of: merged)), id: \.self) { project in
                 mergedSection(project, merged: merged.filter { $0.project == project }, entries: entries)
             }
+            hiddenToggle(merged)
             Text("같은 프로젝트의 같은 일은 한 줄로 모으고 \(span) 마지막 상태를 씁니다. 줄을 누르면 그날로 갑니다.")
                 .font(.system(size: 12)).foregroundStyle(WL.faint)
         }
@@ -448,8 +502,7 @@ struct WorkLogView: View {
     // MARK: 프로젝트
 
     private var selectedProject: String? {
-        if let project = page.project, store.log.allProjects.contains(project) { return project }
-        return store.log.allProjects.first
+        page.selectedProject(in: store.log)
     }
 
     private var projectEntries: [WorkEntry] {
@@ -488,9 +541,8 @@ struct WorkLogView: View {
                     ForEach(entries.filter { $0.day == day }) { entry in
                         HStack(spacing: 10) {
                             StatusGlyph(status: entry.status)
-                            Text(entry.title).font(.system(size: 14))
-                            Spacer(minLength: 8)
-                            if let issue = entry.issue { IssueLabel(issue: issue, posted: !entry.needsRedmine) }
+                            Text(entry.title).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine)
                             StatusText(status: entry.status)
                         }
                         .padding(.horizontal, 6)
@@ -619,13 +671,14 @@ private struct SearchResultRow: View {
                 StatusGlyph(status: entry.status)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.title).font(.system(size: 14)).foregroundStyle(WL.text).multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 5) {
                         ProjectSwatch(name: entry.project, size: 7)
                         Text(entry.project).font(.system(size: 12)).foregroundStyle(WL.muted)
                     }
                 }
-                Spacer(minLength: 8)
-                if let issue = entry.issue { IssueLabel(issue: issue, posted: !entry.needsRedmine) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine)
                 StatusText(status: entry.status)
             }
             .padding(.horizontal, 6)

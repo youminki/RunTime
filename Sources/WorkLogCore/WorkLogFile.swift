@@ -111,7 +111,9 @@ public enum WorkLogCommand {
                 guard let day = dayArg(rest.first) else { return fail("날짜는 yyyy-MM-dd로 적습니다") }
                 entries = log.entries(on: day)
             }
-            let text = WorkReport.redmineRequest(WorkReport.redmineUpdates(entries.filter(\.needsRedmine)))
+            // 앱 설정의 댓글 꼴을 따른다 (기본 HTML: 평문 줄바꿈은 레드마인 웹 편집기에서 한 줄로 붙는다)
+            let html = UserDefaults.standard.object(forKey: "workLog.redmineHTML") as? Bool ?? true
+            let text = WorkReport.redmineRequest(WorkReport.redmineUpdates(entries.filter(\.needsRedmine), log: log), html: html)
             return Result(output: text.isEmpty ? "올릴 일감 없음" : text, changed: false, failed: false)
 
         case "add":

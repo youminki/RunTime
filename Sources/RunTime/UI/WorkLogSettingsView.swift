@@ -53,7 +53,7 @@ struct WorkLogSettingsView: View {
         .onAppear {
             page.keyDraft = ""
             page.teamsDraft = ""
-            if settings.redmineReady && settings.logTime { sync.loadActivities() }
+            if settings.redmineReady { sync.loadStatuses() }
         }
     }
 
@@ -118,8 +118,8 @@ struct WorkLogSettingsView: View {
 
     private var sectionNote: String {
         switch page.settingsSection {
-        case .gitlab: return "머지한 내 MR은 머지한 날에 완료로, 아직 main·dev·release에 들어가지 않은 내 커밋은 브랜치마다 진행중으로 들어옵니다. MR 설명이 레드마인 댓글이 됩니다."
-        case .redmine: return "앱이 레드마인 API로 진척률과 댓글을 직접 보내 Claude 토큰을 쓰지 않습니다. 보내기는 레드마인 탭에서 눌러야 나가고, 일감 상태는 바꾸지 않습니다."
+        case .gitlab: return "머지한 내 MR은 머지한 날에 완료로, 아직 main·dev·release에 들어가지 않은 내 커밋은 브랜치마다 진행중으로 들어옵니다. MR 설명은 레드마인 댓글 꼴로 다듬어 씁니다: [확인 방법]과 일감 번호를 빼고, 일감 여럿을 다룬 MR은 일감마다 나눕니다."
+        case .redmine: return "앱이 레드마인 API로 진척률과 댓글을 직접 보내 Claude 토큰을 쓰지 않습니다. 보내기는 레드마인 탭에서 눌러야 나가고, 상태와 날짜는 아래에서 켠 만큼만 맞춥니다."
         case .teams: return "일일·주간·월간 보고를 팀즈 채팅에 카드로 보냅니다. 처음에는 나에게 오는 채팅으로 이어 시험해 보세요. 보내기 전에 한 번 더 묻습니다."
         case .recurring: return "정한 요일이 되면 그날 일지에 저절로 들어갑니다. 그날 지우면 다시 넣지 않습니다."
         case .shortcuts: return "어디서든 한 줄 적기와 퇴근 무렵 알림."
@@ -195,24 +195,33 @@ struct WorkLogSettingsView: View {
                     .buttonStyle(NotionButtonStyle())
                     .disabled(!settings.redmineReady)
             }
-            SettingRow("작업 시간도 남기기", "보낼 때 레드마인 소요 시간을 날짜별로 함께 남깁니다. 정하지 않은 일감은 그 저장소 폴더에서 Claude Code를 쓴 시간으로 어림하고, 보내기 전에 고칠 수 있습니다.") {
-                Toggle("", isOn: $settings.logTime).toggleStyle(.switch).labelsHidden()
-                    .onChange(of: settings.logTime) { if $0 { sync.loadActivities() } }
+            SettingRow("댓글을 HTML로 보내기", "웹 편집기를 쓰는 레드마인은 줄바꿈을 HTML로 받아야 섹션과 줄이 나뉩니다. 손으로 쓴 댓글처럼 [작업 내용]마다 문단, 줄마다 줄바꿈으로 보냅니다.") {
+                Toggle("", isOn: $settings.redmineHTML).toggleStyle(.switch).labelsHidden()
             }
-            if settings.logTime {
-                SettingRow("작업 분류", "소요 시간에 붙일 분류입니다.") {
-                    Picker("", selection: Binding(
-                        get: { settings.activityID ?? 0 },
-                        set: { settings.activityID = $0 == 0 ? nil : $0 }
-                    )) {
-                        if sync.activities.isEmpty { Text(settings.redmineReady ? "불러오는 중" : "레드마인을 먼저 이으세요").tag(0) }
-                        ForEach(sync.activities) { Text($0.name).tag($0.id) }
+            SettingRow("상태·날짜도 맞추기", "진행으로 적으면 할일 상태의 일감을 진행 상태로, 완료로 적으면 완료 상태로 옮깁니다. 시작일과 완료 기한은 비어 있을 때만 일지 날짜로 채우고, 테스트·반려처럼 다른 상태의 일감은 건드리지 않습니다.") {
+                Toggle("", isOn: $settings.syncIssueFields).toggleStyle(.switch).labelsHidden()
+                    .onChange(of: settings.syncIssueFields) { if $0 { sync.loadStatuses() } }
+            }
+            if settings.syncIssueFields {
+                SettingRow("진행 · 완료 상태", sync.statuses.isEmpty ? "레드마인을 이으면 상태 목록을 받습니다." : "일지가 진행·완료일 때 옮길 상태입니다.") {
+                    HStack(spacing: 6) {
+                        statusPicker($settings.progressStatusID)
+                        Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.faint)
+                        statusPicker($settings.doneStatusID)
                     }
-                    .labelsHidden()
-                    .frame(width: 180)
                 }
             }
         }
+    }
+
+    private func statusPicker(_ selection: Binding<Int?>) -> some View {
+        Picker("", selection: Binding(get: { selection.wrappedValue ?? 0 }, set: { selection.wrappedValue = $0 == 0 ? nil : $0 })) {
+            Text("바꾸지 않음").tag(0)
+            ForEach(sync.statuses) { Text($0.name).tag($0.id) }
+        }
+        .labelsHidden()
+        .frame(width: 110)
+        .disabled(sync.statuses.isEmpty)
     }
 
     private var redmineStatus: String {
@@ -312,7 +321,7 @@ struct WorkLogSettingsView: View {
                 Text("새 고정 업무").font(.system(size: 13, weight: .semibold))
                 HStack(spacing: 8) {
                     Menu {
-                        ForEach(store.log.allProjects, id: \.self) { name in Button(name) { page.recurringProject = name } }
+                        ForEach(store.log.visibleProjects, id: \.self) { name in Button(name) { page.recurringProject = name } }
                     } label: {
                         HStack(spacing: 6) {
                             if !page.recurringProject.isEmpty { ProjectSwatch(name: page.recurringProject) }
@@ -425,6 +434,8 @@ struct SettingRow<Control: View>: View {
                     Text(detail).font(.system(size: 12)).foregroundStyle(detailTint ?? WL.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                // 조작이 넓어도 제목·설명이 한 글자 너비로 눌려 세로로 서지 않게 최소 너비를 둔다
+                .frame(minWidth: 180, alignment: .leading)
                 Spacer(minLength: 12)
                 // 조작은 줄이지 않고 설명이 남은 너비에서 줄을 바꾼다. 통째로 fixedSize를 걸면
                 // 글 칸이 들어 있는 글 길이만큼 늘어나 긴 웹훅 주소가 창 밖으로 나간다
@@ -452,7 +463,11 @@ struct SecretInput: View {
             if saved && !state.editing {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(WL.done).font(.system(size: 12))
-                    Text(hint ?? "저장됨").font(.system(size: 12.5).monospacedDigit()).foregroundStyle(WL.muted).lineLimit(1)
+                    // 웹훅 호스트처럼 긴 값은 가운데를 줄여 설명 칸을 밀어내지 않게 한다
+                    Text(hint ?? "저장됨").font(.system(size: 12.5).monospacedDigit()).foregroundStyle(WL.muted)
+                        .lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: 180, alignment: .trailing)
+                        .help(hint ?? "")
                     Button("바꾸기") { state.editing = true; state.problem = nil }.buttonStyle(NotionButtonStyle())
                     Button("지우기") { clear() }.buttonStyle(NotionButtonStyle())
                 }

@@ -235,6 +235,19 @@ if let index = CommandLine.arguments.firstIndex(of: "--readme-shots") {
     app.run()
 }
 
+// 레드마인 점검: 앱의 보내기·되돌리기 길로 시험 댓글을 한 일감에 보내고, 줄바꿈이 살았는지 본 뒤 지운다.
+// 진척률·상태·날짜·작업 시간은 건드리지 않는다. RUNTIME_WORKLOG로 다른 일지 파일을 가리키고 쓴다.
+if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
+   CommandLine.arguments.dropFirst(index + 1).first == "dupes" {
+    MainActor.assumeIsolated { RedmineCheck.dupes() }
+    RunLoop.main.run()
+}
+if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
+   let issue = CommandLine.arguments.dropFirst(index + 1).first.flatMap({ Int($0) }) {
+    MainActor.assumeIsolated { RedmineCheck.run(issue: issue) }
+    RunLoop.main.run()
+}
+
 // 화면 점검: 주요 창을 실제 데이터로 찍어 PNG로 저장하고 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "ui-shots"

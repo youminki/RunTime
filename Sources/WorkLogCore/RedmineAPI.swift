@@ -13,9 +13,16 @@ public enum RedmineAPI {
         /// `yyyy-MM-dd`
         public var dueDate: String?
         public var priority: String = ""
+        public var startDate: String?
+        public var statusID: Int?
+        public var projectID: Int?
+        public var assignee: Member?
 
         public init(id: Int, subject: String, project: String, status: String, doneRatio: Int,
-                    tracker: String = "", parentID: Int? = nil, dueDate: String? = nil, priority: String = "") {
+                    tracker: String = "", parentID: Int? = nil, dueDate: String? = nil, priority: String = "",
+                    startDate: String? = nil, statusID: Int? = nil, projectID: Int? = nil, assignee: Member? = nil) {
+            self.projectID = projectID
+            self.assignee = assignee
             self.id = id
             self.subject = subject
             self.project = project
@@ -25,7 +32,138 @@ public enum RedmineAPI {
             self.parentID = parentID
             self.dueDate = dueDate
             self.priority = priority
+            self.startDate = startDate
+            self.statusID = statusID
         }
+    }
+
+    /// 담당자로 고를 수 있는 사람 (프로젝트 구성원).
+    public struct Member: Codable, Equatable, Identifiable, Hashable {
+        public let id: Int
+        public let name: String
+
+        public init(id: Int, name: String) {
+            self.id = id
+            self.name = name
+        }
+    }
+
+    public static func membersRequest(base: URL, key: String, project: Int) -> URLRequest {
+        var components = URLComponents(url: base.appendingPathComponent("projects/\(project)/memberships.json"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "limit", value: "100")]
+        var request = URLRequest(url: components.url!)
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        return request
+    }
+
+    /// 구성원 가운데 사람만 (그룹 담당은 고르지 않는다), 이름 순.
+    public static func parseMembers(_ data: Data) throws -> [Member] {
+        struct Named: Decodable { let id: Int; let name: String }
+        struct Raw: Decodable { let user: Named? }
+        struct List: Decodable { let memberships: [Raw] }
+        let users = try JSONDecoder().decode(List.self, from: data).memberships.compactMap(\.user)
+        var seen = Set<Int>()
+        return users.filter { seen.insert($0.id).inserted }.map { Member(id: $0.id, name: $0.name) }
+            .sorted { $0.name < $1.name }
+    }
+
+    /// 일감 상태. 레드마인이 주는 순서가 일의 흐름 순서다 (신규 → 진행 → 해결 → 완료).
+    public struct Status: Codable, Equatable, Identifiable {
+        public let id: Int
+        public let name: String
+        public let isClosed: Bool
+
+        public init(id: Int, name: String, isClosed: Bool) {
+            self.id = id
+            self.name = name
+            self.isClosed = isClosed
+        }
+    }
+
+    /// 일감 댓글 기록 한 건.
+    public struct Journal: Equatable, Identifiable {
+        public let id: Int
+        public let notes: String
+        public let createdOn: Date
+
+        public init(id: Int, notes: String, createdOn: Date) {
+            self.id = id
+            self.notes = notes
+            self.createdOn = createdOn
+        }
+    }
+
+    /// 일감 하나를 댓글 기록과 함께 (되돌리기 전에 지금 값을 본다).
+    public static func issueWithJournalsRequest(base: URL, key: String, issue: Int) -> URLRequest {
+        var components = URLComponents(url: base.appendingPathComponent("issues/\(issue).json"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "include", value: "journals")]
+        var request = URLRequest(url: components.url!)
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        return request
+    }
+
+    public static func parseJournals(_ data: Data) throws -> [Journal] {
+        struct Raw: Decodable { let id: Int; let notes: String?; let created_on: String }
+        struct Issue: Decodable { let journals: [Raw]? }
+        struct Root: Decodable { let issue: Issue }
+        let formatter = ISO8601DateFormatter()
+        return try JSONDecoder().decode(Root.self, from: data).issue.journals?.compactMap { raw in
+            formatter.date(from: raw.created_on).map { Journal(id: raw.id, notes: raw.notes ?? "", createdOn: $0) }
+        } ?? []
+    }
+
+    /// 댓글 글을 비운다. 칸 변경이 없는 기록이면 레드마인이 기록째 지운다 (레드마인 5 이상).
+    public static func clearJournalRequest(base: URL, key: String, journal: Int) throws -> URLRequest {
+        var request = URLRequest(url: base.appendingPathComponent("journals/\(journal).json"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["journal": ["notes": ""]])
+        return request
+    }
+
+    /// 되돌리기: 댓글 없이 칸만 고친다. 날짜를 빈 글자로 주면 그 칸을 비운다.
+    public static func revertRequest(base: URL, key: String, issue: Int, doneRatio: Int?, statusID: Int?,
+                                     startDate: String?, dueDate: String?, assigneeID: Int? = nil) throws -> URLRequest {
+        var request = URLRequest(url: base.appendingPathComponent("issues/\(issue).json"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        var fields: [String: Any] = [:]
+        if let doneRatio { fields["done_ratio"] = doneRatio }
+        if let statusID { fields["status_id"] = statusID }
+        if let startDate { fields["start_date"] = startDate }
+        if let dueDate { fields["due_date"] = dueDate }
+        if let assigneeID { fields["assigned_to_id"] = assigneeID }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["issue": fields])
+        return request
+    }
+
+    public static func deleteTimeEntryRequest(base: URL, key: String, id: Int) -> URLRequest {
+        var request = URLRequest(url: base.appendingPathComponent("time_entries/\(id).json"))
+        request.httpMethod = "DELETE"
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        return request
+    }
+
+    /// 작업 시간을 남긴 응답에서 번호를 읽는다 (되돌릴 때 지우려고).
+    public static func parseTimeEntryID(_ data: Data) -> Int? {
+        struct Entry: Decodable { let id: Int }
+        struct Root: Decodable { let time_entry: Entry }
+        return (try? JSONDecoder().decode(Root.self, from: data))?.time_entry.id
+    }
+
+    public static func statusesRequest(base: URL, key: String) -> URLRequest {
+        var request = URLRequest(url: base.appendingPathComponent("issue_statuses.json"))
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        return request
+    }
+
+    public static func parseStatuses(_ data: Data) throws -> [Status] {
+        struct Raw: Decodable { let id: Int; let name: String; let is_closed: Bool? }
+        struct List: Decodable { let issue_statuses: [Raw] }
+        return try JSONDecoder().decode(List.self, from: data).issue_statuses
+            .map { Status(id: $0.id, name: $0.name, isClosed: $0.is_closed ?? false) }
     }
 
     /// 나에게 배정된 열린 일감 한 쪽 (100개씩). `offset`으로 다음 쪽.
@@ -64,14 +202,19 @@ public enum RedmineAPI {
         return url
     }
 
-    /// 진척률과 댓글을 한 번에 올린다. 상태는 바꾸지 않는다. 진척률이 nil이면 댓글만.
-    public static func updateRequest(base: URL, key: String, issue: Int, doneRatio: Int?, note: String) throws -> URLRequest {
+    /// 진척률과 댓글을 한 번에 올린다. 진척률이 nil이면 댓글만. 상태·시작일·완료 기한은 넘긴 것만 바꾼다.
+    public static func updateRequest(base: URL, key: String, issue: Int, doneRatio: Int?, note: String,
+                                     fields extra: WorkReport.IssueFields = .init()) throws -> URLRequest {
         var request = URLRequest(url: base.appendingPathComponent("issues/\(issue).json"))
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
         var fields: [String: Any] = ["notes": note]
         if let doneRatio { fields["done_ratio"] = doneRatio }
+        if let status = extra.status { fields["status_id"] = status.id }
+        if let assignee = extra.assignee { fields["assigned_to_id"] = assignee.id }
+        if let start = extra.startDate { fields["start_date"] = start }
+        if let due = extra.dueDate { fields["due_date"] = due }
         request.httpBody = try JSONSerialization.data(withJSONObject: ["issue": fields])
         return request
     }
@@ -131,7 +274,8 @@ public enum RedmineAPI {
     }
 
     public static func parseIssues(_ data: Data) throws -> [Issue] {
-        struct Named: Decodable { let name: String }
+        struct Named: Decodable { let name: String; let id: Int? }
+        struct Person: Decodable { let name: String; let id: Int }
         struct Ref: Decodable { let id: Int }
         struct Raw: Decodable {
             let id: Int
@@ -143,13 +287,16 @@ public enum RedmineAPI {
             let parent: Ref?
             let done_ratio: Int?
             let due_date: String?
+            let start_date: String?
+            let assigned_to: Person?
         }
         struct List: Decodable { let issues: [Raw]? ; let issue: Raw? }
         let list = try JSONDecoder().decode(List.self, from: data)
         return (list.issues ?? list.issue.map { [$0] } ?? []).map {
             Issue(id: $0.id, subject: $0.subject, project: $0.project?.name ?? "", status: $0.status?.name ?? "",
                   doneRatio: $0.done_ratio ?? 0, tracker: $0.tracker?.name ?? "", parentID: $0.parent?.id,
-                  dueDate: $0.due_date, priority: $0.priority?.name ?? "")
+                  dueDate: $0.due_date, priority: $0.priority?.name ?? "", startDate: $0.start_date, statusID: $0.status?.id,
+                  projectID: $0.project?.id, assignee: $0.assigned_to.map { Member(id: $0.id, name: $0.name) })
         }
     }
 

@@ -66,7 +66,7 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(log.entries[0].status == .done)
         #expect(log.entries[0].title == "데스티네이션 API 연동")
         #expect(log.entries[0].issue == 4512)
-        #expect(log.entries[0].note == "[작업 내용]\n- 목록·상세 API")
+        #expect(log.entries[0].note == "[작업 내용]\n- 목록·상세 API\n\n[비고]\n- MR !14")   // 레드마인 댓글 꼴로
     }
 
     @Test func keepsUserEditsAndRemembersDeletes() {

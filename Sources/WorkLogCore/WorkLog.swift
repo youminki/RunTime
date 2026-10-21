@@ -76,6 +76,8 @@ public struct WorkEntry: Codable, Equatable, Identifiable {
     public var source: String?
     /// 커밋으로 만든 댓글. 사용자가 댓글을 고치지 않았을 때만 새 커밋을 더해 다시 쓴다.
     public var autoNote: String?
+    /// MR에서 온 줄의 MR 설명 원문. 일감 제목을 나중에 받으면 댓글을 다시 나눌 수 있게 둔다.
+    public var mrBody: String?
     /// 레드마인에 남길 작업 시간(시간). 비우면 남기지 않는다.
     public var hours: Double?
     /// 작업 시간을 레드마인에 남겼는지. 댓글을 다시 보내도 시간은 두 번 남기지 않는다.
@@ -83,7 +85,9 @@ public struct WorkEntry: Codable, Equatable, Identifiable {
 
     public init(id: UUID = UUID(), day: String, project: String, title: String, status: WorkStatus = .done,
                 issue: Int? = nil, note: String = "", postedAt: Date? = nil, updatedAt: Date = Date(),
-                source: String? = nil, autoNote: String? = nil, hours: Double? = nil, timeLogged: Bool = false) {
+                source: String? = nil, autoNote: String? = nil, hours: Double? = nil, timeLogged: Bool = false,
+                mrBody: String? = nil) {
+        self.mrBody = mrBody
         self.id = id
         self.day = day
         self.project = project
@@ -124,6 +128,7 @@ public struct WorkEntry: Codable, Equatable, Identifiable {
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date(timeIntervalSince1970: 0)
         source = try c.decodeIfPresent(String.self, forKey: .source)
         autoNote = try c.decodeIfPresent(String.self, forKey: .autoNote)
+        mrBody = try c.decodeIfPresent(String.self, forKey: .mrBody)
         hours = try c.decodeIfPresent(Double.self, forKey: .hours)
         timeLogged = try c.decodeIfPresent(Bool.self, forKey: .timeLogged) ?? false
     }
@@ -164,6 +169,11 @@ public struct WorkLog: Codable, Equatable {
     public var issues: [String: IssueInfo]
     /// 레드마인 프로젝트 이름 → 보고서 프로젝트 이름. 예: `목포 데이터밸류 체인 구축` → `uxhub`.
     public var redmineProjects: [String: String]
+    /// 목록에서 숨긴 일지 프로젝트와 레드마인 프로젝트. 보는 것만 가리고 기록과 보고서에는 그대로 남는다.
+    public var hiddenProjects: Set<String>
+    public var hiddenRedmineProjects: Set<String>
+    /// 앱이 레드마인에 보낸 기록 (최근 것부터 쌓고 오래된 것은 버린다). 되돌리기에 쓴다.
+    public var sent: [RedmineSent]
 
     public init(projects: [String] = [], entries: [WorkEntry] = [], aliases: [String: String] = [:],
                 dismissed: Set<String> = [], recurring: [RecurringWork] = []) {
@@ -174,6 +184,9 @@ public struct WorkLog: Codable, Equatable {
         self.recurring = recurring
         self.issues = [:]
         self.redmineProjects = [:]
+        self.hiddenProjects = []
+        self.hiddenRedmineProjects = []
+        self.sent = []
     }
 
     public func issue(_ id: Int?) -> IssueInfo? {
@@ -197,6 +210,9 @@ public struct WorkLog: Codable, Equatable {
         recurring = try c.decodeIfPresent([RecurringWork].self, forKey: .recurring) ?? []
         issues = try c.decodeIfPresent([String: IssueInfo].self, forKey: .issues) ?? [:]
         redmineProjects = try c.decodeIfPresent([String: String].self, forKey: .redmineProjects) ?? [:]
+        hiddenProjects = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenProjects) ?? []
+        hiddenRedmineProjects = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenRedmineProjects) ?? []
+        sent = try c.decodeIfPresent([RedmineSent].self, forKey: .sent) ?? []
     }
 
     /// 그날 요일에 맞는 고정 업무를 넣는다. 이미 있거나 그날 지운 것은 건너뛴다.
@@ -250,6 +266,11 @@ public struct WorkLog: Codable, Equatable {
         var order = projects
         for entry in entries where !order.contains(entry.project) { order.append(entry.project) }
         return order
+    }
+
+    /// 숨기지 않은 프로젝트 (왼쪽 목록, 적을 프로젝트 고르기에 쓴다).
+    public var visibleProjects: [String] {
+        allProjects.filter { !hiddenProjects.contains($0) }
     }
 
     /// 내용·댓글·프로젝트·일감 번호에서 찾는다. 낱말마다 모두 맞아야 하고, `ㄷㅇㅌ`처럼 초성만 쳐도 된다. 최근 날부터.
@@ -319,6 +340,15 @@ public struct WorkLog: Codable, Equatable {
         merged.issues.merge(mine.issues) { disk, mine in mine.fetchedAt >= disk.fetchedAt ? mine : disk }
         // 지운 이름도 되살아나지 않게 바뀌었으면 통째로 내 것을 쓴다
         if mine.redmineProjects != base.redmineProjects { merged.redmineProjects = mine.redmineProjects }
+        if mine.hiddenProjects != base.hiddenProjects { merged.hiddenProjects = mine.hiddenProjects }
+        if mine.hiddenRedmineProjects != base.hiddenRedmineProjects { merged.hiddenRedmineProjects = mine.hiddenRedmineProjects }
+        // 보낸 기록은 번호로 합치고, 이 창에서 고친 것(되돌림)을 얹는다
+        if mine.sent != base.sent {
+            let baseSent = Dictionary(base.sent.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            var byID = Dictionary(merged.sent.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            for record in mine.sent where baseSent[record.id] != record { byID[record.id] = record }
+            merged.sent = byID.values.sorted { $0.sentAt > $1.sentAt }
+        }
         if mine.aliases != base.aliases { merged.aliases.merge(mine.aliases) { _, mine in mine } }
         if mine.projects != base.projects {
             merged.projects = mine.projects + disk.projects.filter { !mine.projects.contains($0) }

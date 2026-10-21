@@ -18,9 +18,6 @@ final class WorkLogSettings: ObservableObject {
     /// 평일 이 시각(분)에 오늘 기록과 보낼 일감을 알린다. 기본 18:00.
     @Published var reminderMinutes: Int { didSet { defaults.set(reminderMinutes, forKey: "workLog.reminderMinutes") } }
     @Published private(set) var hasRedmineKey: Bool
-    /// 레드마인에 보낼 때 작업 시간도 남길지와 그 작업 분류.
-    @Published var logTime: Bool { didSet { defaults.set(logTime, forKey: "workLog.logTime") } }
-    @Published var activityID: Int? { didSet { defaults.set(activityID ?? 0, forKey: "workLog.activityID") } }
     @Published private(set) var hasTeamsWebhook: Bool
     /// 보고서 꼴: 상시 → 완료 → 진행 순서, 주간 보고 끝에 차주 계획.
     @Published var doneFirst: Bool { didSet { defaults.set(doneFirst, forKey: "workLog.doneFirst") } }
@@ -30,6 +27,12 @@ final class WorkLogSettings: ObservableObject {
     @Published var reportByIssue: Bool { didSet { defaults.set(reportByIssue, forKey: "workLog.reportByIssue") } }
     /// ⌃⌥L로 어디서든 한 줄 적기.
     @Published var quickAddEnabled: Bool { didSet { defaults.set(quickAddEnabled, forKey: "workLog.quickAdd") } }
+    /// 보낼 때 일감 상태·시작일·완료 기한도 일지에 맞춘다. 진행·완료로 쓸 상태는 레드마인마다 달라 고른다.
+    @Published var syncIssueFields: Bool { didSet { defaults.set(syncIssueFields, forKey: "workLog.syncIssueFields") } }
+    @Published var progressStatusID: Int? { didSet { defaults.set(progressStatusID ?? 0, forKey: "workLog.progressStatus") } }
+    @Published var doneStatusID: Int? { didSet { defaults.set(doneStatusID ?? 0, forKey: "workLog.doneStatus") } }
+    /// 댓글을 HTML(`<p>`, `<br />`)로 보낸다. 웹 편집기를 쓰는 레드마인은 평문 줄바꿈을 한 줄로 붙인다.
+    @Published var redmineHTML: Bool { didSet { defaults.set(redmineHTML, forKey: "workLog.redmineHTML") } }
 
     private init() {
         gitlabHost = defaults.string(forKey: "workLog.gitlabHost") ?? Self.detectGitLabHost() ?? ""
@@ -40,9 +43,6 @@ final class WorkLogSettings: ObservableObject {
         reminderMinutes = defaults.object(forKey: "workLog.reminderMinutes") as? Int ?? 18 * 60
         // 값을 읽지 않고 있는지만 본다 (값을 읽으면 다른 서명의 빌드에서 키체인 창이 뜬다)
         hasRedmineKey = !Self.keychainOff && Keychain.exists(Self.keyAccount)
-        logTime = defaults.object(forKey: "workLog.logTime") as? Bool ?? false
-        let activity = defaults.integer(forKey: "workLog.activityID")
-        activityID = activity > 0 ? activity : nil
         hasTeamsWebhook = !Self.keychainOff && Keychain.exists(Self.teamsAccount)
         teamsHint = defaults.string(forKey: "workLog.teamsHost")
         doneFirst = defaults.object(forKey: "workLog.doneFirst") as? Bool ?? true
@@ -50,6 +50,12 @@ final class WorkLogSettings: ObservableObject {
         dailyHeader = defaults.object(forKey: "workLogReportHeader") as? Bool ?? false
         reportByIssue = defaults.object(forKey: "workLog.reportByIssue") as? Bool ?? true
         quickAddEnabled = defaults.object(forKey: "workLog.quickAdd") as? Bool ?? true
+        syncIssueFields = defaults.object(forKey: "workLog.syncIssueFields") as? Bool ?? true
+        redmineHTML = defaults.object(forKey: "workLog.redmineHTML") as? Bool ?? true
+        let progress = defaults.integer(forKey: "workLog.progressStatus")
+        progressStatusID = progress > 0 ? progress : nil
+        let done = defaults.integer(forKey: "workLog.doneStatus")
+        doneStatusID = done > 0 ? done : nil
     }
 
     private static let keyAccount = "redmine-api-key"
@@ -209,10 +215,12 @@ final class WorkLogSync: ObservableObject {
     @Published private(set) var issuesLoadedAt: Date?
     private var requestedInfo: Set<Int> = []
     @Published private(set) var sending = false
-    @Published private(set) var activities: [RedmineAPI.Activity] = []
+    /// 일감 상태 목록. 레드마인이 닿지 않을 때도 보낼 내용을 미리 보이게 마지막으로 받은 목록을 둔다.
+    @Published var statuses: [RedmineAPI.Status] = {
+        guard let data = UserDefaults.standard.data(forKey: "workLog.statuses") else { return [] }
+        return (try? JSONDecoder().decode([RedmineAPI.Status].self, from: data)) ?? []
+    }()
     @Published private(set) var postingTeams = false
-    /// 그날 폴더별 Claude Code 사용 분. AppDelegate가 사용량 기록에서 이어 준다.
-    var minutesByFolder: (String) -> [String: Int] = { _ in [:] }
 
     private let settings = WorkLogSettings.shared
     private let store = WorkLogStore.shared
@@ -489,23 +497,72 @@ final class WorkLogSync: ObservableObject {
 
     func info(_ id: Int) -> IssueInfo? { store.log.issue(id) }
 
-    func loadActivities() {
+    func loadStatuses() {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
-        URLSession.shared.dataTask(with: RedmineAPI.activitiesRequest(base: base, key: key)) { [weak self] data, response, _ in
-            guard (try? Self.check(response)) != nil, let list = try? RedmineAPI.parseActivities(data ?? Data()) else { return }
+        URLSession.shared.dataTask(with: RedmineAPI.statusesRequest(base: base, key: key)) { [weak self] data, response, _ in
+            guard (try? Self.check(response)) != nil, let list = try? RedmineAPI.parseStatuses(data ?? Data()), !list.isEmpty else { return }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.activities = list
-                if self.settings.activityID == nil || !list.contains(where: { $0.id == self.settings.activityID }) {
-                    self.settings.activityID = (list.first(where: \.isDefault) ?? list.first)?.id
-                }
+                self.statuses = list
+                self.defaults.set(try? JSONEncoder().encode(list), forKey: "workLog.statuses")
+                // 고른 상태가 없거나 사라졌으면 이름으로 어림한다
+                let guess = WorkReport.defaultStatuses(list)
+                if !list.contains(where: { $0.id == self.settings.progressStatusID }) { self.settings.progressStatusID = guess.progress }
+                if !list.contains(where: { $0.id == self.settings.doneStatusID }) { self.settings.doneStatusID = guess.done }
             }
         }.resume()
     }
 
-    /// 그날 일감별로 아직 남기지 않은 작업 시간 어림값 (Claude Code를 쓴 폴더 기준, 이미 남긴 시간은 뺌).
-    func suggestedHours(on day: String, entries: [WorkEntry]) -> [Int: Double] {
-        WorkTime.remaining(entries.filter { $0.day == day }, minutesByFolder: minutesByFolder(day))
+    /// 댓글 수정 API가 되는 레드마인인지. 한 번 404를 받으면 아니라고 적어 둔다.
+    var journalAPI: Bool { defaults.object(forKey: "workLog.journalAPI") as? Bool ?? true }
+
+    /// 이 일감을 보낼 때 함께 바꿀 칸: 일지로 정한 상태·날짜 위에 직접 고른 칸을 얹는다.
+    func fields(for update: WorkReport.RedmineUpdate, edit: WorkReport.IssueEdit? = nil) -> WorkReport.IssueFields {
+        let current = store.log.issue(update.issue)
+        let auto = settings.syncIssueFields && !statuses.isEmpty
+            ? WorkReport.issueFields(for: update, current: current, statuses: statuses,
+                                     progressID: settings.progressStatusID, doneID: settings.doneStatusID)
+            : .init()
+        return .merged(auto: auto, edit: edit, current: current, statuses: statuses)
+    }
+
+    /// Claude 등으로 이미 올린 것 같은 댓글 (일감 번호 → 그 댓글). 같은 글을 두 번 올리지 않게 카드에 알린다.
+    @Published var postedHints: [Int: RedmineAPI.Journal] = [:]
+    private var checkedNotes: [Int: String] = [:]
+
+    /// 보낼 일감마다 레드마인 댓글을 읽어 비슷한 댓글이 이미 있는지 본다. 같은 글은 한 번만 본다.
+    func checkPosted(_ updates: [WorkReport.RedmineUpdate]) {
+        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
+        let todo = updates.filter { $0.needsNote && checkedNotes[$0.issue] != $0.note }
+        guard !todo.isEmpty else { return }
+        for update in todo { checkedNotes[update.issue] = update.note }
+        queue.async { [weak self] in
+            for update in todo {
+                let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: update.issue))
+                guard response.ok, let data = response.data, let journals = try? RedmineAPI.parseJournals(data) else { continue }
+                // Claude는 MR을 올릴 때(머지 전날일 수 있다) 댓글을 다니, 첫날 사흘 전부터 본다
+                let since = update.days.first.flatMap(WorkDay.date).map { $0.addingTimeInterval(-3 * 86_400) } ?? .distantPast
+                let hit = RedmineComment.alreadyPosted(update.note, journals: journals, since: since)
+                DispatchQueue.main.async { self?.postedHints[update.issue] = hit }
+            }
+        }
+    }
+
+    /// 프로젝트 구성원 (담당자 고르기). 프로젝트마다 한 번 받아 둔다.
+    @Published private(set) var members: [Int: [RedmineAPI.Member]] = [:]
+    private var requestedMembers: Set<Int> = []
+
+    func loadMembers(project: Int?) {
+        guard let project, !requestedMembers.contains(project),
+              let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
+        requestedMembers.insert(project)
+        URLSession.shared.dataTask(with: RedmineAPI.membersRequest(base: base, key: key, project: project)) { [weak self] data, response, _ in
+            let list = (try? Self.check(response)) != nil ? (try? RedmineAPI.parseMembers(data ?? Data())) : nil
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let list { self.members[project] = list } else { self.requestedMembers.remove(project) }
+            }
+        }.resume()
     }
 
     // MARK: 팀즈
@@ -531,9 +588,10 @@ final class WorkLogSync: ObservableObject {
         }.resume()
     }
 
-    /// 일감마다 차례로: 댓글·진척률을 보내야 하면 먼저 보내고, 그 다음 날짜별 작업 시간을 남긴다. 상태는 바꾸지 않는다.
-    /// 댓글이 올라가면 시간이 실패해도 보냄으로 표시하고, 시간은 다음에 시간만 다시 남긴다 (댓글을 또 올리지 않게).
-    func send(_ updates: [WorkReport.RedmineUpdate], done: @escaping (_ sent: Int, _ failures: [String]) -> Void) {
+    /// 일감마다 차례로 지금 값을 다시 읽고 댓글·진척률과 함께 상태·시작일·기한·담당자를 보낸다.
+    /// `edits`는 카드에서 직접 고른 칸으로, 일지로 정한 값보다 앞선다.
+    func send(_ updates: [WorkReport.RedmineUpdate], edits: [Int: WorkReport.IssueEdit] = [:],
+              done: @escaping (_ sent: Int, _ failures: [String]) -> Void) {
         guard !sending else {
             done(0, ["이미 보내는 중입니다"])
             return
@@ -543,84 +601,237 @@ final class WorkLogSync: ObservableObject {
             return
         }
         sending = true
-        var remaining = updates
-        var sent = 0
-        var failures: [String] = []
-        let logTime = settings.logTime
-        let activityID = settings.activityID
-
-        func finish() {
-            sending = false
-            loadMyIssues()
-            done(sent, failures)
+        // 설정과 장부는 메인에서 읽어 두고, 보내기는 뒤에서 한 건씩 차례로 한다
+        let html = settings.redmineHTML
+        let plan = { [settings, statuses] (update: WorkReport.RedmineUpdate, current: IssueInfo?) -> WorkReport.IssueFields in
+            let auto = settings.syncIssueFields && !statuses.isEmpty
+                ? WorkReport.issueFields(for: update, current: current, statuses: statuses,
+                                         progressID: settings.progressStatusID, doneID: settings.doneStatusID)
+                : .init()
+            return .merged(auto: auto, edit: edits[update.issue], current: current, statuses: statuses)
         }
-
-        func next() {
-            guard !remaining.isEmpty else { return finish() }
-            let update = remaining.removeFirst()
-            let times = logTime ? update.timeEntries : []
-            if update.needsNote {
-                putNote(update) { ok in
-                    guard ok else { return next() }
-                    sent += 1
-                    logTimes(update, times, then: next)
-                }
-            } else {
-                if !times.isEmpty { sent += 1 }
-                logTimes(update, times, then: next)
+        let known = Dictionary(uniqueKeysWithValues: updates.compactMap { update in store.log.issue(update.issue).map { (update.issue, $0) } })
+        queue.async { [weak self] in
+            var sent = 0
+            var failures: [String] = []
+            for update in updates {
+                let result = Self.sendOne(update, base: base, key: key, known: known[update.issue], html: html, plan: plan)
+                failures += result.failures
+                if result.record != nil { sent += 1 }
+                DispatchQueue.main.async { self?.apply(result, update: update) }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.sending = false
+                self.loadMyIssues()
+                done(sent, failures)
             }
         }
-
-        func putNote(_ update: WorkReport.RedmineUpdate, then: @escaping (Bool) -> Void) {
-            guard let request = try? RedmineAPI.updateRequest(base: base, key: key, issue: update.issue,
-                                                              doneRatio: update.doneRatio, note: update.note) else {
-                failures.append("#\(update.issue)")
-                return then(false)
-            }
-            URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-                let ok = error == nil && (try? Self.check(response)) != nil
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    if ok {
-                        self.store.markPosted(update.entryIDs)
-                        // 보낸 진척률을 장부에도 적어 다시 받기 전에도 화면이 새 값을 보이게
-                        if let ratio = update.doneRatio { self.store.setIssueRatio(update.issue, ratio) }
-                    } else {
-                        failures.append("#\(update.issue) " + (error?.localizedDescription ?? Self.statusText(response)))
-                    }
-                    then(ok)
-                }
-            }.resume()
-        }
-
-        func logTimes(_ update: WorkReport.RedmineUpdate, _ times: [WorkReport.TimeEntry], then: @escaping () -> Void) {
-            guard let time = times.first else { return then() }
-            guard let request = try? RedmineAPI.timeEntryRequest(base: base, key: key, issue: update.issue, spentOn: time.day,
-                                                                 hours: time.hours, activityID: activityID,
-                                                                 comments: Self.firstLine(update.note)) else {
-                return logTimes(update, Array(times.dropFirst()), then: then)
-            }
-            URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-                let ok = error == nil && (try? Self.check(response)) != nil
-                DispatchQueue.main.async {
-                    if ok {
-                        self?.store.markTimeLogged(time.entryIDs)
-                    } else {
-                        failures.append("#\(update.issue) \(WorkReport.shortDate(time.day)) 작업 시간 "
-                                        + (error?.localizedDescription ?? Self.statusText(response)))
-                    }
-                    logTimes(update, Array(times.dropFirst()), then: then)
-                }
-            }.resume()
-        }
-
-        next()
     }
 
-    /// 작업 시간 설명: 댓글 [작업 내용]의 첫 항목.
-    static func firstLine(_ note: String) -> String {
-        let line = note.components(separatedBy: "\n").first { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }
-        return line ?? note.components(separatedBy: "\n").first ?? ""
+    /// 내 일감에서 칸만 고친다 (댓글 없이). 보낸 기록에 남아 되돌릴 수 있다.
+    func saveFields(issue: Int, edit: WorkReport.IssueEdit, done: @escaping (_ problem: String?) -> Void) {
+        guard !sending else { return done("보내는 중입니다") }
+        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
+            return done("레드마인 주소(https)와 API 키를 설정하세요")
+        }
+        sending = true
+        let statuses = statuses
+        let known = store.log.issue(issue)
+        queue.async { [weak self] in
+            var problem: String?
+            var record: RedmineSent?
+            let fresh = (try? Self.fetch(RedmineAPI.issueRequest(base: base, key: key, issue: issue))).flatMap { try? RedmineAPI.parseIssues($0).first }
+            if let fresh {
+                let current = Self.merge(known, fresh)
+                let fields = WorkReport.IssueFields.merged(auto: .init(), edit: edit, current: current, statuses: statuses)
+                if let message = fields.problem(current: current) {
+                    problem = message
+                } else if fields.isEmpty {
+                    problem = "바뀐 칸이 없습니다"
+                } else if let request = try? RedmineAPI.revertRequest(base: base, key: key, issue: issue, doneRatio: nil,
+                                                                      statusID: fields.status?.id, startDate: fields.startDate,
+                                                                      dueDate: fields.dueDate, assigneeID: fields.assignee?.id) {
+                    let response = Self.perform(request)
+                    if response.ok {
+                        record = RedmineSent(issue: issue, entryIDs: [], note: "", before: Self.snapshot(fresh),
+                                             after: Self.after(fields, ratio: nil))
+                    } else {
+                        problem = response.message
+                    }
+                }
+            } else {
+                problem = "#\(issue)를 읽지 못했습니다"
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let record {
+                    self.store.addSent(record)
+                    self.store.setIssueState(issue, ratio: nil, fields: Self.fields(record.after, statuses: statuses))
+                }
+                self.sending = false
+                self.loadMyIssues()
+                done(problem)
+            }
+        }
+    }
+
+    private struct SendResult {
+        var record: RedmineSent?
+        var failures: [String] = []
+    }
+
+    /// 일감 하나: 지금 값을 새로 읽고 → 댓글·진척률·칸. 되돌릴 수 있게 보내기 전 값을 함께 남긴다.
+    private static func sendOne(_ update: WorkReport.RedmineUpdate, base: URL, key: String, known: IssueInfo?, html: Bool,
+                                plan: (WorkReport.RedmineUpdate, IssueInfo?) -> WorkReport.IssueFields) -> SendResult {
+        var result = SendResult()
+        guard update.needsNote else { return result }
+        // 장부 값은 30분 묵을 수 있어, 바꿀 칸을 정하기 전에 지금 값을 받는다
+        let fresh = (try? fetch(RedmineAPI.issueRequest(base: base, key: key, issue: update.issue)))
+            .flatMap { try? RedmineAPI.parseIssues($0).first }
+        let current = fresh.map { merge(known, $0) } ?? known
+        let note = html ? RedmineNote.html(update.note) : update.note
+        var extra = fresh == nil ? WorkReport.IssueFields() : plan(update, current)
+        if let problem = extra.problem(current: current) {
+            result.failures.append("#\(update.issue) \(problem)라 칸은 빼고 보냄")
+            extra = .init()
+        }
+        var response = put(update, note: note, extra: extra, base: base, key: key)
+        if response.status == 422 && !extra.isEmpty {
+            // 워크플로가 막는 상태 전환이나 구성원이 아닌 담당자면 댓글까지 잃지 않게 칸을 빼고 다시 보낸다
+            result.failures.append("#\(update.issue) 상태·날짜·담당자는 레드마인이 받지 않아 댓글과 진척률만 보냄")
+            extra = .init()
+            response = put(update, note: note, extra: extra, base: base, key: key)
+        }
+        guard response.ok else {
+            result.failures.append("#\(update.issue) " + response.message)
+            return result
+        }
+        let ratio = update.doneRatio == fresh?.doneRatio ? nil : update.doneRatio
+        result.record = RedmineSent(issue: update.issue, entryIDs: update.entryIDs, note: note,
+                                    before: fresh.map(snapshot) ?? .init(), after: after(extra, ratio: ratio))
+        return result
+    }
+
+    private static func merge(_ known: IssueInfo?, _ fresh: RedmineAPI.Issue) -> IssueInfo {
+        var current = known ?? IssueInfo(id: fresh.id, subject: fresh.subject, project: fresh.project)
+        current.status = fresh.status
+        current.statusID = fresh.statusID
+        current.doneRatio = fresh.doneRatio
+        current.startDate = fresh.startDate
+        current.dueDate = fresh.dueDate
+        current.assignee = fresh.assignee
+        current.projectID = fresh.projectID ?? current.projectID
+        return current
+    }
+
+    private static func snapshot(_ issue: RedmineAPI.Issue) -> RedmineSent.Snapshot {
+        .init(doneRatio: issue.doneRatio, statusID: issue.statusID, statusName: issue.status,
+              startDate: issue.startDate, dueDate: issue.dueDate, assignee: issue.assignee)
+    }
+
+    private static func after(_ fields: WorkReport.IssueFields, ratio: Int?) -> RedmineSent.Snapshot {
+        .init(doneRatio: ratio, statusID: fields.status?.id, statusName: fields.status?.name,
+              startDate: fields.startDate, dueDate: fields.dueDate, assignee: fields.assignee)
+    }
+
+    private static func fields(_ after: RedmineSent.Snapshot, statuses: [RedmineAPI.Status]) -> WorkReport.IssueFields {
+        .init(status: after.statusID.flatMap { id in statuses.first { $0.id == id } }, startDate: after.startDate,
+              dueDate: after.dueDate, assignee: after.assignee)
+    }
+
+    private static func put(_ update: WorkReport.RedmineUpdate, note: String, extra: WorkReport.IssueFields,
+                            base: URL, key: String) -> (ok: Bool, status: Int?, message: String, data: Data?) {
+        guard let request = try? RedmineAPI.updateRequest(base: base, key: key, issue: update.issue, doneRatio: update.doneRatio,
+                                                          note: note, fields: extra) else { return (false, nil, "요청을 만들지 못함", nil) }
+        return perform(request)
+    }
+
+    /// 뒤 큐에서 한 요청을 끝까지 기다린다. 422처럼 상태 번호로 갈라야 해서 fetch와 따로 둔다.
+    private static func perform(_ request: URLRequest) -> (ok: Bool, status: Int?, message: String, data: Data?) {
+        let semaphore = DispatchSemaphore(value: 0)
+        var output: (ok: Bool, status: Int?, message: String, data: Data?) = (false, nil, "응답 없음", nil)
+        var timed = request
+        timed.timeoutInterval = 30
+        URLSession.shared.dataTask(with: timed) { data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode
+            let ok = error == nil && status.map { (200..<300).contains($0) } == true
+            output = (ok, status, error?.localizedDescription ?? statusText(response), data)
+            semaphore.signal()
+        }.resume()
+        semaphore.wait()
+        return output
+    }
+
+    private func apply(_ result: SendResult, update: WorkReport.RedmineUpdate) {
+        guard let record = result.record else { return }
+        store.markPosted(update.entryIDs)
+        // 보낸 값을 장부에도 적어 다시 받기 전에도 화면이 새 값을 보이게
+        store.setIssueState(update.issue, ratio: update.doneRatio, fields: Self.fields(record.after, statuses: statuses))
+        store.addSent(record)
+    }
+
+    // MARK: 되돌리기
+
+    /// 잘못 보낸 건을 되돌린다: 앱이 바꾼 그대로인 칸을 옛 값으로, 보낸 댓글을 지우고, 그 줄들을 다시 보낼 목록으로 돌린다.
+    /// 댓글 수정 API가 없는 레드마인(5.0 아래)이면 지울 댓글 번호를 돌려줘 화면이 그 댓글을 브라우저로 연다.
+    func undo(_ record: RedmineSent, done: @escaping (_ problems: [String], _ manualJournal: Int?) -> Void) {
+        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
+            done(["레드마인 주소(https)와 API 키를 설정하세요"], nil)
+            return
+        }
+        guard !sending else { done(["보내는 중에는 되돌릴 수 없습니다"], nil); return }
+        sending = true
+        queue.async { [weak self] in
+            var problems: [String] = []
+            var manual: Int?
+            let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: record.issue))
+            guard response.ok, let data = response.data, let issue = try? RedmineAPI.parseIssues(data).first else {
+                DispatchQueue.main.async {
+                    self?.sending = false
+                    done(["#\(record.issue)를 읽지 못했습니다: " + response.message], nil)
+                }
+                return
+            }
+            let revert = record.revert(current: Self.snapshot(issue))
+            if revert.doneRatio != nil || revert.statusID != nil || revert.startDate != nil || revert.dueDate != nil || revert.assigneeID != nil,
+               let request = try? RedmineAPI.revertRequest(base: base, key: key, issue: record.issue, doneRatio: revert.doneRatio,
+                                                           statusID: revert.statusID, startDate: revert.startDate,
+                                                           dueDate: revert.dueDate, assigneeID: revert.assigneeID) {
+                let reverted = Self.perform(request)
+                if !reverted.ok { problems.append("칸을 되돌리지 못했습니다 (\(reverted.message))") }
+            }
+            if !record.note.isEmpty {
+                let journals = (try? RedmineAPI.parseJournals(data)) ?? []
+                if let journal = record.matchJournal(journals) {
+                    if let request = try? RedmineAPI.clearJournalRequest(base: base, key: key, journal: journal.id) {
+                        let cleared = Self.perform(request)
+                        if cleared.status == 404 || cleared.status == 403 || cleared.status == 405 {
+                            // 레드마인 5.0 아래는 댓글 수정 API가 없다. 그 댓글을 열어 직접 지우게 한다
+                            manual = journal.id
+                            DispatchQueue.main.async { self?.defaults.set(false, forKey: "workLog.journalAPI") }
+                        } else if !cleared.ok {
+                            problems.append("댓글을 지우지 못했습니다 (\(cleared.message))")
+                            manual = journal.id
+                        }
+                    }
+                } else {
+                    problems.append("보낸 댓글을 찾지 못했습니다. 이미 지웠거나 고친 것 같습니다")
+                }
+            }
+            // 예전 판이 남긴 작업 시간
+            for id in record.timeEntryIDs {
+                let deleted = Self.perform(RedmineAPI.deleteTimeEntryRequest(base: base, key: key, id: id))
+                if !deleted.ok && deleted.status != 404 { problems.append("작업 시간 \(id)를 지우지 못했습니다 (\(deleted.message))") }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.store.markUndone(record)
+                self.sending = false
+                self.loadMyIssues()
+                done(problems, manual)
+            }
+        }
     }
 
     private static func check(_ response: URLResponse?) throws {

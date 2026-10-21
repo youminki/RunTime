@@ -8,6 +8,7 @@ struct WorkLogSidebar: View {
     @ObservedObject var sync: WorkLogSync
     @ObservedObject var settings: WorkLogSettings
     @StateObject private var hover = HoveredKey()
+    @FocusState private var searching: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -32,10 +33,18 @@ struct WorkLogSidebar: View {
             TextField("찾기", text: $page.search)
                 .textFieldStyle(.plain)
                 .font(WL.meta)
+                .focused($searching)
+                .onExitCommand { page.search = ""; searching = false }
             if !page.search.isEmpty {
                 Button { page.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                     .buttonStyle(.plain)
+            } else if !searching {
+                Text("⌘F").font(WL.caption).foregroundStyle(.tertiary)
             }
+        }
+        .background {
+            // 어느 칸에 있든 ⌘F로 찾기 칸에 들어간다
+            Button("") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
@@ -119,7 +128,7 @@ struct WorkLogSidebar: View {
     private func dayCell(_ day: String, entries: [WorkEntry], inMonth: Bool) -> some View {
         let isToday = day == WorkDay.today()
         let isSelected = day == page.day && (page.mode == .day || page.mode == .project)
-        let projects = Array(store.log.orderedProjects(of: entries).prefix(3))
+        let projects = Array(store.log.orderedProjects(of: entries).filter { !store.log.hiddenProjects.contains($0) }.prefix(3))
         return Button {
             page.search = ""
             page.day = day
@@ -160,7 +169,8 @@ struct WorkLogSidebar: View {
 
     private var projects: some View {
         let monthEntries = store.log.entries(in: WorkDay.month(of: page.calendarMonth))
-        let names = store.log.allProjects
+        let names = store.log.visibleProjects
+        let hidden = store.log.allProjects.filter(store.log.hiddenProjects.contains)
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("프로젝트").font(WL.label).foregroundStyle(.secondary)
@@ -198,9 +208,10 @@ struct WorkLogSidebar: View {
                     ForEach(names, id: \.self) { name in
                         projectRow(name, count: monthEntries.filter { $0.project == name }.count)
                     }
+                    if !hidden.isEmpty { hiddenProjects(hidden) }
                 }
             }
-            .frame(maxHeight: 240)
+            .frame(maxHeight: 280)
         }
     }
 
@@ -240,6 +251,8 @@ struct WorkLogSidebar: View {
             }
             Button("보고서에서 위로") { store.moveProject(name, by: -1) }
             Button("보고서에서 아래로") { store.moveProject(name, by: 1) }
+            Divider()
+            Button("목록에서 숨기기") { hide(name) }
             if !store.log.entries.contains(where: { $0.project == name }) {
                 Divider()
                 Button("목록에서 빼기") {
@@ -248,6 +261,53 @@ struct WorkLogSidebar: View {
                 }
             }
         }
+    }
+
+    /// 숨긴 프로젝트는 접힌 묶음 하나로 모은다. 펼쳐서 눈 단추로 다시 보인다.
+    private func hiddenProjects(_ names: [String]) -> some View {
+        VStack(spacing: 1) {
+            Button { page.showsHidden.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(page.showsHidden ? 90 : 0))
+                        .frame(width: 10)
+                    Text("숨긴 프로젝트 \(names.count)").font(WL.caption)
+                    Spacer()
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if page.showsHidden {
+                ForEach(names, id: \.self) { name in
+                    HStack(spacing: 8) {
+                        ProjectSwatch(name: name).opacity(0.5)
+                        Text(name).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button { store.setHidden(name, false) } label: { Image(systemName: "eye") }
+                            .buttonStyle(GhostIconButtonStyle())
+                            .help("다시 보이기")
+                    }
+                    .padding(.leading, 8)
+                    .frame(height: 28)
+                    .contextMenu {
+                        Button("다시 보이기") { store.setHidden(name, false) }
+                        Button("기록 보기") { page.search = ""; page.project = name; page.mode = .project }
+                    }
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func hide(_ name: String) {
+        page.openProjects.remove(name)
+        store.setHidden(name, true)
+        if page.project == name && page.mode == .project { page.project = nil }
+        page.flash("‘\(name)’를 숨겼습니다. 기록과 보고서에는 그대로 남습니다")
     }
 
     /// 만들면 고른 날에 그 프로젝트를 열어 바로 적게 한다.
@@ -268,10 +328,14 @@ struct WorkLogSidebar: View {
     private var footer: some View {
         Button { page.showsSettings = true } label: {
             VStack(alignment: .leading, spacing: 4) {
+                // 오류 글은 길어 한 줄에서 잘리니 "확인 필요"로 줄이고 전체 글은 올렸을 때 보인다
                 status("GitLab", on: settings.captureEnabled, error: sync.captureError != nil,
-                       detail: sync.captureError ?? sync.lastCapture.map { "\(WorkLogFormat.when($0)) 가져옴" } ?? (settings.captureEnabled ? "대기" : "꺼짐"))
+                       detail: sync.captureError != nil ? "확인 필요"
+                           : sync.lastCapture.map { "\(WorkLogFormat.when($0)) 가져옴" } ?? (settings.captureEnabled ? "대기" : "꺼짐"))
+                    .help(sync.captureError ?? "")
                 status("레드마인", on: settings.redmineReady, error: sync.issuesError != nil,
-                       detail: sync.issuesError ?? (settings.redmineReady ? "연결됨" : "꺼짐"))
+                       detail: sync.issuesError != nil ? "확인 필요" : settings.redmineReady ? "연결됨" : "꺼짐")
+                    .help(sync.issuesError ?? "")
                 status("팀즈", on: settings.hasTeamsWebhook, error: false, detail: settings.hasTeamsWebhook ? "연결됨" : "복사로 올림")
             }
             .padding(8)

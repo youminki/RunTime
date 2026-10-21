@@ -3,12 +3,13 @@ import SwiftUI
 import WorkLogCore
 
 /// 하루 보기의 한 줄: 상태 · 내용 · 출처 · 일감 · 상태 글자 · 댓글 단추.
-/// 상태 표시를 누르면 상태 고르기, 말풍선을 누르면 일감·댓글·작업 시간을 고치는 창이 뜬다.
+/// 상태 표시를 누르면 상태 고르기, 말풍선을 누르면 일감·댓글을 고치는 창이 뜬다.
 struct EntryRow: View {
     @ObservedObject var store: WorkLogStore
     @ObservedObject var page: WorkLogPage
     let entry: WorkEntry
     @StateObject private var hover = HoverFlag()
+    @StateObject private var drop = HoverFlag()
 
     var body: some View {
         HStack(spacing: 10) {
@@ -21,19 +22,20 @@ struct EntryRow: View {
                         page.statusPicking = nil
                     }
                 }
+            // 긴 내용은 자르지 않고 세 줄까지 꺾는다. 보고서는 한 줄이라 줄바꿈은 빈칸으로 바꾼다
             TextField("내용", text: Binding(
                 get: { store.entry(entry.id)?.title ?? entry.title },
-                set: { value in store.update(entry.id) { $0.title = value } }
-            ), onCommit: { store.commitTitle(entry.id) })
+                set: { value in store.update(entry.id) { $0.title = value.replacingOccurrences(of: "\n", with: " ") } }
+            ), axis: .vertical)
+            .onSubmit { store.commitTitle(entry.id) }
+            .lineLimit(1...3)
             .textFieldStyle(.plain)
             .font(.system(size: 14))
+            .padding(.vertical, 6)
             // 빈칸을 두면 글 칸과 너비를 반씩 나눠 제목이 잘려, 글 칸이 남은 너비를 다 쓰게 한다
             .frame(maxWidth: .infinity)
-            if let source = entry.source { SourceMark(source: source) }
-            if let hours = entry.hours, hours > 0 {
-                Text(WorkTime.label(hours)).font(WL.number).foregroundStyle(.tertiary)
-            }
-            if let issue = entry.issue { IssueLabel(issue: issue, posted: !entry.needsRedmine) }
+            Group { if let source = entry.source { SourceMark(source: source) } }.frame(width: 14)
+            IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine)
             StatusText(status: entry.status)
             Button { page.editing = entry.id } label: {
                 Image(systemName: entry.note.isEmpty ? "text.bubble" : "text.bubble.fill")
@@ -41,7 +43,7 @@ struct EntryRow: View {
             .buttonStyle(GhostIconButtonStyle())
             // 댓글이 있으면 늘 보이고, 없으면 올렸을 때만 (노션처럼 손잡이는 숨겨 둔다)
             .opacity(hover.on || page.editing == entry.id || !entry.note.isEmpty ? 1 : 0)
-            .help("일감 번호·레드마인 댓글·작업 시간")
+            .help("일감 번호·레드마인 댓글")
             .popover(isPresented: flag(\.editing), arrowEdge: .trailing) {
                 EntryEditor(store: store, page: page, id: entry.id)
             }
@@ -49,6 +51,28 @@ struct EntryRow: View {
         .padding(.horizontal, 6)
         .frame(minHeight: 32)
         .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(hover.on ? WL.hover : .clear))
+        // 노션처럼 줄 왼쪽 바깥에 손잡이를 두어, 글 칸을 끌어 고르는 것과 줄을 옮기는 것이 섞이지 않게 한다
+        .overlay(alignment: .leading) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(WL.faint)
+                .frame(width: 14, height: 24)
+                .contentShape(Rectangle())
+                .opacity(hover.on ? 1 : 0)
+                .offset(x: -16)
+                .draggable(entry.id.uuidString) {
+                    Text(entry.title).font(.system(size: 13)).padding(6).background(WL.surface)
+                }
+                .help("끌어서 순서 바꾸기")
+        }
+        .overlay(alignment: .top) {
+            if drop.on { Rectangle().fill(WL.accent).frame(height: 2).offset(y: -1) }
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let id = items.first.flatMap(UUID.init(uuidString:)) else { return false }
+            store.move(id, before: entry.id)
+            return true
+        } isTargeted: { drop.on = $0 }
         .onHover { hover.on = $0 }
         .contextMenu {
             ForEach(WorkLogFormat.quickStatuses, id: \.self) { status in
@@ -131,7 +155,7 @@ struct StatusPicker: View {
     }
 }
 
-/// 일감 번호, 레드마인 댓글, 작업 시간, 보냄 표시를 고친다.
+/// 일감 번호, 레드마인 댓글, 보냄 표시를 고친다.
 struct EntryEditor: View {
     @ObservedObject var store: WorkLogStore
     @ObservedObject var page: WorkLogPage
@@ -205,26 +229,6 @@ struct EntryEditor: View {
                 if let issue = entry.issue, let info = sync.info(issue) {
                     Text("\(info.reportTitle) · 레드마인 \(info.doneRatio)%")
                         .font(WL.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
-                field("작업 시간") {
-                    HStack(spacing: 8) {
-                        TextField("시간", text: Binding(
-                            get: { entry.hours.map { String(format: "%g", $0) } ?? "" },
-                            set: { value in store.setEntryHours(id, Double(value.replacingOccurrences(of: ",", with: "."))) }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 64)
-                        .disabled(entry.timeLogged)
-                        Text("시간").font(WL.meta).foregroundStyle(.secondary)
-                        if let issue = entry.issue, entry.hours == nil,
-                           let guess = sync.suggestedHours(on: entry.day, entries: store.log.entries)[issue] {
-                            Button("추정 \(WorkTime.label(guess)) 넣기") { store.setEntryHours(id, guess) }
-                                .buttonStyle(TextLinkButtonStyle())
-                                .help("이 저장소 폴더에서 Claude Code를 쓴 시간을 그날 일감 수로 나눈 값")
-                        }
-                        Spacer()
-                        if entry.timeLogged { Text("레드마인에 남김").font(WL.caption).foregroundStyle(WL.done) }
-                    }
                 }
                 field("댓글") {
                     VStack(alignment: .leading, spacing: 6) {
@@ -316,16 +320,22 @@ struct MergedRow: View {
         } label: {
             HStack(spacing: 10) {
                 StatusGlyph(status: entry.status)
+                // 날짜는 제목 아래에 두어 좁은 창에서도 제목이 넓게 쓴다
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.title).font(.system(size: 14)).foregroundStyle(WL.text).multilineTextAlignment(.leading)
-                    if steps.count > 1 {
-                        Text(steps.map(\.label).joined(separator: " → ")).font(WL.caption).foregroundStyle(WL.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        Text(days.count > 1 ? "\(WorkLogFormat.shortDay(days[0])) 외 \(days.count - 1)일" : WorkLogFormat.shortDay(entry.day))
+                            .monospacedDigit()
+                        if steps.count > 1 {
+                            Text("·")
+                            Text(steps.map(\.label).joined(separator: " → "))
+                        }
                     }
+                    .font(WL.caption).foregroundStyle(WL.muted)
                 }
-                Spacer(minLength: 8)
-                Text(days.count > 1 ? "\(WorkLogFormat.shortDay(days[0])) 외 \(days.count - 1)일" : WorkLogFormat.shortDay(entry.day))
-                    .font(WL.caption).foregroundStyle(.tertiary).monospacedDigit()
-                if let issue = entry.issue { IssueLabel(issue: issue) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                IssueSlot(issue: entry.issue)
                 StatusText(status: entry.status)
             }
             .padding(.horizontal, 6)

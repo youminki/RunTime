@@ -88,11 +88,11 @@ final class QuickAddModel: ObservableObject {
         added = nil
         problem = nil
         shown += 1
-        let projects = WorkLogStore.shared.log.allProjects
+        let projects = WorkLogStore.shared.log.visibleProjects
         let last = UserDefaults.standard.string(forKey: "workLog.quickProject") ?? ""
         if projects.contains(last) { project = last; return }
         let today = WorkLogStore.shared.log.entries(on: WorkDay.today())
-        project = WorkLogStore.shared.log.orderedProjects(of: today).first ?? projects.first ?? ""
+        project = WorkLogStore.shared.log.orderedProjects(of: today).first(where: projects.contains) ?? projects.first ?? ""
     }
 }
 
@@ -106,7 +106,7 @@ struct QuickAddView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Menu {
-                    ForEach(store.log.allProjects, id: \.self) { name in
+                    ForEach(store.log.visibleProjects, id: \.self) { name in
                         Button(name) { model.project = name }
                     }
                 } label: {

@@ -201,9 +201,11 @@ public enum WorkReport {
     }
 
     /// 일감 번호별로 모은다. 같은 일감에 여러 줄이 있으면 [작업 내용]에 모두 적고 진척률은 가장 늦은 줄을 쓴다.
-    public static func redmineUpdates(_ entries: [WorkEntry]) -> [RedmineUpdate] {
+    /// `log`를 주면 MR에서 온 댓글을 레드마인 꼴로 다듬는다 (리뷰어용 섹션·일감 번호를 빼고, 따로 줄이 있는 일감 줄은 그쪽으로).
+    public static func redmineUpdates(_ entries: [WorkEntry], log: WorkLog? = nil) -> [RedmineUpdate] {
         var order: [Int] = []
         var grouped: [Int: [WorkEntry]] = [:]
+        let entries = log.map { log in entries.map { tidied($0, in: log) } } ?? entries
         for entry in entries.sorted(by: { $0.day < $1.day }) {
             guard let issue = entry.issue else { continue }
             if grouped[issue] == nil { order.append(issue) }
@@ -225,6 +227,131 @@ public enum WorkReport {
         }
     }
 
+    /// 진척률과 함께 바꿀 일감 칸. 비어 있으면 댓글과 진척률만 보낸다.
+    /// 날짜는 `yyyy-MM-dd`, 빈 글자면 그 칸을 비운다.
+    public struct IssueFields: Equatable {
+        public var status: RedmineAPI.Status?
+        public var startDate: String?
+        public var dueDate: String?
+        public var assignee: RedmineAPI.Member?
+
+        public init(status: RedmineAPI.Status? = nil, startDate: String? = nil, dueDate: String? = nil,
+                    assignee: RedmineAPI.Member? = nil) {
+            self.status = status
+            self.startDate = startDate
+            self.dueDate = dueDate
+            self.assignee = assignee
+        }
+
+        public var isEmpty: Bool { status == nil && startDate == nil && dueDate == nil && assignee == nil }
+
+        /// 자동으로 정한 칸 위에 직접 고른 칸을 얹고, 지금 값과 같은 칸은 뺀다 (바뀌지 않는 칸을 보내지 않게).
+        public static func merged(auto: IssueFields, edit: IssueEdit?, current: IssueInfo?,
+                                  statuses: [RedmineAPI.Status]) -> IssueFields {
+            var fields = auto
+            if let edit {
+                if let id = edit.statusID { fields.status = statuses.first { $0.id == id } }
+                if let start = edit.startDate { fields.startDate = start }
+                if let due = edit.dueDate { fields.dueDate = due }
+                if let assignee = edit.assignee { fields.assignee = assignee }
+            }
+            if fields.status?.id == current?.statusID { fields.status = nil }
+            if fields.startDate == (current?.startDate ?? "") { fields.startDate = nil }
+            if fields.dueDate == (current?.dueDate ?? "") { fields.dueDate = nil }
+            if fields.assignee?.id == current?.assignee?.id { fields.assignee = nil }
+            return fields
+        }
+
+        /// 보낸 뒤의 시작일이 기한보다 늦으면 레드마인이 422로 거절한다. 미리 알린다.
+        public func problem(current: IssueInfo?) -> String? {
+            let start = startDate ?? current?.startDate ?? ""
+            let due = dueDate ?? current?.dueDate ?? ""
+            guard !start.isEmpty, !due.isEmpty, start > due else { return nil }
+            return "시작일이 완료 기한보다 늦습니다"
+        }
+    }
+
+    /// 직접 고른 칸. nil은 고르지 않음(자동), 날짜의 빈 글자는 비우기.
+    public struct IssueEdit: Codable, Equatable {
+        public var statusID: Int?
+        public var startDate: String?
+        public var dueDate: String?
+        public var assignee: RedmineAPI.Member?
+
+        public init(statusID: Int? = nil, startDate: String? = nil, dueDate: String? = nil, assignee: RedmineAPI.Member? = nil) {
+            self.statusID = statusID
+            self.startDate = startDate
+            self.dueDate = dueDate
+            self.assignee = assignee
+        }
+
+        public var isEmpty: Bool { statusID == nil && startDate == nil && dueDate == nil && assignee == nil }
+    }
+
+    /// 일지를 보고 일감 상태·시작일·완료 기한을 맞춘다.
+    /// 상태는 처음 상태(할일·신규) → 진행 → 완료 순으로 앞으로만 옮긴다. 레드마인의 상태 목록 순서는 일의 흐름과 다를 수 있어
+    /// (할일, 처리중, 코드리뷰, 테스트, 완료, … 해결) 순서 대신 이 세 칸만 본다. 테스트·반려처럼 그 밖의 상태면 건드리지 않는다.
+    /// 날짜는 비어 있을 때만 채운다. 지금 값을 모르는 일감(옛 장부)은 아무것도 바꾸지 않는다. 빈 칸으로 알고 덮어쓰면 안 되니까.
+    public static func issueFields(for update: RedmineUpdate, current: IssueInfo?, statuses: [RedmineAPI.Status],
+                                   progressID: Int?, doneID: Int?) -> IssueFields {
+        guard let current, let currentID = current.statusID, update.needsNote else { return IssueFields() }
+        let finished = update.doneRatio == 100
+        var fields = IssueFields()
+        func rank(_ id: Int) -> Int? {
+            if id == doneID { return 2 }
+            if id == progressID { return 1 }
+            if let status = statuses.first(where: { $0.id == id }), isInitial(status, in: statuses) { return 0 }
+            return nil
+        }
+        if let targetID = finished ? doneID : progressID,
+           let target = statuses.first(where: { $0.id == targetID }),
+           let from = rank(currentID), let to = rank(targetID), to > from {
+            fields.status = target
+        }
+        let due = current.dueDate ?? (finished ? update.days.last : nil)
+        if current.startDate == nil, let first = update.days.first, due.map({ first <= $0 }) ?? true {
+            fields.startDate = first
+        }
+        if finished, current.dueDate == nil, let last = update.days.last,
+           (current.startDate ?? fields.startDate).map({ $0 <= last }) ?? true {
+            fields.dueDate = last
+        }
+        return fields
+    }
+
+    /// 새 일감이 처음 받는 상태 (목록 맨 앞이거나 할일·신규).
+    static func isInitial(_ status: RedmineAPI.Status, in statuses: [RedmineAPI.Status]) -> Bool {
+        let name = status.name.lowercased()
+        return status.id == statuses.first?.id || ["할일", "신규", "new", "todo", "to do"].contains(name)
+    }
+
+    /// 상태 이름으로 진행·완료 상태를 어림한다 (설정에서 고르지 않았을 때). 완료는 `완료`를 `해결`보다 먼저 본다.
+    public static func defaultStatuses(_ statuses: [RedmineAPI.Status]) -> (progress: Int?, done: Int?) {
+        func find(_ words: [String], closed: Bool? = nil) -> Int? {
+            for word in words {
+                if let hit = statuses.first(where: { (closed == nil || $0.isClosed == closed) && $0.name.lowercased().contains(word) }) {
+                    return hit.id
+                }
+            }
+            return nil
+        }
+        return (find(["처리중", "진행", "in progress", "progress", "doing"], closed: false),
+                find(["완료", "done"]) ?? find(["해결", "resolved", "closed"]))
+    }
+
+    /// MR에서 온 댓글을 보내기 전에 한 번 더 다듬는다. 원문에서 만든 댓글은 이미 다듬어져 있고,
+    /// 사용자가 고친 댓글도 리뷰어용 섹션과 일감 번호만은 뗀다.
+    static func tidied(_ entry: WorkEntry, in log: WorkLog) -> WorkEntry {
+        guard let source = entry.source, source.hasPrefix("mr:"), !entry.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              entry.note != entry.autoNote else { return entry }
+        let base = String(source.split(separator: "#").first ?? Substring(source))
+        let siblings = Set(log.entries.filter { $0.source?.hasPrefix(base) == true && $0.day == entry.day }.compactMap(\.issue))
+        var copy = entry
+        copy.note = RedmineComment.fromMR(entry.note, mr: WorkCapture.mrNumber(source), issue: entry.issue,
+                                          subjects: WorkCapture.subjects(for: Array(siblings), in: log), siblings: siblings)
+        return copy
+    }
+
     /// 직접 쓴 댓글이 있으면 그대로 쓰고, 없으면 제목으로 [작업 내용]을 만든다.
     public static func comment(_ entries: [WorkEntry]) -> String {
         let written = entries.map { $0.note.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
@@ -239,12 +366,20 @@ public enum WorkReport {
     }
 
     /// Claude에게 그대로 붙여 넣는 글. git을 다시 훑지 않고 이 글만 보고 올리게 해 토큰을 아낀다.
-    public static func redmineRequest(_ updates: [RedmineUpdate]) -> String {
+    /// `html`이면 댓글을 레드마인에 실릴 HTML 그대로 넣어, Claude가 꼴을 바꾸다 줄바꿈을 잃지 않게 한다.
+    public static func redmineRequest(_ updates: [RedmineUpdate], fields: [Int: IssueFields] = [:], html: Bool = false) -> String {
         guard !updates.isEmpty else { return "" }
-        let head = "레드마인 일감에 아래 진척률과 댓글을 반영해 줘. 상태는 바꾸지 말고, 댓글은 고치지 말고 그대로 올려."
+        let head = html
+            ? "레드마인 일감에 아래 진척률과 댓글을 반영해 줘. 적힌 칸 말고는 바꾸지 말고, 댓글은 HTML이니 고치지 말고 notes에 그대로 넣어 (줄바꿈을 지우지 마)."
+            : "레드마인 일감에 아래 진척률과 댓글을 반영해 줘. 적힌 칸 말고는 바꾸지 말고, 댓글은 고치지 말고 그대로 올려."
         let blocks = updates.map { update in
-            let ratio = update.doneRatio.map { "진척률 \($0)%" } ?? "진척률 그대로"
-            return "#\(update.issue) \(ratio)\n\(update.note)"
+            var parts = [update.doneRatio.map { "진척률 \($0)%" } ?? "진척률 그대로"]
+            let extra = fields[update.issue] ?? IssueFields()
+            if let status = extra.status { parts.append("상태 \(status.name)") }
+            if let start = extra.startDate { parts.append(start.isEmpty ? "시작일 비우기" : "시작일 \(start)") }
+            if let due = extra.dueDate { parts.append(due.isEmpty ? "완료 기한 비우기" : "완료 기한 \(due)") }
+            if let assignee = extra.assignee { parts.append("담당자 \(assignee.name)(id \(assignee.id))") }
+            return "#\(update.issue) \(parts.joined(separator: " · "))\n\(html ? RedmineNote.html(update.note) : update.note)"
         }
         return ([head] + blocks).joined(separator: "\n\n---\n")
     }

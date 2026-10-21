@@ -191,10 +191,11 @@ public enum WorkCapture {
             guard !log.dismissed.contains(day + "|" + mr.source) else { continue }
             let branchSource = "branch:\(mr.path):\(mr.sourceBranch)"
             let title = cleanTitle(mr.title)
-            let note = mr.description.trimmingCharacters(in: .whitespacesAndNewlines)
             // 같은 브랜치로 앞서 적힌 줄의 일감 번호를 이어받는다
             let earlierIssue = log.entries.last { $0.source == branchSource && $0.issue != nil }?.issue
             let issue = issueNumber(in: [mr.title, mr.description], branch: mr.sourceBranch) ?? earlierIssue
+            // MR 설명은 리뷰어용 글이라 레드마인 댓글 꼴로 다듬는다 (tidyMRNotes). 일감이 여럿이면 일감마다 줄을 나눈다
+            let raw = mr.description.trimmingCharacters(in: .whitespacesAndNewlines)
             if let index = log.entries.firstIndex(where: { $0.source == branchSource && $0.day == day }) {
                 // 같은 날 진행중이던 브랜치 줄을 완료로 바꾼다
                 var entry = log.entries[index]
@@ -203,9 +204,10 @@ public enum WorkCapture {
                 entry.status = .done
                 if untouched {
                     entry.title = title
-                    entry.note = note
+                    entry.note = raw
+                    entry.autoNote = nil
                 }
-                entry.autoNote = nil
+                entry.mrBody = raw
                 if entry.issue == nil { entry.issue = issue }
                 entry.updatedAt = now
                 log.entries[index] = entry
@@ -213,7 +215,7 @@ public enum WorkCapture {
                 let project = projectName(for: mr.path, in: &log)
                 log.register(project: project)
                 log.entries.append(WorkEntry(day: day, project: project, title: title, status: .done, issue: issue,
-                                             note: note, updatedAt: now, source: mr.source))
+                                             note: raw, updatedAt: now, source: mr.source, mrBody: raw))
             }
             changed += 1
         }
@@ -265,7 +267,69 @@ public enum WorkCapture {
             }
             changed += 1
         }
+        tidyMRNotes(&log, now: now)
         return changed
+    }
+
+    /// 아직 보내지 않은 MR 줄을 레드마인 댓글 꼴로 다듬는다.
+    /// - MR이 다룬 다른 일감마다 줄을 하나씩 더한다 (레드마인에 일감마다 따로 올리던 대로). 그날 그 일감 줄이 있으면 건너뛴다.
+    /// - 사용자가 고치지 않은 댓글(note == autoNote)은 원문(mrBody)에서 다시 만든다. 일감 제목을 나중에 받으면 줄을 다시 나눈다.
+    /// 고친 때(updatedAt)는 그대로 둔다. 몇 번을 돌려도 결과가 같다.
+    @discardableResult
+    public static func tidyMRNotes(_ log: inout WorkLog, now: Date = Date()) -> Int {
+        var changed = 0
+        // 예전에 가져온 줄은 원문을 따로 두지 않았다. 고치지 않은 댓글이 곧 원문이다
+        for index in log.entries.indices where isMR(log.entries[index]) && log.entries[index].postedAt == nil
+            && log.entries[index].mrBody == nil && log.entries[index].autoNote == nil {
+            log.entries[index].mrBody = log.entries[index].note
+        }
+        for entry in log.entries where isMR(entry) && entry.postedAt == nil && entry.issue != nil && !(entry.source ?? "").contains("#") {
+            guard let raw = entry.mrBody, let source = entry.source else { continue }
+            for other in RedmineComment.allIssueRefs([raw]) where other != entry.issue {
+                let siblingSource = source + "#\(other)"
+                guard !log.entries.contains(where: { $0.source == siblingSource || ($0.day == entry.day && $0.issue == other) }),
+                      !log.dismissed.contains(entry.day + "|" + siblingSource) else { continue }
+                log.entries.append(WorkEntry(day: entry.day, project: entry.project, title: log.issue(other)?.reportTitle ?? "#\(other)",
+                                             status: entry.status, issue: other, note: "", updatedAt: now, source: siblingSource,
+                                             mrBody: raw))
+                changed += 1
+            }
+        }
+        for index in log.entries.indices where isMR(log.entries[index]) && log.entries[index].postedAt == nil {
+            let entry = log.entries[index]
+            guard let raw = entry.mrBody, entry.autoNote == nil || entry.note == entry.autoNote || entry.note.isEmpty,
+                  let source = entry.source else { continue }
+            let base = String(source.split(separator: "#").first ?? Substring(source))
+            let siblings = Set(log.entries.filter { $0.day == entry.day && ($0.source?.hasPrefix(base) == true) }.compactMap(\.issue))
+            let refs = RedmineComment.allIssueRefs([raw])
+            let note = RedmineComment.fromMR(raw, mr: mrNumber(source), issue: entry.issue,
+                                             subjects: subjects(for: refs + Array(siblings), in: log), siblings: siblings)
+            // 따로 나눈 일감 줄의 제목: 일감 이름을 받았으면 그것, 아니면 [작업 내용] 첫 항목 ([비고]의 `MR !110`이 제목이 되지 않게)
+            if source.contains("#") {
+                let work = note.components(separatedBy: "\n\n").first { $0.hasPrefix("[작업 내용]") }
+                let first = work?.components(separatedBy: "\n").first { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }
+                if let title = log.issue(entry.issue)?.reportTitle ?? first, title != entry.title {
+                    log.entries[index].title = title
+                    changed += 1
+                }
+            }
+            if note != entry.note || entry.autoNote != note {
+                log.entries[index].note = note
+                log.entries[index].autoNote = note
+                changed += 1
+            }
+        }
+        return changed
+    }
+
+    static func isMR(_ entry: WorkEntry) -> Bool { entry.source?.hasPrefix("mr:") == true }
+
+    static func mrNumber(_ source: String) -> Int? {
+        Int(source.split(separator: "!").last?.split(separator: "#").first ?? "")
+    }
+
+    static func subjects(for issues: [Int], in log: WorkLog) -> [Int: String] {
+        Dictionary(issues.compactMap { id in log.issue(id).map { (id, IssueInfo.cleanSubject($0.subject)) } }, uniquingKeysWith: { a, _ in a })
     }
 
     static func commitNote(_ subjects: [String]) -> String {

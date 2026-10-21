@@ -207,10 +207,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Notifier.shared.requestAuthorization()
         engine.start()
         WorkLogSync.shared.start()
-        // 업무 일지 작업 시간 어림: 그날 폴더별로 Claude Code를 쓴 분
-        WorkLogSync.shared.minutesByFolder = { [weak self] day in
-            self?.engine.snapshot?.dailyTotals.first { WorkDay.key($0.dayStart) == day }?.projectActiveMinutes ?? [:]
-        }
         GlobalHotKey.shared.quickAction = { QuickAddPanel.shared.toggle() }
         GlobalHotKey.shared.setQuickAdd(WorkLogSettings.shared.quickAddEnabled)
         // 처음 설치한 사람에게만 한 번. 러너가 메뉴바에 자리 잡은 뒤에 띄운다

@@ -14,12 +14,32 @@ final class WorkLogPage: ObservableObject {
     @Published var search = ""
     @Published var project: String?
     @Published var preview = Preview.report
+    /// 레드마인 칸에서 이번에 보내지 않으려고 체크를 푼 일감. 새로 생긴 일감은 골라진 채로 나온다.
+    @Published var redmineSkipped: Set<Int> = []
+    /// 이미 올라간 것 같아 체크를 한 번 풀어 준 일감 (다시 고른 것을 또 풀지 않게).
+    @Published var hintApplied: Set<Int> = []
+    /// 레드마인 칸에서 댓글을 다 펼쳐 본 일감과, 댓글을 고치려고 연 일감.
+    @Published var expandedNotes: Set<Int> = []
+    @Published var noteEditing: Int?
+    /// 진척률이 내려가는 일감이 있어 한 번 더 묻는 동안 보내려던 일감 전부 (확인하면 이것을 다 보낸다).
+    @Published var confirmingLower: [Int]?
+    /// 레드마인 칸에서 보낸 기록을 보는 중인지와, 되돌릴지 묻는 중인 기록.
+    @Published var redmineHistory = false
+    /// 카드에서 직접 고른 상태·날짜·담당자 (일감 번호 → 고른 칸). 보내면 비운다.
+    @Published var issueEdits: [Int: WorkReport.IssueEdit] = [:]
+    @Published var fieldEditing: Int?
+    /// 내 일감에서 바로 고치는 일감과 고르는 중인 칸.
+    @Published var boardEditing: Int?
+    @Published var boardDraft = WorkReport.IssueEdit()
+    @Published var confirmingUndo: RedmineSent?
     @Published var editing: UUID?
     @Published var statusPicking: UUID?
     @Published var drafts: [String: String] = [:]
     /// 기록은 없지만 적으려고 열어 둔 프로젝트 묶음.
     @Published var openProjects: Set<String> = []
     @Published var addingProject = false
+    /// 왼쪽 목록 아래 숨긴 프로젝트 묶음을 펼쳤는지.
+    @Published var showsHidden = false
     @Published var newProject = ""
     @Published var renaming: String?
     @Published var renameText = ""
@@ -72,6 +92,12 @@ final class WorkLogPage: ObservableObject {
         if let draft = drafts.removeValue(forKey: old) { drafts[name] = draft }
         if collapsed.remove("day:" + old) != nil { collapsed.insert("day:" + name) }
         if project == old { project = name }
+    }
+
+    /// 프로젝트 보기에서 고른 프로젝트. 없거나 사라졌으면 숨기지 않은 첫 프로젝트.
+    func selectedProject(in log: WorkLog) -> String? {
+        if let project, log.allProjects.contains(project) { return project }
+        return log.visibleProjects.first ?? log.allProjects.first
     }
 
     func toggle(_ key: String) {

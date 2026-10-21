@@ -39,6 +39,7 @@ final class WorkLogStore: ObservableObject {
             log = try WorkLogFile.load(url)
             base = log
             loadError = nil
+            tidyMRNotes()
         } catch {
             loadError = "\(url.lastPathComponent)을 읽지 못했습니다. 파일을 고치거나 옮기면 다시 읽습니다."
         }
@@ -154,6 +155,19 @@ final class WorkLogStore: ObservableObject {
         change { $0.entries.swapAt(siblings[position], siblings[position + offset]) }
     }
 
+    /// 끌어 놓은 줄을 대상 줄 자리로 옮긴다. 같은 날 같은 프로젝트 안에서만 (보고서 줄 순서가 이 순서다).
+    func move(_ id: UUID, before target: UUID) {
+        guard id != target, let moving = entry(id), let goal = entry(target),
+              moving.day == goal.day, moving.project == goal.project else { return }
+        change { log in
+            guard let from = log.entries.firstIndex(where: { $0.id == id }) else { return }
+            let item = log.entries.remove(at: from)
+            guard let to = log.entries.firstIndex(where: { $0.id == target }) else { return }
+            // 놓는 자리 표시(대상 줄 위의 선)와 같게 늘 대상 앞에 놓는다
+            log.entries.insert(item, at: to)
+        }
+    }
+
     func addProject(_ name: String) {
         change { $0.register(project: name) }
     }
@@ -173,6 +187,20 @@ final class WorkLogStore: ObservableObject {
             for (group, alias) in log.aliases where alias == old { log.aliases[group] = name }
             // 고정 업무가 옛 이름을 다시 만들지 않게
             for index in log.recurring.indices where log.recurring[index].project == old { log.recurring[index].project = name }
+            if log.hiddenProjects.remove(old) != nil { log.hiddenProjects.insert(name) }
+        }
+    }
+
+    /// 프로젝트를 목록에서 숨기거나 다시 보인다. 기록은 그대로 둔다.
+    func setHidden(_ name: String, _ hidden: Bool) {
+        change { log in
+            if hidden { log.hiddenProjects.insert(name) } else { log.hiddenProjects.remove(name) }
+        }
+    }
+
+    func setRedmineHidden(_ name: String, _ hidden: Bool) {
+        change { log in
+            if hidden { log.hiddenRedmineProjects.insert(name) } else { log.hiddenRedmineProjects.remove(name) }
         }
     }
 
@@ -214,28 +242,10 @@ final class WorkLogStore: ObservableObject {
         return count
     }
 
-    func markTimeLogged(_ ids: [UUID]) {
-        change { log in
-            for index in log.entries.indices where ids.contains(log.entries[index].id) { log.entries[index].timeLogged = true }
-        }
-    }
-
-    /// 그날 그 일감의 작업 시간을 정한다. 아직 남기지 않은 줄 가운데 마지막 줄에 두고 나머지는 비운다.
-    /// 시간은 댓글 내용이 아니라서 고친 때(updatedAt)를 바꾸지 않는다 (댓글을 다시 보내게 되지 않게).
-    func setHours(_ hours: Double?, issue: Int, day: String) {
-        let open = log.entries.filter { $0.issue == issue && $0.day == day && !$0.timeLogged }
-        guard let last = open.last?.id else { return }
-        change { log in
-            for index in log.entries.indices where open.contains(where: { $0.id == log.entries[index].id }) {
-                log.entries[index].hours = log.entries[index].id == last ? hours : nil
-            }
-        }
-    }
-
-    /// 줄 하나의 작업 시간. 이미 남긴 줄은 바꾸지 않는다.
-    func setEntryHours(_ id: UUID, _ hours: Double?) {
-        guard let index = log.entries.firstIndex(where: { $0.id == id }), !log.entries[index].timeLogged else { return }
-        change { $0.entries[index].hours = hours }
+    /// 예전에 가져온 MR 댓글을 레드마인 꼴로 다듬고 일감마다 나눈다. 바뀐 게 없으면 파일을 쓰지 않는다.
+    private func tidyMRNotes() {
+        var copy = log
+        if WorkCapture.tidyMRNotes(&copy) > 0 { change { $0 = copy } }
     }
 
     func setRecurring(_ items: [RecurringWork]) {
@@ -265,18 +275,34 @@ final class WorkLogStore: ObservableObject {
                     // 배정 목록을 받지 않은 조회는 내 일감 여부를 모르니 있던 값을 둔다
                     if assignedIDs == nil { info.assigned = old.assigned }
                     // 받기를 시작한 뒤에 보낸 진척률은 늦게 끝난 받기가 옛 값으로 덮지 않게 둔다
-                    if old.fetchedAt > info.fetchedAt { info.doneRatio = old.doneRatio }
+                    if old.fetchedAt > info.fetchedAt {
+                        info.doneRatio = old.doneRatio
+                        info.status = old.status
+                        info.statusID = old.statusID ?? info.statusID
+                        info.startDate = old.startDate ?? info.startDate
+                        info.dueDate = old.dueDate ?? info.dueDate
+                    }
                 }
                 log.issues[key] = info
             }
         }
+        // 일감 제목을 받았으니 MR 댓글을 일감마다 다시 나눈다
+        tidyMRNotes()
     }
 
-    func setIssueRatio(_ id: Int, _ ratio: Int) {
-        guard log.issues[String(id)] != nil else { return }
-        change {
-            $0.issues[String(id)]?.doneRatio = ratio
-            $0.issues[String(id)]?.fetchedAt = Date()
+    /// 보낸 진척률·상태·날짜를 장부에도 적어, 다시 받기 전에도 화면이 새 값을 보이게 한다.
+    func setIssueState(_ id: Int, ratio: Int?, fields: WorkReport.IssueFields) {
+        let key = String(id)
+        guard log.issues[key] != nil, ratio != nil || !fields.isEmpty else { return }
+        change { log in
+            if let ratio { log.issues[key]?.doneRatio = ratio }
+            if let status = fields.status {
+                log.issues[key]?.status = status.name
+                log.issues[key]?.statusID = status.id
+            }
+            if let start = fields.startDate { log.issues[key]?.startDate = start }
+            if let due = fields.dueDate { log.issues[key]?.dueDate = due }
+            log.issues[key]?.fetchedAt = Date()
         }
     }
 
@@ -303,6 +329,26 @@ final class WorkLogStore: ObservableObject {
             $0.entries.append(entry)
         }
         return entry
+    }
+
+    /// 보낸 기록을 맨 앞에 쌓는다. 오래된 것은 100건까지만 둔다.
+    func addSent(_ record: RedmineSent) {
+        change { log in
+            log.sent.insert(record, at: 0)
+            if log.sent.count > 100 { log.sent.removeLast(log.sent.count - 100) }
+        }
+    }
+
+    /// 되돌린 건: 그 줄들을 다시 보낼 목록으로 돌리고, 지운 작업 시간은 다시 남길 수 있게 한다.
+    func markUndone(_ record: RedmineSent) {
+        let ids = Set(record.entryIDs)
+        change { log in
+            if let index = log.sent.firstIndex(where: { $0.id == record.id }) { log.sent[index].undoneAt = Date() }
+            for index in log.entries.indices where ids.contains(log.entries[index].id) {
+                if !record.note.isEmpty { log.entries[index].postedAt = nil }
+                if !record.timeEntryIDs.isEmpty { log.entries[index].timeLogged = false }
+            }
+        }
     }
 
     func markPosted(_ ids: [UUID]) {
