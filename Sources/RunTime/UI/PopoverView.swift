@@ -351,9 +351,14 @@ struct PopoverView: View {
             .padding(.top, 4)
             GaugeBar(percent: gauge?.percent, elapsed: elapsed)
                 .padding(.top, 6)
-            VStack(alignment: .leading, spacing: 2) {
-                caption(detail)
-                extra()
+            // 아래 두 줄 자리를 늘 잡아 둔다. 공식 값을 받아 "Opus 100%" 같은 줄이 열린 뒤에 생기면
+            // 팝오버가 위로 자라 위쪽 모니터 쪽으로 넘어가 잘린다
+            ZStack(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 2) { caption(" "); caption(" ") }.hidden()
+                VStack(alignment: .leading, spacing: 2) {
+                    caption(detail)
+                    extra()
+                }
             }
             .padding(.top, 7)
             Spacer(minLength: 0)

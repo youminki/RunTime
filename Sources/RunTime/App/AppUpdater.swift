@@ -50,6 +50,9 @@ final class AppUpdater: ObservableObject {
     private var target: String?
     /// 받을 변경의 제목들 (최근 것부터 5개, "feat: " 같은 머리말은 뺀다).
     @Published private(set) var incoming: [String] = []
+    /// 새 버전은 있지만 클론 사정(고친 파일, 다른 브랜치)으로 미룬 까닭. 실패가 아니라 다음 확인 때 다시 해 본다.
+    @Published private(set) var blocked: String?
+    private var blockedAt: Date?
     /// 팝오버가 열려 있는지. 자동 업데이트는 설치 중에 앱이 꺼지므로 닫혀 있을 때만 한다 (게임도 팝오버 안에서만 한다).
     var isInUse: () -> Bool = { false }
 
@@ -70,8 +73,6 @@ final class AppUpdater: ObservableObject {
             state = .unavailable("install.sh로 설치한 앱에서만 업데이트를 확인합니다.")
         } else if build?.repo == nil {
             state = .unavailable("GitHub에서 클론하지 않아 업데이트를 확인할 수 없습니다.")
-        } else if build?.dirty == true {
-            state = .unavailable("직접 고친 파일이 있는 빌드라 업데이트하지 않습니다.")
         } else {
             state = .idle
         }
@@ -90,6 +91,7 @@ final class AppUpdater: ObservableObject {
         if defaults.string(forKey: Key.installing) != nil {
             defaults.removeObject(forKey: Key.installing)
             bubble = build.subject.isEmpty ? "새 버전으로 업데이트했어요" : "업데이트했어요: \(Self.title(of: build.subject))"
+            Diagnostics.record("업데이트", "설치 완료: \(build.commit.prefix(7)) \(build.subject)")
         }
         guard canCheck else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.check() }
@@ -147,10 +149,16 @@ final class AppUpdater: ObservableObject {
     }
 
     private func finishCheck(_ comparison: Comparison?, status: Int, failed: Bool) {
+        // 404는 아직 푸시하지 않은 커밋으로 만든 빌드다. GitHub보다 앞서 있으니 받을 것이 없다
+        if status == 404 {
+            state = .upToDate
+            return
+        }
         guard let comparison, status == 200 else {
-            // 404는 GitHub에 없는 커밋이나 저장소라 최신인지 알 수 없다
-            state = .failed(status == 404 ? "이 빌드의 커밋을 GitHub에서 찾지 못했습니다."
-                            : failed ? "GitHub에 연결하지 못했습니다." : "확인하지 못했습니다 (HTTP \(status)).")
+            let reason = failed ? "GitHub에 연결하지 못했습니다." : "확인하지 못했습니다 (HTTP \(status))."
+            // 30분마다 같은 까닭으로 쌓이지 않게 바뀔 때만 남긴다
+            if state != .failed(reason) { Diagnostics.record("업데이트", "확인 실패: \(reason)") }
+            state = .failed(reason)
             return
         }
         // ahead: 기본 브랜치가 이 빌드보다 앞섬. diverged·behind는 이 빌드에 기본 브랜치에 없는 커밋이 있는 개발 빌드다
@@ -164,6 +172,7 @@ final class AppUpdater: ObservableObject {
         let isNew = newTarget != target
         target = newTarget
         state = .available(count: comparison.aheadBy, latest: latest)
+        if isNew { blocked = nil }
         if autoUpdate, newTarget != UserDefaults.standard.string(forKey: Key.failedTarget) {
             applyAutoUpdateIfIdle()
         } else if isNew {
@@ -187,6 +196,8 @@ final class AppUpdater: ObservableObject {
     private func applyAutoUpdateIfIdle() {
         guard autoUpdate, case .available = state, !isInUse(),
               target != UserDefaults.standard.string(forKey: Key.failedTarget) else { return }
+        // 미룬 업데이트는 창을 닫을 때마다 git을 돌리지 않게 10분에 한 번만 다시 본다
+        if let blockedAt, Date().timeIntervalSince(blockedAt) < 10 * 60 { return }
         update(automatic: true)
     }
 
@@ -197,36 +208,75 @@ final class AppUpdater: ObservableObject {
         guard let build, canCheck, state != .updating else { return }
         state = .updating
         let target = target
+        let previous = state
         DispatchQueue.global(qos: .utility).async {
             let problem = Self.checkClone(build)
             DispatchQueue.main.async {
-                if let problem {
-                    self.fail(problem, target: target, automatic: automatic)
-                } else {
+                switch problem {
+                case .none:
+                    self.blocked = nil
+                    self.blockedAt = nil
                     self.launchInstall(build, target: target, automatic: automatic)
+                case .wait(let reason)?:
+                    // 개발 중인 클론은 실패로 남기지 않는다. 커밋하거나 브랜치를 돌려 놓으면 다음 확인 때 받는다
+                    Diagnostics.record("업데이트", "미룸: \(reason)")
+                    self.blocked = reason
+                    self.blockedAt = Date()
+                    self.state = previous
+                case .broken(let reason)?:
+                    self.fail(reason, target: target, automatic: automatic)
                 }
             }
         }
     }
 
     private func fail(_ reason: String, target: String?, automatic: Bool) {
+        Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "실패: \(reason)")
         state = .failed(reason)
         UserDefaults.standard.removeObject(forKey: Key.installing)
         if automatic, let target { UserDefaults.standard.set(target, forKey: Key.failedTarget) }
     }
 
-    private static func checkClone(_ build: Build) -> String? {
-        guard FileManager.default.fileExists(atPath: build.sourcePath + "/install.sh") else {
-            return "설치할 때 쓴 폴더(\(build.sourcePath))가 없습니다. 다시 클론해서 ./install.sh를 실행하세요."
+    private enum CloneProblem {
+        /// 사용자가 클론에서 일하는 중이라 잠시 미룬다.
+        case wait(String)
+        /// 손대지 않으면 계속 안 되는 문제.
+        case broken(String)
+    }
+
+    private static func checkClone(_ build: Build) -> CloneProblem? {
+        let path = build.sourcePath
+        guard FileManager.default.fileExists(atPath: path + "/install.sh") else {
+            return .broken("설치할 때 쓴 폴더(\(path))가 없습니다. 다시 클론해서 ./install.sh를 실행하세요.")
         }
-        guard let branch = git(["rev-parse", "--abbrev-ref", "HEAD"], in: build.sourcePath) else {
-            return "git을 실행하지 못했습니다."
+        guard let branch = git(["rev-parse", "--abbrev-ref", "HEAD"], in: path) else {
+            return .broken("git을 실행하지 못했습니다.")
         }
-        guard branch == build.branch else { return "클론이 \(build.branch)가 아닌 \(branch) 브랜치에 있습니다." }
-        guard git(["status", "--porcelain", "--untracked-files=no"], in: build.sourcePath)?.isEmpty == true else {
-            return "클론에 고친 파일이 있어 업데이트하지 않았습니다."
+        guard branch == build.branch else { return .wait("클론이 \(branch) 브랜치에 있어 \(build.branch)로 돌아오면 받습니다.") }
+        guard git(["status", "--porcelain", "--untracked-files=no"], in: path)?.isEmpty == true else {
+            return .wait("클론에 커밋하지 않은 변경이 있어 커밋한 뒤 받습니다.")
+        }
+        // pull --ff-only가 로그에만 남기고 실패하지 않게, 갈라진 클론은 먼저 가린다
+        guard git(["fetch", "--quiet", "origin", build.branch], in: path) != nil else {
+            return .wait("GitHub에서 받아 오지 못했습니다. 연결되면 다시 해 봅니다.")
+        }
+        guard git(["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"], in: path) != nil
+                || git(["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"], in: path) != nil else {
+            return .wait("클론에 GitHub에 없는 커밋이 있어 푸시하거나 맞춘 뒤 받습니다.")
+        }
+        guard !FileManager.default.fileExists(atPath: NSHomeDirectory() + "/Library/Caches/RunTime/install.lock") else {
+            return .wait("다른 설치가 진행 중이라 끝난 뒤 받습니다.")
         }
         return nil
+    }
+
+    /// 마지막 업데이트 기록에서 까닭이 적힌 줄 (`✗ …`, `error: …`, `fatal: …`).
+    static func failureReason(inLog text: String) -> String? {
+        let attempt = text.components(separatedBy: "\n== ").last ?? text
+        return attempt.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { line in ["✗", "error:", "fatal:"].contains { line.contains($0) } }
+            .map { String($0.prefix(140)) }
     }
 
     private static func git(_ arguments: [String], in path: String) -> String? {
@@ -261,11 +311,15 @@ final class AppUpdater: ObservableObject {
         environment["GIT_TERMINAL_PROMPT"] = "0"
         process.environment = environment
         UserDefaults.standard.set(target ?? build.commit, forKey: Key.installing)
+        Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "설치 시작: \(build.commit.prefix(7)) → \((target ?? "").prefix(7))")
         // install.sh가 성공하면 이 앱은 꺼지고 새 빌드가 뜬다. 여기로 돌아왔다면 실패한 것이다
         process.terminationHandler = { finished in
             DispatchQueue.main.async {
                 if finished.terminationStatus != 0 {
-                    self.fail("업데이트에 실패했습니다. 로그: \(Self.logURL.path)", target: target, automatic: automatic)
+                    let log = (try? String(contentsOf: Self.logURL, encoding: .utf8)) ?? ""
+                    let reason = Self.failureReason(inLog: log).map { "업데이트에 실패했습니다: \($0)" }
+                        ?? "업데이트에 실패했습니다. 로그: \(Self.logURL.path)"
+                    self.fail(reason, target: target, automatic: automatic)
                 }
             }
         }

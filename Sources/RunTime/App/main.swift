@@ -249,6 +249,13 @@ if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
 }
 
 // 화면 점검: 주요 창을 실제 데이터로 찍어 PNG로 저장하고 종료.
+// 터미널이나 원격 접속으로 다른 Mac의 상태를 볼 때
+if CommandLine.arguments.contains("--diagnose") {
+    _ = NSApplication.shared
+    print(Diagnostics.report())
+    exit(0)
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "ui-shots"
     let app = NSApplication.shared

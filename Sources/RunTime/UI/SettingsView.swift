@@ -86,6 +86,10 @@ struct SettingsView: View {
                 UpdateRows(updater: AppUpdater.shared)
             }
 
+            GroupedSection("문제 기록", footer: "업데이트를 미루거나 실패한 일, 사용량 창이 화면 밖으로 넘친 일, 공식 사용량을 받지 못한 일을 이 Mac에만 적어 둡니다. 다른 Mac에서 문제가 생기면 그 Mac에서 '진단 복사'를 눌러 붙여 넣으면 빌드·화면 구성·최근 기록을 한 번에 볼 수 있습니다. 키나 일지 내용은 담지 않습니다.") {
+                DiagnosticsRows(usage: { officialStatusText })
+            }
+
             GroupedSection("정보", footer: "RunTime은 Anthropic과 관계없는 개인 프로젝트입니다.") {
                 GroupedRow("버전", icon: "info", tint: Palette.gray) {
                     Text(Self.versionText).foregroundStyle(.secondary)
@@ -258,6 +262,61 @@ struct SettingsView: View {
     }
 }
 
+/// 문제 기록 묶음. 새 기록이 생기면 바로 다시 읽는다.
+private struct DiagnosticsRows: View {
+    let usage: () -> String
+    @StateObject private var model = DiagnosticsModel()
+
+    var body: some View {
+        GroupedRow("최근 기록", icon: "stethoscope", tint: Palette.orange) {
+            HStack(spacing: 8) {
+                Text(model.recent.isEmpty ? "없음" : "\(model.recent.count)건").foregroundStyle(.secondary)
+                Button("열기") { NSWorkspace.shared.open(Diagnostics.logURL) }
+                    .controlSize(.small)
+                    .disabled(model.recent.isEmpty)
+                Button(model.copied ? "복사됨" : "진단 복사") {
+                    Diagnostics.copyReport(usage: usage())
+                    model.markCopied()
+                }
+                .controlSize(.small)
+                .help("빌드, macOS, 화면 구성, 업데이트 상태와 최근 기록을 클립보드에 담습니다")
+            }
+        }
+        .help(Diagnostics.logURL.path)
+        // 최근 세 건은 바로 보이게 한다
+        ForEach(Array(model.recent.suffix(3).reversed().enumerated()), id: \.offset) { _, line in
+            GroupedRow(line) { EmptyView() }
+                .font(.system(size: 11.5).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .help(line)
+        }
+    }
+}
+
+/// 문제 기록 묶음의 상태. `@State`를 못 쓰는 이유는 HoverFlag 참고.
+final class DiagnosticsModel: ObservableObject {
+    @Published private(set) var recent: [String] = []
+    @Published private(set) var copied = false
+    private var observer: NSObjectProtocol?
+
+    init() {
+        reload()
+        observer = NotificationCenter.default.addObserver(forName: Diagnostics.recorded, object: nil, queue: .main) { [weak self] _ in
+            self?.reload()
+        }
+    }
+
+    deinit { observer.map(NotificationCenter.default.removeObserver) }
+
+    func reload() { recent = Diagnostics.recent(50) }
+
+    func markCopied() {
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.copied = false }
+    }
+}
+
 /// 업데이트 묶음의 줄들. 새 커밋이 있으면 단추 하나로 받아 다시 빌드한다.
 private struct UpdateRows: View {
     @ObservedObject var updater: AppUpdater
@@ -281,6 +340,11 @@ private struct UpdateRows: View {
         .help(helpText)
         // 받을 변경을 최근 것부터 몇 줄 보여 준다
         if case .available = updater.state {
+            if let blocked = updater.blocked {
+                GroupedRow(blocked) { EmptyView() }
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.orange)
+            }
             ForEach(Array(updater.incoming.enumerated()), id: \.offset) { _, title in
                 GroupedRow("· \(title)") { EmptyView() }
                     .font(.system(size: 12))
@@ -298,7 +362,7 @@ private struct UpdateRows: View {
         case .idle: return "30분마다 확인"
         case .checking: return "확인 중…"
         case .upToDate: return "최신 버전"
-        case .available(let count, _): return "새 커밋 \(count)개"
+        case .available(let count, _): return updater.blocked == nil ? "새 커밋 \(count)개" : "새 커밋 \(count)개 · 미룸"
         case .updating: return "설치하는 중…"
         case .failed(let reason): return reason
         }
@@ -308,7 +372,7 @@ private struct UpdateRows: View {
     private var helpText: String {
         switch updater.state {
         case .unavailable(let reason): return reason
-        case .available(_, let latest): return latest
+        case .available(_, let latest): return updater.blocked.map { "\($0)\n최신: \(latest)" } ?? latest
         case .failed(let reason): return reason
         default: return ""
         }

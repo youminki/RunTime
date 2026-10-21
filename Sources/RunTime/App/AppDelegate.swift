@@ -314,13 +314,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func pinTop(of popover: NSPopover, below anchor: NSView) {
         guard let window = popover.contentViewController?.view.window, let anchorWindow = anchor.window else { return }
         let top = anchorWindow.convertToScreen(anchor.convert(anchor.bounds, to: nil)).minY
-        let pin = { [weak window] in
+        var reported = false
+        let fix = { [weak window] in
             guard let window, window.frame.maxY > top + 0.5 else { return }
+            // 다른 Mac에서 다시 잘린다고 하면 어느 화면 구성에서 얼마나 넘쳤는지 볼 수 있게 한 번만 남긴다
+            if !reported {
+                reported = true
+                let screen = anchorWindow.screen
+                Diagnostics.record("사용량 창", "메뉴바 위로 \(Int(window.frame.maxY - top))pt 넘쳐 되돌림 · 창 높이 \(Int(window.frame.height))pt"
+                                   + " · 화면 \(screen?.localizedName ?? "?") 쓸 수 있는 높이 \(Int(screen?.visibleFrame.height ?? 0))pt"
+                                   + " · 화면 \(NSScreen.screens.count)개")
+            }
             window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
         }
+        // 팝오버는 알림을 보낸 뒤에도 자리를 다시 잡을 때가 있어, 한 바퀴 뒤에 한 번 더 본다
+        // 메뉴바 아래로 붙여도 화면 아래로 모자라면 아래쪽이 잘린다. 그때도 한 번 남긴다
+        var reportedShort = false
+        let checkFit = { [weak window] in
+            guard let window, !reportedShort, let screen = anchorWindow.screen,
+                  window.frame.minY < screen.visibleFrame.minY - 0.5 else { return }
+            reportedShort = true
+            Diagnostics.record("사용량 창", "화면 아래로 \(Int(screen.visibleFrame.minY - window.frame.minY))pt 모자람 · 창 높이 \(Int(window.frame.height))pt"
+                               + " · 화면 \(screen.localizedName) 쓸 수 있는 높이 \(Int(screen.visibleFrame.height))pt")
+        }
+        let pin = { fix(); checkFit(); DispatchQueue.main.async(execute: fix) }
         pin()
         popoverFrameObservers.forEach(NotificationCenter.default.removeObserver)
-        popoverFrameObservers = [NSWindow.didResizeNotification, NSWindow.didMoveNotification].map {
+        popoverFrameObservers = [NSWindow.didResizeNotification, NSWindow.didMoveNotification,
+                                 NSWindow.didChangeScreenNotification].map {
             NotificationCenter.default.addObserver(forName: $0, object: window, queue: .main) { _ in pin() }
         }
     }

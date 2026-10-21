@@ -443,6 +443,7 @@ final class UsageEngine: ObservableObject {
         switch result {
         case .success(let usage):
             officialBackoffUntil = nil
+            if !lastOfficialFailure.isEmpty { Diagnostics.record("사용량", "공식 조회 다시 됨") }
             lastOfficialFailure = ""
             log.info("공식 조회 성공: 세션 \(usage.sessionPercent ?? -1)% 주간 \(usage.weeklyPercent ?? -1)%")
             // 응답을 기다리는 사이 연동을 끈 경우
@@ -458,6 +459,8 @@ final class UsageEngine: ObservableObject {
                 officialBackoffUntil = Date().addingTimeInterval(Self.rateLimitBackoff)
             }
             let reason = Self.describe(error)
+            // 실패가 이어지는 동안은 까닭이 바뀔 때만 남긴다
+            if reason != lastOfficialFailure { Diagnostics.record("사용량", "공식 조회 실패: \(reason)") }
             lastOfficialFailure = reason
             log.error("공식 조회 실패(\(reason, privacy: .public)): \(String(describing: error))")
             guard config.officialEnabled else { return }
