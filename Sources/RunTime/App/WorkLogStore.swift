@@ -316,9 +316,10 @@ final class WorkLogStore: ObservableObject {
     }
 
     /// 내 일감을 고른 날 일지에 넣는다. 이미 그날 그 일감 줄이 있으면 상태만 바꾼다.
+    /// `again`이면 같은 일감 줄을 하나 더 넣는다 (한 일감에 따로 적을 일이 여럿인 날). 보낼 때 일감별로 한 댓글로 모인다.
     @discardableResult
-    func addIssue(_ info: IssueInfo, day: String, status: WorkStatus) -> WorkEntry? {
-        if let index = log.entries.firstIndex(where: { $0.day == day && $0.issue == info.id }) {
+    func addIssue(_ info: IssueInfo, day: String, status: WorkStatus, again: Bool = false) -> WorkEntry? {
+        if !again, let index = log.entries.firstIndex(where: { $0.day == day && $0.issue == info.id }) {
             update(log.entries[index].id) { $0.status = status }
             return log.entries[index]
         }

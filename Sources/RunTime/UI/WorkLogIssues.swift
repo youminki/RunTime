@@ -279,7 +279,8 @@ private struct IssueRow: View {
     @StateObject private var hover = HoverFlag()
 
     var body: some View {
-        let entry = store.log.entries(on: page.day).first { $0.issue == info.id }
+        let written = store.log.entries(on: page.day).filter { $0.issue == info.id }
+        let entry = written.first
         let status = entry?.status ?? redmineStatus
         HStack(spacing: 10) {
             StatusGlyph(status: status)
@@ -301,13 +302,16 @@ private struct IssueRow: View {
             }
             Spacer(minLength: 8)
             if let entry {
-                Text(dayLabel + " 적음 · " + entry.status.label).font(.system(size: 12)).foregroundStyle(WL.done)
+                Text(dayLabel + (written.count > 1 ? " \(written.count)줄" : "") + " 적음 · " + entry.status.label)
+                    .font(.system(size: 12)).foregroundStyle(WL.done)
             }
             HStack(spacing: 2) {
-                Button { add(entry?.status ?? defaultStatus) } label: { Image(systemName: entry == nil ? "plus" : "checkmark") }
+                // 이미 적은 일감도 한 줄 더 넣을 수 있다 (같은 일감에 따로 적을 일이 여럿인 날)
+                Button { add(entry?.status ?? defaultStatus, again: entry != nil) } label: {
+                    Image(systemName: entry == nil ? "plus" : "plus.square.on.square")
+                }
                     .buttonStyle(GhostIconButtonStyle())
-                    .help(entry == nil ? "\(dayLabel) 일지에 넣기" : "\(dayLabel) 일지에 있음")
-                    .disabled(entry != nil)
+                    .help(entry == nil ? "\(dayLabel) 일지에 넣기" : "\(dayLabel) 일지에 한 줄 더 넣기")
                 Menu {
                     Button("완료") { add(.done) }
                     ForEach(Array(stride(from: 100, through: 10, by: -10)), id: \.self) { value in
@@ -352,6 +356,7 @@ private struct IssueRow: View {
         .onHover { hover.on = $0 }
         .contextMenu {
             Button("\(dayLabel) 일지에 넣기") { add(defaultStatus) }
+            if let entry { Button("\(dayLabel) 일지에 한 줄 더 넣기") { add(entry.status, again: true) } }
             Button("보고서 이름 복사") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(info.reportTitle, forType: .string)
@@ -391,8 +396,8 @@ private struct IssueRow: View {
     /// 넣을 때 기본 상태: 레드마인 진척률이 있으면 그 값, 없으면 진행중.
     private var defaultStatus: WorkStatus { info.doneRatio > 0 ? .percent(min(info.doneRatio, 100)) : .inProgress }
 
-    private func add(_ status: WorkStatus) {
-        if let entry = store.addIssue(info, day: page.day, status: status) {
+    private func add(_ status: WorkStatus, again: Bool = false) {
+        if let entry = store.addIssue(info, day: page.day, status: status, again: again) {
             page.flash("\(entry.project) · \(WorkReport.line(entry))")
         }
     }

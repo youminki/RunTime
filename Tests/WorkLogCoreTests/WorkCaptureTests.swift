@@ -69,6 +69,52 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(log.entries[0].note == "[작업 내용]\n- 목록·상세 API\n\n[비고]\n- MR !14")   // 레드마인 댓글 꼴로
     }
 
+    @Test func rereadsMRDescriptionEditedAfterImport() {
+        // velox !15: 번호 없이 가져온 뒤 MR 설명 맨 위에 [일감]을 달았다 (2026-10-21)
+        var log = WorkLog(projects: ["velox"])
+        let before = WorkCapture.MergedMR(path: "velox/velox-web-portal", iid: 15, title: "수집 작업 관리 API 연동과 시안 차이 보정",
+                                          description: "[작업 내용]\n- 수집 작업 관리 목록, 상세, 등록 화면을 API에 연동",
+                                          sourceBranch: "feature/collection-job-api", mergedAt: at("2026-10-21T07:24:53Z"))
+        WorkCapture.apply(mrs: [before], commits: [], to: &log)
+        #expect(log.entries.map(\.issue) == [nil])
+        #expect(WorkCapture.apply(mrs: [before], commits: [], to: &log) == 0)   // 그대로면 건드리지 않는다
+
+        let after = WorkCapture.MergedMR(path: before.path, iid: 15, title: before.title,
+                                         description: "[일감]\n- #36397 [FN-ING-07] 데이터 수집 작업 제어 > API 연동\n- #36415 [FN-ING-13] 데이터 수집 로그 조회 > API 연동\n\n"
+                                            + before.description,
+                                         sourceBranch: before.sourceBranch, mergedAt: before.mergedAt)
+        #expect(WorkCapture.apply(mrs: [after], commits: [], to: &log) == 1)
+        #expect(log.entries.map(\.issue) == [36397, 36415])
+        #expect(!log.entries[0].note.contains("[일감]"))
+        #expect(WorkCapture.apply(mrs: [after], commits: [], to: &log) == 0)
+
+        log.entries[0].postedAt = Date()
+        // 보낸 줄은 설명이 바뀌어도 댓글을 그대로 둔다
+        let edited = WorkCapture.MergedMR(path: before.path, iid: 15, title: before.title, description: after.description + "\n- 로그 조회 검색어 덧붙임",
+                                          sourceBranch: before.sourceBranch, mergedAt: before.mergedAt)
+        WorkCapture.apply(mrs: [edited], commits: [], to: &log)
+        #expect(!log.entries[0].note.contains("덧붙임"))
+        #expect(log.entries[1].note.contains("덧붙임"))
+    }
+
+    @Test func addsNewlyListedIssuesEvenAfterTheMRLineWasSent() {
+        // velox !15 실제 경우: #36406을 골라 레드마인에 보낸 뒤 MR 설명에 [일감] 넷을 달았다
+        var log = WorkLog(projects: ["velox"])
+        let body = "[작업 내용]\n- 수집 작업 관리 목록, 상세, 등록 화면을 API에 연동"
+        log.entries = [WorkEntry(day: "2026-10-21", project: "velox", title: "수집 작업 관리 API 연동", issue: 36406, note: body,
+                                 postedAt: Date(), source: "mr:velox/velox-web-portal!15", mrBody: body)]
+        let sentNote = log.entries[0].note
+        let mr = WorkCapture.MergedMR(path: "velox/velox-web-portal", iid: 15, title: "수집 작업 관리 API 연동",
+                                      description: "[일감]\n- #36397 작업 제어 > API 연동\n- #36415 로그 조회 > API 연동\n- #36406 동기화 이력 > API 연동\n\n" + body,
+                                      sourceBranch: "feature/collection-job-api", mergedAt: at("2026-10-21T07:24:53Z"))
+        WorkCapture.apply(mrs: [mr], commits: [], to: &log)
+        #expect(log.entries.map(\.issue) == [36406, 36397, 36415])
+        #expect(log.entries[0].note == sentNote)
+        #expect(log.entries[1].title == "작업 제어 > API 연동")
+        #expect(log.entries[1].postedAt == nil && log.entries[1].note.hasPrefix("[작업 내용]"))
+        #expect(WorkCapture.apply(mrs: [mr], commits: [], to: &log) == 0)
+    }
+
     @Test func keepsUserEditsAndRemembersDeletes() {
         var log = WorkLog()
         let commit = WorkCapture.Commit(path: "cdh/admin", branch: "fix/a", subject: "fix: 아이콘", date: at("2026-10-20T01:00:00Z"))

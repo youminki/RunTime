@@ -186,7 +186,11 @@ public enum WorkCapture {
         var changed = 0
         let known = Set(log.entries.compactMap(\.source))
 
-        for mr in mrs.sorted(by: { $0.mergedAt < $1.mergedAt }) where !known.contains(mr.source) {
+        for mr in mrs.sorted(by: { $0.mergedAt < $1.mergedAt }) {
+            if known.contains(mr.source) {
+                changed += refresh(mr, in: &log, now: now)
+                continue
+            }
             let day = WorkDay.key(mr.mergedAt)
             guard !log.dismissed.contains(day + "|" + mr.source) else { continue }
             let branchSource = "branch:\(mr.path):\(mr.sourceBranch)"
@@ -271,6 +275,37 @@ public enum WorkCapture {
         return changed
     }
 
+    /// 머지 뒤에 고친 MR 설명(나중에 단 `[일감]` 등)을 다시 읽는다.
+    /// - 아직 보내지 않은 줄: 원문을 바꾸고, 일감 번호가 없던 줄은 새 설명에서 찾는다. 댓글은 고치지 않은 것만 tidyMRNotes가 다시 만든다.
+    /// - 이미 보낸 줄: 댓글은 그대로 두고, 새로 적힌 다른 일감 줄만 더한다 (tidyMRNotes는 보낸 MR 줄을 나누지 않는다).
+    static func refresh(_ mr: MergedMR, in log: inout WorkLog, now: Date) -> Int {
+        let raw = mr.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        var changed = 0
+        for index in log.entries.indices {
+            let entry = log.entries[index]
+            guard let source = entry.source, source == mr.source || source.hasPrefix(mr.source + "#"),
+                  (entry.mrBody ?? entry.note) != raw else { continue }
+            log.entries[index].mrBody = raw
+            if entry.postedAt == nil {
+                if entry.issue == nil { log.entries[index].issue = issueNumber(in: [mr.title, raw], branch: mr.sourceBranch) }
+                log.entries[index].updatedAt = now
+            } else if source == mr.source {
+                let listed = listedTitles(raw)
+                for other in RedmineComment.allIssueRefs([raw]) where other != entry.issue {
+                    let siblingSource = source + "#\(other)"
+                    guard !log.entries.contains(where: { $0.source == siblingSource }),
+                          !log.dismissed.contains(entry.day + "|" + siblingSource) else { continue }
+                    log.entries.append(WorkEntry(day: entry.day, project: entry.project,
+                                                 title: log.issue(other)?.reportTitle ?? listed[other] ?? "#\(other)",
+                                                 status: entry.status, issue: other, note: "", updatedAt: now,
+                                                 source: siblingSource, mrBody: raw))
+                }
+            }
+            changed += 1
+        }
+        return changed
+    }
+
     /// 아직 보내지 않은 MR 줄을 레드마인 댓글 꼴로 다듬는다.
     /// - MR이 다룬 다른 일감마다 줄을 하나씩 더한다 (레드마인에 일감마다 따로 올리던 대로). 그날 그 일감 줄이 있으면 건너뛴다.
     /// - 사용자가 고치지 않은 댓글(note == autoNote)은 원문(mrBody)에서 다시 만든다. 일감 제목을 나중에 받으면 줄을 다시 나눈다.
@@ -285,11 +320,14 @@ public enum WorkCapture {
         }
         for entry in log.entries where isMR(entry) && entry.postedAt == nil && entry.issue != nil && !(entry.source ?? "").contains("#") {
             guard let raw = entry.mrBody, let source = entry.source else { continue }
+            let listed = listedTitles(raw)
+            // 그날 같은 일감 줄이 이미 있어도 MR마다 줄을 둔다 (한 일감을 여러 MR로 하는 날). 보낼 때 일감별로 한 댓글로 모인다
             for other in RedmineComment.allIssueRefs([raw]) where other != entry.issue {
                 let siblingSource = source + "#\(other)"
-                guard !log.entries.contains(where: { $0.source == siblingSource || ($0.day == entry.day && $0.issue == other) }),
+                guard !log.entries.contains(where: { $0.source == siblingSource }),
                       !log.dismissed.contains(entry.day + "|" + siblingSource) else { continue }
-                log.entries.append(WorkEntry(day: entry.day, project: entry.project, title: log.issue(other)?.reportTitle ?? "#\(other)",
+                log.entries.append(WorkEntry(day: entry.day, project: entry.project,
+                                             title: log.issue(other)?.reportTitle ?? listed[other] ?? "#\(other)",
                                              status: entry.status, issue: other, note: "", updatedAt: now, source: siblingSource,
                                              mrBody: raw))
                 changed += 1
@@ -302,13 +340,15 @@ public enum WorkCapture {
             let base = String(source.split(separator: "#").first ?? Substring(source))
             let siblings = Set(log.entries.filter { $0.day == entry.day && ($0.source?.hasPrefix(base) == true) }.compactMap(\.issue))
             let refs = RedmineComment.allIssueRefs([raw])
-            let note = RedmineComment.fromMR(raw, mr: mrNumber(source), issue: entry.issue,
-                                             subjects: subjects(for: refs + Array(siblings), in: log), siblings: siblings)
+            let listed = listedTitles(raw)
+            // [일감]에 적은 이름이 장부의 잎 이름(`API 연동`)보다 화면 낱말이 많아 줄 주인을 더 잘 가른다
+            let named = subjects(for: refs + Array(siblings), in: log).merging(listed) { _, mine in mine }
+            let note = RedmineComment.fromMR(raw, mr: mrNumber(source), issue: entry.issue, subjects: named, siblings: siblings)
             // 따로 나눈 일감 줄의 제목: 일감 이름을 받았으면 그것, 아니면 [작업 내용] 첫 항목 ([비고]의 `MR !110`이 제목이 되지 않게)
             if source.contains("#") {
                 let work = note.components(separatedBy: "\n\n").first { $0.hasPrefix("[작업 내용]") }
                 let first = work?.components(separatedBy: "\n").first { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }
-                if let title = log.issue(entry.issue)?.reportTitle ?? first, title != entry.title {
+                if let title = log.issue(entry.issue)?.reportTitle ?? entry.issue.flatMap({ listed[$0] }) ?? first, title != entry.title {
                     log.entries[index].title = title
                     changed += 1
                 }
@@ -330,6 +370,12 @@ public enum WorkCapture {
 
     static func subjects(for issues: [Int], in log: WorkLog) -> [Int: String] {
         Dictionary(issues.compactMap { id in log.issue(id).map { (id, IssueInfo.cleanSubject($0.subject)) } }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// `[일감]`에 이름까지 적은 일감 (번호 → 이름).
+    static func listedTitles(_ raw: String) -> [Int: String] {
+        Dictionary(RedmineComment.listedIssues(raw).filter { !$0.title.isEmpty }.map { ($0.id, $0.title) },
+                   uniquingKeysWith: { a, _ in a })
     }
 
     static func commitNote(_ subjects: [String]) -> String {

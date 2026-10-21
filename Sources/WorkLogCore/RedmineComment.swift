@@ -7,9 +7,14 @@ import Foundation
 /// - 줄 안의 `(#37828)`, `레드마인 #37856, #37857` 같은 일감 번호는 레드마인에서는 군더더기라 뗀다.
 /// - MR 하나가 일감 여럿을 다루면 일감마다 따로 올렸다. 다른 일감 줄은 그 일감 댓글로 보낸다.
 /// - `[비고]` 맨 앞에 `- MR !110`을 둔다.
+/// - `[일감]`은 이 MR이 다룬 일감 목록(`- #37742 상품 신청 내역 > API 연동`)이라 댓글에 올리지 않는다.
+/// - 일감별 묶음(`#37742 …` 줄 아래 [작업 내용]·[연동 API]·[비고])으로 쓴 MR은 그 묶음을 그 일감 댓글로 그대로 쓴다.
 public enum RedmineComment {
     /// 리뷰어에게만 쓸모 있는 섹션.
     static let reviewerSections = ["확인 방법", "확인방법", "테스트", "검증", "리뷰", "스크린샷", "변경 파일"]
+
+    /// MR이 다룬 일감을 적는 섹션 (2026-10-21부터 MR 맨 위에 둔다).
+    static let issueSections = ["일감", "레드마인", "관련 일감"]
 
     /// - Parameters:
     ///   - mr: MR 번호 (`!110`). `[비고]`에 남긴다.
@@ -17,12 +22,26 @@ public enum RedmineComment {
     ///   - subjects: 같은 MR이 다룬 일감들의 제목 (일감 번호 → 제목). 번호 없는 줄을 어느 일감 것인지 가르는 데 쓴다.
     ///   - siblings: 같은 MR에서 따로 댓글을 받는 다른 일감. 이 일감들의 줄만 뺀다 (따로 받지 않는 일감 줄은 남겨 잃지 않게).
     public static func fromMR(_ text: String, mr: Int?, issue: Int?, subjects: [Int: String] = [:], siblings: Set<Int> = []) -> String {
+        // 일감별 묶음으로 쓴 MR은 짐작하지 않고 적힌 대로 나눈다: 묶음 앞 칸(모든 일감) + 이 일감 묶음
+        let split = issueBlocks(text)
+        var text = text
+        var siblings = siblings
+        if !split.blocks.isEmpty {
+            text = ([split.shared] + split.blocks.filter { $0.id == issue }.map(\.body)).joined(separator: "\n")
+            siblings = []
+        }
         var sections: [(name: String, lines: [String])] = []
         for raw in text.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
             if RedmineNote.isHeading(line) {
-                sections.append((String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces), []))
+                let name = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                // 묶음 앞 칸과 일감 묶음에 같은 머리가 있으면 한 칸으로 모은다 (뒤로 옮겨 이어 쓴다)
+                if let index = sections.firstIndex(where: { $0.name == name }) {
+                    sections.append(sections.remove(at: index))
+                } else {
+                    sections.append((name, []))
+                }
                 continue
             }
             // 머리 없이 쓴 설명(커밋 목록, 문장)은 [작업 내용] 항목으로 본다
@@ -31,7 +50,8 @@ public enum RedmineComment {
         }
         let others = siblings.subtracting(issue.map { [$0] } ?? [])
         var result: [(name: String, lines: [String])] = []
-        for section in sections where !reviewerSections.contains(where: section.name.contains) {
+        for section in sections where !reviewerSections.contains(where: section.name.contains)
+            && !issueSections.contains(section.name) {
             var lines: [String] = []
             // 어느 일감 줄인지 모르는 줄은 바로 위 줄의 일감을 잇는다 (`… 제거(#37828)` 아래 이어지는 설명)
             var carried: [Int] = []
@@ -60,6 +80,55 @@ public enum RedmineComment {
         return result.filter { !$0.lines.isEmpty }
             .map { (["[\($0.name)]"] + $0.lines).joined(separator: "\n") }
             .joined(separator: "\n\n")
+    }
+
+    /// `[일감]` 섹션의 일감과 그 이름. `- #37742 상품 신청 내역 > API 연동` → `[37742: "상품 신청 내역 > API 연동"]`.
+    /// 이름을 비워 적은 줄은 번호만 남는다 (빈 이름은 넣지 않는다).
+    public static func listedIssues(_ text: String) -> [(id: Int, title: String)] {
+        var inSection = false
+        var result: [(id: Int, title: String)] = []
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if RedmineNote.isHeading(line) {
+                inSection = issueSections.contains(String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces))
+                continue
+            }
+            if let header = blockHeader(line) {
+                inSection = false
+                if !result.contains(where: { $0.id == header.id }) { result.append((header.id, header.title)) }
+                continue
+            }
+            guard inSection else { continue }
+            for id in issueRefs(line) where !result.contains(where: { $0.id == id }) {
+                let title = stripRefs(line.hasPrefix("-") ? String(line.dropFirst()) : line)
+                result.append((id, title))
+            }
+        }
+        return result
+    }
+
+    /// 일감별 묶음. `#37742 상품 신청 내역 > API 연동`처럼 번호로 시작하는 줄(목록 기호 없이)이 묶음 머리다.
+    /// 첫 묶음 앞의 글은 모든 일감에 함께 들어간다.
+    public static func issueBlocks(_ text: String) -> (shared: String, blocks: [(id: Int, title: String, body: String)]) {
+        var shared: [String] = []
+        var blocks: [(id: Int, title: String, body: [String])] = []
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if let header = blockHeader(line) {
+                blocks.append((header.id, header.title, []))
+            } else if blocks.isEmpty {
+                shared.append(raw)
+            } else {
+                blocks[blocks.count - 1].body.append(raw)
+            }
+        }
+        return (shared.joined(separator: "\n"), blocks.map { ($0.id, $0.title, $0.body.joined(separator: "\n")) })
+    }
+
+    static func blockHeader(_ line: String) -> (id: Int, title: String)? {
+        guard let range = line.range(of: #"^#\d{4,7}\b"#, options: .regularExpression),
+              let id = Int(line[range].dropFirst()) else { return nil }
+        return (id, String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces))
     }
 
     /// 줄에 적힌 일감 번호들.
