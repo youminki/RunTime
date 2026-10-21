@@ -33,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var anchorWindow: NSWindow?
     /// 팝오버 창이 커지거나 움직일 때 윗변을 붙이는 관찰자.
     private var popoverFrameObservers: [NSObjectProtocol] = []
+    private var terminateSource: DispatchSourceSignal?
+    private var reopening = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         EditMenu.install()
@@ -75,16 +77,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         animator.compactProvider = { [weak self] in self?.currentLabel != nil }
         animator.set(display: .normal(.sleeping))
         LeaderboardFeed.shared.start()
-        // 설정·순위표 창이나 파일 고르는 창을 쓰는 중에도 업데이트가 앱을 끄지 않게 본다
+        // 설정·업무 일지 창이나 파일 고르는 창을 쓰는 중에는 업데이트가 앱을 끄지 않게 본다.
+        // 업무 일지 창은 하루 종일 열어 두기도 해서, 다른 앱을 쓰는 동안은 쓰는 중으로 보지 않는다
         AppUpdater.shared.isInUse = { [weak self] in
             self?.popover?.isShown == true || NSApp.modalWindow != nil
-                || NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) }
+                || (NSApp.isActive && NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) })
+        }
+        AppUpdater.shared.openWindows = { [weak self] in
+            guard let self else { return [] }
+            return [("workLog", workLogWindow), ("settings", settingsWindow), ("dailyDetail", dailyDetailWindow),
+                    ("leaderboard", leaderboardWindow)]
+                .filter { $0.1?.isVisible == true }.map(\.0)
         }
         AppUpdater.shared.start()
+        // 자동 업데이트는 다른 앱을 쓰는 동안 일어나므로, 다시 연 창이 그 앱의 초점을 빼앗지 않게 뒤에 둔다
+        reopening = true
+        for name in AppUpdater.shared.takeWindowsToReopen() {
+            switch name {
+            case "workLog": openWorkLog()
+            case "settings": openSettings()
+            case "dailyDetail": openDailyDetail()
+            case "leaderboard": openLeaderboard()
+            default: break
+            }
+        }
+        reopening = false
         NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
             .filter { ($0.object as? NSWindow)?.styleMask.contains(.titled) == true }
+            .merge(with: NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification))
             .sink { _ in AppUpdater.shared.appClosedWindow() }
             .store(in: &cancellables)
+        // install.sh가 pkill(SIGTERM)로 끄면 종료 알림 없이 꺼져, 일지에 마지막으로 친 글자가 저장되지 않는다
+        signal(SIGTERM, SIG_IGN)
+        let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        terminateSource.setEventHandler { NSApp.terminate(nil) }
+        terminateSource.resume()
+        self.terminateSource = terminateSource
         // 메뉴바가 있는 화면이 바뀌면(레티나↔일반, 메뉴바 높이) 레이어 배율과 칸 크기를 맞춘다
         NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)
             .merge(with: NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification),
@@ -544,6 +572,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             window.center()
             return window
         }()
+        if reopening {
+            window.orderFront(nil)
+            return window
+        }
         window.makeKeyAndOrderFront(nil)
         // 처음 열 때 글 칸(순위표 닉네임)에 커서가 가서 글자가 통째로 선택되지 않게 한다. SwiftUI가 초점을 잡은 뒤에 푼다
         if existing == nil { DispatchQueue.main.async { window.makeFirstResponder(nil) } }

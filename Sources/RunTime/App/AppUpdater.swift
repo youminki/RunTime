@@ -34,6 +34,8 @@ final class AppUpdater: ObservableObject {
         static let installing = "updateInstalling"
         /// 자동 업데이트가 실패한 대상 커밋. 같은 커밋으로는 다시 자동 시도하지 않는다.
         static let failedTarget = "updateFailedTarget"
+        /// 설치하려고 앱을 끌 때 열려 있던 창. 새 빌드가 켜지면 다시 연다.
+        static let reopen = "updateReopenWindows"
     }
 
     private static let checkInterval: TimeInterval = 30 * 60
@@ -45,6 +47,7 @@ final class AppUpdater: ObservableObject {
     @Published var autoUpdate: Bool { didSet { UserDefaults.standard.set(autoUpdate, forKey: Key.auto) } }
     /// 러너가 말풍선으로 알릴 업데이트 소식 (한 번만).
     private var bubble: String?
+    private var windowsToReopen: [String] = []
     private var timer: Timer?
     /// 지금 받을 수 있는 커밋.
     private var target: String?
@@ -53,8 +56,10 @@ final class AppUpdater: ObservableObject {
     /// 새 버전은 있지만 클론 사정(고친 파일, 다른 브랜치)으로 미룬 까닭. 실패가 아니라 다음 확인 때 다시 해 본다.
     @Published private(set) var blocked: String?
     private var blockedAt: Date?
-    /// 팝오버가 열려 있는지. 자동 업데이트는 설치 중에 앱이 꺼지므로 닫혀 있을 때만 한다 (게임도 팝오버 안에서만 한다).
+    /// 팝오버나 창을 지금 쓰고 있는지. 자동 업데이트는 설치 중에 앱이 꺼지므로 쓰지 않을 때만 한다 (게임도 팝오버 안에서만 한다).
     var isInUse: () -> Bool = { false }
+    /// 지금 열려 있는 창의 이름. 업데이트로 앱이 다시 켜지면 이 창들을 다시 연다.
+    var openWindows: () -> [String] = { [] }
 
     private static func bundleBuild() -> Build? {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -90,6 +95,8 @@ final class AppUpdater: ObservableObject {
         // 업데이터가 설치한 뒤 처음 켜졌을 때만 (직접 다른 커밋을 설치한 경우는 말하지 않는다)
         if defaults.string(forKey: Key.installing) != nil {
             defaults.removeObject(forKey: Key.installing)
+            windowsToReopen = defaults.stringArray(forKey: Key.reopen) ?? []
+            defaults.removeObject(forKey: Key.reopen)
             bubble = build.subject.isEmpty ? "새 버전으로 업데이트했어요" : "업데이트했어요: \(Self.title(of: build.subject))"
             Diagnostics.record("업데이트", "설치 완료: \(build.commit.prefix(7)) \(build.subject)")
         }
@@ -104,6 +111,12 @@ final class AppUpdater: ObservableObject {
     func checkIfStale() {
         let last = UserDefaults.standard.double(forKey: Key.lastCheck)
         if Date().timeIntervalSince1970 - last > Self.checkInterval { check() }
+    }
+
+    /// 업데이트 직전에 열려 있던 창 (한 번만).
+    func takeWindowsToReopen() -> [String] {
+        defer { windowsToReopen = [] }
+        return windowsToReopen
     }
 
     func takeBubble() -> String? {
@@ -187,7 +200,7 @@ final class AppUpdater: ObservableObject {
         return String(line[range.upperBound...])
     }
 
-    /// 팝오버나 앱 창이 닫혔을 때 미뤄 둔 자동 업데이트를 적용한다.
+    /// 팝오버나 앱 창이 닫히거나 다른 앱으로 넘어갔을 때 미뤄 둔 자동 업데이트를 적용한다.
     /// 팝오버를 닫고 설정·파일 창을 여는 중일 수 있어, 그 창이 뜬 뒤에 다시 본다.
     func appClosedWindow() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.applyAutoUpdateIfIdle() }
@@ -234,6 +247,7 @@ final class AppUpdater: ObservableObject {
         Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "실패: \(reason)")
         state = .failed(reason)
         UserDefaults.standard.removeObject(forKey: Key.installing)
+        UserDefaults.standard.removeObject(forKey: Key.reopen)
         if automatic, let target { UserDefaults.standard.set(target, forKey: Key.failedTarget) }
     }
 
@@ -311,6 +325,7 @@ final class AppUpdater: ObservableObject {
         environment["GIT_TERMINAL_PROMPT"] = "0"
         process.environment = environment
         UserDefaults.standard.set(target ?? build.commit, forKey: Key.installing)
+        UserDefaults.standard.set(openWindows(), forKey: Key.reopen)
         Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "설치 시작: \(build.commit.prefix(7)) → \((target ?? "").prefix(7))")
         // install.sh가 성공하면 이 앱은 꺼지고 새 빌드가 뜬다. 여기로 돌아왔다면 실패한 것이다
         process.terminationHandler = { finished in
