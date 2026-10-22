@@ -682,10 +682,12 @@ final class WorkLogSync: ObservableObject {
         let updates = updates.map { prepared($0, edit: edits[$0.issue]) }
         // 설정과 장부는 메인에서 읽어 두고, 보내기는 뒤에서 한 건씩 차례로 한다
         let html = settings.redmineHTML
-        let plan = { [settings, statuses, blockedTransitions] (update: WorkReport.RedmineUpdate, current: IssueInfo?) -> WorkReport.IssueFields in
-            let auto = settings.syncIssueFields && !statuses.isEmpty
+        // 보내는 동안 설정을 바꿔도 값이 갈리지 않게 메인에서 읽어 둔다
+        let syncFields = settings.syncIssueFields, progressID = settings.progressStatusID, doneID = settings.doneStatusID
+        let plan = { [statuses, blockedTransitions] (update: WorkReport.RedmineUpdate, current: IssueInfo?) -> WorkReport.IssueFields in
+            let auto = syncFields && !statuses.isEmpty
                 ? Self.droppingBlocked(WorkReport.issueFields(for: update, current: current, statuses: statuses,
-                                                              progressID: settings.progressStatusID, doneID: settings.doneStatusID),
+                                                              progressID: progressID, doneID: doneID),
                                        current: current, blocked: blockedTransitions)
                 : .init()
             return .merged(auto: auto, edit: edits[update.issue], current: current, statuses: statuses)
@@ -830,6 +832,11 @@ final class WorkLogSync: ObservableObject {
             result.failures.append("#\(update.issue) \(problem)라 칸은 빼고 보냄")
             extra = .init()
         }
+        if noteless, fresh == nil {
+            // 지금 값을 모르면 바뀐 것이 있는지 알 수 없다. 묵은 장부로 보내거나 보낸 것으로 표시하지 않는다
+            result.failures.append("#\(update.issue)를 읽지 못해 보내지 않음")
+            return result
+        }
         if noteless, extra.isEmpty, update.doneRatio == nil || update.doneRatio == fresh?.doneRatio {
             // 바꿀 것이 없다. 레드마인에 빈 기록을 남기지 않고 보낸 것으로만 표시한다
             result.markOnly = true
@@ -851,7 +858,11 @@ final class WorkLogSync: ObservableObject {
         if let wanted = extra.status {
             let after = (try? fetch(RedmineAPI.issueRequest(base: base, key: key, issue: update.issue)))
                 .flatMap { try? RedmineAPI.parseIssues($0).first }
-            if let after, after.statusID != wanted.id {
+            if after == nil {
+                // 다시 읽지 못하면 바뀌었는지 모르니 보낸 기록에 상태를 남기지 않는다 (되돌리기가 엉뚱한 값을 되돌리지 않게)
+                result.failures.append("#\(update.issue) 상태가 바뀌었는지 확인하지 못함")
+                extra.status = nil
+            } else if let after, after.statusID != wanted.id {
                 result.failures.append("#\(update.issue) 상태는 레드마인 워크플로가 막아 '\(after.status)'에 그대로 둠 ('\(wanted.name)'(으)로 못 바꿈)")
                 if let from = current?.statusID, from == after.statusID { result.blocked = (from, wanted.id) }
                 extra.status = nil
