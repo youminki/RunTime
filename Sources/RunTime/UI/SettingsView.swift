@@ -423,7 +423,17 @@ private struct UpdateRows: View {
                 switch updater.state {
                 case .available:
                     Button("업데이트") { updater.update() }.controlSize(.small)
-                case .checking, .updating:
+                case .failed where updater.installFailed:
+                    Button("다시 시도") { updater.update() }.controlSize(.small)
+                case .updating:
+                    if let progress = updater.progress {
+                        UpdateGauge(fraction: progress.fraction, track: Color.secondary.opacity(0.2))
+                            .frame(width: 70, height: 5)
+                        Text("\(Int(progress.fraction * 100))%").foregroundStyle(.secondary).monospacedDigit()
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                case .checking:
                     ProgressView().controlSize(.small)
                 case .unavailable:
                     EmptyView()
@@ -454,11 +464,13 @@ private struct UpdateRows: View {
     private var status: String {
         switch updater.state {
         case .unavailable: return "설치한 앱에서만 확인"
-        case .idle: return "30분마다 확인"
+        case .idle: return "매일 9시, 30분마다 확인"
         case .checking: return "확인 중…"
         case .upToDate: return "최신 버전"
         case .available(let count, _): return updater.blocked == nil ? "새 커밋 \(count)개" : "새 커밋 \(count)개 · 미룸"
-        case .updating: return "설치하는 중…"
+        case .updating:
+            guard let progress = updater.progress else { return "설치하는 중…" }
+            return progress.remaining.map { "\(progress.step) · \(UpdateProgressPanel.remainingText($0))" } ?? progress.step
         case .failed(let reason): return reason
         }
     }
@@ -477,6 +489,7 @@ private struct UpdateRows: View {
         switch updater.state {
         case .available: return Palette.blue
         case .failed: return Palette.orange
+        case .updating: return Palette.teal
         default: return .secondary
         }
     }

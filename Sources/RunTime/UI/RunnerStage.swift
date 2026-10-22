@@ -23,6 +23,7 @@ struct RunnerStage: View {
     var height: CGFloat = RunnerStage.height
 
     @StateObject private var model = StageModel()
+    @ObservedObject private var updater = AppUpdater.shared
     /// 무대를 누르고 있는지. 제스처가 취소돼도 저절로 풀려 게임 입력이 눌린 채 남지 않는다.
     @GestureState private var pressed = false
 
@@ -65,6 +66,10 @@ struct RunnerStage: View {
             if let request { model.play(request.trick) }
         }
         .overlay(alignment: .topTrailing) { controls }
+        .overlay { updateLayer }
+        .onChange(of: updater.state) { state in
+            if state == .updating, !updater.isSilent { model.say("새 버전 받아 올게요", seconds: 2.6) }
+        }
         .background(WindowReader { model.window = $0 })
         .onHover { model.setPointer($0) }
         .onAppear {
@@ -137,6 +142,34 @@ struct RunnerStage: View {
         }
         .animation(.easeOut(duration: 0.18), value: model.bubble)
         .allowsHitTesting(false)
+    }
+
+    /// 자동으로 받지 못한 새 버전은 러너가 누르면 업데이트하는 말풍선으로 알리고, 눌러서 설치하는 동안에는 아래에 진행 판을 띄운다.
+    /// 자동 업데이트는 조용히 한다.
+    /// 다른 말풍선이 뜬 동안에는 그 말이 끝날 때까지 비켜 준다. 무대 쓰다듬기 제스처보다 위에 있어야 눌린다.
+    private var updateLayer: some View {
+        GeometryReader { geo in
+            let scale = geo.size.height / Self.height
+            if updater.hasPendingUpdate, model.bubble == nil, model.game == nil {
+                UpdateBubble(text: updater.pendingPrompt) { updater.update() }
+                    .tip(updater.incoming.isEmpty ? "누르면 바로 업데이트해요"
+                         : "누르면 바로 업데이트해요\n" + updater.incoming.map { "· \($0)" }.joined(separator: "\n"))
+                    .scaleEffect(scale)
+                    // 오른쪽 위 순위·게임 단추 줄 아래에 둔다
+                    .position(x: min(geo.size.width * StageModel.runnerAnchor + 100 * scale, geo.size.width - 100 * scale),
+                              y: 46 * scale)
+                    .transition(.opacity.combined(with: .offset(y: 3)))
+            }
+            if updater.state == .updating, !updater.isSilent, model.game == nil, let progress = updater.progress {
+                VStack {
+                    Spacer()
+                    UpdateProgressPanel(progress: progress)
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: updater.hasPendingUpdate)
+        .animation(.easeOut(duration: 0.2), value: updater.state == .updating)
     }
 }
 

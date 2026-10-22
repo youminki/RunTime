@@ -190,6 +190,12 @@ enum UIShots {
             print("failed: \(error)")
             exit(1)
         }
+        // RUNTIME_UPDATE_SHOT=pending이면 업데이트 말풍선, progress면 설치 진행 판이 뜬 무대를 찍는다
+        switch ProcessInfo.processInfo.environment["RUNTIME_UPDATE_SHOT"] {
+        case "pending": AppUpdater.shared.rehearse(progress: nil)
+        case "progress": AppUpdater.shared.rehearse(progress: .init(fraction: 0.62, step: "빌드하는 중", remaining: 41))
+        default: break
+        }
         // 찍힌 그림에는 창 배경이 빠지므로 뷰 뒤에 배경을 직접 깐다. 팝오버는 PopoverView가 바탕을 칠한다.
         let windowBackground = Color(nsColor: .windowBackgroundColor)
         let screens: [(name: String, appearance: NSAppearance.Name, height: CGFloat?, view: AnyView)] = [

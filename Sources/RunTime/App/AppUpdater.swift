@@ -36,9 +36,15 @@ final class AppUpdater: ObservableObject {
         static let failedTarget = "updateFailedTarget"
         /// 설치하려고 앱을 끌 때 열려 있던 창. 새 빌드가 켜지면 다시 연다.
         static let reopen = "updateReopenWindows"
+        /// 설치를 시작한 시각과 지난 설치에 걸린 시간. 남은 시간을 어림한다.
+        static let startedAt = "updateStartedAt", lastDuration = "updateLastDuration"
+        /// 자동 업데이트로 설치했는지. 자동 업데이트는 끝나도 말하지 않는다.
+        static let silent = "updateSilent"
     }
 
     private static let checkInterval: TimeInterval = 30 * 60
+    /// 30분 확인과 따로 매일 이 시각에 꼭 확인한다. 잠자기로 놓쳤으면 깨어날 때 확인한다.
+    private static let dailyHour = 9
     static let logURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Logs/RunTime/update.log")
 
@@ -49,8 +55,14 @@ final class AppUpdater: ObservableObject {
     private var bubble: String?
     private var windowsToReopen: [String] = []
     private var timer: Timer?
-    /// 지금 받을 수 있는 커밋.
-    private var target: String?
+    private var dailyTimer: Timer?
+    /// 지금 받을 수 있는 커밋. 있으면 러너가 누르면 업데이트하는 말풍선을 띄운다.
+    @Published private(set) var target: String?
+    /// 설치하는 동안 로그에서 읽은 진행 상황.
+    @Published private(set) var progress: Progress?
+    private var progressTimer: Timer?
+    /// 이번 설치 기록이 로그 파일에서 시작하는 자리.
+    private var logOffset: UInt64 = 0
     /// 받을 변경의 제목들 (최근 것부터 5개, "feat: " 같은 머리말은 뺀다).
     @Published private(set) var incoming: [String] = []
     /// 새 버전은 있지만 클론 사정(고친 파일, 다른 브랜치)으로 미룬 까닭. 실패가 아니라 다음 확인 때 다시 해 본다.
@@ -88,6 +100,19 @@ final class AppUpdater: ObservableObject {
         return true
     }
 
+    /// 자동으로 받지 못한 새 버전이 있다 (자동 업데이트를 꺼 두었거나, 실패했거나, 클론 사정으로 미뤘다).
+    /// 자동 업데이트가 켜져 있고 창을 닫으면 곧 받을 것이면 알리지 않는다.
+    var hasPendingUpdate: Bool {
+        guard target != nil, canCheck, state != .updating, state != .checking else { return false }
+        if installFailed { return true }
+        return !autoUpdate || blocked != nil || UserDefaults.standard.string(forKey: Key.failedTarget) == target
+    }
+
+    /// 지금 설치가 자동 업데이트인지. 자동 업데이트는 무대에 진행 판을 띄우지 않고 조용히 한다.
+    @Published private(set) var isSilent = false
+    /// 마지막 실패가 설치 실패인지 (확인 실패는 다음 확인 때 저절로 다시 하므로 알리지 않는다).
+    @Published private(set) var installFailed = false
+
     /// 앱이 켜질 때. 업데이트 뒤 처음 켜진 것이면 알리고, 잠시 뒤부터 30분마다 확인한다.
     func start() {
         guard let build else { return }
@@ -97,7 +122,16 @@ final class AppUpdater: ObservableObject {
             defaults.removeObject(forKey: Key.installing)
             windowsToReopen = defaults.stringArray(forKey: Key.reopen) ?? []
             defaults.removeObject(forKey: Key.reopen)
-            bubble = build.subject.isEmpty ? "새 버전으로 업데이트했어요" : "업데이트했어요: \(Self.title(of: build.subject))"
+            if !defaults.bool(forKey: Key.silent) {
+                bubble = build.subject.isEmpty ? "새 버전으로 업데이트했어요" : "업데이트했어요: \(Self.title(of: build.subject))"
+            }
+            defaults.removeObject(forKey: Key.silent)
+            let started = defaults.double(forKey: Key.startedAt)
+            // 앱이 꺼져 있던 시간이 섞인 값(10분 넘음)은 어림에 쓰지 않는다
+            if started > 0, case let took = Date().timeIntervalSince1970 - started, took > 10, took < 600 {
+                defaults.set(took, forKey: Key.lastDuration)
+            }
+            defaults.removeObject(forKey: Key.startedAt)
             Diagnostics.record("업데이트", "설치 완료: \(build.commit.prefix(7)) \(build.subject)")
         }
         guard canCheck else { return }
@@ -105,12 +139,36 @@ final class AppUpdater: ObservableObject {
         let timer = Timer(timeInterval: Self.checkInterval, repeats: true) { [weak self] _ in self?.check() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+        scheduleDaily()
+        _ = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil,
+                                                          queue: .main) { [weak self] _ in
+            // 잠든 사이 지난 타이머는 깨어난 뒤 늦게 울리거나 건너뛰어서 다음 9시를 다시 잡는다
+            self?.scheduleDaily()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { self?.checkIfStale() }
+        }
     }
 
-    /// 팝오버를 열 때. 잠자기에서 깨어나 확인이 밀렸으면 다시 본다.
+    private func scheduleDaily() {
+        dailyTimer?.invalidate()
+        guard let next = Calendar.current.nextDate(after: Date(), matching: DateComponents(hour: Self.dailyHour, minute: 0),
+                                                   matchingPolicy: .nextTime) else { return }
+        let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
+            self?.check()
+            self?.scheduleDaily()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        dailyTimer = timer
+    }
+
+    /// 팝오버를 열 때, 잠자기에서 깨어났을 때. 확인이 30분 넘게 밀렸거나 오늘 9시 확인을 놓쳤으면 다시 본다.
     func checkIfStale() {
-        let last = UserDefaults.standard.double(forKey: Key.lastCheck)
-        if Date().timeIntervalSince1970 - last > Self.checkInterval { check() }
+        let last = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: Key.lastCheck))
+        if Date().timeIntervalSince(last) > Self.checkInterval || Self.missedDaily(lastCheck: last) { check() }
+    }
+
+    static func missedDaily(lastCheck: Date, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let today = calendar.date(bySettingHour: dailyHour, minute: 0, second: 0, of: now) else { return false }
+        return now >= today && lastCheck < today
     }
 
     /// 업데이트 직전에 열려 있던 창 (한 번만).
@@ -162,9 +220,13 @@ final class AppUpdater: ObservableObject {
     }
 
     private func finishCheck(_ comparison: Comparison?, status: Int, failed: Bool) {
+        // 확인하는 사이 업데이트를 눌렀으면 설치 상태를 덮지 않는다
+        guard state == .checking else { return }
         // 404는 아직 푸시하지 않은 커밋으로 만든 빌드다. GitHub보다 앞서 있으니 받을 것이 없다
         if status == 404 {
             state = .upToDate
+            target = nil
+            installFailed = false
             return
         }
         guard let comparison, status == 200 else {
@@ -177,6 +239,8 @@ final class AppUpdater: ObservableObject {
         // ahead: 기본 브랜치가 이 빌드보다 앞섬. diverged·behind는 이 빌드에 기본 브랜치에 없는 커밋이 있는 개발 빌드다
         guard comparison.status == "ahead", comparison.aheadBy > 0 else {
             state = .upToDate
+            target = nil
+            installFailed = false
             return
         }
         let latest = comparison.commits.last?.commit.message.components(separatedBy: "\n").first ?? ""
@@ -185,12 +249,21 @@ final class AppUpdater: ObservableObject {
         let isNew = newTarget != target
         target = newTarget
         state = .available(count: comparison.aheadBy, latest: latest)
-        if isNew { blocked = nil }
+        if isNew {
+            blocked = nil
+            installFailed = false
+        }
+        // 자동으로 받지 못한 새 버전은 러너가 누르면 업데이트하는 말풍선으로 알린다 (hasPendingUpdate)
         if autoUpdate, newTarget != UserDefaults.standard.string(forKey: Key.failedTarget) {
             applyAutoUpdateIfIdle()
-        } else if isNew {
-            bubble = "새 버전이 있어요: \(Self.title(of: latest))"
         }
+    }
+
+    /// 러너 말풍선 글. 누르면 `update()`.
+    var pendingPrompt: String {
+        if installFailed { return "업데이트하지 못했어요 · 눌러서 다시" }
+        if blocked != nil { return "새 버전을 기다리는 중 · 눌러서 다시" }
+        return "새 버전이 있어요 · 눌러서 업데이트"
     }
 
     /// 커밋 메시지 첫 줄에서 "feat: ", "fix(ui): " 같은 머리말을 뺀다.
@@ -218,10 +291,15 @@ final class AppUpdater: ObservableObject {
 
     /// 클론이 깨끗하고 기본 브랜치에 있을 때만 받는다. 직접 고친 파일이 있으면 덮어쓰지 않고 멈춘다.
     func update(automatic: Bool = false) {
-        guard let build, canCheck, state != .updating else { return }
-        state = .updating
-        let target = target
+        // 확인 중에 받으면 그 응답이 버려져, 미룰 때 .checking으로 돌아가 다시는 확인하지 못한다
+        guard let build, canCheck, state != .updating, state != .checking else { return }
+        // .updating으로 바꾸기 전에 잡아 둬야 미룰 때 원래 상태로 돌아간다 (안 그러면 설치 중에 멈춰 확인도 다시 못 한다)
         let previous = state
+        isSilent = automatic
+        installFailed = false
+        state = .updating
+        progress = Progress(fraction: 0.02, step: "준비하는 중", remaining: nil)
+        let target = target
         DispatchQueue.global(qos: .utility).async {
             let problem = Self.checkClone(build)
             DispatchQueue.main.async {
@@ -241,6 +319,7 @@ final class AppUpdater: ObservableObject {
                     Diagnostics.record("업데이트", "미룸: \(reason)")
                     self.blocked = reason
                     self.blockedAt = Date()
+                    self.progress = nil
                     self.state = previous
                 case .broken(let reason)?:
                     self.fail(reason, target: target, automatic: automatic)
@@ -252,9 +331,14 @@ final class AppUpdater: ObservableObject {
     private func fail(_ reason: String, target: String?, automatic: Bool) {
         Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "실패: \(reason)")
         state = .failed(reason)
+        installFailed = true
+        stopProgress()
         UserDefaults.standard.removeObject(forKey: Key.installing)
         UserDefaults.standard.removeObject(forKey: Key.reopen)
-        if automatic, let target { UserDefaults.standard.set(target, forKey: Key.failedTarget) }
+        UserDefaults.standard.removeObject(forKey: Key.startedAt)
+        UserDefaults.standard.removeObject(forKey: Key.silent)
+        // 눌러서 받다 실패한 버전도 자동으로 다시 빌드하지 않는다. 말풍선을 눌러 다시 할 수 있다
+        if let target { UserDefaults.standard.set(target, forKey: Key.failedTarget) }
     }
 
     private enum CloneProblem {
@@ -351,12 +435,24 @@ final class AppUpdater: ObservableObject {
         environment["GIT_TERMINAL_PROMPT"] = "0"
         process.environment = environment
         UserDefaults.standard.set(target ?? build.commit, forKey: Key.installing)
+        UserDefaults.standard.set(automatic, forKey: Key.silent)
         UserDefaults.standard.set(openWindows(), forKey: Key.reopen)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Key.startedAt)
+        logOffset = ((try? FileManager.default.attributesOfItem(atPath: Self.logURL.path))?[.size] as? UInt64) ?? 0
+        startProgress()
         Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "설치 시작: \(build.commit.prefix(7)) → \((target ?? "").prefix(7))")
         // install.sh가 성공하면 이 앱은 꺼지고 새 빌드가 뜬다. 여기로 돌아왔다면 실패한 것이다
         process.terminationHandler = { finished in
             DispatchQueue.main.async {
-                if finished.terminationStatus != 0 {
+                if finished.terminationStatus == 0 {
+                    // install.sh가 이 앱을 끄지 못했다. 설치 중에 멈춰 있지 않게 돌려 두고 다시 확인한다
+                    guard self.state == .updating else { return }
+                    Diagnostics.record("업데이트", "설치는 끝났지만 앱이 꺼지지 않았습니다")
+                    self.stopProgress()
+                    self.state = .idle
+                    UserDefaults.standard.removeObject(forKey: Key.startedAt)
+                    self.check()
+                } else {
                     let log = (try? String(contentsOf: Self.logURL, encoding: .utf8)) ?? ""
                     let reason = Self.failureReason(inLog: log).map { "업데이트에 실패했습니다: \($0)" }
                         ?? "업데이트에 실패했습니다. 로그: \(Self.logURL.path)"
@@ -369,5 +465,86 @@ final class AppUpdater: ObservableObject {
         } catch {
             fail("업데이트를 시작하지 못했습니다.", target: target, automatic: automatic)
         }
+    }
+
+    // MARK: 진행 상황
+
+    struct Progress: Equatable {
+        /// 0~1. 뒤로 가지 않는다.
+        var fraction: Double
+        var step: String
+        /// 남은 시간 어림 (초).
+        var remaining: TimeInterval?
+    }
+
+    /// install.sh·build-app.sh가 남기는 줄로 단계를 나눈다. swift build의 `[12 / 56]`은 빌드 안의 진행이다.
+    /// 분모가 빌드 계획이 늘며 커지므로 값이 잠깐 줄 수 있어, 쓰는 쪽에서 큰 값만 받는다.
+    static func progress(inLog text: String) -> (fraction: Double, step: String) {
+        var result = (fraction: 0.02, step: "준비하는 중")
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("== ") {
+                result = (0.04, "새 코드 받는 중")
+            } else if line.hasPrefix("RunTime 설치를 시작합니다") {
+                result = (0.08, "빌드 준비 중")
+            } else if line.hasPrefix("▸ release 빌드") {
+                result = (0.1, "빌드하는 중")
+            } else if line.hasPrefix("Build complete") {
+                result = (0.86, "앱으로 묶는 중")
+            } else if line.hasPrefix("▸ 서명") {
+                result = (0.88, "서명하는 중")
+            } else if line.hasPrefix("▸ dmg") {
+                result = (0.92, "마무리하는 중")
+            } else if line.hasPrefix("✓ 완료: dist/") {  // setup-signing.sh도 "✓ 완료:"를 찍는다
+                result = (0.97, "새 버전으로 다시 켜는 중")
+            } else if let match = line.firstMatch(of: #/^\[(\d+) / (\d+)\]/#),
+                      let done = Double(match.1), let total = Double(match.2), total > 0 {
+                result = (0.1 + 0.75 * min(done / total, 1), "빌드하는 중")
+            }
+        }
+        return result
+    }
+
+    /// 남은 시간. 지난 설치 시간과 지금 속도로 잰 값을 섞는다. 처음엔 진행률이 거칠어 지난 시간을 더 믿는다.
+    static func remaining(fraction: Double, elapsed: TimeInterval, typical: TimeInterval) -> TimeInterval {
+        let byHistory = typical - elapsed
+        guard fraction >= 0.2 else { return max(byHistory, 5) }
+        let bySpeed = elapsed / fraction * (1 - fraction)
+        return max((byHistory + bySpeed) / 2, 3)
+    }
+
+    /// 화면 점검(--ui-shots)용. 받지 않고 말풍선이나 진행 판이 뜬 상태로만 둔다.
+    func rehearse(progress: Progress?) {
+        target = "rehearsal"
+        incoming = ["업데이트 진행 막대", "매일 9시 업데이트 확인"]
+        state = progress == nil ? .available(count: 2, latest: "feat: 업데이트 진행 막대") : .updating
+        self.progress = progress
+    }
+
+    private func startProgress() {
+        progressTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.readProgress() }
+        RunLoop.main.add(timer, forMode: .common)
+        progressTimer = timer
+    }
+
+    private func stopProgress() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+        progress = nil
+    }
+
+    private func readProgress() {
+        guard state == .updating, let handle = try? FileHandle(forReadingFrom: Self.logURL) else { return }
+        defer { try? handle.close() }
+        try? handle.seek(toOffset: logOffset)
+        let text = String(decoding: handle.readDataToEndOfFile(), as: UTF8.self)
+        let (fraction, step) = Self.progress(inLog: text)
+        let defaults = UserDefaults.standard
+        let elapsed = Date().timeIntervalSince1970 - defaults.double(forKey: Key.startedAt)
+        let typical = defaults.double(forKey: Key.lastDuration)
+        let best = max(fraction, progress?.fraction ?? 0)
+        progress = Progress(fraction: best, step: step,
+                            remaining: Self.remaining(fraction: best, elapsed: elapsed, typical: typical > 0 ? typical : 100))
     }
 }
