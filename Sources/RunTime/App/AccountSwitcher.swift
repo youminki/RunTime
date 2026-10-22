@@ -91,12 +91,12 @@ final class AccountSwitcher: ObservableObject {
     /// 다시 빌드한 앱이면 키체인이 한 번 물을 수 있다. 못 읽으면 그 계정은 /login을 한 번 더 하면 된다.
     private func migrateLegacy() {
         guard !keychainOff else { return }
-        let ids = accounts.map(\.id).filter { Keychain.exists($0, service: Self.legacyKeychainService) }
+        let ids = accounts.map(\.id).filter { AppKeychain.exists($0, service: Self.legacyKeychainService) }
         guard !ids.isEmpty else { return }
         queue.async { [weak self] in
             guard let self else { return }
             for id in ids {
-                if let text = Keychain.read(id, service: Self.legacyKeychainService),
+                if let text = AppKeychain.read(id, service: Self.legacyKeychainService),
                    let legacy = try? JSONDecoder().decode(LegacySnapshot.self, from: Data(text.utf8)),
                    let part = ClaudeLogin.oauthPart(of: legacy.credentials),
                    ClaudeLogin.writeKeychain(part, service: Self.keychainService, account: id) {
@@ -106,7 +106,7 @@ final class AccountSwitcher: ObservableObject {
                             self.persist()
                         }
                     }
-                    Keychain.delete(id, service: Self.legacyKeychainService)
+                    AppKeychain.delete(id, service: Self.legacyKeychainService)
                 }
             }
         }

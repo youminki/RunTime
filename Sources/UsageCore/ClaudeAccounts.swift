@@ -128,6 +128,11 @@ public enum ClaudeLogin {
         OAuthUsageProvider.runSecurity(["find-generic-password", "-s", service, "-a", account, "-w"])
     }
 
+    /// 값을 읽지 않고 항목이 있는지만 본다 (`-w` 없이는 허용 창이 뜨지 않는다).
+    public static func keychainItemExists(service: String, account: String) -> Bool {
+        OAuthUsageProvider.runSecurity(["find-generic-password", "-s", service, "-a", account]) != nil
+    }
+
     public static func deleteKeychain(service: String, account: String) {
         _ = OAuthUsageProvider.runSecurity(["delete-generic-password", "-s", service, "-a", account])
     }

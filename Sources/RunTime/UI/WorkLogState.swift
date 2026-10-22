@@ -16,6 +16,12 @@ final class WorkLogPage: ObservableObject {
     @Published var preview = Preview.report
     /// 레드마인 칸에서 이번에 보내지 않으려고 체크를 푼 일감. 새로 생긴 일감은 골라진 채로 나온다.
     @Published var redmineSkipped: Set<Int> = []
+    /// MR 수정 전·후 화면을 붙이지 않고 보낼 일감.
+    @Published var redmineNoScreens: Set<Int> = []
+    /// 댓글은 빼고 진척률·칸만 보낼 일감. 같은 댓글이 이미 있으면 저절로 들어간다.
+    @Published var redmineNoNote: Set<Int> = []
+    /// 진척률 고르기 창을 띄운 일감.
+    @Published var ratioEditing: Int?
     /// 이미 올라간 것 같아 체크를 한 번 풀어 준 일감 (다시 고른 것을 또 풀지 않게).
     @Published var hintApplied: Set<Int> = []
     /// 레드마인 칸에서 댓글을 다 펼쳐 본 일감과, 댓글을 고치려고 연 일감.

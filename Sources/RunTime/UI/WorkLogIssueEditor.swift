@@ -7,6 +7,8 @@ struct IssueFieldEditor<Footer: View>: View {
     let current: IssueInfo?
     /// 일지로 정한 값 (카드에서만). 고르지 않으면 이 값이 나간다.
     var auto = WorkReport.IssueFields()
+    /// 일지 줄의 상태로 정한 진척률 (카드에서만). 내 일감에서는 nil이라 "그대로"가 기본이다.
+    var autoRatio: Int? = nil
     @Binding var edit: WorkReport.IssueEdit
     @ObservedObject var sync: WorkLogSync
     /// 저장 확인 중에는 칸을 막아, 확인 문구와 다른 값이 저장되지 않게 한다.
@@ -23,6 +25,17 @@ struct IssueFieldEditor<Footer: View>: View {
                 }
             }
             Group {
+                row("진척률", now: current.map { "\($0.doneRatio)%" }) {
+                    Picker("", selection: Binding(
+                        get: { edit.doneRatio ?? -1 },
+                        set: { edit.doneRatio = $0 < 0 ? nil : $0 }
+                    )) {
+                        Text(autoRatio.map { "일지대로 · \($0)%" } ?? "그대로").tag(-1)
+                        ForEach(Array(stride(from: 100, through: 0, by: -10)), id: \.self) { value in
+                            Text(value == 100 ? "100% · 완료" : "\(value)%").tag(value)
+                        }
+                    }
+                }
                 row("상태", now: current?.status) {
                     Picker("", selection: Binding(
                         get: { edit.statusID ?? 0 },

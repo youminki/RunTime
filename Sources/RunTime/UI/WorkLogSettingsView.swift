@@ -171,8 +171,37 @@ struct WorkLogSettingsView: View {
                         statusPicker($settings.doneStatusID)
                     }
                 }
+                if !sync.blockedTransitions.isEmpty {
+                    SettingRow("막힌 상태 전환", blockedText + " · 레드마인 워크플로가 막아 자동으로 보내지 않습니다. 워크플로를 고쳤으면 지우세요.",
+                               detailTint: WL.waiting) {
+                        Button("기억 지우기") { sync.clearBlockedTransitions(); page.flash("막힌 상태 전환 기억을 지웠습니다") }
+                            .buttonStyle(NotionButtonStyle())
+                    }
+                }
+            SettingRow("진행중 진척률", "일지 줄이 몇 %인지 정하지 않은 진행중일 때 보낼 진척률입니다. 그대로 두면 진척률은 건드리지 않고 댓글만 보냅니다. 카드마다 진척률 > 고치기로 따로 고를 수 있습니다.") {
+                Picker("", selection: Binding(get: { settings.inProgressRatio ?? -1 },
+                                              set: { settings.inProgressRatio = $0 < 0 ? nil : $0 })) {
+                    Text("그대로").tag(-1)
+                    ForEach(Array(stride(from: 10, through: 90, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 110)
+            }
+            SettingRow("MR 화면 붙이기", "MR 본문이나 AI 검증 댓글에 수정 전·후 그림이 있으면 레드마인에 첨부하고 댓글 끝에 붙입니다. 카드마다 끌 수도 있습니다.") {
+                Toggle("", isOn: $settings.attachScreens).toggleStyle(.switch).labelsHidden()
+            }
             }
         }
+    }
+
+    /// `할일 → 해결` 꼴.
+    private var blockedText: String {
+        sync.blockedTransitions.sorted().compactMap { key -> String? in
+            let ids = key.split(separator: ">").compactMap { Int($0) }
+            guard ids.count == 2 else { return nil }
+            let name = { (id: Int) in sync.statuses.first { $0.id == id }?.name ?? "#\(id)" }
+            return "\(name(ids[0])) → \(name(ids[1]))"
+        }.joined(separator: ", ")
     }
 
     private func statusPicker(_ selection: Binding<Int?>) -> some View {

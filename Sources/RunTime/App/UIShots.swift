@@ -13,6 +13,8 @@ enum UIShots {
         page.preview = preview
         // 예시 일지의 마지막 기록일을 보인다 (날이 바뀌어도 빈 화면이 찍히지 않게)
         if let last = WorkLogStore.shared.log.days.first { page.day = last }
+        // 점검할 날을 고를 때 (예: 보낼 MR 줄이 있는 날의 화면 첨부 미리보기). 화면은 앱처럼 카드 목록이 불러온다
+        if let day = ProcessInfo.processInfo.environment["RUNTIME_SHOT_DAY"], !day.isEmpty { page.day = day }
         page.search = search
         // 줄이 없는 새 프로젝트도 카드와 목록에 보이는지 본다
         if let newProject {
@@ -161,6 +163,8 @@ enum UIShots {
             ("worklog-day", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
             ("worklog-day-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
             ("worklog-redmine", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
+            // 카드 아래 MR 화면 첨부 미리보기까지 보이게 길게 찍는다
+            ("worklog-redmine-tall", .darkAqua, 1400, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
             ("worklog-redmine-partial", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: {
                 // 일감 하나를 골라 내지 않았을 때 보내기 단추와 카드가 고른 것만 가리키는지 본다
                 let page = workLogPage(.day, preview: .redmine)

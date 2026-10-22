@@ -8,6 +8,7 @@ struct WorkLogPreview: View {
     @ObservedObject var page: WorkLogPage
     @ObservedObject var sync: WorkLogSync
     @ObservedObject var settings: WorkLogSettings
+    @ObservedObject private var shots = MRScreenStore.shared
 
     var body: some View {
         let updates = WorkReport.redmineUpdates(pendingEntries, log: store.log)
@@ -17,7 +18,7 @@ struct WorkLogPreview: View {
                      selection: $page.preview, fill: true)
             switch page.preview {
             case .report: report
-            case .redmine: redmine(updates)
+            case .redmine: redmine(edited(updates))
             }
         }
         .padding(16)
@@ -202,23 +203,25 @@ struct WorkLogPreview: View {
             } else {
                 selectionBar(updates, chosen: chosen.count)
                 ScrollView {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 14) {
                         ForEach(updates, id: \.issue) { update in card(update) }
                     }
                 }
                 .onAppear {
                     sync.loadInfo(updates.map(\.issue))
                     if settings.redmineReady { sync.checkPosted(updates) }
+                    loadScreens(updates)
                 }
                 .onChange(of: updates.map(\.issue)) { _ in
                     sync.loadInfo(updates.map(\.issue))
                     if settings.redmineReady { sync.checkPosted(updates) }
+                    loadScreens(updates)
                 }
                 .onReceive(sync.$postedHints) { hints in
-                    // 이미 올라간 것 같은 일감은 처음 한 번 체크를 풀어 둔다 (다시 고르면 그대로 보낸다)
+                    // 같은 댓글이 이미 있는 일감은 처음 한 번 댓글만 뺀다. 진척률·칸은 그대로 보낸다 (댓글 스위치로 되돌린다)
                     for issue in hints.keys where !page.hintApplied.contains(issue) {
                         page.hintApplied.insert(issue)
-                        page.redmineSkipped.insert(issue)
+                        page.redmineNoNote.insert(issue)
                     }
                 }
             }
@@ -288,7 +291,8 @@ struct WorkLogPreview: View {
     }
 
     private func sendSummary(_ updates: [WorkReport.RedmineUpdate]) -> String {
-        var parts = ["\(updates.count)건", "진척률과 댓글"]
+        let noted = updates.filter { $0.needsNote && !page.redmineNoNote.contains($0.issue) }.count
+        var parts = ["\(updates.count)건", noted == updates.count ? "진척률과 댓글" : "댓글 \(noted)건"]
         let changing = updates.filter { !fields($0).isEmpty }.count
         if changing > 0 { parts.append("상태·날짜·담당자 \(changing)건") }
         return parts.joined(separator: " · ")
@@ -304,6 +308,17 @@ struct WorkLogPreview: View {
     }
 
     /// 진척률을 실제로 보내는 일감만 따진다 (시간만 남기는 일감은 진척률을 보내지 않는다).
+    /// 카드에서 직접 고른 진척률을 얹는다. 보낼 때(`sync.send`)도 같은 값을 얹는다.
+    private func edited(_ updates: [WorkReport.RedmineUpdate]) -> [WorkReport.RedmineUpdate] {
+        updates.map { sync.prepared($0, edit: page.issueEdits[$0.issue]) }
+    }
+
+    /// 일지 줄의 상태로 정한 진척률 (직접 고르기 전 값).
+    private func journalRatio(_ issue: Int) -> Int? {
+        WorkReport.redmineUpdates(pendingEntries, log: store.log).first { $0.issue == issue }
+            .flatMap { sync.prepared($0, edit: nil).doneRatio }
+    }
+
     private func isLowering(_ update: WorkReport.RedmineUpdate) -> Bool {
         guard update.needsNote, let ratio = update.doneRatio, let current = info(update.issue)?.doneRatio else { return false }
         return current > ratio
@@ -311,7 +326,7 @@ struct WorkLogPreview: View {
 
     /// 보내기 전 확인 창: 일감마다 진척률, 함께 바뀔 칸, 댓글, 작업 시간을 한눈에 보이고 확인해야 보낸다.
     func sendConfirm(_ issues: Set<Int>) -> some View {
-        let updates = WorkReport.redmineUpdates(pendingEntries, log: store.log).filter { issues.contains($0.issue) }
+        let updates = edited(WorkReport.redmineUpdates(pendingEntries, log: store.log).filter { issues.contains($0.issue) })
         let lowering = updates.filter(isLowering)
         return VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
@@ -366,7 +381,11 @@ struct WorkLogPreview: View {
     private func confirmRow(_ update: WorkReport.RedmineUpdate, lowering: Bool) -> some View {
         let current = info(update.issue)
         var parts = WorkLogFormat.fieldChanges(fields(update), current: current)
-        if update.needsNote { parts.append("댓글 \(update.note.components(separatedBy: "\n").filter { !$0.isEmpty }.count)줄") }
+        if page.redmineNoNote.contains(update.issue) {
+            parts.append("댓글 빼고 보냄")
+        } else if update.needsNote {
+            parts.append("댓글 \(update.note.components(separatedBy: "\n").filter { !$0.isEmpty }.count)줄")
+        }
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 IssueLabel(issue: update.issue)
@@ -392,11 +411,49 @@ struct WorkLogPreview: View {
         sync.info(issue)
     }
 
+    /// 보낼 일감 카드. 머리(번호·제목) 아래로 진척률 · 함께 바꿀 칸 · 댓글 · 화면 영역을 선으로 나누고,
+    /// 영역마다 고치는 단추를 제목줄 오른쪽 같은 자리에 둔다.
     private func card(_ update: WorkReport.RedmineUpdate) -> some View {
         let current = info(update.issue)
-        let lowering = update.doneRatio.map { ratio in (current?.doneRatio ?? 0) > ratio } ?? false
         let chosen = !page.redmineSkipped.contains(update.issue)
-        return VStack(alignment: .leading, spacing: 10) {
+        let shape = RoundedRectangle(cornerRadius: WL.outer, style: .continuous)
+        return VStack(alignment: .leading, spacing: 0) {
+            // 머리에 옅은 띠를 깔아 카드가 어디서 시작하는지 보이게 한다 (카드가 길어도 다음 카드와 섞이지 않게)
+            cardHeader(update, current: current, chosen: chosen)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(chosen ? WL.accent.opacity(0.07) : Color.primary.opacity(0.035))
+            Rectangle().fill(WL.border).frame(height: 1)
+            VStack(alignment: .leading, spacing: 0) {
+                if let hint = sync.postedHints[update.issue] {
+                    postedBanner(update, hint: hint).padding(.top, 12).padding(.bottom, 2)
+                }
+                cardSection(first: true) { progress(update, current: current) }
+                cardSection { fieldChanges(update, current: current) }
+                cardSection { note(update) }
+                screens(update)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 4)
+        }
+        .background(shape.fill(WL.surface))
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(chosen ? WL.border.opacity(1) : WL.border.opacity(0.5), lineWidth: 1))
+        .shadow(color: Color.black.opacity(chosen ? 0.08 : 0), radius: 3, y: 1)
+        // 고르지 않은 일감은 옅게 두어 보낼 것만 눈에 들어오게 한다
+        .opacity(chosen ? 1 : 0.55)
+    }
+
+    /// 영역 하나: 위에 가는 선, 위아래 여백.
+    private func cardSection<Content: View>(first: Bool = false, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !first { Rectangle().fill(WL.border.opacity(0.6)).frame(height: 1) }
+            content().padding(.vertical, 11)
+        }
+    }
+
+    private func cardHeader(_ update: WorkReport.RedmineUpdate, current: IssueInfo?, chosen: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Toggle("", isOn: Binding(
                     get: { chosen },
@@ -408,65 +465,140 @@ struct WorkLogPreview: View {
                 .labelsHidden()
                 .tip(chosen ? "이번에 보내지 않기" : "이번에 보내기")
                 IssueLabel(issue: update.issue)
-                // 진척률은 번호 옆에 두고 단추는 카드 오른쪽 끝에 모은다 (단추 사이에 숫자가 끼지 않게)
-                Text(ratioText(update, current: current?.doneRatio))
-                    .font(WL.number)
-                    .foregroundStyle(lowering ? WL.waiting : .primary)
-                    .tip(lowering ? "레드마인의 지금 진척률보다 낮습니다" : "레드마인 진척률 지금 → 보낼 값")
-                Spacer(minLength: 4)
-                HStack(spacing: 0) {
-                    if settings.redmineReady {
-                        Button { send([update]) } label: { Image(systemName: "paperplane") }
-                            .tip("이 일감만 보내기 (보내기 전에 확인)")
-                            .disabled(sync.sending)
-                    }
-                    cardMenu(update)
+                if current?.isQA == true {
+                    Text("QA").font(.system(size: 9.5, weight: .bold)).foregroundStyle(WL.waiting)
+                        .padding(.horizontal, 5).frame(height: 15)
+                        .background(Capsule().fill(WL.waiting.opacity(0.14)))
+                        .tip("QA 수정사항으로 묶여 보고됩니다")
                 }
-                .buttonStyle(GhostIconButtonStyle())
+                Spacer(minLength: 4)
+                if settings.redmineReady {
+                    Button { send([update]) } label: { Label("보내기", systemImage: "paperplane") }
+                        .buttonStyle(PillButtonStyle(tint: WL.accent))
+                        .tip("이 일감만 보내기 (보내기 전에 확인)")
+                        .disabled(sync.sending)
+                }
+                cardMenu(update)
+                    .buttonStyle(GhostIconButtonStyle())
             }
-            if let hint = sync.postedHints[update.issue] { postedBanner(update, hint: hint) }
             if let current {
-                // 대괄호 머리와 기능 번호를 뗀 보고서 이름으로 보인다. QA 건은 QA로 묶일 것을 알린다
-                Text(current.isQA ? IssueInfo.cleanSubject(current.subject) : current.reportTitle).font(WL.meta).lineLimit(2)
-                Text((current.isQA ? "QA 수정사항 · " : "") + current.project).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1)
+                // 대괄호 머리와 기능 번호를 뗀 보고서 이름으로 보인다
+                Text(current.isQA ? IssueInfo.cleanSubject(current.subject) : current.reportTitle)
+                    .font(WL.heading).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Text(current.project).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1)
+            } else {
+                Text("일감 정보를 받는 중…").font(WL.caption).foregroundStyle(WL.faint)
+            }
+        }
+    }
+
+    /// 진척률: 지금 → 보낼 값과 막대. 고치기로 0~100%를 바로 고르고, 직접 고른 값은 파란 점으로 알린다.
+    /// 100%를 고르면 함께 바꿀 칸의 상태도 완료로 따라온다.
+    private func progress(_ update: WorkReport.RedmineUpdate, current: IssueInfo?) -> some View {
+        let lowering = update.doneRatio.map { ratio in (current?.doneRatio ?? 0) > ratio } ?? false
+        let picked = page.issueEdits[update.issue]?.doneRatio != nil
+        return VStack(alignment: .leading, spacing: 8) {
+            CardSectionHeader(icon: "chart.bar.fill", title: "진척률") {
+                HStack(spacing: 6) {
+                    if picked { Circle().fill(WL.accent).frame(width: 5, height: 5).tip("직접 고른 진척률") }
+                    Text(ratioText(update, current: current?.doneRatio))
+                        .font(WL.number)
+                        .foregroundStyle(lowering ? WL.waiting : update.doneRatio == nil ? WL.muted : .primary)
+                        .tip(lowering ? "레드마인의 지금 진척률보다 낮습니다" : "레드마인 진척률 지금 → 보낼 값")
+                    ratioMenu(update, current: current)
+                }
             }
             if let ratio = update.doneRatio {
                 RatioBar(current: current?.doneRatio, next: ratio)
             }
-            fieldChanges(update, current: current)
-            note(update)
         }
-        .padding(12)
-        .wlSurface()
-        // 고르지 않은 일감은 옅게 두어 보낼 것만 눈에 들어오게 한다
-        .opacity(chosen ? 1 : 0.5)
     }
 
-    /// 비슷한 댓글이 이미 있을 때: 보낸 것으로 표시하거나 그 댓글을 열어 본다.
+    /// 진척률 고르기. 다른 고치기와 같은 단추에서 작은 창을 열어 일지대로 두거나 10% 단위로 고른다.
+    private func ratioMenu(_ update: WorkReport.RedmineUpdate, current: IssueInfo?) -> some View {
+        Button { page.ratioEditing = update.issue } label: { Label("고치기", systemImage: "pencil") }
+            .buttonStyle(PillButtonStyle())
+            .tip("보낼 진척률 고르기")
+            .popover(isPresented: Binding(
+                get: { page.ratioEditing == update.issue },
+                set: { if !$0 { page.ratioEditing = nil } }
+            ), arrowEdge: .leading) {
+                ratioPicker(update, current: current)
+            }
+    }
+
+    private func ratioPicker(_ update: WorkReport.RedmineUpdate, current: IssueInfo?) -> some View {
+        let picked = page.issueEdits[update.issue]?.doneRatio
+        let auto = journalRatio(update.issue)
+        func set(_ ratio: Int?) {
+            var edit = page.issueEdits[update.issue] ?? .init()
+            edit.doneRatio = ratio
+            page.issueEdits[update.issue] = edit.isEmpty ? nil : edit
+            page.ratioEditing = nil
+        }
+        func cell(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+            Button(action: action) {
+                Text(title)
+                    .font(.system(size: 12, weight: selected ? .semibold : .medium)).monospacedDigit()
+                    .foregroundStyle(selected ? Color.white : WL.text)
+                    .frame(maxWidth: .infinity).frame(height: 28)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selected ? WL.accent : Color.primary.opacity(0.05)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("보낼 진척률").font(WL.heading)
+                Text("레드마인 지금 \(current.map { "\($0.doneRatio)%" } ?? "모름") · 100%를 고르면 상태도 완료로 바뀝니다")
+                    .font(WL.caption).foregroundStyle(WL.muted)
+            }
+            cell("일지대로 · " + (auto.map { "\($0)%" } ?? "그대로 둠"), selected: picked == nil) { set(nil) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
+                ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { value in
+                    cell(value == 100 ? "완료" : "\(value)%", selected: picked == value) { set(value) }
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 260)
+    }
+
+    /// 비슷한 댓글이 이미 있을 때: 댓글은 저절로 빼고 진척률·칸만 보낸다. 댓글도 보내거나, 보낸 것으로 표시하거나, 그 댓글을 연다.
     private func postedBanner(_ update: WorkReport.RedmineUpdate, hint: RedmineAPI.Journal) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        let noNote = page.redmineNoNote.contains(update.issue)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "checkmark.bubble").font(.system(size: 11, weight: .semibold))
-                // 시각은 오른쪽 끝에 따로 두어 좁은 칸에서 시각만 다음 줄로 떨어지지 않게 한다
-                Text("비슷한 댓글이 이미 있습니다").font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("같은 댓글이 이미 있습니다").font(.system(size: 11.5, weight: .semibold))
+                    Text(!noNote ? "댓글도 다시 보냅니다"
+                         : nothingElse(update) ? "진척률·칸도 이미 같아, 보내면 보낸 것으로만 표시합니다"
+                         : "이번에는 댓글을 빼고 진척률·칸만 보냅니다")
+                        .font(WL.caption).foregroundStyle(WL.text.opacity(0.75))
+                }
                 Spacer(minLength: 4)
+                // 시각은 오른쪽 끝에 따로 두어 좁은 칸에서 시각만 다음 줄로 떨어지지 않게 한다
                 Text(WorkLogFormat.when(hint.createdOn)).font(WL.caption).monospacedDigit().fixedSize()
             }
             .foregroundStyle(WL.waiting)
-            HStack(spacing: 12) {
-                Button("보낸 것으로 표시") {
+            FlowLayout(spacing: 6) {
+                Button { open(update.issue, journal: hint.id) } label: { Label("댓글 보기", systemImage: "arrow.up.right") }
+                Button {
+                    if noNote { page.redmineNoNote.remove(update.issue) } else { page.redmineNoNote.insert(update.issue) }
+                } label: { Label(noNote ? "댓글도 보내기" : "댓글 빼기", systemImage: noNote ? "plus.bubble" : "minus.circle") }
+                Button {
                     store.markPosted(update.entryIDs)
                     page.redmineSkipped.remove(update.issue)
                     page.flash("#\(update.issue)를 보낸 것으로 표시했습니다")
-                }
-                Button("댓글 보기") { open(update.issue, journal: hint.id) }
+                } label: { Label("보낸 것으로 표시", systemImage: "checkmark") }
+                    .tip("진척률·칸도 보내지 않고 목록에서 뺍니다")
             }
-            .buttonStyle(TextLinkButtonStyle())
+            .buttonStyle(PillButtonStyle())
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.waiting.opacity(0.1)))
-        .tip("Claude나 손으로 이미 올린 것 같아 체크를 풀어 두었습니다. 다시 고르면 그대로 보냅니다")
     }
 
     /// 잘못 고른 일감을 빼는 방법들. 연결 끊기는 줄을 지우지 않고 일감 번호만 떼어 낸다.
@@ -588,73 +720,73 @@ struct WorkLogPreview: View {
         }
     }
 
-    /// 함께 바꿀 상태·날짜·담당자를 작은 칩으로, 끝에 고치기 단추. 직접 고른 칸은 진하게.
+    /// 함께 바꿀 상태·날짜·담당자. 직접 고른 칸은 진하게, 고치기는 제목줄 오른쪽에.
     private func fieldChanges(_ update: WorkReport.RedmineUpdate, current: IssueInfo?) -> some View {
         let fields = fields(update)
         let edit = page.issueEdits[update.issue]
-        return FlowLayout(spacing: 4) {
-            if let status = fields.status {
-                FieldChip(icon: "flag", text: "\(current?.status ?? "") → \(status.name)", picked: edit?.statusID != nil)
+        return VStack(alignment: .leading, spacing: 8) {
+            CardSectionHeader(icon: "slider.horizontal.3", title: "함께 바꿀 칸") {
+                Button { page.fieldEditing = update.issue } label: { Label("고치기", systemImage: "pencil") }
+                    .buttonStyle(PillButtonStyle())
+                    .tip("보낼 때 함께 바꿀 상태·시작일·완료 기한·담당자 고르기")
+                    .popover(isPresented: Binding(
+                        get: { page.fieldEditing == update.issue },
+                        set: { if !$0 { page.fieldEditing = nil } }
+                    ), arrowEdge: .leading) {
+                        IssueFieldEditor(current: current, auto: settings.syncIssueFields ? sync.fields(for: update) : .init(),
+                                         autoRatio: journalRatio(update.issue),
+                                         edit: Binding(get: { page.issueEdits[update.issue] ?? .init() },
+                                                       set: { page.issueEdits[update.issue] = $0.isEmpty ? nil : $0 }),
+                                         sync: sync) {
+                            Button("닫기") { page.fieldEditing = nil }.buttonStyle(NotionButtonStyle(kind: .primary))
+                        }
+                    }
             }
-            if let start = fields.startDate {
-                FieldChip(icon: "play", text: start.isEmpty ? "시작일 비움" : "시작 \(WorkReport.shortDate(start))", picked: edit?.startDate != nil)
-            }
-            if let due = fields.dueDate {
-                FieldChip(icon: "flag.checkered", text: due.isEmpty ? "기한 비움" : "기한 \(WorkReport.shortDate(due))", picked: edit?.dueDate != nil)
-            }
-            if let assignee = fields.assignee {
-                FieldChip(icon: "person", text: "담당 \(assignee.name)", picked: true)
-            }
-            Button { page.fieldEditing = update.issue } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "slider.horizontal.3").font(.system(size: 9.5, weight: .semibold))
-                    Text(fields.isEmpty ? "상태·날짜·담당자" : "고치기").font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(WL.muted)
-                .padding(.horizontal, 7)
-                .frame(height: 20)
-                .background(Capsule().strokeBorder(WL.border, lineWidth: 1))
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .tip("보낼 때 함께 바꿀 상태·시작일·완료 기한·담당자 고르기")
-            .popover(isPresented: Binding(
-                get: { page.fieldEditing == update.issue },
-                set: { if !$0 { page.fieldEditing = nil } }
-            ), arrowEdge: .leading) {
-                IssueFieldEditor(current: current, auto: settings.syncIssueFields ? sync.fields(for: update) : .init(),
-                                 edit: Binding(get: { page.issueEdits[update.issue] ?? .init() },
-                                               set: { page.issueEdits[update.issue] = $0.isEmpty ? nil : $0 }),
-                                 sync: sync) {
-                    Button("닫기") { page.fieldEditing = nil }.buttonStyle(NotionButtonStyle(kind: .primary))
+            if fields.isEmpty {
+                Text("바꿀 칸 없음 · 상태\(current?.status.isEmpty == false ? "(\(current!.status))" : "")는 그대로 둡니다")
+                    .font(WL.caption).foregroundStyle(WL.muted)
+            } else {
+                FlowLayout(spacing: 4) {
+                    if let status = fields.status {
+                        FieldChip(icon: "flag", text: "\(current?.status ?? "") → \(status.name)", picked: edit?.statusID != nil)
+                    }
+                    if let start = fields.startDate {
+                        FieldChip(icon: "play", text: start.isEmpty ? "시작일 비움" : "시작 \(WorkReport.shortDate(start))", picked: edit?.startDate != nil)
+                    }
+                    if let due = fields.dueDate {
+                        FieldChip(icon: "flag.checkered", text: due.isEmpty ? "기한 비움" : "기한 \(WorkReport.shortDate(due))", picked: edit?.dueDate != nil)
+                    }
+                    if let assignee = fields.assignee {
+                        FieldChip(icon: "person", text: "담당 \(assignee.name)", picked: true)
+                    }
                 }
             }
         }
     }
 
-    /// 댓글 미리보기. 길면 펼쳐 보고, 고치기를 누르면 그 줄의 댓글 칸이 뜬다.
+    /// 댓글 미리보기. 고치기는 제목줄 오른쪽, 길면 아래에서 펼친다.
     private func note(_ update: WorkReport.RedmineUpdate) -> some View {
         let expanded = page.expandedNotes.contains(update.issue)
         let long = update.note.components(separatedBy: "\n").count > 6 || update.note.count > 240
         let target = store.log.entries.filter { update.entryIDs.contains($0.id) }.sorted { $0.day < $1.day }
             .last(where: \.needsRedmine)?.id ?? update.entryIDs.last
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(update.note)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(expanded ? nil : 6)
-                .lineSpacing(2)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 10) {
-                if long {
-                    Button(expanded ? "접기" : "펼치기") {
-                        if expanded { page.expandedNotes.remove(update.issue) } else { page.expandedNotes.insert(update.issue) }
-                    }
+        let noNote = page.redmineNoNote.contains(update.issue)
+        return VStack(alignment: .leading, spacing: 8) {
+            CardSectionHeader(icon: "text.bubble", title: "댓글", detail: noNote ? "빼고 보냄" : nil) {
+                if update.needsNote {
+                    Toggle("", isOn: Binding(
+                        get: { !noNote },
+                        set: { on in
+                            if on { page.redmineNoNote.remove(update.issue) } else { page.redmineNoNote.insert(update.issue) }
+                        }
+                    ))
+                    .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                    .tip(noNote ? "댓글도 함께 보내기" : "댓글은 빼고 진척률·상태·날짜만 보내기")
                 }
-                Spacer()
-                if let target, update.needsNote {
-                    Button("댓글 고치기") { page.noteEditing = update.issue }
+                if let target, update.needsNote, !noNote {
+                    Button { page.noteEditing = update.issue } label: { Label("고치기", systemImage: "pencil") }
+                        .buttonStyle(PillButtonStyle())
+                        .tip("이 일감 줄의 댓글 고치기")
                         .popover(isPresented: Binding(
                             get: { page.noteEditing == update.issue },
                             set: { if !$0 { page.noteEditing = nil } }
@@ -663,16 +795,144 @@ struct WorkLogPreview: View {
                         }
                 }
             }
-            .buttonStyle(TextLinkButtonStyle(tint: WL.muted))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(update.note)
+                    .font(.system(size: 12))
+                    .foregroundStyle(WL.text)
+                    .lineLimit(expanded ? nil : noNote ? 2 : 6)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if long {
+                    Button {
+                        if expanded { page.expandedNotes.remove(update.issue) } else { page.expandedNotes.insert(update.issue) }
+                    } label: {
+                        Label(expanded ? "접기" : "모두 보기", systemImage: expanded ? "chevron.up" : "chevron.down")
+                    }
+                    .buttonStyle(TextLinkButtonStyle(tint: WL.accent))
+                    .labelStyle(.titleAndIcon)
+                    .font(.system(size: 11.5, weight: .medium))
+                }
+            }
+            .padding(10)
+            .opacity(noNote ? 0.4 : 1)
+            // 어두운 화면에서는 callout과 카드 바탕이 같은 색이라 옅은 덧칠과 테두리로 상자를 보인다
+            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(Color.primary.opacity(0.045)))
+            .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.border.opacity(0.6), lineWidth: 1))
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.callout))
+    }
+
+    /// 이 일감 줄이 온 MR의 수정 전·후 화면. 보낼 때 레드마인에 첨부하고 댓글 끝에 붙는다.
+    /// 레드마인 댓글과 같은 순서로, 항목 제목 아래 수정 전·후를 나란히 보인다.
+    @ViewBuilder
+    private func screens(_ update: WorkReport.RedmineUpdate) -> some View {
+        let origins = settings.attachScreens && !page.redmineNoNote.contains(update.issue)
+            ? MRScreenStore.origins(store.log.entries.filter { update.entryIDs.contains($0.id) }.map(\.source)) : []
+        let refs = origins.compactMap(shots.ref)
+        if !origins.isEmpty {
+            let groups = refs.flatMap { ref in
+                (shots.screens[ref] ?? []).enumerated().map { index, screen in
+                    ScreenGroup(id: "\(ref.key)#\(index)", number: index + 1, title: screen.title,
+                                before: screen.before, after: screen.after)
+                }
+            }
+            let count = groups.reduce(0) { $0 + ($1.before == nil ? 0 : 1) + ($1.after == nil ? 0 : 1) }
+            let loading = origins.contains { shots.loading.contains($0) }
+            let off = page.redmineNoScreens.contains(update.issue)
+            if loading || !groups.isEmpty {
+                cardSection {
+                    VStack(alignment: .leading, spacing: 10) {
+                        CardSectionHeader(icon: "photo.on.rectangle.angled", title: "수정 전·후 화면",
+                                          detail: loading ? nil : off ? "붙이지 않음" : "\(count)장 첨부") {
+                            if loading {
+                                ProgressView().controlSize(.mini)
+                            } else if !groups.isEmpty {
+                                Toggle("", isOn: Binding(
+                                    get: { !off },
+                                    set: { on in
+                                        if on { page.redmineNoScreens.remove(update.issue) } else { page.redmineNoScreens.insert(update.issue) }
+                                    }
+                                ))
+                                .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                                .tip(off ? "화면을 함께 올리기" : "이번에는 화면 없이 댓글만 보내기")
+                            }
+                        }
+                        if loading {
+                            Text("MR에서 수정 전·후 화면을 찾는 중…").font(WL.caption).foregroundStyle(WL.muted)
+                        } else if !off {
+                            ForEach(groups) { group in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("\(group.number). \(group.title.map(MRScreenTitle.short) ?? "화면")")
+                                        .font(WL.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    HStack(spacing: 6) {
+                                        thumb(group.before, kind: .before)
+                                        thumb(group.after, kind: .after)
+                                    }
+                                }
+                            }
+                            Text("댓글 끝 [수정 전·후 화면]에 이 순서로 붙습니다. 누르면 크게 봅니다.")
+                                .font(WL.caption).foregroundStyle(WL.faint)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 보낼 일감들의 MR 화면을 받는다. 카드 안의 빈 칸에 달면 처음에 보이는 것이 없어 불리지 않으므로 목록에서 부른다.
+    private func loadScreens(_ updates: [WorkReport.RedmineUpdate]) {
+        guard settings.attachScreens else { return }
+        let ids = Set(updates.flatMap(\.entryIDs))
+        let origins = MRScreenStore.origins(store.log.entries.filter { ids.contains($0.id) }.map(\.source))
+        shots.load(origins, host: settings.gitlabHost.trimmingCharacters(in: .whitespaces))
+    }
+
+    /// 썸네일 하나. 캡처가 없으면 빈 칸으로 두어 어느 쪽이 빠졌는지 보인다. 누르면 원본을 연다.
+    private func thumb(_ path: String?, kind: MRScreens.Kind) -> some View {
+        let image = path.flatMap { shots.thumbnails[$0] }
+        return Button {
+            if let path { shots.open(path) }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 4, style: .continuous).fill(WL.callout)
+                if let image {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                } else {
+                    Text(path == nil ? "캡처 없음" : "불러오는 중").font(WL.caption).foregroundStyle(WL.faint)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .strokeBorder(WL.border, style: StrokeStyle(lineWidth: 1, dash: path == nil ? [3, 3] : [])))
+            .overlay(alignment: .topLeading) {
+                Text(kind.label)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .frame(height: 16)
+                    .background(Capsule().fill(path == nil ? WL.faint : kind == .before ? WL.quiet : WL.done))
+                    .padding(4)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(image == nil)
+        .tip(image == nil ? kind.label : "\(kind.label) 크게 보기")
     }
 
     private func ratioText(_ update: WorkReport.RedmineUpdate, current: Int?) -> String {
         guard let ratio = update.doneRatio else { return "진척률 그대로" }
-        if let current, current != ratio { return "\(current)% → \(ratio)%" }
-        return "\(ratio)%"
+        guard let current else { return "\(ratio)%" }
+        return current == ratio ? "\(ratio)% · 같음" : "\(current)% → \(ratio)%"
+    }
+
+    /// 댓글을 빼면 레드마인에서 바뀌는 것이 없는지 (진척률이 같고 함께 바꿀 칸도 없다).
+    private func nothingElse(_ update: WorkReport.RedmineUpdate) -> Bool {
+        let ratioSame = update.doneRatio == nil || update.doneRatio == info(update.issue)?.doneRatio
+        return ratioSame && fields(update).isEmpty
     }
 
     // MARK: 보내기
@@ -684,10 +944,13 @@ struct WorkLogPreview: View {
         }
         let issues = Set(updates.map(\.issue))
         let fresh = WorkReport.redmineUpdates(pendingEntries, log: store.log).filter { issues.contains($0.issue) }
-        sync.send(fresh, edits: page.issueEdits) { sent, failures in
+        sync.send(fresh, edits: page.issueEdits, withoutScreens: page.redmineNoScreens, withoutNotes: page.redmineNoNote) { sent, failures in
             // 보낸 일감은 직접 고른 칸을 비운다 (다음에 또 보낼 때 묵은 값이 나가지 않게)
             let left = Set(pendingEntries.compactMap(\.issue))
-            for issue in issues where !left.contains(issue) { page.issueEdits[issue] = nil }
+            for issue in issues where !left.contains(issue) {
+                page.issueEdits[issue] = nil
+                page.redmineNoNote.remove(issue)
+            }
             page.flash(failures.isEmpty ? "레드마인에 \(sent)건 보냈습니다" : "\(sent)건 보냄 · " + failures.joined(separator: ", "))
         }
     }
@@ -796,5 +1059,23 @@ private struct RatioBar: View {
             }
         }
         .frame(height: 4)
+    }
+}
+
+/// 카드에 보일 화면 항목 하나 (제목과 수정 전·후).
+private struct ScreenGroup: Identifiable {
+    let id: String
+    let number: Int
+    let title: String?
+    let before: String?
+    let after: String?
+}
+
+private enum MRScreenTitle {
+    /// `제목 (\`/경로\`): 확인됨` → `제목`.
+    static func short(_ title: String) -> String {
+        var text = title
+        if let open = text.range(of: " (") { text = String(text[..<open.lowerBound]) }
+        return text.replacingOccurrences(of: "**", with: "").trimmingCharacters(in: .whitespaces)
     }
 }

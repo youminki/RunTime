@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Security
+import UsageCore
 import WorkLogCore
 
 /// 업무 일지 연동 설정. 레드마인 API 키만 키체인에 둔다.
@@ -35,6 +36,10 @@ final class WorkLogSettings: ObservableObject {
     @Published var doneStatusID: Int? { didSet { defaults.set(doneStatusID ?? 0, forKey: "workLog.doneStatus") } }
     /// 댓글을 HTML(`<p>`, `<br />`)로 보낸다. 웹 편집기를 쓰는 레드마인은 평문 줄바꿈을 한 줄로 붙인다.
     @Published var redmineHTML: Bool { didSet { defaults.set(redmineHTML, forKey: "workLog.redmineHTML") } }
+    /// 일지가 몇 %인지 정하지 않은 진행중일 때 보낼 진척률. nil이면 진척률을 건드리지 않는다.
+    @Published var inProgressRatio: Int? { didSet { defaults.set(inProgressRatio ?? -1, forKey: "workLog.inProgressRatio") } }
+    /// MR 본문·댓글의 수정 전·후 화면을 레드마인 댓글에 붙인다 (기본 켬).
+    @Published var attachScreens: Bool { didSet { defaults.set(attachScreens, forKey: "workLog.attachScreens") } }
 
     private init() {
         gitlabHost = defaults.string(forKey: "workLog.gitlabHost") ?? Self.detectGitLabHost() ?? ""
@@ -54,6 +59,9 @@ final class WorkLogSettings: ObservableObject {
         reportGrouped = defaults.object(forKey: "workLog.reportGrouped") as? Bool ?? true
         quickAddEnabled = defaults.object(forKey: "workLog.quickAdd") as? Bool ?? true
         syncIssueFields = defaults.object(forKey: "workLog.syncIssueFields") as? Bool ?? true
+        let ratio = defaults.object(forKey: "workLog.inProgressRatio") as? Int ?? -1
+        inProgressRatio = (0...100).contains(ratio) ? ratio : nil
+        attachScreens = defaults.object(forKey: "workLog.attachScreens") as? Bool ?? true
         redmineHTML = defaults.object(forKey: "workLog.redmineHTML") as? Bool ?? true
         let progress = defaults.integer(forKey: "workLog.progressStatus")
         progressStatusID = progress > 0 ? progress : nil
@@ -61,8 +69,8 @@ final class WorkLogSettings: ObservableObject {
         doneStatusID = done > 0 ? done : nil
     }
 
-    private static let keyAccount = "redmine-api-key"
-    private static let teamsAccount = "teams-webhook"
+    static let keyAccount = "redmine-api-key"
+    static let teamsAccount = "teams-webhook"
 
     /// 웹훅 주소는 아는 사람 누구나 그 채팅에 글을 올릴 수 있어 키체인에 둔다.
     var teamsWebhook: URL? {
@@ -166,11 +174,48 @@ final class WorkLogSettings: ObservableObject {
     }
 }
 
-/// 키체인. 앱이 직접 만든 항목이라 고정 서명으로 다시 빌드해도 묻지 않는다.
+/// 업무 일지 키체인 (레드마인 API 키, 팀즈 웹훅). Claude Code 로그인 항목처럼 `/usr/bin/security`로 만든다.
+/// 앱이 직접 만든 항목은 자체 서명 앱의 코드 해시에 묶여, "항상 허용"을 눌러도 다시 빌드할 때마다 또 묻는다.
+/// 예전 항목은 처음 읽을 때 한 번 옮기고 지운다 (그때 한 번 더 물을 수 있다).
 enum Keychain {
+    static let service = "RunTime worklog"
+
+    static func read(_ account: String) -> String? {
+        if let data = ClaudeLogin.readKeychain(service: service, account: account) {
+            return String(data: data, encoding: .utf8)
+        }
+        guard AppKeychain.exists(account, service: AppKeychain.worklogService),
+              let legacy = AppKeychain.read(account, service: AppKeychain.worklogService) else { return nil }
+        if ClaudeLogin.writeKeychain(Data(legacy.utf8), service: service, account: account) {
+            AppKeychain.delete(account, service: AppKeychain.worklogService)
+        }
+        return legacy
+    }
+
+    @discardableResult
+    static func write(_ value: String, account: String) -> Bool {
+        guard ClaudeLogin.writeKeychain(Data(value.utf8), service: service, account: account) else { return false }
+        AppKeychain.delete(account, service: AppKeychain.worklogService)
+        return true
+    }
+
+    /// 값을 읽지 않고 항목이 있는지만 본다. 허용 창이 뜨지 않는다.
+    static func exists(_ account: String) -> Bool {
+        ClaudeLogin.keychainItemExists(service: service, account: account)
+            || AppKeychain.exists(account, service: AppKeychain.worklogService)
+    }
+
+    static func delete(_ account: String) {
+        ClaudeLogin.deleteKeychain(service: service, account: account)
+        AppKeychain.delete(account, service: AppKeychain.worklogService)
+    }
+}
+
+/// 앱이 Security.framework로 직접 만든 키체인 항목. 예전 저장소를 옮길 때만 쓴다.
+enum AppKeychain {
     static let worklogService = "dev.runtime.RunTime.worklog"
 
-    static func read(_ account: String, service: String = worklogService) -> String? {
+    static func read(_ account: String, service: String) -> String? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account, kSecReturnData as String: true]
         var result: AnyObject?
@@ -180,7 +225,7 @@ enum Keychain {
 
     /// 있으면 값만 바꾸고 없을 때만 새로 만든다. 지우고 다시 만들면 만들기가 실패할 때 옛 키까지 잃는다.
     @discardableResult
-    static func write(_ value: String, account: String, service: String = worklogService) -> Bool {
+    static func write(_ value: String, account: String, service: String) -> Bool {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account]
         let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
@@ -192,13 +237,13 @@ enum Keychain {
     }
 
     /// 값을 읽지 않고 항목이 있는지만 본다. 값을 읽을 때와 달리 키체인 허용 창이 뜨지 않는다.
-    static func exists(_ account: String, service: String = worklogService) -> Bool {
+    static func exists(_ account: String, service: String) -> Bool {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account, kSecReturnAttributes as String: true]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    static func delete(_ account: String, service: String = worklogService) {
+    static func delete(_ account: String, service: String) {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                     kSecAttrAccount as String: account]
         SecItemDelete(query as CFDictionary)
@@ -232,6 +277,15 @@ final class WorkLogSync: ObservableObject {
     private let defaults = UserDefaults.standard
 
     func start() {
+        // 예전 항목이 남아 있으면 켤 때 한꺼번에 옮긴다. 보낼 때 따로따로 다시 묻지 않게
+        if !WorkLogSettings.keychainOff {
+            DispatchQueue.global(qos: .utility).async {
+                for account in [WorkLogSettings.keyAccount, WorkLogSettings.teamsAccount]
+                where AppKeychain.exists(account, service: AppKeychain.worklogService) {
+                    _ = Keychain.read(account)
+                }
+            }
+        }
         timer?.invalidate()
         // 1분마다 깨서 10분이 지났으면 가져오고, 알림 시각이 됐으면 알린다
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.tick() }
@@ -291,12 +345,25 @@ final class WorkLogSync: ObservableObject {
     }
 
     private static func fetchMRs(host: String, since: Date) throws -> [WorkCapture.MergedMR] {
+        let iso = ISO8601DateFormatter().string(from: since)
+        let output = try run(glabPath(), ["api", "--paginate", "--hostname", host,
+                                          "merge_requests?scope=created_by_me&state=merged&updated_after=\(iso)&per_page=100"])
+        return try WorkCapture.parseMRs(output)
+    }
+
+    private static func glabPath() throws -> String {
         guard let glab = ["/opt/homebrew/bin/glab", "/usr/local/bin/glab"].first(where: FileManager.default.isExecutableFile)
         else { throw SyncError("glab이 없습니다. brew install glab 뒤 glab auth login") }
-        let iso = ISO8601DateFormatter().string(from: since)
-        let output = try run(glab, ["api", "--paginate", "--hostname", host,
-                                    "merge_requests?scope=created_by_me&state=merged&updated_after=\(iso)&per_page=100"])
-        return try WorkCapture.parseMRs(output)
+        return glab
+    }
+
+    /// GitLab API 한 번 (`glab api`).
+    static func glab(host: String, _ endpoint: String) throws -> Data {
+        try run(glabPath(), ["api", "--hostname", host, endpoint])
+    }
+
+    static func glabText(_ args: [String]) throws -> String {
+        text(try run(glabPath(), args))
     }
 
     /// 회사 GitLab 저장소가 아닌 곳은 조용히 건너뛰고, 회사 저장소에서 git이 실패하면 오류로 알린다.
@@ -521,10 +588,12 @@ final class WorkLogSync: ObservableObject {
 
     /// 이 일감을 보낼 때 함께 바꿀 칸: 일지로 정한 상태·날짜 위에 직접 고른 칸을 얹는다.
     func fields(for update: WorkReport.RedmineUpdate, edit: WorkReport.IssueEdit? = nil) -> WorkReport.IssueFields {
+        let update = prepared(update, edit: edit)
         let current = store.log.issue(update.issue)
         let auto = settings.syncIssueFields && !statuses.isEmpty
-            ? WorkReport.issueFields(for: update, current: current, statuses: statuses,
-                                     progressID: settings.progressStatusID, doneID: settings.doneStatusID)
+            ? Self.droppingBlocked(WorkReport.issueFields(for: update, current: current, statuses: statuses,
+                                                          progressID: settings.progressStatusID, doneID: settings.doneStatusID),
+                                   current: current, blocked: blockedTransitions)
             : .init()
         return .merged(auto: auto, edit: edit, current: current, statuses: statuses)
     }
@@ -542,7 +611,11 @@ final class WorkLogSync: ObservableObject {
         queue.async { [weak self] in
             for update in todo {
                 let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: update.issue))
-                guard response.ok, let data = response.data, let journals = try? RedmineAPI.parseJournals(data) else { continue }
+                guard response.ok, let data = response.data, let journals = try? RedmineAPI.parseJournals(data) else {
+                    // 못 읽었으면 확인한 것으로 남기지 않는다. 다음에 목록을 열 때 다시 본다
+                    DispatchQueue.main.async { self?.checkedNotes[update.issue] = nil }
+                    continue
+                }
                 // Claude는 MR을 올릴 때(머지 전날일 수 있다) 댓글을 다니, 첫날 사흘 전부터 본다
                 let since = update.days.first.flatMap(WorkDay.date).map { $0.addingTimeInterval(-3 * 86_400) } ?? .distantPast
                 let hit = RedmineComment.alreadyPosted(update.note, journals: journals, since: since)
@@ -594,6 +667,7 @@ final class WorkLogSync: ObservableObject {
     /// 일감마다 차례로 지금 값을 다시 읽고 댓글·진척률과 함께 상태·시작일·기한·담당자를 보낸다.
     /// `edits`는 카드에서 직접 고른 칸으로, 일지로 정한 값보다 앞선다.
     func send(_ updates: [WorkReport.RedmineUpdate], edits: [Int: WorkReport.IssueEdit] = [:],
+              withoutScreens: Set<Int> = [], withoutNotes: Set<Int> = [],
               done: @escaping (_ sent: Int, _ failures: [String]) -> Void) {
         guard !sending else {
             done(0, ["이미 보내는 중입니다"])
@@ -604,23 +678,43 @@ final class WorkLogSync: ObservableObject {
             return
         }
         sending = true
+        // 진행중 기본 진척률과 카드에서 직접 고른 진척률을 먼저 얹는다 (100%로 고르면 완료 상태도 따라온다)
+        let updates = updates.map { prepared($0, edit: edits[$0.issue]) }
         // 설정과 장부는 메인에서 읽어 두고, 보내기는 뒤에서 한 건씩 차례로 한다
         let html = settings.redmineHTML
-        let plan = { [settings, statuses] (update: WorkReport.RedmineUpdate, current: IssueInfo?) -> WorkReport.IssueFields in
+        let plan = { [settings, statuses, blockedTransitions] (update: WorkReport.RedmineUpdate, current: IssueInfo?) -> WorkReport.IssueFields in
             let auto = settings.syncIssueFields && !statuses.isEmpty
-                ? WorkReport.issueFields(for: update, current: current, statuses: statuses,
-                                         progressID: settings.progressStatusID, doneID: settings.doneStatusID)
+                ? Self.droppingBlocked(WorkReport.issueFields(for: update, current: current, statuses: statuses,
+                                                              progressID: settings.progressStatusID, doneID: settings.doneStatusID),
+                                       current: current, blocked: blockedTransitions)
                 : .init()
             return .merged(auto: auto, edit: edits[update.issue], current: current, statuses: statuses)
         }
         let known = Dictionary(uniqueKeysWithValues: updates.compactMap { update in store.log.issue(update.issue).map { (update.issue, $0) } })
+        // 줄이 MR에서 왔으면 그 MR의 수정 전·후 화면을 함께 붙인다. 이미 붙여 보낸 MR은 다시 붙이지 않는다
+        let host = settings.gitlabHost.trimmingCharacters(in: .whitespaces)
+        var attach: [Int: (origins: [MRScreenStore.Origin], previous: String)] = [:]
+        // 화면은 댓글에 붙으므로 댓글을 빼고 보내는 일감에는 붙이지 않는다
+        for update in updates where settings.attachScreens && !withoutScreens.contains(update.issue)
+            && !withoutNotes.contains(update.issue) && !host.isEmpty {
+            let sources = store.log.entries.filter { update.entryIDs.contains($0.id) }.map(\.source)
+            let previous = store.log.sent.filter { $0.issue == update.issue && $0.undoneAt == nil }.map(\.note).joined()
+            let origins = MRScreenStore.origins(sources)
+            if !origins.isEmpty { attach[update.issue] = (origins, previous) }
+        }
         queue.async { [weak self] in
             var sent = 0
             var failures: [String] = []
             for update in updates {
-                let result = Self.sendOne(update, base: base, key: key, known: known[update.issue], html: html, plan: plan)
+                let screens = attach[update.issue].flatMap { plan -> ScreenAttachment? in
+                    let refs = plan.origins.compactMap { MRScreenStore.shared.refForSending($0, host: host) }
+                        .filter { !plan.previous.contains("mr\($0.iid)-") }
+                    return refs.isEmpty ? nil : Self.attachScreens(refs, base: base, key: key, host: host, html: html)
+                }
+                let result = Self.sendOne(update, base: base, key: key, known: known[update.issue], html: html,
+                                          screens: screens, noteless: withoutNotes.contains(update.issue), plan: plan)
                 failures += result.failures
-                if result.record != nil { sent += 1 }
+                if result.record != nil || result.markOnly { sent += 1 }
                 DispatchQueue.main.async { self?.apply(result, update: update) }
             }
             DispatchQueue.main.async {
@@ -650,15 +744,16 @@ final class WorkLogSync: ObservableObject {
                 let fields = WorkReport.IssueFields.merged(auto: .init(), edit: edit, current: current, statuses: statuses)
                 if let message = fields.problem(current: current) {
                     problem = message
-                } else if fields.isEmpty {
+                } else if fields.isEmpty && (edit.doneRatio == nil || edit.doneRatio == fresh.doneRatio) {
                     problem = "바뀐 칸이 없습니다"
-                } else if let request = try? RedmineAPI.revertRequest(base: base, key: key, issue: issue, doneRatio: nil,
+                } else if let request = try? RedmineAPI.revertRequest(base: base, key: key, issue: issue,
+                                                                      doneRatio: edit.doneRatio == fresh.doneRatio ? nil : edit.doneRatio,
                                                                       statusID: fields.status?.id, startDate: fields.startDate,
                                                                       dueDate: fields.dueDate, assigneeID: fields.assignee?.id) {
                     let response = Self.perform(request)
                     if response.ok {
                         record = RedmineSent(issue: issue, entryIDs: [], note: "", before: Self.snapshot(fresh),
-                                             after: Self.after(fields, ratio: nil))
+                                             after: Self.after(fields, ratio: edit.doneRatio == fresh.doneRatio ? nil : edit.doneRatio))
                     } else {
                         problem = response.message
                     }
@@ -670,7 +765,7 @@ final class WorkLogSync: ObservableObject {
                 guard let self else { return }
                 if let record {
                     self.store.addSent(record)
-                    self.store.setIssueState(issue, ratio: nil, fields: Self.fields(record.after, statuses: statuses))
+                    self.store.setIssueState(issue, ratio: record.after.doneRatio, fields: Self.fields(record.after, statuses: statuses))
                 }
                 self.sending = false
                 self.loadMyIssues()
@@ -682,10 +777,40 @@ final class WorkLogSync: ObservableObject {
     private struct SendResult {
         var record: RedmineSent?
         var failures: [String] = []
+        /// 레드마인 워크플로가 막은 상태 전환 (지금 상태 → 보내려던 상태).
+        var blocked: (from: Int, to: Int)?
+        /// 보낼 것이 없어 보낸 것으로만 표시한다.
+        var markOnly = false
+    }
+
+    /// 보낼 진척률: 일지 값 → 진행중 기본값 → 직접 고른 값 순으로 얹는다.
+    func prepared(_ update: WorkReport.RedmineUpdate, edit: WorkReport.IssueEdit?) -> WorkReport.RedmineUpdate {
+        let base = update.withInProgressRatio(settings.inProgressRatio)
+        return edit?.applied(to: base) ?? base
+    }
+
+    /// 설정에서 막힌 전환 기억을 지운다 (레드마인 워크플로를 고친 뒤).
+    func clearBlockedTransitions() {
+        blockedTransitions = []
+        defaults.removeObject(forKey: "workLog.blockedTransitions")
+    }
+
+    /// 레드마인이 막은 상태 전환 (`"1>3"`). 다음부터는 일지로 정한 상태에서 빼고 보낸다.
+    @Published private(set) var blockedTransitions: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "workLog.blockedTransitions") ?? [])
+
+    static func transitionKey(_ from: Int, _ to: Int) -> String { "\(from)>\(to)" }
+
+    /// 일지로 정한 상태가 이미 막힌 전환이면 뺀다. 직접 고른 상태는 그대로 보내 다시 확인하게 둔다.
+    static func droppingBlocked(_ auto: WorkReport.IssueFields, current: IssueInfo?, blocked: Set<String>) -> WorkReport.IssueFields {
+        guard let status = auto.status, let from = current?.statusID, blocked.contains(transitionKey(from, status.id)) else { return auto }
+        var copy = auto
+        copy.status = nil
+        return copy
     }
 
     /// 일감 하나: 지금 값을 새로 읽고 → 댓글·진척률·칸. 되돌릴 수 있게 보내기 전 값을 함께 남긴다.
     private static func sendOne(_ update: WorkReport.RedmineUpdate, base: URL, key: String, known: IssueInfo?, html: Bool,
+                                screens: ScreenAttachment? = nil, noteless: Bool = false,
                                 plan: (WorkReport.RedmineUpdate, IssueInfo?) -> WorkReport.IssueFields) -> SendResult {
         var result = SendResult()
         guard update.needsNote else { return result }
@@ -693,22 +818,44 @@ final class WorkLogSync: ObservableObject {
         let fresh = (try? fetch(RedmineAPI.issueRequest(base: base, key: key, issue: update.issue)))
             .flatMap { try? RedmineAPI.parseIssues($0).first }
         let current = fresh.map { merge(known, $0) } ?? known
-        let note = html ? RedmineNote.html(update.note) : update.note
+        // 같은 댓글이 이미 있으면 댓글은 빼고 진척률·칸만 보낸다
+        var note = noteless ? "" : html ? RedmineNote.html(update.note) : update.note
+        let uploads = noteless ? [] : screens?.uploads ?? []
+        if let screens {
+            result.failures += screens.failures.map { "#\(update.issue) \($0)" }
+            if !screens.section.isEmpty { note += (html ? "\n" : "\n\n") + screens.section }
+        }
         var extra = fresh == nil ? WorkReport.IssueFields() : plan(update, current)
         if let problem = extra.problem(current: current) {
             result.failures.append("#\(update.issue) \(problem)라 칸은 빼고 보냄")
             extra = .init()
         }
-        var response = put(update, note: note, extra: extra, base: base, key: key)
+        if noteless, extra.isEmpty, update.doneRatio == nil || update.doneRatio == fresh?.doneRatio {
+            // 바꿀 것이 없다. 레드마인에 빈 기록을 남기지 않고 보낸 것으로만 표시한다
+            result.markOnly = true
+            result.failures.append("#\(update.issue) 바뀐 것이 없어 보낸 것으로만 표시")
+            return result
+        }
+        var response = put(update, note: note, extra: extra, uploads: uploads, base: base, key: key)
         if response.status == 422 && !extra.isEmpty {
             // 워크플로가 막는 상태 전환이나 구성원이 아닌 담당자면 댓글까지 잃지 않게 칸을 빼고 다시 보낸다
             result.failures.append("#\(update.issue) 상태·날짜·담당자는 레드마인이 받지 않아 댓글과 진척률만 보냄")
             extra = .init()
-            response = put(update, note: note, extra: extra, base: base, key: key)
+            response = put(update, note: note, extra: extra, uploads: uploads, base: base, key: key)
         }
         guard response.ok else {
             result.failures.append("#\(update.issue) " + response.message)
             return result
+        }
+        // 레드마인은 워크플로가 막는 상태 전환을 오류 없이 빼고 저장한다 (예: 할일 → 해결). 다시 읽어 바뀌었는지 본다
+        if let wanted = extra.status {
+            let after = (try? fetch(RedmineAPI.issueRequest(base: base, key: key, issue: update.issue)))
+                .flatMap { try? RedmineAPI.parseIssues($0).first }
+            if let after, after.statusID != wanted.id {
+                result.failures.append("#\(update.issue) 상태는 레드마인 워크플로가 막아 '\(after.status)'에 그대로 둠 ('\(wanted.name)'(으)로 못 바꿈)")
+                if let from = current?.statusID, from == after.statusID { result.blocked = (from, wanted.id) }
+                extra.status = nil
+            }
         }
         let ratio = update.doneRatio == fresh?.doneRatio ? nil : update.doneRatio
         result.record = RedmineSent(issue: update.issue, entryIDs: update.entryIDs, note: note,
@@ -744,10 +891,55 @@ final class WorkLogSync: ObservableObject {
     }
 
     private static func put(_ update: WorkReport.RedmineUpdate, note: String, extra: WorkReport.IssueFields,
+                            uploads: [RedmineAPI.Upload] = [],
                             base: URL, key: String) -> (ok: Bool, status: Int?, message: String, data: Data?) {
         guard let request = try? RedmineAPI.updateRequest(base: base, key: key, issue: update.issue, doneRatio: update.doneRatio,
-                                                          note: note, fields: extra) else { return (false, nil, "요청을 만들지 못함", nil) }
+                                                          note: note, fields: extra, uploads: uploads)
+        else { return (false, nil, "요청을 만들지 못함", nil) }
         return perform(request)
+    }
+
+    struct ScreenAttachment {
+        var section = ""
+        var uploads: [RedmineAPI.Upload] = []
+        var failures: [String] = []
+    }
+
+    /// MR 화면을 받아 레드마인에 먼저 올리고, 댓글에 붙일 부분과 첨부 토큰을 돌려준다.
+    /// 그림을 못 받거나 못 올려도 댓글은 보낸다 (못 붙인 까닭만 알린다).
+    static func attachScreens(_ refs: [MRScreenStore.Ref], base: URL, key: String, host: String, html: Bool) -> ScreenAttachment {
+        var result = ScreenAttachment()
+        var sections: [String] = []
+        for ref in refs {
+            guard let screens = MRScreenStore.shared.screensForSending(ref, host: host) else {
+                result.failures.append("MR !\(ref.iid) 화면을 GitLab에서 읽지 못해 그림 없이 보냄")
+                continue
+            }
+            var files: [String: String] = [:]
+            var missing = 0
+            for (index, screen) in screens.enumerated() {
+                for (kind, path) in screen.images {
+                    let name = MRScreens.filename(mr: ref.iid, index: index, kind: kind, path: path)
+                    guard let bytes = MRScreenStore.shared.image(path, ref: ref, host: host) else { missing += 1; continue }
+                    let response = perform(RedmineAPI.uploadRequest(base: base, key: key, filename: name, data: bytes))
+                    guard response.ok, let token = response.data.flatMap(RedmineAPI.parseUploadToken) else {
+                        missing += 1
+                        continue
+                    }
+                    files["\(index):\(kind.rawValue)"] = name
+                    result.uploads.append(.init(token: token, filename: name, contentType: RedmineAPI.contentType(forFilename: name)))
+                }
+            }
+            if missing > 0 { result.failures.append("MR !\(ref.iid) 화면 \(missing)장을 붙이지 못함") }
+            let section = MRScreens.noteSection(screens, files: files, html: html)
+            if !section.isEmpty { sections.append(section) }
+        }
+        // MR이 여럿이면 머리는 한 번만 둔다
+        let head = html ? "<p>[수정 전·후 화면]</p>" : "[수정 전·후 화면]"
+        result.section = sections.enumerated().map { index, section in
+            index == 0 ? section : section.replacingOccurrences(of: head + (html ? "\n" : "\n\n"), with: "")
+        }.joined(separator: html ? "\n" : "\n\n")
+        return result
     }
 
     /// 뒤 큐에서 한 요청을 끝까지 기다린다. 422처럼 상태 번호로 갈라야 해서 fetch와 따로 둔다.
@@ -767,6 +959,11 @@ final class WorkLogSync: ObservableObject {
     }
 
     private func apply(_ result: SendResult, update: WorkReport.RedmineUpdate) {
+        if let blocked = result.blocked {
+            blockedTransitions.insert(Self.transitionKey(blocked.from, blocked.to))
+            defaults.set(Array(blockedTransitions).sorted(), forKey: "workLog.blockedTransitions")
+        }
+        if result.markOnly { store.markPosted(update.entryIDs) }
         guard let record = result.record else { return }
         // 보낸 뒤 줄을 고쳐 다시 보낼 목록에 오르면, 방금 올린 댓글과 겹치는지 다시 보게 한다
         checkedNotes[update.issue] = nil

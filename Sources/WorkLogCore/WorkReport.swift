@@ -228,7 +228,7 @@ public enum WorkReport {
     /// 레드마인 일감 하나에 올릴 것.
     public struct RedmineUpdate: Equatable {
         public let issue: Int
-        public let doneRatio: Int?
+        public var doneRatio: Int?
         public let note: String
         public let entryIDs: [UUID]
         /// 댓글·진척률을 보내야 하는지. 시간만 남기면 될 때는 false라 댓글을 또 올리지 않는다.
@@ -237,6 +237,16 @@ public enum WorkReport {
         public var timeEntries: [TimeEntry] = []
         /// 이 일감 줄이 적힌 날들.
         public var days: [String] = []
+        /// 마지막 날 줄이 몇 %인지 정하지 않은 진행중이다. 설정의 진행중 진척률을 얹을 수 있다 (상시 업무는 아니다).
+        public var inProgress = false
+
+        /// 진행중 일감에 설정한 기본 진척률을 얹는다. 직접 고른 진척률은 이 뒤에 얹는다.
+        public func withInProgressRatio(_ ratio: Int?) -> RedmineUpdate {
+            guard inProgress, doneRatio == nil, let ratio else { return self }
+            var copy = self
+            copy.doneRatio = ratio
+            return copy
+        }
 
         public var hours: Double? {
             let total = timeEntries.map(\.hours).reduce(0, +)
@@ -271,9 +281,10 @@ public enum WorkReport {
             }
             // 댓글은 보내야 할 줄만으로 만든다 (시간만 남은 줄의 내용을 또 올리지 않게)
             let noteItems = items.filter(\.needsRedmine)
+            let inProgress = ratio == nil && items.contains { $0.day == lastDay && $0.status == .inProgress }
             return RedmineUpdate(issue: issue, doneRatio: ratio, note: comment(noteItems.isEmpty ? items : noteItems),
                                  entryIDs: items.map(\.id), needsNote: !noteItems.isEmpty, timeEntries: timeEntries,
-                                 days: Array(Set(items.map(\.day))).sorted())
+                                 days: Array(Set(items.map(\.day))).sorted(), inProgress: inProgress)
         }
     }
 
@@ -327,15 +338,27 @@ public enum WorkReport {
         public var startDate: String?
         public var dueDate: String?
         public var assignee: RedmineAPI.Member?
+        /// 직접 고른 진척률. 일지 줄의 상태(완료·60% 등)로 정한 값보다 앞선다.
+        public var doneRatio: Int?
 
-        public init(statusID: Int? = nil, startDate: String? = nil, dueDate: String? = nil, assignee: RedmineAPI.Member? = nil) {
+        public init(statusID: Int? = nil, startDate: String? = nil, dueDate: String? = nil, assignee: RedmineAPI.Member? = nil,
+                    doneRatio: Int? = nil) {
             self.statusID = statusID
             self.startDate = startDate
             self.dueDate = dueDate
             self.assignee = assignee
+            self.doneRatio = doneRatio
         }
 
-        public var isEmpty: Bool { statusID == nil && startDate == nil && dueDate == nil && assignee == nil }
+        public var isEmpty: Bool { statusID == nil && startDate == nil && dueDate == nil && assignee == nil && doneRatio == nil }
+
+        /// 직접 고른 진척률을 얹은 보낼 것. 진척률로 정하는 상태(100%면 완료)도 이 값을 따른다.
+        public func applied(to update: RedmineUpdate) -> RedmineUpdate {
+            guard let doneRatio else { return update }
+            var copy = update
+            copy.doneRatio = doneRatio
+            return copy
+        }
     }
 
     /// 일지를 보고 일감 상태·시작일·완료 기한을 맞춘다.

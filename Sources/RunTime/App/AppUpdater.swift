@@ -230,6 +230,12 @@ final class AppUpdater: ObservableObject {
                     self.blocked = nil
                     self.blockedAt = nil
                     self.launchInstall(build, target: target, automatic: automatic)
+                case .busy(let reason)?:
+                    // 개발 중인 클론은 그대로 두고, 같은 저장소의 업데이트 전용 worktree에서 GitHub 최신을 빌드한다
+                    Diagnostics.record("업데이트", "\(reason) 업데이트 전용 폴더에서 설치")
+                    self.blocked = nil
+                    self.blockedAt = nil
+                    self.launchInstall(build, target: target, automatic: automatic, inWorktree: true)
                 case .wait(let reason)?:
                     // 개발 중인 클론은 실패로 남기지 않는다. 커밋하거나 브랜치를 돌려 놓으면 다음 확인 때 받는다
                     Diagnostics.record("업데이트", "미룸: \(reason)")
@@ -252,7 +258,9 @@ final class AppUpdater: ObservableObject {
     }
 
     private enum CloneProblem {
-        /// 사용자가 클론에서 일하는 중이라 잠시 미룬다.
+        /// 사용자가 클론에서 일하는 중이다 (다른 브랜치, 커밋하지 않은 변경, 푸시하지 않은 커밋). 전용 폴더에서 설치한다.
+        case busy(String)
+        /// 잠시 미룬다.
         case wait(String)
         /// 손대지 않으면 계속 안 되는 문제.
         case broken(String)
@@ -266,9 +274,14 @@ final class AppUpdater: ObservableObject {
         guard let branch = git(["rev-parse", "--abbrev-ref", "HEAD"], in: path) else {
             return .broken("git을 실행하지 못했습니다.")
         }
-        guard branch == build.branch else { return .wait("클론이 \(branch) 브랜치에 있어 \(build.branch)로 돌아오면 받습니다.") }
+        guard !FileManager.default.fileExists(atPath: NSHomeDirectory() + "/Library/Caches/RunTime/install.lock") else {
+            return .wait("다른 설치가 진행 중이라 끝난 뒤 받습니다.")
+        }
+        // 업데이트 전용 폴더에서 설치한 빌드는 늘 그 폴더에서 다시 받는다 (브랜치 없이 커밋을 꺼내 두므로)
+        if path == worktreePath { return .busy("업데이트 전용 폴더에서 설치한 빌드라") }
+        guard branch == build.branch else { return .busy("클론이 \(branch) 브랜치에 있어") }
         guard git(["status", "--porcelain", "--untracked-files=no"], in: path)?.isEmpty == true else {
-            return .wait("클론에 커밋하지 않은 변경이 있어 커밋한 뒤 받습니다.")
+            return .busy("클론에 커밋하지 않은 변경이 있어")
         }
         // pull --ff-only가 로그에만 남기고 실패하지 않게, 갈라진 클론은 먼저 가린다
         guard git(["fetch", "--quiet", "origin", build.branch], in: path) != nil else {
@@ -276,10 +289,7 @@ final class AppUpdater: ObservableObject {
         }
         guard git(["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"], in: path) != nil
                 || git(["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"], in: path) != nil else {
-            return .wait("클론에 GitHub에 없는 커밋이 있어 푸시하거나 맞춘 뒤 받습니다.")
-        }
-        guard !FileManager.default.fileExists(atPath: NSHomeDirectory() + "/Library/Caches/RunTime/install.lock") else {
-            return .wait("다른 설치가 진행 중이라 끝난 뒤 받습니다.")
+            return .busy("클론에 GitHub에 없는 커밋이 있어")
         }
         return nil
     }
@@ -308,13 +318,29 @@ final class AppUpdater: ObservableObject {
     }
 
     /// 앱과 떨어진 셸로 받고 빌드한다. 출력은 로그 파일로 보내 앱이 꺼져도 끊기지 않게 한다.
-    private func launchInstall(_ build: Build, target: String?, automatic: Bool) {
+    /// 개발 클론이 작업 중일 때 빌드하는 곳. 개발 클론과 같은 저장소를 쓰는 worktree다.
+    static let worktreePath = NSHomeDirectory() + "/Library/Application Support/RunTime/update-source"
+
+    private func launchInstall(_ build: Build, target: String?, automatic: Bool, inWorktree: Bool = false) {
         try? FileManager.default.createDirectory(at: Self.logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let quote = { (text: String) in "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let branch = quote(build.branch)
+        let install: String
+        if inWorktree {
+            // 원격 브랜치만 새로 받아 전용 폴더에 꺼낸다. 개발 클론의 작업 파일·브랜치는 건드리지 않는다
+            let worktree = quote(Self.worktreePath)
+            install = """
+            cd \(quote(build.sourcePath)) && git fetch origin "+refs/heads/"\(branch)":refs/remotes/origin/"\(branch) \\
+              && { [ -e \(worktree)/.git ] || { git worktree prune && git worktree add --detach \(worktree) origin/\(branch); }; } \\
+              && cd \(worktree) && git checkout --detach --force origin/\(branch) && ./install.sh
+            """
+        } else {
+            install = "cd \(quote(build.sourcePath)) && git pull --ff-only origin \(branch) && ./install.sh"
+        }
         let script = """
         exec >> \(quote(Self.logURL.path)) 2>&1
-        echo "== $(date) 업데이트 시작"
-        cd \(quote(build.sourcePath)) && git pull --ff-only origin \(quote(build.branch)) && ./install.sh
+        echo "== $(date) 업데이트 시작\(inWorktree ? " (업데이트 전용 폴더)" : "")"
+        \(install)
         """
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")

@@ -891,3 +891,76 @@ struct SevenColumns: Layout {
         }
     }
 }
+
+/// 카드 안 작은 단추 (아이콘 + 글자). 글자 링크보다 눌리는 곳이 분명하고, 영역 제목줄 오른쪽에 같은 꼴로 둔다.
+struct PillButtonStyle: ButtonStyle {
+    var tint: Color? = nil
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        PillBody(configuration: configuration, tint: tint, enabled: enabled)
+    }
+
+    private struct PillBody: View {
+        let configuration: ButtonStyleConfiguration
+        let tint: Color?
+        let enabled: Bool
+        @StateObject private var hover = HoverFlag()
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 11.5, weight: .medium))
+                .labelStyle(PillLabelStyle())
+                .foregroundStyle(tint ?? WL.text)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(tint.map { $0.opacity(configuration.isPressed ? 0.22 : hover.on ? 0.16 : 0.1) }
+                          ?? Color.primary.opacity(configuration.isPressed ? 0.1 : hover.on ? 0.06 : 0)))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(tint == nil ? WL.border : Color.clear, lineWidth: 1))
+                .opacity(enabled ? 1 : 0.45)
+                .contentShape(Rectangle())
+                .onHover { hover.on = $0 }
+        }
+    }
+
+    private struct PillLabelStyle: LabelStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            HStack(spacing: 4) {
+                configuration.icon.font(.system(size: 10, weight: .semibold))
+                configuration.title
+            }
+        }
+    }
+}
+
+/// 카드 안 영역 제목줄: 아이콘·이름 왼쪽, 보조 글자와 단추 오른쪽.
+struct CardSectionHeader<Trailing: View>: View {
+    let icon: String
+    let title: String
+    var detail: String? = nil
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.muted).frame(width: 14)
+            Text(title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(WL.muted)
+            if let detail {
+                Text(detail).font(WL.number).foregroundStyle(.primary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            trailing()
+        }
+        .frame(minHeight: 22)
+    }
+}
+
+extension CardSectionHeader where Trailing == EmptyView {
+    init(icon: String, title: String, detail: String? = nil) {
+        self.init(icon: icon, title: title, detail: detail) { EmptyView() }
+    }
+}
+

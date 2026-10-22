@@ -364,6 +364,13 @@ public enum WorkCapture {
 
     static func isMR(_ entry: WorkEntry) -> Bool { entry.source?.hasPrefix("mr:") == true }
 
+    /// `mr:velox/velox-web-portal!14#37856` → (`velox/velox-web-portal`, 14).
+    public static func mrRef(_ source: String) -> (path: String, iid: Int)? {
+        guard source.hasPrefix("mr:"), let bang = source.lastIndex(of: "!"), let iid = mrNumber(source) else { return nil }
+        let path = String(source[source.index(source.startIndex, offsetBy: 3)..<bang])
+        return path.isEmpty ? nil : (path, iid)
+    }
+
     static func mrNumber(_ source: String) -> Int? {
         Int(source.split(separator: "!").last?.split(separator: "#").first ?? "")
     }

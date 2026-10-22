@@ -204,7 +204,8 @@ public enum RedmineAPI {
 
     /// 진척률과 댓글을 한 번에 올린다. 진척률이 nil이면 댓글만. 상태·시작일·완료 기한은 넘긴 것만 바꾼다.
     public static func updateRequest(base: URL, key: String, issue: Int, doneRatio: Int?, note: String,
-                                     fields extra: WorkReport.IssueFields = .init()) throws -> URLRequest {
+                                     fields extra: WorkReport.IssueFields = .init(),
+                                     uploads: [Upload] = []) throws -> URLRequest {
         var request = URLRequest(url: base.appendingPathComponent("issues/\(issue).json"))
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -215,8 +216,51 @@ public enum RedmineAPI {
         if let assignee = extra.assignee { fields["assigned_to_id"] = assignee.id }
         if let start = extra.startDate { fields["start_date"] = start }
         if let due = extra.dueDate { fields["due_date"] = due }
+        if !uploads.isEmpty {
+            fields["uploads"] = uploads.map { ["token": $0.token, "filename": $0.filename, "content_type": $0.contentType] }
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: ["issue": fields])
         return request
+    }
+
+    /// 먼저 올려 받은 첨부 토큰. 일감 고치기(PUT)에 함께 넘기면 그 댓글의 첨부가 된다.
+    public struct Upload: Equatable {
+        public let token: String
+        public let filename: String
+        public let contentType: String
+
+        public init(token: String, filename: String, contentType: String) {
+            self.token = token
+            self.filename = filename
+            self.contentType = contentType
+        }
+    }
+
+    /// 첨부 파일 올리기 (`POST /uploads.json`, 본문은 파일 그대로).
+    public static func uploadRequest(base: URL, key: String, filename: String, data: Data) -> URLRequest {
+        var components = URLComponents(url: base.appendingPathComponent("uploads.json"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "filename", value: filename)]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        request.httpBody = data
+        return request
+    }
+
+    public static func parseUploadToken(_ data: Data) -> String? {
+        struct Upload: Decodable { let token: String }
+        struct Root: Decodable { let upload: Upload }
+        return (try? JSONDecoder().decode(Root.self, from: data))?.upload.token
+    }
+
+    public static func contentType(forFilename name: String) -> String {
+        switch URL(fileURLWithPath: name).pathExtension.lowercased() {
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        default: return "image/png"
+        }
     }
 
     /// 나에게 배정된 열린 일감 (일감 고르기와 지금 진척률 보기에 쓴다).

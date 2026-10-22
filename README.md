@@ -73,7 +73,8 @@ cd RunTime
 
 앱이 30분마다 GitHub에서 새 버전을 확인하고, 있으면 러너가 말풍선으로 알려 줍니다.
 설정 > 일반 > 업데이트에서 "업데이트"를 누르거나 "자동으로 업데이트"를 켜 두면, 클론한 폴더에서 새 코드를 받아 다시 빌드합니다.
-1~2분 동안 러너가 사라졌다가 새 버전으로 나타납니다. 빌드가 실패하면 쓰던 앱이 그대로 남고, 로그는 `~/Library/Logs/RunTime/update.log`에 있습니다.
+1~2분 동안 러너가 사라졌다가 새 버전으로 나타납니다.
+클론에서 다른 브랜치로 일하거나 커밋하지 않은 변경이 있으면, 그 폴더는 건드리지 않고 같은 저장소의 업데이트 전용 폴더(`~/Library/Application Support/RunTime/update-source`)에서 GitHub 최신을 빌드해 설치합니다. 빌드가 실패하면 쓰던 앱이 그대로 남고, 로그는 `~/Library/Logs/RunTime/update.log`에 있습니다.
 
 터미널에서 하려면 클론한 폴더에서 `git pull --ff-only && ./install.sh`를 실행하세요. 달라진 점은 [변경 기록](CHANGELOG.md)에 있습니다.
 
@@ -90,6 +91,7 @@ rm -rf ~/Library/Application\ Support/RunTime ~/Library/Logs/RunTime
 
 **키체인 암호를 계속 물어요.**
 창이 뜰 때 "허용" 대신 "항상 허용"을 누르세요. `~/.claude/.credentials.json` 파일이 있으면 키체인보다 그 파일을 먼저 읽어서 창이 뜨지 않습니다.
+레드마인 키·팀즈 웹훅을 예전 버전에서 저장했다면, 새 버전이 처음 읽을 때 한 번 더 묻고 업데이트해도 묻지 않는 항목으로 옮깁니다.
 
 **메뉴바에서 러너가 안 보여요.**
 화면이 좁고 앞에 있는 앱의 메뉴가 길면 macOS가 메뉴바 항목을 왼쪽부터 « 안으로 숨깁니다.
@@ -161,6 +163,7 @@ python3 -I scripts/update-aliases.py  # Petdex 캐릭터의 한국어 이름을 
 | `--game-bench` | 무대와 게임 한 장면을 그리는 데 드는 시간 재기 (`BENCH_FRAMES`로 장면 수) |
 | `--hero-gif <파일>` | README 맨 위 GIF 만들기 |
 | `--redmine-check dupes` | 보낼 목록을 레드마인 댓글 꼴로 찍고, 일감마다 비슷한 댓글이 이미 있는지 읽어 봄 (쓰지 않음) |
+| `--redmine-check screens <일감 번호>` | 그 일감 줄이 온 MR의 수정 전·후 화면을 GitLab에서 받아 레드마인에 올려만 보고, 보낼 댓글과 바꿀 상태를 찍음 (일감은 고치지 않음) |
 | `--redmine-check <일감 번호>` | 앱의 보내기·되돌리기 코드로 시험 댓글을 한 일감에 보내고 줄바꿈이 살았는지 본 뒤 되돌림 (진척률·상태·날짜는 그대로). `RUNTIME_REDMINE_URL`·`RUNTIME_REDMINE_KEY`·`RUNTIME_WORKLOG`로 실행 |
 | `--account-check [switch <이메일> \| simulate-limit]` | 기억한 Claude 계정마다 저장본, 토큰 주인, 공식 사용률을 찍음. `switch`는 그 계정으로 바꾸고, `simulate-limit`은 지금 계정이 한도에 막힌 것처럼 넣어 자동 전환을 확인 (설치한 앱 바이너리로 실행) |
 | `--diagnose` | 이 Mac의 빌드, macOS, 화면 구성, 업데이트 상태, 최근 문제 기록(`~/Library/Logs/RunTime/events.log`)을 찍음 |

@@ -63,6 +63,37 @@ enum RedmineCheck {
         }
     }
 
+    /// `--redmine-check screens <일감>`: 그 일감 줄이 온 MR의 수정 전·후 화면을 받아 레드마인에 올려만 보고
+    /// (일감에 붙이지 않은 업로드는 어디에도 보이지 않는다), 보낼 댓글과 함께 바꿀 상태를 찍는다. 일감은 고치지 않는다.
+    static func screens(issue: Int) {
+        let settings = WorkLogSettings.shared
+        let store = WorkLogStore.shared
+        let sync = WorkLogSync.shared
+        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
+            finish("레드마인 주소와 키가 없습니다", ok: false)
+        }
+        let entries = store.log.entries.filter { $0.issue == issue }
+        guard let update = WorkReport.redmineUpdates(entries, log: store.log).first(where: { $0.issue == issue }) ?? nil else {
+            finish("#\(issue) 줄이 일지에 없습니다", ok: false)
+        }
+        let origins = MRScreenStore.origins(entries.map(\.source))
+        let fields = sync.fields(for: update)
+        print("진척률: \(update.doneRatio.map { "\($0)%" } ?? "그대로"), 상태: \(store.log.issue(issue)?.status ?? "?") → \(fields.status?.name ?? "그대로")")
+        let html = settings.redmineHTML
+        let host = settings.gitlabHost
+        DispatchQueue.global().async {
+            let refs = origins.compactMap { MRScreenStore.shared.refForSending($0, host: host) }
+            print("MR: " + (refs.isEmpty ? "없음 (\(origins))" : refs.map { "\($0.path)!\($0.iid)" }.joined(separator: ", ")))
+            let result = WorkLogSync.attachScreens(refs, base: base, key: key, host: host, html: html)
+            DispatchQueue.main.async {
+                print("올린 첨부 \(result.uploads.count)개: " + result.uploads.map(\.filename).joined(separator: ", "))
+                if !result.failures.isEmpty { print("문제: \(result.failures)") }
+                print("보낼 댓글:\n" + (html ? RedmineNote.html(update.note) : update.note) + "\n" + result.section)
+                finish(result.uploads.isEmpty ? "붙일 화면 없음" : "통과", ok: true)
+            }
+        }
+    }
+
     private static func journals(_ issue: Int, _ done: @escaping ([RedmineAPI.Journal]) -> Void) {
         let settings = WorkLogSettings.shared
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return done([]) }

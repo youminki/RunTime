@@ -247,6 +247,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
     RunLoop.main.run()
 }
 if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
+   CommandLine.arguments.dropFirst(index + 1).first == "screens",
+   let issue = CommandLine.arguments.dropFirst(index + 2).first.flatMap({ Int($0) }) {
+    MainActor.assumeIsolated { RedmineCheck.screens(issue: issue) }
+    RunLoop.main.run()
+}
+if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
    let issue = CommandLine.arguments.dropFirst(index + 1).first.flatMap({ Int($0) }) {
     MainActor.assumeIsolated { RedmineCheck.run(issue: issue) }
     RunLoop.main.run()
