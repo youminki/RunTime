@@ -160,7 +160,7 @@ struct IssueBoard: View {
 
     private func projectSection(_ project: String, issues: [IssueInfo]) -> some View {
         let key = "issues:" + project
-        let collapsed = page.collapsed.contains(key)
+        let collapsed = page.isCollapsed(key)
         let groups = Dictionary(grouping: issues, by: \.group)
         let order = issues.map(\.group).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         let reportName = issues.first.map { store.log.reportProject(for: $0) } ?? project

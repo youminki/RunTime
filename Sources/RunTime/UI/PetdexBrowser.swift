@@ -28,7 +28,7 @@ struct PetdexBrowser: View {
                 .fixedSize()
             }
             status(results.count)
-            ScrollView {
+            SlimScrollView {
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(results) { entry in
                         Button { install(entry) } label: { tile(entry) }

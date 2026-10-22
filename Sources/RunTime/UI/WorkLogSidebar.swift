@@ -209,7 +209,7 @@ struct WorkLogSidebar: View {
                     .font(WL.caption).foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 4)
             }
-            ScrollView {
+            SlimScrollView {
                 VStack(spacing: 1) {
                     ForEach(names, id: \.self) { name in
                         projectRow(name, count: monthEntries.filter { $0.project == name }.count)
@@ -242,7 +242,10 @@ struct WorkLogSidebar: View {
         }
         .buttonStyle(.plain)
         .onHover { hover.update("p:" + name, $0) }
-        .tip("이 달 \(count)줄 · 누르면 프로젝트 기록")
+        .tip("이 달 \(count)줄 · 누르면 프로젝트 기록 · 끌어서 순서 바꾸기")
+        // 끌어다 놓아 순서를 바꾸면 보고서 번호 순서도 같이 바뀐다
+        .reorderable(name, dragging: $page.draggingProject) { from, to in store.moveProject(from, to: to) }
+        .opacity(page.draggingProject == name ? 0.4 : 1)
         .contextMenu {
             Button("고른 날에 적기") {
                 page.openProjects.insert(name)

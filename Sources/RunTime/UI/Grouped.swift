@@ -146,7 +146,7 @@ struct GroupedList<Content: View>: View {
     }
 
     var body: some View {
-        ScrollView {
+        SlimScrollView {
             // 넓은 창에서 줄이 끝없이 늘어나지 않게 너비를 두되, 스크롤 막대는 창 오른쪽 끝에 남긴다
             VStack(alignment: .leading, spacing: 22) { content }
                 .frame(maxWidth: 680, alignment: .leading)

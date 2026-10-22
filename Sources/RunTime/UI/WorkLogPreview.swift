@@ -202,7 +202,7 @@ struct WorkLogPreview: View {
                 .wlSurface()
             } else {
                 selectionBar(updates, chosen: chosen.count)
-                ScrollView {
+                SlimScrollView {
                     VStack(spacing: 14) {
                         ForEach(updates, id: \.issue) { update in card(update) }
                     }
@@ -347,7 +347,7 @@ struct WorkLogPreview: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.waiting.opacity(0.1)))
             }
-            ScrollView {
+            SlimScrollView {
                 VStack(spacing: 0) {
                     ForEach(Array(updates.enumerated()), id: \.element.issue) { index, update in
                         if index > 0 { Rectangle().fill(WL.border.opacity(0.7)).frame(height: 0.5) }
@@ -650,7 +650,7 @@ struct WorkLogPreview: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .wlSurface()
             } else {
-                ScrollView {
+                SlimScrollView {
                     VStack(spacing: 8) {
                         ForEach(records) { record in sentRow(record) }
                     }
@@ -975,6 +975,8 @@ private struct ReportText: NSViewRepresentable {
         let scroll = NSTextView.scrollableTextView()
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
+        // 다른 칸과 같은 얇은 막대 (글을 덮지 않게 제 자리를 갖는다)
+        SlimScroller.install(on: scroll)
         if let view = scroll.documentView as? NSTextView {
             view.isEditable = false
             view.isSelectable = true

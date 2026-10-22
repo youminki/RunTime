@@ -1,9 +1,16 @@
 import AppKit
+import DesignSyncCore
 import SwiftUI
 import WorkLogCore
 
 /// 화면 점검: 팝오버·설정·일별·순위표를 실제 데이터로 창에 띄워 PNG로 저장한다.
 /// `ImageRenderer`는 Form·Toggle 같은 AppKit 컨트롤을 그리지 못해서 창에 올린 뒤 그 뷰를 찍는다.
+/// 화면 점검 창. 화면 밖에 두어도 키 창이 되면 사용자가 다른 앱에서 치는 글자를 가져가서, 키 창이 되지 않게 한다.
+final class ShotWindow: NSWindow {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 enum UIShots {
     private static func workLogPage(_ mode: WorkLogPage.Mode, preview: WorkLogPage.Preview = .report,
@@ -118,6 +125,64 @@ enum UIShots {
             .frame(width: mainSize.width, height: mainSize.height))
     }
 
+    /// 디자인 화면은 RUNTIME_DESIGN_HISTORY로 예시 기록을 가리킬 때만 찍는다. 내 기록에는 회사 화면설계서가 들어 있다.
+    /// 없는 파일을 가리키면 처음 화면(피그마 연결 안내)을 찍는다.
+    private static func designScreens(engine: UsageEngine) -> [(name: String, appearance: NSAppearance.Name, height: CGFloat?, view: AnyView)] {
+        guard ProcessInfo.processInfo.environment["RUNTIME_DESIGN_HISTORY"]?.isEmpty == false else { return [] }
+        // 예시 파일을 지켜보는 것으로 두고 한 묶음에 알림을 켜, 종과 상태 점이 어떻게 보이는지 찍는다 (개발용 설정에만 남는다)
+        // 프로젝트가 여럿일 때: 첫 파일 한 묶음에 알림, 메뉴 둘을 즐겨찾기, 둘째 파일 메뉴 하나를 숨긴다
+        if ProcessInfo.processInfo.environment["RUNTIME_SHOT_DESIGN_ALERTS"] == "1" {
+            let files = DesignSync.shared.history.files.sorted { $0.value.name < $1.value.name }
+            DesignSyncSettings.shared.sources = files.enumerated().map { index, file in
+                let paths = Set(file.value.screens.values.map(\.menuPath)).sorted()
+                return DesignSource(fileKey: file.key, name: file.value.name,
+                                    alerts: index == 0 ? [paths.first.map(DesignMenuTree.head) ?? ""] : [],
+                                    hiddenMenus: index == 1 ? Array(paths.suffix(1)) : [])
+            }
+            DesignSyncSettings.shared.favorites = files.prefix(2).compactMap { file in
+                Set(file.value.screens.values.map(\.menuPath)).sorted().dropFirst().first.map { DesignSync.favoriteKey(file.key, $0) }
+            }
+        }
+        return [
+            ("main-design", .aqua, nil, mainDesign(engine: engine)),
+            ("main-design-dark", .darkAqua, nil, mainDesign(engine: engine)),
+            ("main-design-working", .aqua, nil, mainDesign(engine: engine, scope: .working, select: false)),
+            ("main-design-menu", .aqua, nil, mainDesign(engine: engine, scope: firstGroup.map { .group(fileKey: $0.0, head: $0.1) } ?? .all)),
+            ("main-settings-design-alerts", .aqua, nil, {
+                let navigator = MainNavigator()
+                navigator.start(at: .settings)
+                return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.designAlerts))
+                    .frame(width: mainSize.width, height: mainSize.height))
+            }()),
+            ("design-alert-picker", .aqua, nil, AnyView(DesignAlertPicker(sync: .shared,
+                                                                          fileKey: DesignSync.shared.history.files.keys.first ?? ""))),
+            ("main-settings-design", .aqua, nil, {
+                let navigator = MainNavigator()
+                navigator.start(at: .settings)
+                return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.design))
+                    .frame(width: mainSize.width, height: mainSize.height))
+            }()),
+        ]
+    }
+
+    private static var firstGroup: (String, String)? {
+        DesignSync.shared.history.menus().first.map { ($0.fileKey, DesignMenuTree.head($0.path)) }
+    }
+
+    /// 앱 창의 디자인 화면. 화면마다 새 상태로 찍고, 가장 최근 변경을 골라 둔다.
+    private static func mainDesign(engine: UsageEngine, scope: DesignHistoryPage.Scope = .all, select: Bool = true) -> AnyView {
+        let page = DesignHistoryPage()
+        page.scope = scope
+        if select { page.selected = DesignSync.shared.history.events.last(where: { $0.kind == .changed })?.id }
+        let navigator = MainNavigator()
+        navigator.start(at: .design)
+        return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                      workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.general), designPage: page)
+            .frame(width: mainSize.width, height: mainSize.height))
+    }
+
     static func run(to directory: URL, engine: UsageEngine) {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -228,12 +293,12 @@ enum UIShots {
                 .padding(.horizontal, 32).frame(width: 600).background(WL.canvas))),
             ("main-settings-redmine-dark", .darkAqua, nil, mainSettings(.redmine, engine: engine)),
             ("main-settings-teams", .darkAqua, nil, mainSettings(.teams, engine: engine)),
-        ]
+        ] + designScreens(engine: engine)
         // RUNTIME_SHOTS=main-,worklog-day처럼 이름 앞부분을 주면 그 화면만 찍는다
         let only = ProcessInfo.processInfo.environment["RUNTIME_SHOTS"].flatMap { $0.isEmpty ? nil : $0.split(separator: ",").map(String.init) }
         let picked = only.map { prefixes in screens.filter { screen in prefixes.contains { screen.name.hasPrefix($0) } } } ?? screens
         let windows = picked.map { screen -> NSWindow in
-            let window = NSWindow(contentViewController: NSHostingController(rootView: screen.view))
+            let window = ShotWindow(contentViewController: NSHostingController(rootView: screen.view))
             window.styleMask = [.titled]
             window.appearance = NSAppearance(named: screen.appearance)
             // 설정처럼 스크롤되는 창은 최대 높이로 펼쳐 한 장에 담는다

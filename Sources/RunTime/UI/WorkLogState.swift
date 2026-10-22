@@ -12,6 +12,26 @@ final class WorkLogPage: ObservableObject {
     /// 왼쪽 달력에 보이는 달의 1일. 달력 화살표로는 고른 날을 두고 달력만 넘긴다.
     @Published var calendarMonth = WorkDay.month(of: WorkDay.today()).lowerBound
     @Published var search = ""
+    /// 사이드바에서 끌고 있는 프로젝트.
+    @Published var draggingProject: String?
+    /// 끌어서 정한 칸 너비. nil이면 창 너비에 맞춘 자동 너비를 쓴다.
+    @Published var sidebarWidth: CGFloat? = WorkLogPage.stored("workLog.sidebarWidth") {
+        didSet { WorkLogPage.store(sidebarWidth, "workLog.sidebarWidth") }
+    }
+    @Published var previewWidth: CGFloat? = WorkLogPage.stored("workLog.previewWidth") {
+        didSet { WorkLogPage.store(previewWidth, "workLog.previewWidth") }
+    }
+    @Published var calendarDetailWidth: CGFloat? = WorkLogPage.stored("calendar.detailWidth") {
+        didSet { WorkLogPage.store(calendarDetailWidth, "calendar.detailWidth") }
+    }
+
+    private static func stored(_ key: String) -> CGFloat? {
+        (UserDefaults.standard.object(forKey: key) as? Double).map { CGFloat($0) }
+    }
+
+    private static func store(_ value: CGFloat?, _ key: String) {
+        if let value { UserDefaults.standard.set(Double(value), forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+    }
     @Published var project: String?
     @Published var preview = Preview.report
     /// 레드마인 칸에서 이번에 보내지 않으려고 체크를 푼 일감. 새로 생긴 일감은 골라진 채로 나온다.
@@ -113,6 +133,21 @@ final class WorkLogPage: ObservableObject {
 
     func toggle(_ key: String) {
         if collapsed.contains(key) { collapsed.remove(key) } else { collapsed.insert(key) }
+    }
+
+    /// "모두 접기"를 누른 뒤면 true. 묶음마다 `collapsed`는 이 기준에서 거꾸로 둔 것이다.
+    @Published var foldAll = false
+
+    func isCollapsed(_ key: String) -> Bool { foldAll != collapsed.contains(key) }
+
+    /// 기준과 상관없이 이 묶음을 편다 (새로 연 카드 등).
+    func expand(_ key: String) {
+        if foldAll { collapsed.insert(key) } else { collapsed.remove(key) }
+    }
+
+    func setAllCollapsed(_ folded: Bool) {
+        foldAll = folded
+        collapsed = []
     }
     @Published var toast: String?
     /// 업무 일지를 열며 GitLab·레드마인을 마지막으로 받은 때.

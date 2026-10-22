@@ -9,14 +9,16 @@ let package = Package(
         .target(name: "GameCore"),
         .target(name: "SearchCore"),
         .target(name: "WorkLogCore"),
+        .target(name: "DesignSyncCore"),
         .executableTarget(
             name: "RunTime",
-            dependencies: ["UsageCore", "GameCore", "SearchCore", "WorkLogCore"],
+            dependencies: ["UsageCore", "GameCore", "SearchCore", "WorkLogCore", "DesignSyncCore"],
             resources: [.copy("Assets")]
         ),
         .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"]),
         .testTarget(name: "GameCoreTests", dependencies: ["GameCore"]),
         .testTarget(name: "SearchCoreTests", dependencies: ["SearchCore"]),
         .testTarget(name: "WorkLogCoreTests", dependencies: ["WorkLogCore"]),
+        .testTarget(name: "DesignSyncCoreTests", dependencies: ["DesignSyncCore"]),
     ]
 )

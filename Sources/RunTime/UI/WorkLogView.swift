@@ -15,7 +15,7 @@ struct WorkLogView: View {
     @FocusState private var focusedDraft: String?
 
     var body: some View {
-        GeometryReader { geo in columns(WorkLogColumns(width: geo.size.width)) }
+        GeometryReader { geo in columns(WorkLogColumns(width: geo.size.width, sidebar: page.sidebarWidth, preview: page.previewWidth)) }
         .background(WL.canvas)
         .foregroundStyle(WL.text)
         .overlay(alignment: .bottom) {
@@ -44,11 +44,13 @@ struct WorkLogView: View {
         HStack(spacing: 0) {
             WorkLogSidebar(store: store, page: page, sync: sync, settings: settings)
                 .frame(width: layout.sidebar)
-            Rectangle().fill(WL.border).frame(width: 1)
+            // 끌어서 너비를 바꾸고, 두 번 누르면 창 너비에 맞춘 자동 너비로 돌아간다
+            ColumnDivider(width: Binding(get: { layout.sidebar }, set: { page.sidebarWidth = $0 }),
+                          range: WorkLogColumns.sidebarRange, standard: layout.auto.sidebar, reset: { page.sidebarWidth = nil })
             VStack(spacing: 0) {
                 topBar(gutter: layout.gutter)
                 Rectangle().fill(WL.border).frame(height: 1)
-                ScrollView {
+                SlimScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if let error = store.loadError ?? store.saveError { notice(error).padding(.bottom, 16) }
                         if !page.search.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -72,7 +74,9 @@ struct WorkLogView: View {
                 }
                 .background(WL.canvas)
             }
-            Rectangle().fill(WL.border).frame(width: 1)
+            ColumnDivider(width: Binding(get: { layout.preview }, set: { page.previewWidth = $0 }),
+                          range: WorkLogColumns.previewRange, standard: layout.auto.preview, trailing: true,
+                          reset: { page.previewWidth = nil })
             WorkLogPreview(store: store, page: page, sync: sync, settings: settings)
                 .frame(width: layout.preview)
         }
@@ -100,6 +104,17 @@ struct WorkLogView: View {
                     .buttonStyle(GhostIconButtonStyle())
                     .tip("보고서 붙여넣기: 써 둔 일일보고를 한 번에 넣기")
             }
+            // 프로젝트·일감 묶음을 한 번에 펼치거나 접는다
+            Button { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(false) } } label: {
+                Image(systemName: "arrow.up.and.line.horizontal.and.arrow.down")
+            }
+            .buttonStyle(GhostIconButtonStyle())
+            .tip("모든 묶음 펼치기")
+            Button { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(true) } } label: {
+                Image(systemName: "arrow.down.and.line.horizontal.and.arrow.up")
+            }
+            .buttonStyle(GhostIconButtonStyle())
+            .tip("모든 묶음 접기")
             refreshButton
                 .layoutPriority(2)
         }
@@ -143,7 +158,7 @@ struct WorkLogView: View {
             return
         }
         page.openProjects.insert(project)
-        page.collapsed.remove("day:" + project)
+        page.expand("day:" + project)
         // 묶음이 그려진 다음에 칸에 들어가야 한다
         DispatchQueue.main.async { focusedDraft = project }
     }
@@ -325,7 +340,7 @@ struct WorkLogView: View {
 
     private func projectSection(_ project: String, entries: [WorkEntry]) -> some View {
         let key = "day:" + project
-        let collapsed = page.collapsed.contains(key)
+        let collapsed = page.isCollapsed(key)
         return VStack(alignment: .leading, spacing: 0) {
             if page.renaming == project {
                 // 이름 칸은 접기 단추 밖에 둔다 (칸을 누를 때 묶음이 접히지 않게)
@@ -493,7 +508,7 @@ struct WorkLogView: View {
 
     private func mergedSection(_ project: String, merged: [WorkEntry], entries: [WorkEntry]) -> some View {
         let key = "period:" + project
-        let collapsed = page.collapsed.contains(key)
+        let collapsed = page.isCollapsed(key)
         let done = merged.filter(\.status.isFinished).count
         return VStack(alignment: .leading, spacing: 0) {
             ToggleHeading(collapsed: collapsed, toggle: { page.toggle(key) }) {
@@ -570,7 +585,7 @@ struct WorkLogView: View {
 
     private func section<Content: View>(key: String, title: String, jump: String? = nil,
                                         @ViewBuilder content: () -> Content) -> some View {
-        let collapsed = page.collapsed.contains(key)
+        let collapsed = page.isCollapsed(key)
         return VStack(alignment: .leading, spacing: 0) {
             ToggleHeading(collapsed: collapsed, toggle: { page.toggle(key) }) {
                 Text(title).font(WL.section)
@@ -621,18 +636,33 @@ struct WorkLogView: View {
 
 /// 업무 일지 칸 너비에 따른 세 칸 너비. 좁을수록 양옆을 줄여 가운데 할 일이 한 줄에 들어오게 하고
 /// 넓은 창에서는 남는 너비를 보고서 칸에 준다 (가운데는 760에서 더 넓어지지 않는다).
+/// 경계를 끌어 너비를 정했으면 그 너비를 쓰되, 가운데가 `middleMin`보다 좁아지지 않게 줄인다.
 struct WorkLogColumns {
     let sidebar: CGFloat
     let preview: CGFloat
     let gutter: CGFloat
+    /// 끌기 전 자동 너비 (두 번 눌러 돌아갈 너비)
+    let auto: (sidebar: CGFloat, preview: CGFloat)
 
-    init(width: CGFloat) {
+    static let sidebarRange: ClosedRange<CGFloat> = 180...360
+    static let previewRange: ClosedRange<CGFloat> = 260...600
+    static let middleMin: CGFloat = 420
+
+    init(width: CGFloat, sidebar custom: CGFloat? = nil, preview customPreview: CGFloat? = nil) {
+        let automatic: (CGFloat, CGFloat, CGFloat)
         switch width {
-        case ..<1100: (sidebar, preview, gutter) = (200, 300, 20)
-        case ..<1280: (sidebar, preview, gutter) = (220, 320, 24)
-        case ..<1480: (sidebar, preview, gutter) = (240, 340, 36)
-        default: (sidebar, preview, gutter) = (240, 400, 36)
+        case ..<1100: automatic = (200, 300, 20)
+        case ..<1280: automatic = (220, 320, 24)
+        case ..<1480: automatic = (240, 340, 36)
+        default: automatic = (240, 400, 36)
         }
+        auto = (automatic.0, automatic.1)
+        gutter = automatic.2
+        let left = custom ?? automatic.0
+        let right = customPreview ?? automatic.1
+        let room = max(0, width - Self.middleMin - 2)
+        sidebar = min(left, max(Self.sidebarRange.lowerBound, room - Self.previewRange.lowerBound))
+        preview = min(right, max(Self.previewRange.lowerBound, room - sidebar))
     }
 }
 

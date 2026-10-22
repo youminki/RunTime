@@ -11,6 +11,7 @@ struct PopoverView: View {
     var importRunner: () -> Void = {}
     var openDailyDetail: () -> Void = {}
     var openWorkLog: () -> Void = {}
+    var openDesign: () -> Void = {}
     var openLeaderboard: () -> Void = {}
     /// 팝오버를 닫고 같은 화면을 창으로 띄운다. 창 안에서는 비워 두어 단추를 숨긴다.
     var openAsWindow: (() -> Void)?
@@ -30,6 +31,7 @@ struct PopoverView: View {
     @ObservedObject private var customRunners = CustomRunnerStore.shared
     @ObservedObject private var petdex = PetdexStore.shared
     @ObservedObject private var wallet = GameWallet.shared
+    @ObservedObject private var design = DesignSync.shared
 
     private var customSelection: Binding<String?> {
         Binding(get: { settings.customRunnerID },
@@ -105,7 +107,7 @@ struct PopoverView: View {
     /// 창의 사용량 화면: 위에 공식 값 상태, 세션·주간, 30분 그래프와 오늘 수치, 아래에 최근 8일 날짜별 사용량.
     /// 무대와 게임은 게임 화면으로 떼어 숫자만 차분히 보이게 한다.
     private var usagePage: some View {
-        ScrollView {
+        SlimScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 // 화면 이름은 창 위 막대에 있어, 여기는 공식 값을 언제 받았는지와 새로고침만 둔다
                 HStack(alignment: .center) {
@@ -339,7 +341,7 @@ struct PopoverView: View {
                 Spacer(minLength: 4)
                 coinBalance
             }
-            ScrollView {
+            SlimScrollView {
                 Group {
                     switch page.section {
                     case .runners: RunnerPicker(settings: settings, importInPlace: importRunner, gameStyle: true)
@@ -665,12 +667,23 @@ struct PopoverView: View {
             Spacer(minLength: 8)
             if let openAsWindow {
                 Button(action: openAsWindow) { Image(systemName: "macwindow") }
-                    .tip("앱 창에서 열기: 사용량·게임·업무 일지를 한 창에서 오갑니다")
+                    .tip("앱 창에서 열기: 사용량·게임·업무 일지·디자인을 한 창에서 오갑니다")
                     .accessibilityLabel("창으로 보기")
             }
             Button(action: openWorkLog) { Image(systemName: "checklist") }
                 .tip("업무 일지")
                 .accessibilityLabel("업무 일지")
+            Button(action: openDesign) {
+                Image(systemName: "paintpalette")
+                    // 완료된 시안에 확인하지 않은 변경이 있으면 업무 일지처럼 놓치지 않게 점을 붙인다
+                    .overlay(alignment: .topTrailing) {
+                        if design.unseenCount > 0 {
+                            Circle().fill(Theme.accent).frame(width: 6, height: 6).offset(x: 3, y: -2)
+                        }
+                    }
+            }
+            .tip(design.unseenCount > 0 ? "디자인 변경 · 완료 후 변경 \(design.unseenCount)건" : "디자인 변경")
+            .accessibilityLabel(design.unseenCount > 0 ? "디자인 변경, 확인 안 함 \(design.unseenCount)건" : "디자인 변경")
             Button(action: openDailyDetail) { Image(systemName: "chart.bar") }
                 .tip("일별 사용량")
                 .accessibilityLabel("일별 사용량")

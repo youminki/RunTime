@@ -36,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var terminateSource: DispatchSourceSignal?
     private var reopening = false
 
+    /// 디자인 기록은 뒤에서 저장해서, 확인 표시 직후 끄면 마지막 저장이 빠지지 않게 기다린다.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { DesignSync.shared.flush() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         EditMenu.install()
         animator.canvas = MenuBarCanvas(barHeight: NSStatusBar.system.thickness, zoom: engine.settings.runnerSize.zoom,
@@ -227,6 +232,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             case .workLog:
                 self.workLogPage.preview = .redmine
                 self.openWorkLog()
+            case .design:
+                self.showMain(.design)
             }
         }
         // 설정 창을 열어 둔 채 시스템 설정에서 자동 시작을 바꾸고 돌아와도 맞게 보이게
@@ -237,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         engine.start()
         startAccountSwitcher()
         WorkLogSync.shared.start()
+        MainActor.assumeIsolated { DesignSync.shared.start() }
         GlobalHotKey.shared.quickAction = { QuickAddPanel.shared.toggle() }
         GlobalHotKey.shared.setQuickAdd(WorkLogSettings.shared.quickAddEnabled)
         // 처음 설치한 사람에게만 한 번. 러너가 메뉴바에 자리 잡은 뒤에 띄운다
@@ -271,6 +279,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             ? "사용량 보기 (\(GlobalHotKey.displayName))" : "사용량 보기") { [weak self] in self?.togglePopover() }
         add("업무 일지") { [weak self] in self?.openWorkLog() }
         add("캘린더") { [weak self] in self?.showMain(.calendar) }
+        let unseenDesign = MainActor.assumeIsolated { DesignSync.shared.unseenCount }
+        add(unseenDesign > 0 ? "디자인 변경 (\(unseenDesign))" : "디자인 변경") { [weak self] in self?.showMain(.design) }
         add(WorkLogSettings.shared.quickAddEnabled ? "업무 한 줄 적기 (\(GlobalHotKey.quickCombo.label))" : "업무 한 줄 적기") {
             QuickAddPanel.shared.show()
         }
@@ -387,6 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   importRunner: { [weak self] in self?.importRunner() },
                                   openDailyDetail: { [weak self] in self?.openDailyDetail() },
                                   openWorkLog: { [weak self] in self?.openWorkLog() },
+                                  openDesign: { [weak self] in self?.showMain(.design) },
                                   openLeaderboard: { [weak self] in self?.openLeaderboard() },
                                   openAsWindow: { [weak self] in self?.openUsageWindow() },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))

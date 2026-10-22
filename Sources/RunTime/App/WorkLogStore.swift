@@ -220,6 +220,14 @@ final class WorkLogStore: ObservableObject {
         change { $0.projects.swapAt(index, index + offset) }
     }
 
+    /// 끌어다 놓은 자리로 옮긴다 (`name`을 `target` 자리에). 보고서 번호 순서도 같이 바뀐다.
+    func moveProject(_ name: String, to target: String) {
+        var order = log.allProjects
+        guard let from = order.firstIndex(of: name), let to = order.firstIndex(of: target), from != to else { return }
+        order.insert(order.remove(at: from), at: to)
+        change { $0.projects = order }
+    }
+
     /// 기록이 없는 프로젝트만 목록에서 뺀다.
     func removeProjectIfEmpty(_ name: String) {
         guard !log.entries.contains(where: { $0.project == name }) else { return }

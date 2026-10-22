@@ -241,6 +241,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--readme-shots") {
 
 // 레드마인 점검: 앱의 보내기·되돌리기 길로 시험 댓글을 한 일감에 보내고, 줄바꿈이 살았는지 본 뒤 지운다.
 // 진척률·상태·날짜·작업 시간은 건드리지 않는다. RUNTIME_WORKLOG로 다른 일지 파일을 가리키고 쓴다.
+// 디자인 변경 기록: 저장한 피그마 토큰으로 화면설계서 하나를 앱 코드 그대로 받아 보고 개수만 찍는다 (기록은 저장하지 않음)
+if let index = CommandLine.arguments.firstIndex(of: "--design-check"),
+   let url = CommandLine.arguments.dropFirst(index + 1).first {
+    MainActor.assumeIsolated { DesignCheck.run(url: url) }
+    RunLoop.main.run()
+}
 if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
    CommandLine.arguments.dropFirst(index + 1).first == "dupes" {
     MainActor.assumeIsolated { RedmineCheck.dupes() }

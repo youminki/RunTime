@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 한 창 안에서 오가는 화면. 메뉴바·팝오버·알림의 단추도 새 창을 띄우지 않고 이 창의 화면을 바꾼다.
 enum MainPage: String, CaseIterable {
-    case usage, game, runners, workLog, calendar, settings
+    case usage, game, runners, workLog, calendar, design, settings
 
     /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 순위는 게임).
     init?(windowName: String) {
@@ -18,6 +18,7 @@ enum MainPage: String, CaseIterable {
         case .runners: return "러너"
         case .workLog: return "업무 일지"
         case .calendar: return "캘린더"
+        case .design: return "디자인"
         case .settings: return "설정"
         }
     }
@@ -29,6 +30,7 @@ enum MainPage: String, CaseIterable {
         case .runners: return "hare"
         case .workLog: return "checklist"
         case .calendar: return "calendar"
+        case .design: return "paintpalette"
         case .settings: return "gearshape"
         }
     }
@@ -40,12 +42,13 @@ enum MainPage: String, CaseIterable {
         case .runners: return "러너 고르기, 상점, 창고, 퀘스트"
         case .workLog: return "업무 일지와 일일·주간 보고, 레드마인 보내기"
         case .calendar: return "업무 일지를 한 달 달력으로 크게, 공휴일과 함께"
+        case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
         case .settings: return "일반, 러너, 사용량 설정"
         }
     }
 
     /// 들른 뒤로 숨겨 두고 다시 쓰는 화면 (MainWindowView.content 참고).
-    static let kept: [MainPage] = [.workLog, .calendar]
+    static let kept: [MainPage] = [.workLog, .calendar, .design]
 
     /// 팝오버와 같은 어두운 색 규칙으로 그리는 화면. 이 화면에서는 창 전체를 어둡게 한다.
     var isDark: Bool { self == .usage || self == .game || self == .runners }
@@ -100,6 +103,8 @@ struct MainWindowView: View {
     @ObservedObject var navigator: MainNavigator
     let workLogPage: WorkLogPage
     let settingsTab: SettingsTabState
+    /// 디자인 화면 상태. 앱은 하나를 계속 쓰고, 화면 점검은 화면마다 따로 넘긴다.
+    var designPage: DesignHistoryPage = .shared
     var importRunner: () -> Void = {}
     var performTrick: (Trick) -> Void = { _ in }
 
@@ -116,6 +121,12 @@ struct MainWindowView: View {
         .onReceive(workLogPage.$showsSettings.filter { $0 }) { _ in
             workLogPage.showsSettings = false
             settingsTab.selection = .workLog
+            navigator.go(.settings)
+        }
+        // 디자인 화면의 연동 상태·"피그마 연결하기"는 설정 화면의 디자인 칸으로 간다
+        .onReceive(designPage.$showsSettings.filter { $0 }) { _ in
+            designPage.showsSettings = false
+            settingsTab.selection = designPage.settingsSection == .alerts ? .designAlerts : .design
             navigator.go(.settings)
         }
         .frame(minWidth: AppWindow.minSize.width, idealWidth: AppWindow.size.width,
@@ -178,6 +189,8 @@ struct MainWindowView: View {
                 Group {
                     if kept == .workLog {
                         WorkLogView(store: .shared, page: workLogPage, isActive: shown)
+                    } else if kept == .design {
+                        DesignHistoryView(sync: .shared, settings: .shared, page: designPage, isActive: shown)
                     } else {
                         screen(kept)
                     }
@@ -202,6 +215,7 @@ struct MainWindowView: View {
                         importRunner: importRunner,
                         openDailyDetail: { [navigator] in navigator.go(.usage) },
                         openWorkLog: { [navigator] in navigator.go(.workLog) },
+                        openDesign: { [navigator] in navigator.go(.design) },
                         openLeaderboard: { [navigator] in navigator.go(.game) },
                         performTrick: performTrick,
                         layout: page == .usage ? .usagePage : page == .game ? .gamePage : .runnersPage)
@@ -216,6 +230,8 @@ struct MainWindowView: View {
                 workLogPage.mode = .day
                 navigator.go(.workLog)
             }
+        case .design:
+            DesignHistoryView(sync: .shared, settings: .shared, page: designPage)
         case .settings:
             SettingsView(settings: settings, engine: engine, tab: settingsTab, workLog: workLogPage)
         }

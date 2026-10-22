@@ -11,7 +11,7 @@ struct WorkLogSettingsView: View {
     @ObservedObject var store: WorkLogStore
 
     var body: some View {
-        ScrollView {
+        SlimScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(sectionNote).font(.system(size: 12.5)).foregroundStyle(WL.muted)
                     .fixedSize(horizontal: false, vertical: true)

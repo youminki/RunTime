@@ -9,7 +9,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// 알림을 눌렀을 때 열 화면.
     enum Destination: String {
-        case usage, daily, workLog
+        case usage, daily, workLog, design
     }
 
     /// 번들 앱(.app)으로 실행 중일 때만 사용 가능.

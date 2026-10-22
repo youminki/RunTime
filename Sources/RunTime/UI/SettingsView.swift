@@ -14,7 +14,7 @@ struct SettingsView: View {
     @ObservedObject private var workLogSync = WorkLogSync.shared
     @StateObject private var hotKeyRecorder = HotKeyRecorder()
 
-    enum Tab: Hashable { case general, runner, usage, workLog }
+    enum Tab: Hashable { case general, runner, usage, workLog, design, designAlerts }
 
     init(settings: AppSettings, engine: UsageEngine, tab: SettingsTabState, workLog: WorkLogPage) {
         self.settings = settings
@@ -35,6 +35,9 @@ struct SettingsView: View {
                 ForEach(WorkLogPage.SettingsSection.allCases, id: \.self) { section in
                     workLogRow(section)
                 }
+                navHeader("디자인").padding(.top, 14)
+                navRow(.design, "피그마", icon: "paintpalette.fill", tint: Palette.purple)
+                navRow(.designAlerts, "알림", icon: "bell.fill", tint: Palette.purple)
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -55,11 +58,15 @@ struct SettingsView: View {
                 case .workLog:
                     WorkLogSettingsView(settings: workLogSettings, sync: workLogSync, page: workLog, store: .shared)
                         .padding(.leading, -12)
+                case .design, .designAlerts:
+                    DesignSettingsView(sync: .shared, settings: .shared, section: tab.selection == .design ? .figma : .alerts)
+                        .id(tab.selection)
+                        .padding(.leading, -12)
                 }
             }
             .padding(.leading, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(tab.selection == .workLog ? WL.canvas : Palette.groupedBackground)
+            .background([.workLog, .design, .designAlerts].contains(tab.selection) ? WL.canvas : Palette.groupedBackground)
         }
         .background(Palette.groupedBackground)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -71,6 +78,8 @@ struct SettingsView: View {
         case .runner: return "러너"
         case .usage: return "사용량"
         case .workLog: return workLog.settingsSection.rawValue
+        case .design: return "피그마"
+        case .designAlerts: return "디자인 알림"
         }
     }
 

@@ -33,9 +33,11 @@ struct CalendarPageView: View {
                     .padding(.bottom, 16)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Rectangle().fill(WL.border).frame(width: 1)
+            // 고른 날 칸은 끌어서 넓히고, 두 번 누르면 기본 300으로 돌아간다
+            ColumnDivider(width: Binding(get: { page.calendarDetailWidth ?? 300 }, set: { page.calendarDetailWidth = $0 }),
+                          range: 240...520, standard: 300, trailing: true, reset: { page.calendarDetailWidth = nil })
             detail
-                .frame(width: 300)
+                .frame(width: page.calendarDetailWidth ?? 300)
         }
         .background(WL.canvas)
         .foregroundStyle(WL.text)
@@ -181,7 +183,7 @@ struct CalendarPageView: View {
             .padding(.top, 22)
             .padding(.bottom, 14)
             Rectangle().fill(WL.border).frame(height: 1)
-            ScrollView {
+            SlimScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(store.log.orderedProjects(of: entries), id: \.self) { project in
                         VStack(alignment: .leading, spacing: 4) {
