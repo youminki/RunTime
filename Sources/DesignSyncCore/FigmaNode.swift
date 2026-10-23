@@ -11,13 +11,16 @@ public struct FigmaNode: Decodable, Equatable, Sendable {
     public var componentId: String?
     /// 이미지 채우기의 해시. 목업에 붙인 화면 캡처를 바꾸면 달라진다.
     public var imageRef: String?
+    /// 캔버스 기준 위치. 화면 안 어디가 바뀌었는지 표시할 때 화면 프레임 위치를 빼서 쓴다.
+    public var x: Double?
+    public var y: Double?
     public var width: Double?
     public var height: Double?
     public var children: [FigmaNode]
 
     public init(id: String, name: String = "", type: String = "FRAME", visible: Bool = true, characters: String? = nil,
-                componentId: String? = nil, imageRef: String? = nil, width: Double? = nil, height: Double? = nil,
-                children: [FigmaNode] = []) {
+                componentId: String? = nil, imageRef: String? = nil, x: Double? = nil, y: Double? = nil,
+                width: Double? = nil, height: Double? = nil, children: [FigmaNode] = []) {
         self.id = id
         self.name = name
         self.type = type
@@ -25,6 +28,8 @@ public struct FigmaNode: Decodable, Equatable, Sendable {
         self.characters = characters
         self.componentId = componentId
         self.imageRef = imageRef
+        self.x = x
+        self.y = y
         self.width = width
         self.height = height
         self.children = children
@@ -35,6 +40,8 @@ public struct FigmaNode: Decodable, Equatable, Sendable {
     }
 
     private struct Box: Decodable {
+        let x: Double?
+        let y: Double?
         let width: Double
         let height: Double
     }
@@ -56,6 +63,8 @@ public struct FigmaNode: Decodable, Equatable, Sendable {
         let fills = try? container.decodeIfPresent([Paint].self, forKey: .fills)
         imageRef = fills?.first { $0.visible != false && $0.imageRef != nil }?.imageRef
         let box = try container.decodeIfPresent(Box.self, forKey: .absoluteBoundingBox)
+        x = box?.x
+        y = box?.y
         width = box?.width
         height = box?.height
         children = try container.decodeIfPresent([FigmaNode].self, forKey: .children) ?? []

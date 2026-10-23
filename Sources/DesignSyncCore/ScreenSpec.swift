@@ -29,6 +29,28 @@ public struct SpecComponent: Codable, Equatable, Sendable {
     }
 }
 
+/// 목업 요소가 화면 안 어디에 있는지. 마크업할 때 바뀐 곳을 찾기 쉽게 레이어 경로와 자리를 둔다.
+public struct SpecPlace: Codable, Equatable, Hashable, Sendable {
+    /// 화면 프레임 아래 레이어 이름들 (`Frame 12` 같은 자동 이름은 뺀다). 마지막은 요소 자신.
+    public var path: [String]
+    /// 화면 프레임 크기에 대한 비율 (0~1). 화면 이미지 위에 표시한다.
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    public init(path: [String], x: Double = 0, y: Double = 0, width: Double = 0, height: Double = 0) {
+        self.path = path
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    /// 자리를 모르는 요소 (캔버스 위치가 없을 때)는 넓이가 0이다.
+    public var hasBox: Bool { width > 0 && height > 0 }
+}
+
 /// 화면설계서 화면 하나를 비교용으로 줄인 것. 피그마 원본은 크기가 커서 저장하지 않는다.
 public struct ScreenSnapshot: Codable, Equatable, Sendable {
     public var frameID: String
@@ -53,11 +75,13 @@ public struct ScreenSnapshot: Codable, Equatable, Sendable {
     /// 목업 글자. 노드 ID → 내용.
     public var texts: [String: String]
     public var components: [String: SpecComponent]
+    /// 목업 글자·컴포넌트의 노드 ID → 자리. 이 칸이 생기기 전 기록은 nil이다.
+    public var places: [String: SpecPlace]?
 
     public init(frameID: String, candidateID: String? = nil, frameName: String = "", screenID: String, title: String = "",
                 menuPath: String = "", requirementID: String = "", author: String = "", pageID: String = "",
                 pageName: String = "", sectionName: String = "", notes: String = "", items: [SpecItem] = [],
-                texts: [String: String] = [:], components: [String: SpecComponent] = [:]) {
+                texts: [String: String] = [:], components: [String: SpecComponent] = [:], places: [String: SpecPlace]? = nil) {
         self.frameID = frameID
         self.candidateID = candidateID ?? frameID
         self.frameName = frameName
@@ -73,6 +97,7 @@ public struct ScreenSnapshot: Codable, Equatable, Sendable {
         self.items = items
         self.texts = texts
         self.components = components
+        self.places = places
     }
 }
 
@@ -181,8 +206,10 @@ public enum SpecExtractor {
 
         var mockTexts: [String: String] = [:]
         var components: [String: SpecComponent] = [:]
+        var places: [String: SpecPlace] = [:]
+        let frame = Frame(screen)
         for child in screen.children where child.visible && child.id != headerRow?.id && child.id != panel?.id {
-            readMockup(child, texts: &mockTexts, components: &components)
+            readMockup(child, path: [], frame: frame, texts: &mockTexts, components: &components, places: &places)
         }
 
         let screenID = header[screenIDLabel].flatMap { $0.isEmpty ? nil : $0 } ?? screen.name
@@ -192,7 +219,7 @@ public enum SpecExtractor {
         return ScreenSnapshot(frameID: screen.id, frameName: screen.name, screenID: screenID, title: header["화면명"] ?? "",
                               menuPath: path, requirementID: header["요구사항 ID"] ?? "", author: header["작성자"] ?? "",
                               pageID: page.id, pageName: page.name, sectionName: sectionName, notes: notes, items: items,
-                              texts: mockTexts, components: components)
+                              texts: mockTexts, components: components, places: places)
     }
 
     /// Description 패널: 위쪽 참고 글, 아래쪽 `번호 → 설명` 항목들.
@@ -211,18 +238,56 @@ public enum SpecExtractor {
         return (notes, items.filter { !$0.text.isEmpty })
     }
 
-    private static func readMockup(_ node: FigmaNode, texts: inout [String: String], components: inout [String: SpecComponent]) {
+    private static func readMockup(_ node: FigmaNode, path: [String], frame: Frame, texts: inout [String: String],
+                                   components: inout [String: SpecComponent], places: inout [String: SpecPlace]) {
         guard node.visible, !markerNames.contains(node.name) else { return }
         if let text = node.text {
-            if !text.isEmpty, !text.hasPrefix("©"), !placeholders.contains(text) { texts[node.id] = text }
+            if !text.isEmpty, !text.hasPrefix("©"), !placeholders.contains(text) {
+                texts[node.id] = text
+                places[node.id] = frame.place(of: node, path: path + [DesignText.headline(text, limit: 30)])
+            }
             return
         }
         if node.type == "INSTANCE", let component = node.componentId {
             components[node.id] = SpecComponent(name: node.name, componentID: component)
+            places[node.id] = frame.place(of: node, path: path + [node.name])
         } else if let image = node.imageRef {
             components[node.id] = SpecComponent(name: node.name, componentID: SpecComponent.imagePrefix + image)
+            places[node.id] = frame.place(of: node, path: path + [node.name])
         }
-        for child in node.children { readMockup(child, texts: &texts, components: &components) }
+        let inner = isGenericName(node.name) ? path : path + [node.name]
+        for child in node.children {
+            readMockup(child, path: inner, frame: frame, texts: &texts, components: &components, places: &places)
+        }
+    }
+
+    /// 피그마가 붙이는 자동 이름. 경로에 넣어도 어디인지 알 수 없어 뺀다.
+    static func isGenericName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return true }
+        let generic = ["Frame", "Group", "Rectangle", "Vector", "Auto layout", "Container", "Ellipse", "Line", "Union", "Mask group"]
+        return generic.contains { prefix in
+            trimmed == prefix || (trimmed.hasPrefix(prefix + " ") && trimmed.dropFirst(prefix.count + 1).allSatisfy(\.isNumber))
+        }
+    }
+
+    /// 화면 프레임의 캔버스 위치. 요소 자리를 화면 크기에 대한 비율로 바꾼다.
+    struct Frame {
+        let x, y, width, height: Double?
+
+        init(_ node: FigmaNode) {
+            x = node.x; y = node.y; width = node.width; height = node.height
+        }
+
+        func place(of node: FigmaNode, path: [String]) -> SpecPlace {
+            guard let x, let y, let width, let height, width > 0, height > 0,
+                  let nx = node.x, let ny = node.y, let nw = node.width, let nh = node.height
+            else { return SpecPlace(path: path) }
+            let clamp = { (value: Double) in min(max(value, 0), 1) }
+            let left = clamp((nx - x) / width), top = clamp((ny - y) / height)
+            let right = clamp((nx + nw - x) / width), bottom = clamp((ny + nh - y) / height)
+            return SpecPlace(path: path, x: left, y: top, width: max(right - left, 0), height: max(bottom - top, 0))
+        }
     }
 
     static func isItemNumber(_ text: String) -> Bool {

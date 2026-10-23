@@ -61,8 +61,8 @@ import Testing
     @Test func recreatedTextWithNewIDIsNotAChange() {
         let changes = SpecDiff.texts(["1": "등록", "2": "가격"], ["9": "등록", "2": "판매 가격", "3": "재고"])
         #expect(changes == [
-            SpecChange(layer: .text, op: .modified, label: "판매 가격", before: "가격", after: "판매 가격"),
-            SpecChange(layer: .text, op: .added, label: "재고", after: "재고"),
+            SpecChange(layer: .text, op: .modified, label: "판매 가격", before: "가격", after: "판매 가격", nodeID: "2"),
+            SpecChange(layer: .text, op: .added, label: "재고", after: "재고", nodeID: "3"),
         ])
     }
 
@@ -71,7 +71,7 @@ import Testing
         let new = ["1": SpecComponent(name: "button", componentID: "c:secondary"), "2": SpecComponent(name: "input", componentID: "c:in"),
                    "3": SpecComponent(name: "checkbox", componentID: "c:cb"), "4": SpecComponent(name: "checkbox", componentID: "c:cb")]
         let changes = SpecDiff.components(old, new)
-        #expect(changes.contains(SpecChange(layer: .component, op: .modified, label: "button 변형 교체", before: "button", after: "button")))
+        #expect(changes.contains(SpecChange(layer: .component, op: .modified, label: "button 변형 교체", before: "button", after: "button", nodeID: "1")))
         #expect(changes.contains(SpecChange(layer: .component, op: .added, label: "컴포넌트 추가", after: "checkbox 2")))
         #expect(!changes.contains { $0.op == .removed })
     }

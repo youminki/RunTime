@@ -19,10 +19,21 @@ final class DesignHistoryPage: ObservableObject {
         case group(fileKey: String, head: String)
         /// 한 프로젝트(화면설계서)의 변경 전부
         case project(fileKey: String)
+        /// 마크업에 반영을 마친 변경. 다른 보기에서는 빠진다
+        case applied
     }
 
     @Published var scope: Scope = .important
-    @Published var selected: UUID?
+    @Published var selected: UUID? {
+        didSet { if selected != oldValue { selectedChange = nil; foldedChangeGroups = [] } }
+    }
+    /// 상세에서 고른 목업 변경 번호. 화면 비교 이미지에서 그 자리를 강조한다.
+    @Published var selectedChange: Int?
+    @Published var hoveredChange: Int?
+    /// 변경 트리에서 접은 묶음
+    @Published var foldedChangeGroups: Set<String> = []
+    /// 화면 비교 이미지 위에 바뀐 자리를 그린다
+    @Published var showsMarks = true
     @Published var layer: SpecChange.Layer?
     @Published var search = ""
     @Published var toast: String?
@@ -126,9 +137,11 @@ struct DesignHistoryView: View {
         return sync.history.events.filter { event in
             // 숨긴 프로젝트·메뉴는 어느 보기에서도 빼고, 맨 아래 숨긴 항목에서만 다시 켠다
             if sync.isHidden(event) { return false }
+            // 반영을 마친 변경은 "반영 완료" 보기에만 남긴다
+            if sync.history.isApplied(event) != (page.scope == .applied) { return false }
             switch page.scope {
             case .project(let key): if event.fileKey != key { return false }
-            case .all: break
+            case .all, .applied: break
             case .important: if !event.isImportant { return false }
             case .working: if event.isImportant { return false }
             case .menu(let key, let path): if event.fileKey != key || event.menuPath != path { return false }
@@ -146,12 +159,11 @@ struct DesignHistoryView: View {
 
     @ViewBuilder private var detail: some View {
         if let id = page.selected, let event = sync.history.events.first(where: { $0.id == id }) {
-            DesignEventDetail(event: event, seen: sync.history.isSeen(event), showRenumbered: $page.showRenumbered,
-                              compareMode: $page.compareMode,
+            DesignEventDetail(event: event, seen: sync.history.isSeen(event), sync: sync, page: page,
                               toggleSeen: {
                                   if sync.history.isSeen(event) { sync.markUnseen(event.id) } else { sync.markSeen([event.id]) }
                               },
-                              flash: page.flash)
+                              toggleApplied: { toggleApplied(event) })
                 .id(event.id)
         } else {
             VStack(spacing: 10) {
@@ -166,6 +178,24 @@ struct DesignHistoryView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// 반영 완료로 넘기면 목록에서 바로 아래 변경을 골라 이어서 고치게 한다.
+    private func toggleApplied(_ event: DesignEvent) {
+        if sync.history.isApplied(event) {
+            sync.setApplied(event.id, false)
+            page.flash("반영 완료를 풀었습니다. 다시 목록에 나옵니다")
+            return
+        }
+        let order = DesignHistory.days(events).flatMap(\.events)
+        let index = order.firstIndex { $0.id == event.id }
+        sync.setApplied(event.id, true)
+        if page.scope != .applied, let index {
+            let next = order.indices.contains(index + 1) ? order[index + 1] : index > 0 ? order[index - 1] : nil
+            page.selected = next?.id
+            if let next { sync.markSeen([next.id]) }
+        }
+        page.flash("반영 완료로 넘겼습니다. 사이드바 ‘반영 완료’에서 다시 볼 수 있습니다")
     }
 
     /// 자주 보는 것부터. 헤더 표의 화면명·경로·작성자는 개발 용어 대신 "화면 정보"라 부른다.
@@ -273,10 +303,14 @@ private struct DesignSidebar: View {
             VStack(spacing: 1) {
                 row(key: "important", icon: "checkmark.seal", title: "완료 후 변경", count: sync.unseenCount, badge: true, scope: .important)
                     .tip("완료된 화면에 다시 생긴 변경, 막 완료된 화면, 디자이너가 적은 이력")
+                let open = sync.history.events.filter { !sync.history.isApplied($0) }
                 row(key: "working", icon: "pencil.line", title: "작업 중 변경",
-                    count: sync.history.events.filter { !$0.isImportant }.count, badge: false, scope: .working)
+                    count: open.filter { !$0.isImportant }.count, badge: false, scope: .working)
                     .tip("아직 작업 중인 화면의 변경. 같은 날 바뀐 것은 한 건으로 합칩니다")
-                row(key: "all", icon: "tray.full", title: "모든 변경", count: sync.history.events.count, badge: false, scope: .all)
+                row(key: "all", icon: "tray.full", title: "모든 변경", count: open.count, badge: false, scope: .all)
+                    .tip("반영 완료로 넘긴 것을 뺀 변경 전부")
+                row(key: "applied", icon: "checkmark.circle", title: "반영 완료", count: sync.history.applied.count, badge: false, scope: .applied)
+                    .tip("마크업에 반영을 마친 변경. 상세에서 반영 완료를 풀면 다시 목록에 나옵니다")
             }
             if !settings.sources.isEmpty && settings.sources.allSatisfy({ $0.alerts.isEmpty }) && !sync.history.files.isEmpty {
                 alertHint
@@ -870,7 +904,8 @@ private struct DesignTimeline: View {
                             Section {
                                 ForEach(day.events) { event in
                                     DesignEventRow(event: event, seen: sync.history.isSeen(event), selected: page.selected == event.id,
-                                                   project: showsProject ? sync.projectName(event.fileKey) : nil) {
+                                                   project: showsProject ? sync.projectName(event.fileKey) : nil,
+                                                   progress: sync.history.progress(event)) {
                                         page.selected = event.id
                                         page.showRenumbered = false
                                         sync.markSeen([event.id])
@@ -899,6 +934,7 @@ private struct DesignTimeline: View {
         case .all: return "모든 변경"
         case .important: return "완료 후 변경"
         case .working: return "작업 중 변경"
+        case .applied: return "반영 완료"
         case .menu(_, let path): return path.components(separatedBy: " > ").last ?? path
         case .group(_, let head): return head.components(separatedBy: " > ").last ?? head
         case .project(let key): return sync.projectName(key)
@@ -976,6 +1012,8 @@ private struct DesignEventRow: View {
     let seen: Bool
     let selected: Bool
     var project: String?
+    /// 반영한 항목 수. 손대기 시작한 변경만 줄에 보인다.
+    var progress: (done: Int, total: Int) = (0, 0)
     let select: () -> Void
     @StateObject private var hover = HoveredKey()
 
@@ -1006,6 +1044,11 @@ private struct DesignEventRow: View {
                         DesignPhaseBadge(phase: event.phase)
                         Text(event.summary).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1)
                         Spacer(minLength: 0)
+                        if progress.done > 0 {
+                            Text("반영 \(progress.done)/\(progress.total)").font(WL.label).monospacedDigit()
+                                .foregroundStyle(progress.done == progress.total ? WL.done : WL.muted)
+                                .fixedSize()
+                        }
                         if hover.key == "row", let url = DesignFormat.link(event) {
                             Button { NSWorkspace.shared.open(url) } label: { FigmaMark(height: 12).frame(width: 18, height: 18) }
                                 .buttonStyle(.plain)
@@ -1065,57 +1108,113 @@ private struct DesignPhaseBadge: View {
 private struct DesignEventDetail: View {
     let event: DesignEvent
     let seen: Bool
-    @Binding var showRenumbered: Bool
-    @Binding var compareMode: Int
+    @ObservedObject var sync: DesignSync
+    @ObservedObject var page: DesignHistoryPage
     let toggleSeen: () -> Void
-    let flash: (String) -> Void
+    let toggleApplied: () -> Void
     @ObservedObject private var images = DesignImages.shared
 
+    /// 이보다 넓으면 왼쪽 화면 비교, 오른쪽 변경 목록 두 칸으로 나눠 큰 모니터의 빈 곳을 쓴다.
+    static let splitWidth: CGFloat = 1040
+
     var body: some View {
-        SlimScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                header
-                actions
-                if event.kind == .changelog, let note = event.note {
-                    section("디자이너가 적은 이력", count: nil) {
-                        Text(note).font(WL.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        GeometryReader { geo in
+            if geo.size.width >= Self.splitWidth {
+                HStack(spacing: 0) {
+                    SlimScrollView {
+                        overview(wide: true).padding(.horizontal, 28).padding(.vertical, 24)
                     }
-                }
-                if event.kind == .replaced, let old = event.note {
-                    callout("square.on.square", "옛 프레임 ‘\(old)’를 지우고 새 프레임으로 바꿨습니다. 아래는 옛 프레임과 비교한 차이입니다.")
-                }
-                if DesignSync.shared.isHidden(event) {
-                    callout("eye.slash", "숨긴 프로젝트나 메뉴의 변경입니다. 목록과 알림에는 나오지 않습니다.")
-                }
-                if event.kind == .added {
-                    callout("plus.square.dashed", "처음 보는 화면입니다. 피그마에서 열어 전체를 확인하세요.")
-                }
-                comparison
-                if event.phase == .completed {
-                    callout("checkmark.seal", "이번 변경으로 완료 표시가 붙은 화면입니다.")
-                } else if event.phase == .working && event.kind == .changed {
-                    callout("pencil.line", "작업 중인 화면입니다. 같은 날 바뀐 것은 이 한 건에 모아 그날 처음 상태와 비교합니다.")
-                }
-                if event.kind == .removed {
-                    callout("trash", "화면설계서에서 이 화면이 없어졌습니다. 다른 화면 ID로 옮겨졌는지 확인하세요.")
-                }
-                ForEach(DesignHistoryView.layerOrder, id: \.self) { layer in
-                    let changes = event.changes.filter { $0.layer == layer && $0.op != .renumbered }
-                    if !changes.isEmpty {
-                        section(DesignHistoryView.layerName(layer), count: changes.count) {
-                            ForEach(Array(changes.enumerated()), id: \.offset) { index, change in
-                                if index > 0 { RowDivider() }
-                                DesignChangeRow(change: change)
-                            }
-                        }
+                    .frame(width: (geo.size.width * 0.55).rounded())
+                    Rectangle().fill(WL.border).frame(width: 1)
+                    SlimScrollView {
+                        changeList.padding(.horizontal, 24).padding(.vertical, 24)
                     }
+                    .frame(maxWidth: .infinity)
                 }
-                renumbered
+            } else {
+                SlimScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        overview(wide: false)
+                        changeList
+                    }
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 26)
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 26)
-            .frame(maxWidth: 760, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var applied: Bool { sync.history.isApplied(event) }
+    private var progress: (done: Int, total: Int) { sync.history.progress(event) }
+    private var checked: Set<String> { sync.history.checkedKeys(event) }
+    private var tree: DesignChangeTree.Node? { DesignChangeTree.mockupChanges(event).map(DesignChangeTree.build) }
+
+    /// 머리, 단추, 안내, 화면 비교.
+    private func overview(wide: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            header
+            actions
+            if applied {
+                callout("checkmark.circle", "마크업에 반영을 마친 변경입니다. 목록과 알림에서 뺐습니다.")
+            }
+            if event.kind == .changelog, let note = event.note {
+                section("디자이너가 적은 이력", count: nil) {
+                    Text(note).font(WL.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if event.kind == .replaced, let old = event.note {
+                callout("square.on.square", "옛 프레임 ‘\(old)’를 지우고 새 프레임으로 바꿨습니다. 아래는 옛 프레임과 비교한 차이입니다.")
+            }
+            if DesignSync.shared.isHidden(event) {
+                callout("eye.slash", "숨긴 프로젝트나 메뉴의 변경입니다. 목록과 알림에는 나오지 않습니다.")
+            }
+            if event.kind == .added {
+                callout("plus.square.dashed", "처음 보는 화면입니다. 피그마에서 열어 전체를 확인하세요.")
+            }
+            comparison(wide: wide)
+            if event.phase == .completed {
+                callout("checkmark.seal", "이번 변경으로 완료 표시가 붙은 화면입니다.")
+            } else if event.phase == .working && event.kind == .changed {
+                callout("pencil.line", "작업 중인 화면입니다. 같은 날 바뀐 것은 이 한 건에 모아 그날 처음 상태와 비교합니다.")
+            }
+            if event.kind == .removed {
+                callout("trash", "화면설계서에서 이 화면이 없어졌습니다. 다른 화면 ID로 옮겨졌는지 확인하세요.")
+            }
+        }
+    }
+
+    /// 바뀐 내용. 목업 문구·컴포넌트는 자리를 알면 레이어 트리로 묶어 명세와 화면 정보 사이에 둔다.
+    private var changeList: some View {
+        let tree = tree
+        return VStack(alignment: .leading, spacing: 22) {
+            layerSection(.spec)
+            if let tree {
+                DesignChangeTreeView(root: tree, fileKey: event.fileKey, page: page, checked: checked,
+                                     toggle: { sync.toggleChecked($0, in: event.id) })
+            } else {
+                layerSection(.text)
+            }
+            layerSection(.header)
+            if tree == nil { layerSection(.component) }
+            renumbered
+        }
+    }
+
+    @ViewBuilder private func layerSection(_ layer: SpecChange.Layer) -> some View {
+        let changes = event.changes.filter { $0.layer == layer && $0.op != .renumbered }
+        if !changes.isEmpty {
+            section(DesignHistoryView.layerName(layer), count: changes.count) {
+                ForEach(Array(changes.enumerated()), id: \.offset) { index, change in
+                    if index > 0 { RowDivider(inset: 26) }
+                    HStack(alignment: .top, spacing: 8) {
+                        AppliedCheck(on: checked.contains(change.key)) { sync.toggleChecked(change, in: event.id) }
+                            .padding(.top, 12)
+                        DesignChangeRow(change: change).opacity(checked.contains(change.key) ? 0.45 : 1)
+                    }
+                }
+            }
         }
     }
 
@@ -1136,8 +1235,10 @@ private struct DesignEventDetail: View {
                 }
                 Spacer(minLength: 8)
                 // 좁은 창에서도 단추 줄 끝으로 밀려 사라지지 않게 맨 위에 둔다
-                Button(seen ? "안 본 것으로 표시" : "본 것으로 표시", action: toggleSeen).buttonStyle(TextLinkButtonStyle())
-                    .tip(seen ? "목록에 다시 파란 점을 붙여 나중에 볼 것으로 둡니다" : "확인한 것으로 둡니다")
+                if !applied {
+                    Button(seen ? "안 본 것으로 표시" : "본 것으로 표시", action: toggleSeen).buttonStyle(TextLinkButtonStyle())
+                        .tip(seen ? "목록에 다시 파란 점을 붙여 나중에 볼 것으로 둡니다" : "확인한 것으로 둡니다")
+                }
             }
             title
             breadcrumb
@@ -1179,33 +1280,61 @@ private struct DesignEventDetail: View {
 
     /// 상세가 좁으면(최소 창 크기) 보조 단추는 아이콘만 남겨 줄이 넘치지 않게 한다.
     private var actions: some View {
-        ViewThatFits(in: .horizontal) {
-            actionRow(compact: false)
-            actionRow(compact: true)
+        VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                actionRow(compact: false)
+                actionRow(compact: true)
+            }
+            if progress.total > 0 && !applied { progressBar }
+        }
+    }
+
+    /// 항목을 체크한 만큼 채운다. 다 채우면 반영 완료로 넘기라고 알린다.
+    private var progressBar: some View {
+        let ratio = CGFloat(progress.done) / CGFloat(max(progress.total, 1))
+        let full = progress.done == progress.total
+        return HStack(spacing: 10) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.07))
+                    Capsule().fill(full ? WL.done : WL.accent).frame(width: geo.size.width * ratio)
+                }
+            }
+            .frame(height: 4)
+            Text(full ? "모두 반영함 · 반영 완료로 넘기세요" : "반영 \(progress.done)/\(progress.total)")
+                .font(WL.label).monospacedDigit()
+                .foregroundStyle(full ? WL.done : WL.muted)
+                .fixedSize()
         }
     }
 
     private func actionRow(compact: Bool) -> some View {
         HStack(spacing: 8) {
+            Button(action: toggleApplied) {
+                Label(applied ? "반영 완료 풀기" : "반영 완료", systemImage: applied ? "arrow.uturn.backward" : "checkmark.circle")
+            }
+            .buttonStyle(NotionButtonStyle(kind: applied ? .secondary : .primary))
+            .tip(applied ? "다시 목록에 나오게 합니다" : "마크업에 반영했으면 목록에서 빼고 다음 변경으로 넘어갑니다")
             if let url = DesignFormat.link(event) {
                 let title = event.kind == .changelog ? "이력 표 열기" : "피그마에서 열기"
                 Button { NSWorkspace.shared.open(url) } label: {
-                    HStack(spacing: 7) { FigmaMark(height: 14); Text(title) }
+                    if compact { FigmaMark(height: 14) } else { HStack(spacing: 7) { FigmaMark(height: 14); Text(title) } }
                 }
                 .buttonStyle(NotionButtonStyle())
+                .tip(title)
             }
             Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(event.report, forType: .string)
-                flash("변경 요약을 복사했습니다")
+                page.flash("변경 요약을 복사했습니다")
             } label: {
                 if compact { Image(systemName: "doc.on.doc") } else { Label("요약 복사", systemImage: "doc.on.doc") }
             }
             .buttonStyle(NotionButtonStyle())
-            .tip("요약 복사: 레드마인·MR에 붙일 [디자인 변경] 글")
+            .tip("요약 복사: 레드마인·MR에 붙일 [디자인 변경] 글 (목업 요소는 위치도 붙음)")
             if event.kind != .changelog && event.kind != .removed {
                 Button {
-                    flash(DesignSync.shared.addToWorkLog(event) ? "업무 일지 오늘 칸에 넣었습니다" : "업무 일지에 넣지 못했습니다")
+                    page.flash(DesignSync.shared.addToWorkLog(event) ? "업무 일지 오늘 칸에 넣었습니다" : "업무 일지에 넣지 못했습니다")
                 } label: {
                     if compact { Image(systemName: "text.badge.plus") } else { Label("업무 일지에 넣기", systemImage: "text.badge.plus") }
                 }
@@ -1232,15 +1361,22 @@ private struct DesignEventDetail: View {
     // MARK: 화면 비교
 
     /// 바뀌기 전·후 버전 그대로 그린 프레임. 볼 때만 받아 이 Mac에 둔다.
-    @ViewBuilder private var comparison: some View {
+    @ViewBuilder private func comparison(wide: Bool) -> some View {
         if event.kind != .changelog, let frame = event.frameID {
             if event.beforeVersion != nil || event.afterVersion != nil {
+                let marks = tree.map(DesignChangeTree.items)?.filter { $0.change.place?.hasBox == true } ?? []
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
+                    HStack(spacing: 10) {
                         SectionLabel("화면 비교")
                         Spacer()
-                        Picker("", selection: $compareMode) {
-                            Text("나란히").tag(0)
+                        if !marks.isEmpty {
+                            Toggle("바뀐 자리 표시", isOn: $page.showsMarks)
+                                .toggleStyle(.checkbox).font(WL.meta).foregroundStyle(WL.muted)
+                                .lineLimit(1).fixedSize()
+                                .tip("목업 변경의 자리와 번호를 이미지 위에 그립니다. 번호는 변경 목록과 같습니다")
+                        }
+                        Picker("", selection: $page.compareMode) {
+                            Text("둘 다").tag(0)
                             Text("이전").tag(1)
                             Text("이후").tag(2)
                         }
@@ -1248,13 +1384,17 @@ private struct DesignEventDetail: View {
                         .labelsHidden()
                         .frame(width: 168)
                     }
-                    switch compareMode {
-                    case 1: shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, large: true)
-                    case 2: shot("이후", version: event.afterVersion, frame: frame, large: true)
+                    let shown = page.showsMarks ? marks : []
+                    switch page.compareMode {
+                    case 1: shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, marks: shown, maxHeight: wide ? 1400 : 520)
+                    case 2: shot("이후", version: event.afterVersion, frame: frame, marks: shown, maxHeight: wide ? 1400 : 520)
                     default:
-                        HStack(alignment: .top, spacing: 10) {
-                            shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, large: false)
-                            shot("이후", version: event.afterVersion, frame: frame, large: false)
+                        // 넓은 칸에서는 위아래로 쌓아 가로로 긴 화면도 칸 너비를 다 쓰게 한다
+                        let layout = wide ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
+                            : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
+                        layout {
+                            shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, marks: shown, maxHeight: wide ? 900 : 260)
+                            shot("이후", version: event.afterVersion, frame: frame, marks: shown, maxHeight: wide ? 900 : 260)
                         }
                     }
                 }
@@ -1265,33 +1405,40 @@ private struct DesignEventDetail: View {
         }
     }
 
-    private func shot(_ label: String, version: String?, frame: String, large: Bool) -> some View {
+    /// 이미지는 제 비율대로 칸 너비에 맞춘다. 받기 전·실패는 고정 높이 자리로 둔다.
+    private func shot(_ label: String, version: String?, frame: String, marks: [DesignChangeTree.Item], maxHeight: CGFloat) -> some View {
         let state = version.flatMap { images.state(fileKey: event.fileKey, nodeID: frame, version: $0) }
         return VStack(alignment: .leading, spacing: 5) {
             Text(label).font(WL.label).foregroundStyle(.secondary)
-            ZStack {
-                RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.callout)
-                if version == nil {
-                    Text(label == "이전" ? "새로 생긴 화면이라 이전이 없습니다" : "지워진 화면이라 이후가 없습니다")
-                        .font(WL.caption).foregroundStyle(WL.faint).multilineTextAlignment(.center).padding(10)
-                } else if case .ready(let url) = state, let image = images.image(url) {
+            Group {
+                if version != nil, case .ready(let url) = state, let image = images.image(url) {
                     Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+                        .overlay(ChangeMarks(items: marks, before: label == "이전", selected: $page.selectedChange))
                         .clipShape(RoundedRectangle(cornerRadius: WL.inner, style: .continuous))
-                        .onTapGesture { NSWorkspace.shared.open(url) }
-                        .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
-                        .tip("\(label) 화면 · 누르면 크게 엽니다")
-                } else if case .missing(let reason) = state {
-                    Text(reason).font(WL.caption).foregroundStyle(WL.waiting).multilineTextAlignment(.center).padding(10)
+                        .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+                        .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: .top)
+                        .onTapGesture(count: 2) { NSWorkspace.shared.open(url) }
+                        .tip("\(label) 화면 · 두 번 누르면 크게 엽니다")
                 } else {
-                    VStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("피그마에서 그리는 중…").font(WL.caption).foregroundStyle(WL.faint)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.callout)
+                        if version == nil {
+                            Text(label == "이전" ? "새로 생긴 화면이라 이전이 없습니다" : "지워진 화면이라 이후가 없습니다")
+                                .font(WL.caption).foregroundStyle(WL.faint).multilineTextAlignment(.center).padding(10)
+                        } else if case .missing(let reason) = state {
+                            Text(reason).font(WL.caption).foregroundStyle(WL.waiting).multilineTextAlignment(.center).padding(10)
+                        } else {
+                            VStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("피그마에서 그리는 중…").font(WL.caption).foregroundStyle(WL.faint)
+                            }
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: min(maxHeight, 220))
+                    .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
                 }
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: large ? 380 : 190)
-            .overlay(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
         }
         .onAppear { if let version { images.load(fileKey: event.fileKey, nodeID: frame, version: version) } }
     }
@@ -1304,7 +1451,7 @@ private struct DesignEventDetail: View {
 
     private func setStatus(_ done: Bool?) {
         DesignSync.shared.setStatus(DesignStatusRules.screenKey(event.screenID), done: done, in: event.fileKey)
-        flash(done == nil ? "섹션 표시대로 봅니다" : done! ? "이 화면을 완료로 봅니다. 다음 변경부터 알립니다" : "이 화면을 작업 중으로 봅니다")
+        page.flash(done == nil ? "섹션 표시대로 봅니다" : done! ? "이 화면을 완료로 봅니다. 다음 변경부터 알립니다" : "이 화면을 작업 중으로 봅니다")
     }
 
     private var renumbered: some View {
@@ -1312,17 +1459,17 @@ private struct DesignEventDetail: View {
         return Group {
             if !changes.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Button { showRenumbered.toggle() } label: {
+                    Button { page.showRenumbered.toggle() } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
-                                .rotationEffect(.degrees(showRenumbered ? 90 : 0))
+                                .rotationEffect(.degrees(page.showRenumbered ? 90 : 0))
                             Text("번호만 바뀐 명세 \(changes.count)개").font(WL.meta)
                         }
                         .foregroundStyle(WL.muted)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if showRenumbered {
+                    if page.showRenumbered {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(changes.enumerated()), id: \.offset) { _, change in
                                 HStack(spacing: 6) {
@@ -1359,7 +1506,25 @@ private struct DesignEventDetail: View {
     }
 }
 
-private struct DesignChangeRow: View {
+/// 반영 체크. 누르면 그 항목을 마크업에 반영한 것으로 둔다.
+struct AppliedCheck: View {
+    let on: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 14))
+                .foregroundStyle(on ? WL.done : WL.faint)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .tip(on ? "반영 안 함으로 되돌리기" : "마크업에 반영함")
+    }
+}
+
+struct DesignChangeRow: View {
     let change: SpecChange
 
     var body: some View {

@@ -111,9 +111,14 @@ enum UIShots {
             .frame(width: mainSize.width, height: mainSize.height))
     }
 
-    /// 앱 창 화면을 찍을 크기. RUNTIME_SHOT_MIN=1이면 최소 크기로 찍어 잘리는 곳을 본다.
+    /// 앱 창 화면을 찍을 크기. RUNTIME_SHOT_MIN=1이면 최소 크기로 찍어 잘리는 곳을 보고,
+    /// RUNTIME_SHOT_SIZE=2400x1300이면 큰 모니터에서 창을 키웠을 때를 본다.
     private static var mainSize: CGSize {
-        ProcessInfo.processInfo.environment["RUNTIME_SHOT_MIN"] == "1" ? AppWindow.minSize : AppWindow.size
+        let env = ProcessInfo.processInfo.environment
+        if let size = env["RUNTIME_SHOT_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
+            return CGSize(width: size[0], height: size[1])
+        }
+        return env["RUNTIME_SHOT_MIN"] == "1" ? AppWindow.minSize : AppWindow.size
     }
 
     /// 앱 창 설정 화면에서 업무 일지 연동 칸을 고른 채 찍는다.

@@ -828,12 +828,12 @@ struct WorkLogPreview: View {
     private func screens(_ update: WorkReport.RedmineUpdate) -> some View {
         let origins = settings.attachScreens && !page.redmineNoNote.contains(update.issue)
             ? MRScreenStore.origins(store.log.entries.filter { update.entryIDs.contains($0.id) }.map(\.source)) : []
-        let refs = origins.compactMap(shots.ref)
+        let refs = shots.refs(origins)
         if !origins.isEmpty {
             let groups = refs.flatMap { ref in
                 (shots.screens[ref] ?? []).enumerated().map { index, screen in
-                    ScreenGroup(id: "\(ref.key)#\(index)", number: index + 1, title: screen.title,
-                                before: screen.before, after: screen.after)
+                    ScreenGroup(id: "\(ref.key)#\(index)", mr: refs.count > 1 && index == 0 ? ref.iid : nil, number: index + 1,
+                                title: screen.title, before: screen.before, after: screen.after)
                 }
             }
             let count = groups.reduce(0) { $0 + ($1.before == nil ? 0 : 1) + ($1.after == nil ? 0 : 1) }
@@ -861,6 +861,10 @@ struct WorkLogPreview: View {
                             Text("MR에서 수정 전·후 화면을 찾는 중…").font(WL.caption).foregroundStyle(WL.muted)
                         } else if !off {
                             ForEach(groups) { group in
+                                // MR이 여럿이면 어느 MR 화면인지 머리를 단다 (번호는 MR마다 1부터)
+                                if let mr = group.mr {
+                                    Text("MR !\(mr)").font(WL.label).foregroundStyle(WL.muted).padding(.top, 2)
+                                }
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text("\(group.number). \(group.title.map(MRScreenTitle.short) ?? "화면")")
                                         .font(WL.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -1067,6 +1071,8 @@ private struct RatioBar: View {
 /// 카드에 보일 화면 항목 하나 (제목과 수정 전·후).
 private struct ScreenGroup: Identifiable {
     let id: String
+    /// MR이 여럿일 때 그 MR의 첫 항목에만 번호를 둔다.
+    let mr: Int?
     let number: Int
     let title: String?
     let before: String?

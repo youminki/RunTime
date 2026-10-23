@@ -709,7 +709,7 @@ final class WorkLogSync: ObservableObject {
             var failures: [String] = []
             for update in updates {
                 let screens = attach[update.issue].flatMap { plan -> ScreenAttachment? in
-                    let refs = plan.origins.compactMap { MRScreenStore.shared.refForSending($0, host: host) }
+                    let refs = MRScreenStore.shared.refsForSending(plan.origins, host: host)
                         .filter { !plan.previous.contains("mr\($0.iid)-") }
                     return refs.isEmpty ? nil : Self.attachScreens(refs, base: base, key: key, host: host, html: html)
                 }

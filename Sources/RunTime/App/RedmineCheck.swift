@@ -82,7 +82,7 @@ enum RedmineCheck {
         let html = settings.redmineHTML
         let host = settings.gitlabHost
         DispatchQueue.global().async {
-            let refs = origins.compactMap { MRScreenStore.shared.refForSending($0, host: host) }
+            let refs = MRScreenStore.shared.refsForSending(origins, host: host)
             print("MR: " + (refs.isEmpty ? "없음 (\(origins))" : refs.map { "\($0.path)!\($0.iid)" }.joined(separator: ", ")))
             let result = WorkLogSync.attachScreens(refs, base: base, key: key, host: host, html: html)
             DispatchQueue.main.async {

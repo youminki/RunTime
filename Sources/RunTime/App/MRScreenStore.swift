@@ -58,6 +58,21 @@ final class MRScreenStore: ObservableObject {
         }
     }
 
+    /// 화면을 붙일 MR들. 머지 전 브랜치 줄과 머지된 MR 줄이 한 일감에 함께 있으면 브랜치가 같은 MR로 풀리므로 한 번만 둔다. 메인 스레드.
+    func refs(_ origins: [Origin]) -> [Ref] {
+        Self.unique(origins.compactMap(ref))
+    }
+
+    /// 보내는 큐에서 부른다. `refs`와 같지만 아직 모르는 브랜치는 지금 찾는다.
+    func refsForSending(_ origins: [Origin], host: String) -> [Ref] {
+        Self.unique(origins.compactMap { refForSending($0, host: host) })
+    }
+
+    private static func unique(_ refs: [Ref]) -> [Ref] {
+        var seen = Set<Ref>()
+        return refs.filter { seen.insert($0).inserted }
+    }
+
     /// 아직 받지 않은 MR의 화면을 받는다. 메인 스레드에서 부른다.
     func load(_ origins: [Origin], host: String) {
         let todo = origins.filter { origin in

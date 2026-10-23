@@ -24,13 +24,24 @@ public struct SpecChange: Codable, Equatable, Hashable, Sendable {
     public var label: String
     public var before: String?
     public var after: String?
+    /// 목업 요소의 노드 ID와 화면 안 자리. 피그마에서 그 요소를 열고 화면 이미지에 표시한다 (명세·헤더와 옛 기록은 nil).
+    public var nodeID: String?
+    public var place: SpecPlace?
 
-    public init(layer: Layer, op: Op, label: String, before: String? = nil, after: String? = nil) {
+    public init(layer: Layer, op: Op, label: String, before: String? = nil, after: String? = nil,
+                nodeID: String? = nil, place: SpecPlace? = nil) {
         self.layer = layer
         self.op = op
         self.label = label
         self.before = before
         self.after = after
+        self.nodeID = nodeID
+        self.place = place
+    }
+
+    /// 반영 체크를 기억할 열쇠. 작업 중 변경을 그날 처음 상태와 다시 견줘도 같은 항목이면 같다.
+    public var key: String {
+        [layer.rawValue, op.rawValue, nodeID ?? label, before ?? "", after ?? ""].joined(separator: "|")
     }
 }
 
@@ -39,7 +50,9 @@ public enum SpecDiff {
     static let sameItemSimilarity = 0.45
 
     public static func changes(from old: ScreenSnapshot, to new: ScreenSnapshot) -> [SpecChange] {
-        header(old, new) + spec(old.items, new.items) + texts(old.texts, new.texts) + components(old.components, new.components)
+        header(old, new) + spec(old.items, new.items)
+            + texts(old.texts, new.texts, oldPlaces: old.places ?? [:], newPlaces: new.places ?? [:])
+            + components(old.components, new.components, oldPlaces: old.places ?? [:], newPlaces: new.places ?? [:])
     }
 
     // MARK: 헤더
@@ -137,47 +150,54 @@ public enum SpecDiff {
     // MARK: 목업
 
     /// 노드 ID로 맞춘다. 지우고 같은 글을 다시 만든 것(ID만 바뀐 것)은 바뀐 것으로 치지 않는다.
-    static func texts(_ old: [String: String], _ new: [String: String]) -> [SpecChange] {
+    static func texts(_ old: [String: String], _ new: [String: String],
+                      oldPlaces: [String: SpecPlace] = [:], newPlaces: [String: SpecPlace] = [:]) -> [SpecChange] {
         var changes: [SpecChange] = []
-        var removed: [String] = []
-        var added: [String] = []
+        var removed: [(id: String, text: String)] = []
+        var added: [(id: String, text: String)] = []
         for (id, text) in old.sorted(by: { $0.key < $1.key }) {
             if let now = new[id] {
                 if now != text {
-                    changes.append(SpecChange(layer: .text, op: .modified, label: DesignText.headline(now), before: text, after: now))
+                    changes.append(SpecChange(layer: .text, op: .modified, label: DesignText.headline(now), before: text, after: now,
+                                              nodeID: id, place: newPlaces[id] ?? oldPlaces[id]))
                 }
             } else {
-                removed.append(text)
+                removed.append((id, text))
             }
         }
-        for (id, text) in new.sorted(by: { $0.key < $1.key }) where old[id] == nil { added.append(text) }
-        var unmatched = removed
-        for text in added {
-            if let index = unmatched.firstIndex(of: text) {
+        for (id, text) in new.sorted(by: { $0.key < $1.key }) where old[id] == nil { added.append((id, text)) }
+        var unmatched = removed.map(\.text)
+        for item in added {
+            if let index = unmatched.firstIndex(of: item.text) {
                 unmatched.remove(at: index)
             } else {
-                changes.append(SpecChange(layer: .text, op: .added, label: DesignText.headline(text), after: text))
+                changes.append(SpecChange(layer: .text, op: .added, label: DesignText.headline(item.text), after: item.text,
+                                          nodeID: item.id, place: newPlaces[item.id]))
             }
         }
-        var pending = added
-        for text in removed {
-            if let index = pending.firstIndex(of: text) {
+        var pending = added.map(\.text)
+        for item in removed {
+            if let index = pending.firstIndex(of: item.text) {
                 pending.remove(at: index)
             } else {
-                changes.append(SpecChange(layer: .text, op: .removed, label: DesignText.headline(text), before: text))
+                // 지운 요소는 지금 파일에 없어 이전 버전 노드를 가리킨다
+                changes.append(SpecChange(layer: .text, op: .removed, label: DesignText.headline(item.text), before: item.text,
+                                          nodeID: item.id, place: oldPlaces[item.id]))
             }
         }
         return changes
     }
 
     /// 교체는 하나씩, 추가·삭제는 표를 새로 짜면 수십 개가 한꺼번에 생겨서 이름별 개수로 묶는다.
-    static func components(_ old: [String: SpecComponent], _ new: [String: SpecComponent]) -> [SpecChange] {
+    static func components(_ old: [String: SpecComponent], _ new: [String: SpecComponent],
+                           oldPlaces: [String: SpecPlace] = [:], newPlaces: [String: SpecPlace] = [:]) -> [SpecChange] {
         var changes: [SpecChange] = []
         for (id, before) in old.sorted(by: { $0.key < $1.key }) {
             if let after = new[id], after.componentID != before.componentID {
                 // 이름이 같으면 같은 컴포넌트의 다른 변형(상태·크기)으로 바꾼 것이다
                 let label = after.isImage ? "이미지 교체" : after.name == before.name ? "\(after.name) 변형 교체" : "컴포넌트 교체"
-                changes.append(SpecChange(layer: .component, op: .modified, label: label, before: before.name, after: after.name))
+                changes.append(SpecChange(layer: .component, op: .modified, label: label, before: before.name, after: after.name,
+                                          nodeID: id, place: newPlaces[id] ?? oldPlaces[id]))
             }
         }
         let added = new.filter { old[$0.key] == nil }.map(\.value.name)

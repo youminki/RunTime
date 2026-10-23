@@ -470,6 +470,27 @@ final class DesignSync: ObservableObject {
         persist()
     }
 
+    // MARK: 반영
+
+    /// 마크업에 반영을 마쳤다. 목록에서 빠지고 "반영 완료" 보기에만 남는다.
+    func setApplied(_ id: UUID, _ applied: Bool) {
+        if applied {
+            guard history.applied.insert(id).inserted else { return }
+            history.seen.insert(id)
+        } else {
+            guard history.applied.remove(id) != nil else { return }
+        }
+        persist()
+    }
+
+    /// 변경 안 항목 하나를 반영했는지 표시한다.
+    func toggleChecked(_ change: SpecChange, in id: UUID) {
+        var keys = history.checked[id.uuidString] ?? []
+        if keys.remove(change.key) == nil { keys.insert(change.key) }
+        history.checked[id.uuidString] = keys.isEmpty ? nil : keys
+        persist()
+    }
+
     /// 업무 일지 오늘 칸에 할 일로 넣는다. 프로젝트는 피그마 파일 이름에서 대괄호 안을 쓴다.
     func addToWorkLog(_ event: DesignEvent) -> Bool {
         let project = Self.project(from: event.fileName)

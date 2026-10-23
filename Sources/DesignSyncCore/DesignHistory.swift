@@ -103,6 +103,13 @@ public struct DesignEvent: Codable, Equatable, Identifiable, Sendable {
     }
 
     static func line(_ change: SpecChange) -> String {
+        // 목업 요소는 어느 영역인지 붙여 마크업할 곳을 바로 찾게 한다
+        let containers = change.place.map { Array($0.path.dropLast()) } ?? []
+        let text = body(change)
+        return containers.isEmpty ? text : text + " (위치: " + containers.joined(separator: " › ") + ")"
+    }
+
+    private static func body(_ change: SpecChange) -> String {
         let layer = ["header": "화면 정보", "spec": "명세", "text": "문구", "component": "컴포넌트"][change.layer.rawValue] ?? ""
         let one = { (text: String?) in DesignText.headline(text ?? "", limit: 80) }
         switch change.op {
@@ -212,15 +219,34 @@ public struct DesignHistory: Codable, Equatable, Sendable {
     /// 오래된 것이 앞.
     public var events: [DesignEvent]
     public var seen: Set<UUID>
+    /// 마크업에 반영을 마친 변경. 목록·배지·알림에서 빠지고 "반영 완료" 보기에만 남는다.
+    public var applied: Set<UUID>
+    /// 변경 ID 문자열 → 그 안에서 반영한 항목 (`SpecChange.key`). UUID 열쇠는 JSON에서 배열이 되어 문자열로 둔다.
+    public var checked: [String: Set<String>]
 
     /// 이보다 오래된 변경은 지운다. 화면설계서는 몇 달이면 다시 짜인다.
     public static let keepDays = 365
     public static let keepCount = 5000
 
-    public init(files: [String: DesignFileRecord] = [:], events: [DesignEvent] = [], seen: Set<UUID> = []) {
+    public init(files: [String: DesignFileRecord] = [:], events: [DesignEvent] = [], seen: Set<UUID> = [],
+                applied: Set<UUID> = [], checked: [String: Set<String>] = [:]) {
         self.files = files
         self.events = events
         self.seen = seen
+        self.applied = applied
+        self.checked = checked
+    }
+
+    private enum CodingKeys: String, CodingKey { case files, events, seen, applied, checked }
+
+    /// 반영 칸이 생기기 전 파일도 읽는다.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        files = try container.decode([String: DesignFileRecord].self, forKey: .files)
+        events = try container.decode([DesignEvent].self, forKey: .events)
+        seen = try container.decode(Set<UUID>.self, forKey: .seen)
+        applied = try container.decodeIfPresent(Set<UUID>.self, forKey: .applied) ?? []
+        checked = try container.decodeIfPresent([String: Set<String>].self, forKey: .checked) ?? [:]
     }
 
     /// 가져온 화면을 직전 상태와 비교해 바뀐 것만 남긴다. 파일을 처음 가져올 때는 기준만 세운다.
@@ -259,7 +285,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         }
         // 오늘 아직 확인하지 않은 작업 중 변경만 합칠 수 있다. 그 밖의 비교 기준은 버린다
         let mergeable = Dictionary(events.enumerated().filter { _, old in
-            old.fileKey == capture.fileKey && old.kind == .changed && old.phase == .working && !seen.contains(old.id)
+            old.fileKey == capture.fileKey && old.kind == .changed && old.phase == .working && !isSeen(old)
                 && calendar.isDate(old.detectedAt, inSameDayAs: date)
         }.compactMap { index, old in old.frameID.map { ($0, index) } }, uniquingKeysWith: { _, last in last })
         var bases = (file.mergeBase ?? [:]).filter { mergeable[$0.key] != nil }
@@ -350,7 +376,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         }
 
         for index in dropped.sorted(by: >) {
-            seen.remove(events[index].id)
+            forgetState(events[index].id)
             events.remove(at: index)
         }
         file.mergeBase = bases.isEmpty ? nil : bases
@@ -383,19 +409,41 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         let removed = Set(events.filter { $0.fileKey == fileKey }.map(\.id))
         events.removeAll { removed.contains($0.id) }
         seen.subtract(removed)
+        applied.subtract(removed)
+        for id in removed { checked[id.uuidString] = nil }
     }
 
     public mutating func prune(now: Date) {
         let limit = now.addingTimeInterval(-Double(Self.keepDays) * 86_400)
         events.removeAll { $0.detectedAt < limit }
         if events.count > Self.keepCount { events.removeFirst(events.count - Self.keepCount) }
-        seen.formIntersection(events.map(\.id))
+        let ids = Set(events.map(\.id))
+        seen.formIntersection(ids)
+        applied.formIntersection(ids)
+        checked = checked.filter { key, _ in UUID(uuidString: key).map(ids.contains) ?? false }
     }
 
-    public func isSeen(_ event: DesignEvent) -> Bool { seen.contains(event.id) }
+    private mutating func forgetState(_ id: UUID) {
+        seen.remove(id)
+        applied.remove(id)
+        checked[id.uuidString] = nil
+    }
+
+    /// 반영까지 마친 변경은 본 것으로 친다.
+    public func isSeen(_ event: DesignEvent) -> Bool { seen.contains(event.id) || applied.contains(event.id) }
+
+    public func isApplied(_ event: DesignEvent) -> Bool { applied.contains(event.id) }
+
+    public func checkedKeys(_ event: DesignEvent) -> Set<String> { checked[event.id.uuidString] ?? [] }
+
+    /// 반영한 항목 수와 반영할 항목 수 (번호만 바뀐 명세는 고칠 것이 없어 뺀다).
+    public func progress(_ event: DesignEvent) -> (done: Int, total: Int) {
+        let keys = Set(event.changes.filter { $0.op != .renumbered }.map(\.key))
+        return ((checked[event.id.uuidString] ?? []).intersection(keys).count, keys.count)
+    }
 
     /// 확인하지 않은 중요한 변경. 작업 중 변경은 세지 않는다.
-    public var unseenCount: Int { events.filter { $0.isImportant && !seen.contains($0.id) }.count }
+    public var unseenCount: Int { events.filter { $0.isImportant && !isSeen($0) }.count }
 
     // MARK: 보기
 
@@ -423,7 +471,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         for event in events {
             let id = event.fileKey + "|" + event.menuPath
             var menu = table[id] ?? Menu(fileKey: event.fileKey, fileName: event.fileName, path: event.menuPath, screenCount: 0, unseen: 0)
-            if event.isImportant && !seen.contains(event.id) { menu.unseen += 1 }
+            if event.isImportant && !isSeen(event) { menu.unseen += 1 }
             menu.lastChange = max(menu.lastChange ?? event.detectedAt, event.detectedAt)
             table[id] = menu
         }
