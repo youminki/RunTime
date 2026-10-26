@@ -35,3 +35,10 @@ jobs:
         run: swift build -c release
       - name: 테스트
         run: ./scripts/test.sh
+      # 새 컴파일러에서만 통과하는 느린 식과, 최소 지원 macOS에 없는 SF Symbol을 미리 잡는다
+      - name: 타입 추론 시간 점검
+        if: matrix.xcode == '26.6'
+        run: ./scripts/check-typecheck.sh
+      - name: SF Symbol 점검
+        if: matrix.xcode == '26.6'
+        run: python3 -I scripts/check-symbols.py

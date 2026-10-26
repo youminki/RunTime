@@ -32,6 +32,12 @@ if ! command -v swift > /dev/null; then
 fi
 
 # 2) 고정 서명 identity (최초 1회 — macOS가 로그인 암호를 물으면 승인)
+MACOS=$(sw_vers -productVersion)
+if [ "${MACOS%%.*}" -lt 13 ]; then
+  echo "✗ macOS ${MACOS}에서는 쓸 수 없습니다. macOS 13 이상이 필요합니다." >&2
+  exit 1
+fi
+
 scripts/setup-signing.sh
 
 # 3) 빌드

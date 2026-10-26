@@ -23,8 +23,8 @@ Anthropic이 만든 앱이 아닌 개인 프로젝트입니다.
 
 ## 설치
 
-macOS 13 이상, Claude Code에 로그인한 상태, Swift 툴체인이 필요합니다.
-Swift가 없으면 먼저 `xcode-select --install`을 실행하세요.
+macOS 13 이상, Claude Code에 로그인한 상태, Swift 6.0 이상(Xcode 16 또는 Command Line Tools 16 이상)이 필요합니다.
+Swift가 없으면 먼저 `xcode-select --install`을 실행하세요. Xcode와 Command Line Tools가 함께 있으면 Swift가 더 새것인 쪽으로 빌드하고, 너무 오래됐거나 Xcode 약관에 동의하지 않았으면 무엇을 하면 되는지 알려 주고 멈춥니다. Xcode를 업데이트한 뒤에는 이전 빌드 결과를 비우고 다시 빌드합니다.
 
 ```bash
 git clone https://github.com/youminki/RunTime.git
@@ -77,6 +77,7 @@ cd RunTime
 1~2분 동안 러너가 사라졌다가 새 버전으로 나타납니다.
 클론에서 다른 브랜치로 일하거나 커밋하지 않은 변경이 있으면, 그 폴더는 건드리지 않고 같은 저장소의 업데이트 전용 폴더(`~/Library/Application Support/RunTime/update-source`)에서 GitHub 최신을 빌드해 설치합니다. 빌드가 실패하면 쓰던 앱이 그대로 남고, 로그는 `~/Library/Logs/RunTime/update.log`에 있습니다.
 
+버전은 `VERSION`의 주.부 번호에 그 뒤 쌓인 커밋 수를 붙여 커밋마다 오릅니다(예: 0.8.3). 큰 변경 때만 `VERSION`을 올립니다.
 터미널에서 하려면 클론한 폴더에서 `git pull --ff-only && ./install.sh`를 실행하세요. 달라진 점은 [변경 기록](CHANGELOG.md)에 있습니다.
 
 ## 지우기
@@ -141,6 +142,8 @@ Claude 계정을 바꿀 수 있게 Claude Code에 로그인했던 계정마다 �
 ```bash
 swift run RunTime             # 빌드하지 않은 채 개발 실행 (알림과 자동 시작은 동작하지 않음)
 ./scripts/test.sh             # 테스트
+./scripts/check-typecheck.sh  # 타입 추론이 100ms 넘는 식 찾기 (Xcode 16 컴파일러에서 빌드가 멈추는 식)
+python3 -I scripts/check-symbols.py   # macOS 13에 없는 SF Symbol 찾기
 scripts/build-app.sh          # dist/RunTime.app과 dmg 만들기
 python3 -I scripts/update-prices.py   # Claude 모델 단가를 LiteLLM 가격 데이터에서 다시 받아 PricingData.swift 만들기
 python3 -I scripts/update-aliases.py  # Petdex 캐릭터의 한국어 이름을 Wikidata에서 받아 한글 검색 사전 만들기 (30분쯤)

@@ -128,12 +128,14 @@ struct PatchNotesBubble: View {
 
     private static let fill = Color(white: 0.97)
     private static let ink = Color(nsColor: NSColor(hex: 0x1F1C26))
+    private static let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String).map { "v" + $0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("업데이트했어요").font(.system(size: 12, weight: .bold))
-                Text("이번에 바뀐 것").font(.system(size: 10.5)).foregroundStyle(Self.ink.opacity(0.5))
+                Text(Self.version.map { "\($0) · 이번에 바뀐 것" } ?? "이번에 바뀐 것")
+                    .font(.system(size: 10.5)).foregroundStyle(Self.ink.opacity(0.5))
                 Spacer(minLength: 4)
                 Button(action: dismiss) {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .bold))

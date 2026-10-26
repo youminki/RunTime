@@ -19,10 +19,9 @@ if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$CODESIGN_I
   exit 1
 fi
 
-# xcode-select가 CLT를 가리키는데 Xcode가 있으면 Xcode 툴체인 사용 (다른 머신 호환)
-if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
-  export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-fi
+# Xcode와 Command Line Tools 가운데 Swift가 새것인 쪽을 고르고, 너무 오래됐으면 여기서 멈춘다
+source scripts/toolchain.sh
+pick_toolchain
 
 echo "▸ release 빌드"
 swift build -c release
@@ -46,8 +45,15 @@ if COMMIT=$(git rev-parse --short HEAD 2>/dev/null); then
   [ -z "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] || { COMMIT="$COMMIT+"; DIRTY=true; }
   # 따옴표·백슬래시가 든 경로나 제목도 그대로 들어가게 plutil로 넣는다
   put() { plutil -insert "$1" -string "$2" "$PLIST"; }
-  # 빌드 번호는 커밋 수로 매긴다. 버전(CFBundleShortVersionString)은 큰 변경 때 Info.plist에서 올린다
+  # 빌드 번호는 커밋 수로 매긴다. 버전은 VERSION의 주.부 번호에, 그 파일을 마지막으로 고친 뒤 쌓인 커밋 수를 붙인다.
+  # 커밋마다 버전이 저절로 오르고, 큰 변경 때만 VERSION을 고친다 (그러면 끝자리가 0부터 다시 센다)
   plutil -replace CFBundleVersion -string "$(git rev-list --count HEAD)" "$PLIST"
+  if [ -f VERSION ]; then
+    BASE=$(tr -d '[:space:]' < VERSION)
+    SINCE=$(git log -1 --format=%H -- VERSION 2>/dev/null || true)
+    PATCH=$( [ -n "$SINCE" ] && git rev-list --count "$SINCE..HEAD" 2>/dev/null || echo 0)
+    plutil -replace CFBundleShortVersionString -string "$BASE.$PATCH" "$PLIST"
+  fi
   put RunTimeCommit "$COMMIT"
   put RunTimeCommitSHA "$(git rev-parse HEAD)"
   put RunTimeCommitSubject "$(git log -1 --format=%s)"
