@@ -1,10 +1,11 @@
 #!/bin/zsh
-# 타입 추론이 오래 걸리는 식을 찾는다. 새 컴파일러에서 100ms 넘게 걸리는 식은 Xcode 16의 컴파일러에서
-# "unable to type-check this expression in reasonable time"으로 빌드를 멈춘 적이 있어, 여기서 미리 막는다.
-# 사용: scripts/check-typecheck.sh [한도 ms, 기본 100]
+# 타입 추론이 오래 걸리는 식을 찾는다. Xcode 16의 컴파일러에서 "unable to type-check this expression in
+# reasonable time"으로 빌드를 멈춘 식은 새 컴파일러로도 수백 ms 걸렸다 (CI 실행기에서 270~600ms).
+# CI 실행기는 같은 식도 실행마다 두세 배씩 흔들려서 한도를 300ms로 둔다.
+# 사용: scripts/check-typecheck.sh [한도 ms, 기본 300]
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-LIMIT="${1:-100}"
+LIMIT="${1:-300}"
 cd "$ROOT"
 # 이미 빌드된 모듈은 다시 검사하지 않으므로 따로 둔 자리에서 처음부터 빌드한다
 rm -rf .build/typecheck

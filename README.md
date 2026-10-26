@@ -142,7 +142,7 @@ Claude 계정을 바꿀 수 있게 Claude Code에 로그인했던 계정마다 �
 ```bash
 swift run RunTime             # 빌드하지 않은 채 개발 실행 (알림과 자동 시작은 동작하지 않음)
 ./scripts/test.sh             # 테스트
-./scripts/check-typecheck.sh  # 타입 추론이 100ms 넘는 식 찾기 (Xcode 16 컴파일러에서 빌드가 멈추는 식)
+./scripts/check-typecheck.sh  # 타입 추론이 300ms 넘는 식 찾기 (Xcode 16 컴파일러에서 빌드가 멈추는 식)
 python3 -I scripts/check-symbols.py   # macOS 13에 없는 SF Symbol 찾기
 scripts/build-app.sh          # dist/RunTime.app과 dmg 만들기
 python3 -I scripts/update-prices.py   # Claude 모델 단가를 LiteLLM 가격 데이터에서 다시 받아 PricingData.swift 만들기
