@@ -32,6 +32,7 @@ struct PopoverView: View {
     @ObservedObject private var petdex = PetdexStore.shared
     @ObservedObject private var wallet = GameWallet.shared
     @ObservedObject private var design = DesignSync.shared
+    @ObservedObject private var updater = AppUpdater.shared
 
     private var customSelection: Binding<String?> {
         Binding(get: { settings.customRunnerID },
@@ -93,6 +94,11 @@ struct PopoverView: View {
     private var narrowBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             stage
+            if let notes = updater.patchNotes {
+                PatchNotesBubble(notes: notes) { withAnimation(.easeOut(duration: 0.18)) { updater.dismissPatchNotes() } }
+                    .padding(.top, 4)
+                    .transition(.opacity.combined(with: .offset(y: -4)))
+            }
             stageCaption.padding(.top, 10).padding(.horizontal, 2)
             if page.showsRunners {
                 runnerPage.padding(.top, 10)

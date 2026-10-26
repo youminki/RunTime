@@ -118,3 +118,82 @@ struct UpdateBubble: View {
         }
     }
 }
+
+/// 업데이트 뒤 러너 아래에 띄우는 패치노트 말풍선. 꼬리가 위의 러너를 가리킨다. 닫을 때까지 남는다.
+struct PatchNotesBubble: View {
+    let notes: PatchNotes
+    /// 꼬리를 둘 가로 위치 (말풍선 폭에 대한 비율). 무대의 러너 자리와 맞춘다.
+    var tailAnchor: CGFloat = StageModel.runnerAnchor
+    let dismiss: () -> Void
+
+    private static let fill = Color(white: 0.97)
+    private static let ink = Color(nsColor: NSColor(hex: 0x1F1C26))
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("업데이트했어요").font(.system(size: 12, weight: .bold))
+                Text("이번에 바뀐 것").font(.system(size: 10.5)).foregroundStyle(Self.ink.opacity(0.5))
+                Spacer(minLength: 4)
+                Button(action: dismiss) {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Self.ink.opacity(0.45))
+                .accessibilityLabel("패치노트 닫기")
+            }
+            ForEach(notes.sections, id: \.kind) { section in
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(section.kind.title, systemImage: section.kind.icon)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(tint(section.kind))
+                    ForEach(section.items, id: \.self) { item in
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                            Circle().fill(Self.ink.opacity(0.35)).frame(width: 3, height: 3).offset(y: -2)
+                            Text(item).font(.system(size: 11.5)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            if notes.hiddenCount > 0 {
+                Text("외 \(notes.hiddenCount)개 더 바뀌었어요").font(.system(size: 10.5)).foregroundStyle(Self.ink.opacity(0.5))
+            }
+        }
+        .foregroundStyle(Self.ink)
+        .padding(.horizontal, 12)
+        .padding(.top, 9)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Self.fill))
+        .overlay(alignment: .topLeading) {
+            GeometryReader { geo in
+                UpTail().fill(Self.fill).frame(width: 12, height: 6)
+                    .position(x: geo.size.width * tailAnchor, y: -3)
+            }
+        }
+        .padding(.top, 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// 말풍선은 어느 모드에서나 밝아서, 밝은 바탕에서 읽히는 진한 색을 고정으로 쓴다.
+    private func tint(_ kind: PatchNotes.Kind) -> Color {
+        switch kind {
+        case .added: return Color(nsColor: NSColor(hex: 0x0063CC))
+        case .fixed: return Color(nsColor: NSColor(hex: 0x1B7F3B))
+        case .polished: return Color(nsColor: NSColor(hex: 0xB35500))
+        }
+    }
+
+    private struct UpTail: Shape {
+        func path(in rect: CGRect) -> Path {
+            Path { p in
+                p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+                p.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+                p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+                p.closeSubpath()
+            }
+        }
+    }
+}

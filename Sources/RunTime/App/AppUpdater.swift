@@ -40,6 +40,10 @@ final class AppUpdater: ObservableObject {
         static let startedAt = "updateStartedAt", lastDuration = "updateLastDuration"
         /// 자동 업데이트로 설치했는지. 자동 업데이트는 끝나도 말하지 않는다.
         static let silent = "updateSilent"
+        /// 설치하는 버전에 든 커밋 제목. 설치를 마치면 패치노트로 옮긴다.
+        static let installingNotes = "updateInstallingNotes"
+        /// 러너 아래에 띄울 패치노트와 설치한 때. 닫을 때까지 남긴다.
+        static let notes = "updatePatchNotes", notesAt = "updatePatchNotesAt"
     }
 
     private static let checkInterval: TimeInterval = 30 * 60
@@ -65,6 +69,12 @@ final class AppUpdater: ObservableObject {
     private var logOffset: UInt64 = 0
     /// 받을 변경의 제목들 (최근 것부터 5개, "feat: " 같은 머리말은 뺀다).
     @Published private(set) var incoming: [String] = []
+    /// 받을 커밋의 첫 줄 전부 (오래된 것부터). 설치할 때 패치노트 재료로 남긴다.
+    private var incomingLines: [String] = []
+    /// 업데이트 뒤 러너 아래에 띄울 패치노트. 닫으면 nil.
+    @Published private(set) var patchNotes: PatchNotes?
+    /// 패치노트는 며칠 지나면 새 소식이 아니라 저절로 거둔다.
+    private static let notesLifetime: TimeInterval = 3 * 24 * 60 * 60
     /// 새 버전은 있지만 클론 사정(고친 파일, 다른 브랜치)으로 미룬 까닭. 실패가 아니라 다음 확인 때 다시 해 본다.
     @Published private(set) var blocked: String?
     private var blockedAt: Date?
@@ -122,7 +132,13 @@ final class AppUpdater: ObservableObject {
             defaults.removeObject(forKey: Key.installing)
             windowsToReopen = defaults.stringArray(forKey: Key.reopen) ?? []
             defaults.removeObject(forKey: Key.reopen)
-            if !defaults.bool(forKey: Key.silent) {
+            // 자동 업데이트도 무엇이 바뀌었는지는 알린다. 패치노트를 만들 수 없을 때만 한 줄로 말한다
+            let lines = defaults.stringArray(forKey: Key.installingNotes) ?? []
+            defaults.removeObject(forKey: Key.installingNotes)
+            if PatchNotes.make(from: lines) != nil {
+                defaults.set(lines, forKey: Key.notes)
+                defaults.set(Date().timeIntervalSince1970, forKey: Key.notesAt)
+            } else if !defaults.bool(forKey: Key.silent) {
                 bubble = build.subject.isEmpty ? "새 버전으로 업데이트했어요" : "업데이트했어요: \(Self.title(of: build.subject))"
             }
             defaults.removeObject(forKey: Key.silent)
@@ -134,6 +150,7 @@ final class AppUpdater: ObservableObject {
             defaults.removeObject(forKey: Key.startedAt)
             Diagnostics.record("업데이트", "설치 완료: \(build.commit.prefix(7)) \(build.subject)")
         }
+        loadPatchNotes()
         guard canCheck else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in self?.check() }
         let timer = Timer(timeInterval: Self.checkInterval, repeats: true) { [weak self] _ in self?.check() }
@@ -175,6 +192,24 @@ final class AppUpdater: ObservableObject {
     func takeWindowsToReopen() -> [String] {
         defer { windowsToReopen = [] }
         return windowsToReopen
+    }
+
+    private func loadPatchNotes() {
+        let defaults = UserDefaults.standard
+        let at = defaults.double(forKey: Key.notesAt)
+        guard at > 0, Date().timeIntervalSince1970 - at < Self.notesLifetime,
+              let notes = PatchNotes.make(from: defaults.stringArray(forKey: Key.notes) ?? [])
+        else {
+            dismissPatchNotes()
+            return
+        }
+        patchNotes = notes
+    }
+
+    func dismissPatchNotes() {
+        patchNotes = nil
+        UserDefaults.standard.removeObject(forKey: Key.notes)
+        UserDefaults.standard.removeObject(forKey: Key.notesAt)
     }
 
     func takeBubble() -> String? {
@@ -245,6 +280,7 @@ final class AppUpdater: ObservableObject {
         }
         let latest = comparison.commits.last?.commit.message.components(separatedBy: "\n").first ?? ""
         incoming = comparison.commits.suffix(5).reversed().map { Self.title(of: $0.commit.message) }
+        incomingLines = comparison.commits.map { $0.commit.message.components(separatedBy: "\n").first ?? "" }
         let newTarget = comparison.commits.last?.sha
         let isNew = newTarget != target
         target = newTarget
@@ -337,6 +373,7 @@ final class AppUpdater: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Key.reopen)
         UserDefaults.standard.removeObject(forKey: Key.startedAt)
         UserDefaults.standard.removeObject(forKey: Key.silent)
+        UserDefaults.standard.removeObject(forKey: Key.installingNotes)
         // 눌러서 받다 실패한 버전도 자동으로 다시 빌드하지 않는다. 말풍선을 눌러 다시 할 수 있다
         if let target { UserDefaults.standard.set(target, forKey: Key.failedTarget) }
     }
@@ -436,6 +473,7 @@ final class AppUpdater: ObservableObject {
         process.environment = environment
         UserDefaults.standard.set(target ?? build.commit, forKey: Key.installing)
         UserDefaults.standard.set(automatic, forKey: Key.silent)
+        UserDefaults.standard.set(Array(incomingLines.suffix(30)), forKey: Key.installingNotes)
         UserDefaults.standard.set(openWindows(), forKey: Key.reopen)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Key.startedAt)
         logOffset = ((try? FileManager.default.attributesOfItem(atPath: Self.logURL.path))?[.size] as? UInt64) ?? 0
@@ -514,6 +552,16 @@ final class AppUpdater: ObservableObject {
     }
 
     /// 화면 점검(--ui-shots)용. 받지 않고 말풍선이나 진행 판이 뜬 상태로만 둔다.
+    func rehearsePatchNotes() {
+        patchNotes = PatchNotes.make(from: [
+            "feat: 피그마 연동으로 알림 기능 및 diff 비교 기능 추가 ( 피그마 화면설계서에서 바뀐 화면 보기)",
+            "fix: 레드마인 일감을 다시 읽지 못할 때 보낸 것으로 잘못 남기는 문제",
+            "refactor: 레드마인 반영 기능 고도화",
+            "feat: 자동업데이트 게이지 추가, 실패시 말풍선 기능 추가",
+            "docs: README 그림 바꾸기",
+        ])
+    }
+
     func rehearse(progress: Progress?) {
         target = "rehearsal"
         incoming = ["업데이트 진행 막대", "매일 9시 업데이트 확인"]
