@@ -119,4 +119,38 @@ struct ClaudeAccountsTests {
         #expect(((root["mcpOAuth"] as? [String: Any])?["srv"] as? [String: Any])?["accessToken"] as? String == "m")
         #expect(ClaudeLogin.refreshToken(in: part) == "ra")
     }
+
+    @Test func tokenResponseReplacesTokensAndKeepsPlan() throws {
+        let part = Data(#"{"claudeAiOauth": {"accessToken": "old", "refreshToken": "r-old", "expiresAt": 1, "subscriptionType": "pro", "scopes": ["user:inference"]}}"#.utf8)
+        let response = Data(#"{"access_token": "new", "refresh_token": "r-new", "expires_in": 28800, "refresh_token_expires_in": 2592000, "scope": "user:inference user:profile", "account": {"uuid": "a-1"}}"#.utf8)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let result = try #require(ClaudeLogin.applying(tokenResponse: response, to: part, now: now))
+        #expect(result.owner == "a-1")
+        let oauth = try #require((JSONSerialization.jsonObject(with: result.part) as? [String: Any])?["claudeAiOauth"] as? [String: Any])
+        #expect(oauth["accessToken"] as? String == "new")
+        #expect(oauth["refreshToken"] as? String == "r-new")
+        #expect((oauth["expiresAt"] as? NSNumber)?.int64Value == Int64(29_800_000))
+        #expect((oauth["refreshTokenExpiresAt"] as? NSNumber)?.int64Value == Int64(2_593_000_000))
+        #expect(oauth["scopes"] as? [String] == ["user:inference", "user:profile"])
+        #expect(oauth["subscriptionType"] as? String == "pro")
+        #expect(!ClaudeLogin.needsRefresh(result.part, now: now, margin: 300))
+        #expect(ClaudeLogin.needsRefresh(part, now: now, margin: 300))
+    }
+
+    @Test func tokenResponseWithoutNewRefreshTokenKeepsOld() throws {
+        let part = Data(#"{"claudeAiOauth": {"accessToken": "old", "refreshToken": "r-old"}}"#.utf8)
+        let response = Data(#"{"access_token": "new", "expires_in": 60}"#.utf8)
+        let result = try #require(ClaudeLogin.applying(tokenResponse: response, to: part, now: Date()))
+        #expect(ClaudeLogin.refreshToken(in: result.part) == "r-old")
+        #expect(result.owner == nil)
+        #expect(ClaudeLogin.applying(tokenResponse: Data(#"{"error": "x"}"#.utf8), to: part, now: Date()) == nil)
+    }
+
+    @Test func onlyInvalidGrantCountsAsRejected() {
+        #expect(ClaudeLogin.refreshRejected(status: 400, body: Data(#"{"error": "invalid_grant"}"#.utf8)))
+        #expect(ClaudeLogin.refreshRejected(status: 401, body: Data()))
+        #expect(!ClaudeLogin.refreshRejected(status: 400, body: Data(#"{"error": "invalid_scope"}"#.utf8)))
+        #expect(!ClaudeLogin.refreshRejected(status: 429, body: Data()))
+        #expect(!ClaudeLogin.refreshRejected(status: 503, body: Data()))
+    }
 }

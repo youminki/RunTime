@@ -309,7 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                 action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for account in switcher.accounts {
-            let item = NSMenuItem(title: account.label + Self.usageNote(account.lastUsage),
+            let note = account.needsLogin == true ? "  (다시 로그인 필요)" : Self.usageNote(account.lastUsage)
+            let item = NSMenuItem(title: account.label + note,
                                   action: #selector(runMenuAction(_:)), keyEquivalent: "")
             item.target = self
             item.state = account.id == switcher.activeID ? .on : .off
@@ -344,6 +345,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 switcher.refreshOthers()
             }
             .store(in: &cancellables)
+        // 공식 값을 못 받는 동안에도 쓰지 않는 계정 토큰이 만료되지 않게 따로 돈다
+        Timer.scheduledTimer(withTimeInterval: AccountSwitcher.othersRefreshInterval, repeats: true) { _ in
+            switcher.refreshOthers()
+        }
         engine.limitReached
             .sink { hit in switcher.limitReached(hit) }
             .store(in: &cancellables)

@@ -165,6 +165,76 @@ public enum ClaudeLogin {
         return (root?["claudeAiOauth"] as? [String: Any])?["refreshToken"] as? String
     }
 
+    // MARK: - 쓰지 않는 계정의 토큰 갱신
+
+    /// Claude Code가 토큰을 새로 받는 곳과 그 클라이언트 ID (claude-code 2.1.304에서 확인).
+    static let tokenEndpoint = URL(string: "https://platform.claude.com/v1/oauth/token")!
+    static let oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+    public enum RefreshResult: Equatable {
+        /// 새 claudeAiOauth 저장본과, 응답이 알려 준 토큰 주인
+        case refreshed(Data, owner: String?)
+        /// 리프레시 토큰이 더는 통하지 않는다. 그 계정으로 /login을 다시 해야 한다
+        case rejected
+        case unknown
+    }
+
+    /// 저장본의 액세스 토큰이 곧 만료되는지. 만료 시각이 없으면 새로 받을 때가 된 것으로 본다.
+    public static func needsRefresh(_ part: Data, now: Date = Date(), margin: TimeInterval) -> Bool {
+        let root = (try? JSONSerialization.jsonObject(with: part)) as? [String: Any]
+        guard let ms = ((root?["claudeAiOauth"] as? [String: Any])?["expiresAt"] as? NSNumber)?.doubleValue else { return true }
+        return Date(timeIntervalSince1970: ms / 1000) <= now.addingTimeInterval(margin)
+    }
+
+    /// 쓰지 않는 계정의 리프레시 토큰으로 새 토큰을 받는다. 리프레시 토큰도 바뀌므로 받은 값은 꼭 저장해야 한다.
+    /// 지금 Claude Code가 쓰는 계정에는 부르지 않는다 (Claude Code가 가진 리프레시 토큰이 무효가 된다).
+    public static func refresh(_ part: Data, clientVersion: String? = nil, now: Date = Date()) async -> RefreshResult {
+        guard let oauth = ((try? JSONSerialization.jsonObject(with: part)) as? [String: Any])?["claudeAiOauth"] as? [String: Any],
+              let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty
+        else { return .rejected }
+        var body: [String: Any] = ["grant_type": "refresh_token", "refresh_token": refreshToken, "client_id": oauthClientID]
+        if let scopes = oauth["scopes"] as? [String], !scopes.isEmpty { body["scope"] = scopes.joined(separator: " ") }
+        var request = URLRequest(url: tokenEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(OAuthUsageProvider.userAgent(clientVersion: clientVersion), forHTTPHeaderField: "User-Agent")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 30
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse
+        else { return .unknown }
+        guard http.statusCode == 200 else { return refreshRejected(status: http.statusCode, body: data) ? .rejected : .unknown }
+        return applying(tokenResponse: data, to: part, now: now).map { .refreshed($0.part, owner: $0.owner) } ?? .unknown
+    }
+
+    /// 토큰이 죽었다는 답인지. 서버가 바쁘거나 막힌 답(429, 5xx)은 다음에 다시 해 본다.
+    static func refreshRejected(status: Int, body: Data) -> Bool {
+        guard status == 400 || status == 401 else { return false }
+        let error = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["error"] as? String
+        return error == nil || error == "invalid_grant"
+    }
+
+    /// 토큰 응답을 저장본에 덮어 쓴다. 요금제 등 다른 칸은 그대로 둔다.
+    static func applying(tokenResponse data: Data, to part: Data, now: Date) -> (part: Data, owner: String?)? {
+        guard let response = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let access = response["access_token"] as? String, !access.isEmpty,
+              let expiresIn = (response["expires_in"] as? NSNumber)?.doubleValue,
+              var oauth = ((try? JSONSerialization.jsonObject(with: part)) as? [String: Any])?["claudeAiOauth"] as? [String: Any]
+        else { return nil }
+        oauth["accessToken"] = access
+        if let refresh = response["refresh_token"] as? String, !refresh.isEmpty { oauth["refreshToken"] = refresh }
+        oauth["expiresAt"] = Int64((now.timeIntervalSince1970 + expiresIn) * 1000)
+        if let refreshIn = (response["refresh_token_expires_in"] as? NSNumber)?.doubleValue {
+            oauth["refreshTokenExpiresAt"] = Int64((now.timeIntervalSince1970 + refreshIn) * 1000)
+        }
+        if let scope = response["scope"] as? String, !scope.isEmpty {
+            oauth["scopes"] = scope.split(separator: " ").map(String.init)
+        }
+        guard let updated = try? JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth], options: [.sortedKeys]) else { return nil }
+        let owner = (response["account"] as? [String: Any])?["uuid"] as? String
+        return (updated, owner)
+    }
+
     public enum Owner: Equatable {
         case account(String)
         /// 액세스 토큰이 만료돼 물어볼 수 없다

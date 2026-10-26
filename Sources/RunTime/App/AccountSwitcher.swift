@@ -19,6 +19,8 @@ final class AccountSwitcher: ObservableObject {
         var lastUsage: ClaudeLogin.LastUsage?
         /// `~/.claude.json`의 oauthAccount 원본. 비밀이 아니라 설정에 둔다.
         var configAccount: Data?
+        /// 저장한 리프레시 토큰이 거절됐다. 그 계정으로 /login을 다시 해야 바꿀 수 있다.
+        var needsLogin: Bool?
 
         /// 메뉴에 보일 이름. 이메일 앞부분과 요금제.
         var label: String {
@@ -68,6 +70,12 @@ final class AccountSwitcher: ObservableObject {
     private var lastSwitchAt: Date?
     /// 지금 계정으로 바꾸기 시작한 때. 엔진이 앞 계정 토큰을 버리게 알린 시각이다.
     private var activatedAt: Date?
+    /// 쓰지 않는 계정 토큰은 만료 이만큼 전에 새로 받아 둔다. 오래 두면 리프레시 토큰까지 만료된다.
+    static let keepAliveMargin: TimeInterval = 30 * 60
+    /// 새로 받지 못했으면(429 등) 이만큼 쉬고 다시 해 본다. 계정을 바꿀 때는 기다리지 않는다.
+    static let refreshRetryDelay: TimeInterval = 60 * 60
+    /// queue 전용. 계정별로 마지막으로 새로 받지 못한 때.
+    private var refreshFailedAt: [String: Date] = [:]
     /// 쓰지 않는 계정 사용률을 받는 간격. 공식 조회 간격(3분)보다 길게 잡아 요청을 늘리지 않는다.
     static let othersRefreshInterval: TimeInterval = 10 * 60
     private var othersFetchedAt: [String: Date] = [:]
@@ -156,6 +164,10 @@ final class AccountSwitcher: ObservableObject {
         }
         switch Self.wait({ await ClaudeLogin.owner(of: part) }) {
         case .account(let owner) where owner != info.uuid:
+            // 옛 계정으로 열린 세션이 토큰을 새로 받아 써 넣었다. 그 계정의 가장 새 토큰이라 그 계정 자리에 남긴다
+            if owner != DispatchQueue.main.sync(execute: { self.activeID }), isNewer(part, than: storedCredentials(for: owner)) {
+                keep(part, for: owner)
+            }
             return .mismatch
         case .account:
             break
@@ -192,6 +204,7 @@ final class AccountSwitcher: ObservableObject {
             account.name = info.displayName
             account.plan = info.organizationType
             account.configAccount = info.raw
+            account.needsLogin = nil
             if let index = self.accounts.firstIndex(where: { $0.id == info.uuid }) {
                 if self.accounts[index] != account { self.accounts[index] = account }
             } else {
@@ -263,7 +276,14 @@ final class AccountSwitcher: ObservableObject {
             case .saved, .unchanged: break
             }
         }
-        let configAccount = DispatchQueue.main.sync { self.accounts.first { $0.id == id }?.configAccount }
+        let target = DispatchQueue.main.sync { self.accounts.first { $0.id == id } }
+        let configAccount = target?.configAccount
+        // 오래 쉰 계정은 바꾸기 전에 토큰을 새로 받아 둔다. 리프레시 토큰이 죽었으면 바꿔도 Claude Code가 로그인을 다시 묻는다
+        switch freshCredentials(for: id) {
+        case .rejected: return "\(target?.email ?? "그 계정")의 로그인이 풀렸습니다. 그 계정으로 Claude Code에서 /login 해 주세요"
+        case .mismatch: return "저장된 \(target?.email ?? "그 계정") 로그인 정보가 다른 계정 것입니다. 그 계정으로 Claude Code에서 /login 해 주세요"
+        case .usable, .unavailable: break
+        }
         let previous = ClaudeLogin.liveCredentials()
         // 저장본에는 Claude 로그인만 있다 (예전 저장본은 MCP 토큰까지 들어 있어 떼어 쓴다). MCP 토큰은 지금 값을 둔다.
         guard let part = storedCredentials(for: id).flatMap(ClaudeLogin.oauthPart(of:)),
@@ -304,8 +324,7 @@ final class AccountSwitcher: ObservableObject {
         considerAutoSwitch()
     }
 
-    /// 쓰지 않는 계정의 사용률을 저장해 둔 토큰으로 받는다. 토큰이 만료됐으면 건너뛴다.
-    /// 토큰을 새로 받지는 않는다 (리프레시 토큰을 돌리면 Claude Code가 가진 토큰이 무효가 될 수 있다).
+    /// 쓰지 않는 계정의 사용률을 저장해 둔 토큰으로 받는다. 토큰이 곧 만료되면 먼저 새로 받아 둔다.
     func refreshOthers(now: Date = Date()) {
         guard !keychainOff else { return }
         let due = others.filter { now.timeIntervalSince(othersFetchedAt[$0.id] ?? .distantPast) >= Self.othersRefreshInterval }
@@ -314,7 +333,7 @@ final class AccountSwitcher: ObservableObject {
         queue.async { [weak self] in
             guard let self else { return }
             for account in due {
-                guard let credentials = self.storedCredentials(for: account.id),
+                guard case .usable(let credentials) = self.freshCredentials(for: account.id, retryNow: false),
                       let parsed = OAuthUsageProvider.parseCredentials(credentials),
                       parsed.expiresAt > Date().addingTimeInterval(OAuthUsageProvider.expiryMargin)
                 else { continue }
@@ -388,6 +407,82 @@ final class AccountSwitcher: ObservableObject {
         }.min { $0.1 < $1.1 }
         exhaustedNoticeUntil = soonest?.1 ?? now.addingTimeInterval(30 * 60)
         onExhausted(soonest?.0, soonest?.1)
+    }
+
+    // MARK: - 쓰지 않는 계정 토큰 살려 두기
+
+    enum Freshness: Equatable {
+        case usable(Data)
+        /// 리프레시 토큰이 거절됐다
+        case rejected
+        /// 저장본이 없거나 네트워크 등으로 새로 받지 못했다. 저장본은 그대로 둔다
+        case unavailable
+        /// 저장본이 다른 계정 토큰이었다
+        case mismatch
+    }
+
+    /// 쓰지 않는 계정들의 토큰을 살려 둔다. 계정 큐에서 돌고 끝나면 메인 스레드에서 결과를 넘긴다 (점검용).
+    func keepOthersFresh(completion: @escaping ([(Account, Freshness)]) -> Void) {
+        let others = others
+        queue.async { [weak self] in
+            guard let self else { return }
+            let results = others.map { ($0, self.freshCredentials(for: $0.id)) }
+            DispatchQueue.main.async { completion(results) }
+        }
+    }
+
+    /// 앞 토큰보다 만료가 늦은지. 앞 토큰이 없으면 새것으로 본다.
+    private func isNewer(_ part: Data, than other: Data?) -> Bool {
+        guard let other, let theirs = OAuthUsageProvider.parseCredentials(other)?.expiresAt else { return true }
+        guard let mine = OAuthUsageProvider.parseCredentials(part)?.expiresAt else { return false }
+        return mine > theirs
+    }
+
+    /// queue 전용. 쓰지 않는 계정의 저장본을 돌려준다. 액세스 토큰이 곧 만료되면 리프레시 토큰으로 새로 받아 저장한다.
+    /// 지금 계정은 Claude Code가 토큰을 돌리므로 손대지 않는다. 계정 바꾸기도 이 큐에서 하므로 그 사이에 지금 계정이 되지 않는다.
+    func freshCredentials(for id: String, retryNow: Bool = true) -> Freshness {
+        guard let stored = storedCredentials(for: id), let part = ClaudeLogin.oauthPart(of: stored) else { return .unavailable }
+        let active = DispatchQueue.main.sync { self.activeID }
+        guard id != active, ClaudeLogin.needsRefresh(part, margin: Self.keepAliveMargin) else { return .usable(part) }
+        // 키체인에 이 리프레시 토큰이 들어 있으면 Claude Code가 쓰는 중이다. 돌리면 Claude Code 로그인이 풀린다
+        let refresh = ClaudeLogin.refreshToken(in: part)
+        if refresh == nil || ClaudeLogin.liveCredentials().flatMap(ClaudeLogin.refreshToken(in:)) == refresh { return .usable(part) }
+        if !retryNow, let failed = refreshFailedAt[id], Date().timeIntervalSince(failed) < Self.refreshRetryDelay { return .usable(part) }
+        let result = Self.wait({ await ClaudeLogin.refresh(part) })
+        if case .unknown = result { refreshFailedAt[id] = Date() } else { refreshFailedAt[id] = nil }
+        switch result {
+        case .refreshed(let updated, let owner):
+            // 저장 자리가 섞였으면 받은 토큰은 그 주인 것이다
+            if let owner, owner != id {
+                if owner != active { keep(updated, for: owner) }
+                return .mismatch
+            }
+            // 서버는 이미 리프레시 토큰을 돌려서, 저장하지 못하면 옛 저장본도 쓸 수 없다
+            if keep(updated, for: id) || keep(updated, for: id) { return .usable(updated) }
+            DispatchQueue.main.sync { self.setNeedsLogin(id, true) }
+            return .rejected
+        case .rejected:
+            DispatchQueue.main.sync { self.setNeedsLogin(id, true) }
+            return .rejected
+        case .unknown:
+            return .unavailable
+        }
+    }
+
+    /// queue 전용. 기억한 계정의 토큰을 저장하고 다시 로그인할 필요 표시를 지운다.
+    @discardableResult
+    private func keep(_ part: Data, for id: String) -> Bool {
+        guard DispatchQueue.main.sync(execute: { self.accounts.contains { $0.id == id } }),
+              ClaudeLogin.writeKeychain(part, service: Self.keychainService, account: id)
+        else { return false }
+        DispatchQueue.main.sync { self.setNeedsLogin(id, false) }
+        return true
+    }
+
+    private func setNeedsLogin(_ id: String, _ value: Bool) {
+        guard let index = accounts.firstIndex(where: { $0.id == id }), (accounts[index].needsLogin ?? false) != value else { return }
+        accounts[index].needsLogin = value ? true : nil
+        persist()
     }
 
     // MARK: - 점검 (--account-check)

@@ -5,6 +5,7 @@ import UsageCore
 ///   RunTime --account-check                 계정마다 저장본, 토큰 주인, 공식 사용률
 ///   RunTime --account-check switch <이메일>   그 계정으로 바꾸고 결과 확인
 ///   RunTime --account-check simulate-limit   지금 계정이 세션 한도에 막힌 것처럼 넣어 자동 전환 확인
+///   RunTime --account-check refresh          쓰지 않는 계정 토큰이 곧 만료되면 새로 받아 저장한 뒤 점검
 enum AccountCheck {
 
     static func run(_ args: [String]) -> Never {
@@ -12,6 +13,7 @@ enum AccountCheck {
             switch args.first {
             case "switch": switchTo(args.dropFirst().first ?? "")
             case "simulate-limit": simulateLimit()
+            case "refresh": keepAlive()
             default: report { exit(0) }
             }
         }
@@ -37,7 +39,10 @@ enum AccountCheck {
                 else { print("    저장본: 없음"); continue }
                 let left = Int(parsed.expiresAt.timeIntervalSinceNow / 60)
                 let hasRefresh = ClaudeLogin.refreshToken(in: credentials) != nil
-                print("    저장본: 있음, 액세스 토큰 \(left > 0 ? "\(left)분 남음" : "만료"), 리프레시 토큰 \(hasRefresh ? "있음" : "없음")")
+                let refreshDays = ((try? JSONSerialization.jsonObject(with: credentials)) as? [String: Any])
+                    .flatMap { ($0["claudeAiOauth"] as? [String: Any])?["refreshTokenExpiresAt"] as? NSNumber }
+                    .map { " (\(Int(($0.doubleValue / 1000 - Date().timeIntervalSince1970) / 86400))일 남음)" } ?? ""
+                print("    저장본: 있음, 액세스 토큰 \(left > 0 ? "\(left)분 남음" : "만료"), 리프레시 토큰 \(hasRefresh ? "있음" + refreshDays : "없음")\(account.needsLogin == true ? ", 다시 로그인 필요" : "")")
                 guard left > 0 else { continue }
                 let owner = wait { await ClaudeLogin.owner(of: credentials) }
                 print("    토큰 주인: \(describe(owner, accounts: accounts))\(owner == .account(account.id) ? " (맞음)" : " (다름!)")")
@@ -66,6 +71,22 @@ enum AccountCheck {
         switcher.switchTo(target.id) { error in
             if let error { print("실패: \(error)"); exit(1) }
             verify(expected: target)
+        }
+    }
+
+    private static func keepAlive() {
+        switcher.keepOthersFresh { results in
+            for (account, freshness) in results {
+                let result: String
+                switch freshness {
+                case .usable: result = "쓸 수 있음"
+                case .rejected: result = "리프레시 토큰 거절 (다시 로그인 필요)"
+                case .mismatch: result = "저장본이 다른 계정 것"
+                case .unavailable: result = "새로 받지 못함"
+                }
+                print("\(account.email): \(result)")
+            }
+            report { exit(0) }
         }
     }
 
