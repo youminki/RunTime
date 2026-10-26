@@ -11,7 +11,7 @@ final class DesignSyncSettings: ObservableObject {
     static let tokenAccount = "figma-token"
 
     @Published var sources: [DesignSource] { didSet { save() } }
-    /// 0이면 손으로만 가져온다.
+    /// 0이면 가져오기를 누를 때만 받는다.
     @Published var intervalMinutes: Int { didSet { defaults.set(intervalMinutes, forKey: "design.interval") } }
     @Published var notify: Bool { didSet { defaults.set(notify, forKey: "design.notify") } }
     /// 작업 중인 화면의 변경도 알린다. 작업 중 시안은 계속 바뀌어 기본은 끈다.
@@ -26,7 +26,8 @@ final class DesignSyncSettings: ObservableObject {
 
     private init() {
         sources = (defaults.data(forKey: "design.sources")).flatMap { try? JSONDecoder().decode([DesignSource].self, from: $0) } ?? []
-        intervalMinutes = defaults.object(forKey: "design.interval") as? Int ?? 60
+        // 화면설계서는 반영할 때만 보면 돼서, 정하지 않았으면 가져오기를 누른 프로젝트만 받는다
+        intervalMinutes = defaults.object(forKey: "design.interval") as? Int ?? 0
         notify = defaults.object(forKey: "design.notify") as? Bool ?? true
         notifyWorking = defaults.object(forKey: "design.notifyWorking") as? Bool ?? false
         untaggedIsDone = defaults.object(forKey: "design.untaggedIsDone") as? Bool ?? true
@@ -109,7 +110,10 @@ final class DesignSync: ObservableObject {
     @Published private(set) var progress = ""
     /// 파일 키 → 마지막 오류
     @Published private(set) var errors: [String: String] = [:]
-    @Published private(set) var lastRun: Date?
+    /// 지금 받고 있는 프로젝트.
+    @Published private(set) var fetching: String?
+    /// 받는 동안 가져오기를 누른 프로젝트. 끝나면 이어서 받는다.
+    @Published private(set) var queued = Set<String>()
     /// 기록 파일을 읽지 못했으면 덮어쓰지 않게 저장을 막는다.
     private(set) var loadError: String?
 
@@ -117,8 +121,10 @@ final class DesignSync: ObservableObject {
     private var timer: Timer?
     /// 가져오는 동안 메뉴를 바꾼 파일. 끝난 뒤 다음에 새로 받도록 버전을 비운다.
     private var menusChanged = Set<String>()
-    /// 가져오는 동안 더한 파일. 끝나면 이어서 받는다.
-    private var waiting = false
+    /// 받는 동안 전부 가져오기를 눌렀다.
+    private var queuedAll = false
+    /// 받는 동안 들어온 요청의 끝 알림. 그 요청이 고른 프로젝트(nil이면 전부)에서 찾은 건수를 넘긴다.
+    private var queuedCompletions: [(keys: Set<String>?, done: (Int) -> Void)] = []
     private let saveQueue = DispatchQueue(label: "dev.runtime.RunTime.design-history", qos: .utility)
 
     private init() {
@@ -154,7 +160,7 @@ final class DesignSync: ObservableObject {
     func intervalLabel(_ minutes: Int?) -> String {
         guard let minutes else { return "기본 (\(intervalLabel(settings.intervalMinutes)))" }
         switch minutes {
-        case 0: return "손으로만"
+        case 0: return "누를 때만"
         case 1440: return "하루마다"
         case let m where m < 60: return "\(m)분마다"
         default: return "\(minutes / 60)시간마다"
@@ -166,18 +172,32 @@ final class DesignSync: ObservableObject {
         settings.sources[index].intervalMinutes = minutes
     }
 
+    /// 주기를 정한 프로젝트 가운데 때가 된 것만 받는다. 누를 때만 받는 프로젝트는 건드리지 않는다.
     private func tick() {
-        guard !syncing else { return }
-        let now = Date()
-        let due = settings.sources.filter { source in
+        guard !syncing, settings.hasToken else { return }
+        let due = dueKeys(now: Date())
+        guard !due.isEmpty else { return }
+        sync(keys: due)
+    }
+
+    func dueKeys(now: Date) -> Set<String> {
+        Set(settings.sources.filter { source in
             let minutes = interval(for: source)
             guard !source.isHidden, minutes > 0 else { return false }
-            let last = max(attempted[source.fileKey] ?? .distantPast, history.files[source.fileKey]?.syncedAt ?? .distantPast)
-            return now.timeIntervalSince(last) >= Double(minutes * 60)
-        }.map(\.fileKey)
-        guard !due.isEmpty else { return }
-        sync(keys: Set(due))
+            return now.timeIntervalSince(lastChecked(source.fileKey)) >= Double(minutes * 60)
+        }.map(\.fileKey))
     }
+
+    /// 마지막으로 받으려 한 때나 받은 때.
+    func lastChecked(_ fileKey: String) -> Date {
+        max(attempted[fileKey] ?? .distantPast, history.files[fileKey]?.syncedAt ?? .distantPast)
+    }
+
+    /// 주기를 정해 저절로 받는 프로젝트 수.
+    var automaticCount: Int { settings.sources.filter { !$0.isHidden && interval(for: $0) > 0 }.count }
+
+    /// 받는 중이거나 받을 차례를 기다리는지.
+    func isBusy(_ fileKey: String) -> Bool { fetching == fileKey || queued.contains(fileKey) || (queuedAll && source(fileKey)?.isHidden == false) }
 
     /// 숨긴 프로젝트·메뉴를 뺀, 확인하지 않은 중요한 변경.
     var unseenCount: Int { history.events.filter { $0.isImportant && !history.isSeen($0) && !isHidden($0) }.count }
@@ -241,31 +261,40 @@ final class DesignSync: ObservableObject {
     /// `keys`가 없으면 숨기지 않은 프로젝트 전부, 있으면 그 프로젝트만 (숨겼어도 지금 가져오기로 고른 것은 받는다).
     func sync(keys: Set<String>?, completion: ((Int) -> Void)? = nil) {
         guard !syncing else {
-            waiting = true
-            completion?(0)
+            // 받는 중에 누른 프로젝트는 이번 차례가 끝나면 그 프로젝트만 받는다
+            if let keys { queued.formUnion(keys.subtracting(fetching.map { [$0] } ?? [])) } else { queuedAll = true }
+            if let completion { queuedCompletions.append((keys, completion)) }
             return
         }
+        run(keys: keys) { counts in completion?(counts.values.reduce(0, +)) }
+    }
+
+    /// 한 차례 받는다. 끝나면 프로젝트별로 찾은 변경 수를 넘긴다.
+    private func run(keys: Set<String>?, completion: @escaping ([String: Int]) -> Void) {
         if let loadError {
             errors["*"] = loadError
-            completion?(0)
+            completion([:])
             return
         }
         // 숨긴 프로젝트는 가져오지 않아 피그마 요청을 아낀다
         let sources = settings.sources.filter { source in keys.map { $0.contains(source.fileKey) } ?? !source.isHidden }
         for source in sources { attempted[source.fileKey] = Date() }
-        guard !sources.isEmpty else { completion?(0); return }
+        guard !sources.isEmpty else { completion([:]); return }
         guard let token = settings.token else {
             errors["*"] = "피그마 토큰을 넣으세요"
-            completion?(0)
+            completion([:])
             return
         }
         errors["*"] = nil
         syncing = true
         Task {
             var found: [DesignEvent] = []
+            var counts: [String: Int] = [:]
             for source in sources {
                 // 가져오는 사이 지운 파일은 기록하지 않는다 (지운 뒤 고아 기록이 생긴다)
                 guard settings.sources.contains(where: { $0.fileKey == source.fileKey }) else { continue }
+                fetching = source.fileKey
+                queued.remove(source.fileKey)
                 do {
                     let outcome = try await DesignSyncEngine.run(
                         source: source, token: token, known: history.files[source.fileKey],
@@ -282,7 +311,9 @@ final class DesignSync: ObservableObject {
                     case .captured(var capture):
                         capture.menus = Set(current)
                         capture.rules = rules(for: source.fileKey)
-                        found += history.record(capture, at: Date())
+                        let events = history.record(capture, at: Date())
+                        found += events
+                        counts[source.fileKey] = events.count
                         rename(source.fileKey, to: capture.fileName)
                     }
                     if menusChanged.remove(source.fileKey) != nil { history.files[source.fileKey]?.lastModified = nil }
@@ -295,24 +326,40 @@ final class DesignSync: ObservableObject {
             }
             persist()
             syncing = false
+            fetching = nil
             progress = ""
-            lastRun = Date()
             announce(found)
-            completion?(found.count)
-            if waiting {
-                waiting = false
-                sync()
+            completion(counts)
+            // 이번 차례에 다 받은 요청은 바로 알리고, 나머지는 다음 차례로 넘긴다
+            let handled = Set(sources.map(\.fileKey))
+            var carried: [(keys: Set<String>?, done: (Int) -> Void)] = []
+            for item in queuedCompletions {
+                if let keys = item.keys, keys.isSubset(of: handled), keys.isDisjoint(with: queued) {
+                    item.done(keys.reduce(0) { $0 + (counts[$1] ?? 0) })
+                } else {
+                    carried.append(item)
+                }
+            }
+            // 전부 가져오기와 숨긴 프로젝트 요청이 함께 기다리면 둘 다 받는다
+            let next = queuedAll ? Set(settings.sources.filter { !$0.isHidden }.map(\.fileKey)).union(queued) : queued
+            queuedAll = false
+            queued = []
+            queuedCompletions = []
+            guard !next.isEmpty else {
+                carried.forEach { $0.done(0) }
+                return
+            }
+            run(keys: next) { counts in
+                for item in carried { item.done((item.keys ?? next).reduce(0) { $0 + (counts[$1] ?? 0) }) }
             }
         }
     }
 
-    /// 창을 열 때. 5분 안에 확인했으면 다시 묻지 않는다.
+    /// 창을 열 때. 주기를 정한 프로젝트 가운데 때가 지난 것만 받는다. 누를 때만 받는 프로젝트는 가져오기를 눌러야 받는다.
     func syncIfStale() {
         // 화면 점검(--ui-shots)은 예시 기록을 찍을 뿐이라 진짜 피그마에 묻지 않는다
         guard !CommandLine.arguments.contains("--ui-shots") else { return }
-        guard !settings.sources.isEmpty, settings.hasToken, !syncing else { return }
-        if let lastRun, Date().timeIntervalSince(lastRun) < 300 { return }
-        sync()
+        tick()
     }
 
     /// 앱을 끌 때 남은 저장을 마친다.

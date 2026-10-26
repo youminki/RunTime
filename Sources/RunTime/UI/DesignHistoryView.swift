@@ -492,6 +492,10 @@ private struct DesignSidebar: View {
             }
             .buttonStyle(.plain)
             .tip("\(file.name)\n누르면 이 프로젝트의 변경만 봅니다 · 끌어서 순서 바꾸기")
+            // 가져오기 단추는 올려 두거나 받는 동안만 보여 목록을 어지럽히지 않는다
+            if sync.source(file.key) != nil && (hover.key == key || sync.isBusy(file.key)) {
+                fetchButton(file.key, name: name)
+            }
             badge(unseen, fallback: collapsed ? nodes.reduce(0) { $0 + $1.screens } : nil)
         }
         .padding(.trailing, 8)
@@ -501,7 +505,8 @@ private struct DesignSidebar: View {
         .reorderable(file.key, dragging: $page.draggingProject) { from, to in sync.moveProject(from, to: to) }
         .contextMenu {
             Button("이 프로젝트만 보기") { page.scope = target }
-            Button("지금 가져오기") { sync.sync(only: file.key) { count in page.flash(count > 0 ? "변경 \(count)건을 찾았습니다" : "새 변경이 없습니다") } }
+            Button("지금 가져오기") { fetch(file.key, name: name) }
+                .disabled(sync.isBusy(file.key) || !settings.hasToken)
             if let url = URL(string: "https://www.figma.com/design/\(file.key)") {
                 Button("피그마에서 열기") { NSWorkspace.shared.open(url) }
             }
@@ -518,6 +523,43 @@ private struct DesignSidebar: View {
                 sync.setProjectHidden(file.key, hidden: true)
                 page.flash("‘\(name)’를 숨겼습니다. 숨긴 동안은 가져오지 않습니다")
             }
+        }
+    }
+
+    private func fetchButton(_ fileKey: String, name: String) -> some View {
+        Button { fetch(fileKey, name: name) } label: {
+            if sync.fetching == fileKey {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: sync.isBusy(fileKey) ? "clock" : "arrow.down.circle")
+            }
+        }
+        .buttonStyle(GhostIconButtonStyle())
+        .disabled(sync.isBusy(fileKey) || !settings.hasToken)
+        .tip(fetchTip(fileKey, name: name))
+    }
+
+    private func fetchTip(_ fileKey: String, name: String) -> String {
+        if sync.fetching == fileKey { return "‘\(name)’ 가져오는 중" }
+        if sync.isBusy(fileKey) { return "앞 프로젝트를 받은 뒤 가져옵니다" }
+        let checked = sync.lastChecked(fileKey)
+        let last = checked == .distantPast ? "아직 가져오지 않음" : DesignFormat.stamp(checked) + " 확인"
+        let minutes = sync.source(fileKey).map(sync.interval(for:)) ?? 0
+        let schedule = minutes == 0 ? "누를 때만 가져옴" : sync.intervalLabel(minutes) + " 자동"
+        return "‘\(name)’ 지금 가져오기\n\(last) · \(schedule)"
+    }
+
+    private func fetch(_ fileKey: String, name: String) {
+        sync.sync(only: fileKey) { count in
+            page.flash(count > 0 ? "‘\(name)’ 변경 \(count)건을 찾았습니다" : "‘\(name)’ 새 변경이 없습니다")
+        }
+    }
+
+    /// 지금 보는 범위가 한 프로젝트 안이면 그 프로젝트.
+    private var scopedFileKey: String? {
+        switch page.scope {
+        case .project(let key), .menu(let key, _), .group(let key, _): return sync.source(key) == nil ? nil : key
+        default: return nil
         }
     }
 
@@ -795,7 +837,11 @@ private struct DesignSidebar: View {
             .onHover { hover.update("footer", $0) }
             .tip(problem ?? "피그마 연동 설정")
             Button {
-                sync.sync { count in page.flash(count > 0 ? "변경 \(count)건을 찾았습니다" : "새 변경이 없습니다") }
+                if let key = scopedFileKey {
+                    fetch(key, name: sync.projectName(key))
+                } else {
+                    sync.sync { count in page.flash(count > 0 ? "변경 \(count)건을 찾았습니다" : "새 변경이 없습니다") }
+                }
             } label: {
                 if sync.syncing { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
                 else { Image(systemName: "arrow.clockwise") }
@@ -803,7 +849,7 @@ private struct DesignSidebar: View {
             .buttonStyle(GhostIconButtonStyle())
             .keyboardShortcut("r", modifiers: .command)
             .disabled(sync.syncing || settings.sources.isEmpty || !settings.hasToken)
-            .tip("지금 가져오기 (⌘R)")
+            .tip(scopedFileKey.map { "‘\(sync.projectName($0))’ 가져오기 (⌘R)" } ?? "숨기지 않은 프로젝트 모두 가져오기 (⌘R)\n하나만 받으려면 프로젝트에 올려 ↓를 누르세요")
         }
     }
 
@@ -812,14 +858,23 @@ private struct DesignSidebar: View {
     }
 
     private var schedule: String {
-        settings.intervalMinutes == 0 ? "수동" : settings.intervalMinutes < 60 ? "\(settings.intervalMinutes)분마다" : "\(settings.intervalMinutes / 60)시간마다"
+        let automatic = sync.automaticCount
+        return automatic == 0 ? "누를 때만" : "자동 \(automatic)개"
     }
 
     private var status: String {
-        if sync.syncing { return sync.progress.isEmpty ? "가져오는 중…" : sync.progress }
+        if sync.syncing {
+            let waiting = sync.queued.isEmpty ? "" : " · 대기 \(sync.queued.count)개"
+            return (sync.progress.isEmpty ? "가져오는 중…" : sync.progress) + waiting
+        }
         if !settings.hasToken { return "토큰을 넣어야 가져옵니다" }
         if settings.sources.isEmpty { return "지켜볼 화면설계서가 없습니다" }
-        return sync.lastRun.map { DesignFormat.stamp($0) + "에 확인" } ?? "아직 확인하지 않았습니다"
+        // 손으로 받는 프로젝트는 언제 받았는지가 중요해, 보는 프로젝트(없으면 가장 최근) 기준으로 적는다
+        if let key = scopedFileKey {
+            let checked = sync.lastChecked(key)
+            return sync.projectName(key) + " · " + (checked == .distantPast ? "아직 가져오지 않았습니다" : DesignFormat.stamp(checked) + "에 확인")
+        }
+        return sync.history.files.values.map(\.syncedAt).max().map { DesignFormat.stamp($0) + "에 확인" } ?? "아직 확인하지 않았습니다"
     }
 }
 
@@ -843,7 +898,7 @@ private struct DesignOnboarding: View {
                 RowDivider()
                 step(2, "화면설계서 주소 붙여넣기", "주소창의 figma.com/design/… 주소를 그대로 넣습니다.", done: !settings.sources.isEmpty)
                 RowDivider()
-                step(3, "기다리기", "처음 가져온 상태가 기준이 되고, 다음 가져오기부터 바뀐 것을 기록합니다.", done: false)
+                step(3, "필요할 때 가져오기", "처음 가져온 상태가 기준이 되고, 프로젝트의 ↓를 누를 때마다 바뀐 것을 기록합니다. 주기를 정하면 저절로 받습니다.", done: false)
             }
             .wlSurface()
             Button("피그마 연결하기") { page.openSettings(.figma) }
@@ -997,7 +1052,7 @@ private struct DesignTimeline: View {
             Text(sync.history.events.isEmpty ? "아직 기록한 변경이 없습니다" : "이 조건에 맞는 변경이 없습니다")
                 .font(WL.body).foregroundStyle(WL.muted)
             Text(sync.history.events.isEmpty
-                 ? "처음 가져온 상태가 기준입니다. 다음 가져오기부터 바뀐 것을 남깁니다."
+                 ? "처음 가져온 상태가 기준입니다. 왼쪽 프로젝트에 올려 ↓를 누르면 그때부터 바뀐 것을 남깁니다."
                  : "찾는 말이나 변경 종류를 바꿔 보세요.")
                 .font(WL.meta).foregroundStyle(WL.faint).multilineTextAlignment(.center)
             Spacer()

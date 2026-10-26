@@ -28,7 +28,7 @@ struct DesignSettingsView: View {
         SlimScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(section == .figma
-                     ? "피그마 화면설계서를 주기마다 가져와 메뉴·화면별로 바뀐 것을 디자인 화면에 날짜별로 남깁니다."
+                     ? "피그마 화면설계서를 필요할 때나 정한 주기마다 가져와 메뉴·화면별로 바뀐 것을 디자인 화면에 날짜별로 남깁니다."
                      : "작업 중인 시안은 계속 바뀌어서, 고른 메뉴에서 완료된 화면이 다시 바뀔 때만 알립니다.")
                     .font(.system(size: 12.5)).foregroundStyle(WL.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -130,7 +130,7 @@ struct DesignSettingsView: View {
 
     private func fileRow(_ source: DesignSource) -> some View {
         let record = sync.history.files[source.fileKey]
-        let detail = [record.map { "화면 \($0.screens.count)개" } ?? (sync.syncing ? "처음 가져오는 중" : "아직 가져오지 않음"),
+        let detail = [record.map { "화면 \($0.screens.count)개" } ?? (sync.isBusy(source.fileKey) ? "처음 가져오는 중" : "아직 가져오지 않음"),
                       record.map { "\(DesignFormat.stamp($0.syncedAt)) 확인" },
                       source.menus.isEmpty ? nil : "일부 메뉴만 받는 중",
                       source.isHidden ? "숨김 · 가져오지 않음" : nil]
@@ -144,6 +144,12 @@ struct DesignSettingsView: View {
                         .buttonStyle(NotionButtonStyle())
                         .disabled(sync.syncing)
                 }
+                Button(sync.fetching == source.fileKey ? "가져오는 중…" : sync.isBusy(source.fileKey) ? "대기 중" : "가져오기") {
+                    sync.sync(only: source.fileKey)
+                }
+                .buttonStyle(NotionButtonStyle())
+                .disabled(sync.isBusy(source.fileKey) || !settings.hasToken)
+                .tip("이 프로젝트만 지금 받습니다")
                 // 프로젝트마다 가져오기 주기: 지금 작업 중인 것은 짧게, 끝난 것은 길게
                 Picker("", selection: Binding(get: { source.intervalMinutes ?? -1 },
                                               set: { sync.setInterval($0 < 0 ? nil : $0, for: source.fileKey) })) {
@@ -191,10 +197,10 @@ struct DesignSettingsView: View {
     // MARK: 가져오기
 
     private var schedule: some View {
-        SettingRow("기본 가져오기 주기", "프로젝트마다 따로 정하지 않았으면 이 주기로 가져옵니다. 파일이 그대로면 파일 정보만 한 번 묻고 끝냅니다.") {
+        SettingRow("기본 가져오기 주기", "프로젝트마다 따로 정하지 않았으면 이 주기로 가져옵니다. 누를 때만으로 두면 디자인 화면에서 프로젝트에 올려 ↓를 누를 때만 받습니다. 파일이 그대로면 파일 정보만 한 번 묻고 끝냅니다.") {
             Picker("", selection: $settings.intervalMinutes) {
                 ForEach(DesignSyncSettings.intervals, id: \.self) { minutes in
-                    Text(minutes == 0 ? "끄기" : minutes < 60 ? "\(minutes)분마다" : "\(minutes / 60)시간마다").tag(minutes)
+                    Text(minutes == 0 ? "누를 때만" : minutes < 60 ? "\(minutes)분마다" : "\(minutes / 60)시간마다").tag(minutes)
                 }
             }
             .labelsHidden().frame(width: 120)
