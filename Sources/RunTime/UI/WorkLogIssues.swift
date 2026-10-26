@@ -381,7 +381,7 @@ private struct IssueRow: View {
                 }
                 Button("진행중") { add(.inProgress) }
             } label: {
-                Image(systemName: "gauge.with.dots.needle.50percent")
+                Image(systemName: "gauge.medium")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)

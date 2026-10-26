@@ -108,7 +108,7 @@ final class WorkLogPage: ObservableObject {
             switch self {
             case .gitlab: return "arrow.triangle.merge"
             case .redmine: return "paperplane"
-            case .teams: return "bubble.left.and.text.bubble.right"
+            case .teams: return "bubble.left.and.bubble.right"
             case .recurring: return "repeat"
             case .shortcuts: return "keyboard"
             }

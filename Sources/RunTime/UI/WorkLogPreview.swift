@@ -153,7 +153,7 @@ struct WorkLogPreview: View {
                     Button { page.confirmingTeams = true } label: {
                         HStack {
                             if sync.postingTeams { ProgressView().controlSize(.small) }
-                            Label("팀즈 채팅에 보내기", systemImage: "bubble.left.and.text.bubble.right")
+                            Label("팀즈 채팅에 보내기", systemImage: "bubble.left.and.bubble.right")
                         }
                     }
                     .buttonStyle(NotionButtonStyle(fill: true))

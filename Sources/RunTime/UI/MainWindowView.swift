@@ -25,7 +25,7 @@ enum MainPage: String, CaseIterable {
 
     var icon: String {
         switch self {
-        case .usage: return "gauge.with.dots.needle.33percent"
+        case .usage: return "gauge.medium"
         case .game: return "gamecontroller"
         case .runners: return "hare"
         case .workLog: return "checklist"

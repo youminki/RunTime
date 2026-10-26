@@ -47,7 +47,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     @objc private func goForward() { navigator.goForward() }
 
     private static func button(_ symbol: String, label: String) -> NSButton {
-        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label)!,
+        // 심볼이 없는 macOS에서도 꺼지지 않게 빈 그림으로 둔다
+        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label) ?? NSImage(),
                               target: nil, action: nil)
         button.bezelStyle = .texturedRounded
         button.isBordered = false
