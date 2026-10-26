@@ -402,14 +402,20 @@ private struct ClaimBurstLayer: View {
                 }
                 .overlay(alignment: .top) {
                     ForEach(claims.bursts) { burst in
-                        let age = context.date.timeIntervalSince(burst.at)
-                        Text("+\(burst.coins)\(burst.boxes > 0 ? "  상자 \(burst.boxes)" : "")")
-                            .font(.system(size: burst.big ? 22 : 16, weight: .heavy, design: .rounded).monospacedDigit())
+                        // 값을 먼저 구해 둔다. 수식을 수정자 안에 바로 쓰면 컴파일러가 타입 추론에 오래 걸린다
+                        let age: Double = context.date.timeIntervalSince(burst.at)
+                        let boxes: String = burst.boxes > 0 ? "  상자 \(burst.boxes)" : ""
+                        let size: CGFloat = burst.big ? 22 : 16
+                        let rise: CGFloat = 48 - CGFloat(age) * 36
+                        let fade: Double = max(0, 1 - age / 1.2)
+                        let pop: CGFloat = 1 + 0.25 * CGFloat(max(0, 1 - age * 4))
+                        Text("+\(burst.coins)" + boxes)
+                            .font(.system(size: size, weight: .heavy, design: .rounded).monospacedDigit())
                             .foregroundStyle(GameShopView.gold)
                             .shadow(color: .black.opacity(0.5), radius: 3)
-                            .offset(y: 48 - CGFloat(age) * 36)
-                            .opacity(max(0, 1 - age / 1.2))
-                            .scaleEffect(1 + 0.25 * max(0, 1 - age * 4))
+                            .offset(y: rise)
+                            .opacity(fade)
+                            .scaleEffect(pop)
                     }
                 }
             }
