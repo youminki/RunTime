@@ -292,10 +292,12 @@ public enum ClaudeLogin {
     public static func autoSwitchTarget(current: String, usage: [String: LastUsage], candidates: [String],
                                         limit: Double, now: Date) -> String? {
         guard let mine = usage[current], mine.effectivePercent(now: now) >= limit else { return nil }
-        return candidates
-            .filter { $0 != current }
-            .map { ($0, usage[$0]?.effectivePercent(now: now) ?? 0) }
-            .filter { $0.1 < limit }
-            .min { $0.1 < $1.1 }?.0
+        // Xcode 16의 컴파일러는 이어 쓴 클로저 체인의 타입 추론이 느려 반복문으로 쓴다
+        var best: (id: String, percent: Double)?
+        for id in candidates where id != current {
+            let percent: Double = usage[id]?.effectivePercent(now: now) ?? 0
+            if percent < limit, best.map({ percent < $0.percent }) ?? true { best = (id, percent) }
+        }
+        return best?.id
     }
 }

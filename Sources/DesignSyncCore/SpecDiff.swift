@@ -91,10 +91,21 @@ public enum SpecDiff {
         }
         // 3. 번호와 상관없이 가장 비슷한 것부터. 번호가 다르면 `검색` ⊂ `검색 결과 없음 안내`처럼 짧은 말이 우연히 들어 있을 수 있어
         //    포함은 짧은 쪽이 여섯 글자 넘을 때만 친다
-        let candidates = oldLeft.flatMap { o in newLeft.map { n in (o, n, matchScore(old[o].text, new[n].text, containment: 6)) } }
-            .filter { $0.2 >= sameItemSimilarity }
-            .sorted { $0.2 != $1.2 ? $0.2 > $1.2 : ($0.1, $0.0) < ($1.1, $1.0) }
-        for (o, n, _) in candidates where oldLeft.contains(o) && newLeft.contains(n) { pair(o, n) }
+        //    Xcode 16의 컴파일러는 이어 쓴 클로저 체인을 제때 추론하지 못해 단계를 나눠 쓴다
+        var candidates: [(old: Int, new: Int, score: Double)] = []
+        for o in oldLeft {
+            for n in newLeft {
+                let score: Double = matchScore(old[o].text, new[n].text, containment: 6)
+                if score >= sameItemSimilarity { candidates.append((o, n, score)) }
+            }
+        }
+        candidates.sort { a, b in
+            if a.score != b.score { return a.score > b.score }
+            return a.new != b.new ? a.new < b.new : a.old < b.old
+        }
+        for candidate in candidates where oldLeft.contains(candidate.old) && newLeft.contains(candidate.new) {
+            pair(candidate.old, candidate.new)
+        }
 
         var changes: [SpecChange] = []
         let matched = Dictionary(pairs.map { ($0.1, $0.0) }, uniquingKeysWith: { first, _ in first })
