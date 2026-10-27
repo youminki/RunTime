@@ -43,11 +43,14 @@ struct WorkLogPreview: View {
             Text("#\(page.confirmingUndo?.issue ?? 0)에서 앱이 바꾼 진척률·상태·날짜·담당자를 보내기 전 값으로 돌리고, 보낸 댓글을 지웁니다. 보낸 뒤 다른 사람이 바꾼 칸은 그대로 둡니다. 그 줄들은 다시 보낼 목록으로 돌아옵니다."
                  + (sync.journalAPI ? "" : "\n\n이 레드마인은 API로 댓글을 지우게 두지 않아, 댓글 자리를 브라우저로 열어 드립니다. 연필 > 지우기로 지우세요."))
         }
-        .alert("팀즈 채팅에 보낼까요?", isPresented: $page.confirmingTeams) {
-            Button("보내기") { postTeams() }
+        .alert("보고 채팅에 올릴까요?", isPresented: $page.confirmingTeams) {
+            Button("올리기") { postTeams(to: .chat) }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("\(reportTitle)를 연결한 팀즈 채팅에 보냅니다. 보낸 글은 팀즈에서 지워야 합니다.")
+            Text(settings.teamsDirect(.chat)
+                 || (settings.teamsAutoSend && settings.teamsAutoPaste && AXIsProcessTrusted() && TeamsOpener.teamsPWA() != nil)
+                 ? "\(postTitle)을 팀 채팅에 바로 올립니다. 올린 글은 팀즈에서 지워야 합니다."
+                 : "팀즈에서 보고 채팅을 열고 \(postTitle)을 붙여 넣습니다. 확인하고 Enter를 누르면 올라갑니다.")
         }
     }
 
@@ -89,13 +92,48 @@ struct WorkLogPreview: View {
         }
     }
 
+    private var copyName: String { isPlan ? "진행 예정" : page.mode == .day || page.mode == .issues ? "진행 사항" : reportTitle }
+
+    private var isPlan: Bool { (page.mode == .day || page.mode == .issues) && page.dayReport == .plan }
+
+    /// 일지에서 만든 진행 예정 사항 (고쳐 쓰기 전).
+    private var generatedPlan: String {
+        WorkReport.plan(day: page.day, in: store.log)
+    }
+
+    /// 하루 보고서 머리줄 `[10/27 진행 사항]`. 팀즈에는 늘 이 줄을 제목으로 올린다.
+    private var dayHeader: String { WorkReport.dayHeader(page.day, plan: isPlan) }
+
+    /// 머리줄을 뺀 보고서 몸통.
+    private var reportBody: String {
+        let grouped = settings.reportGrouped
+        switch page.mode {
+        case .day, .issues:
+            if isPlan { return page.planEdits[page.day]?.text ?? generatedPlan }
+            return WorkReport.daily(scopeEntries, in: store.log, doneFirst: settings.doneFirst, byIssue: settings.reportByIssue,
+                                    grouped: grouped)
+        default:
+            // 주간·월간은 첫 줄이 머리줄이다
+            let lines = reportText.components(separatedBy: "\n")
+            return lines.first?.hasPrefix("[") == true ? lines.dropFirst().joined(separator: "\n") : reportText
+        }
+    }
+
+    /// 팀즈에 올릴 제목 (굵게 첫 줄로 간다).
+    private var postTitle: String {
+        switch page.mode {
+        case .day, .issues: return dayHeader
+        case .project: return "\(selectedProject ?? "프로젝트") 요약"
+        default: return reportText.components(separatedBy: "\n").first ?? reportTitle
+        }
+    }
+
     private var reportText: String {
         let grouped = settings.reportGrouped
         switch page.mode {
         case .day, .issues:
-            let body = WorkReport.daily(scopeEntries, in: store.log, doneFirst: settings.doneFirst, byIssue: settings.reportByIssue,
-                                        grouped: grouped)
-            return body.isEmpty || !settings.dailyHeader ? body : "[금일 진행 사항]\n" + body
+            let body = reportBody
+            return body.isEmpty || !settings.dailyHeader ? body : dayHeader + "\n" + body
         case .week:
             return WorkReport.weekly(scopeEntries, in: store.log, week: WorkDay.week(of: page.day),
                                      doneFirst: settings.doneFirst, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue,
@@ -119,18 +157,35 @@ struct WorkLogPreview: View {
                 Spacer()
                 Text(rangeText).font(WL.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            ReportText(text: text.isEmpty ? "적은 일이 여기 보고서 꼴로 만들어집니다." : text, placeholder: text.isEmpty)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            if page.mode == .day || page.mode == .issues {
+                // 출근 때는 진행 예정, 퇴근 때는 진행 사항을 올린다
+                HStack(spacing: 8) {
+                    Picker("", selection: $page.dayReport) {
+                        ForEach(WorkLogPage.DayReport.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    Text(dayHeader).font(WL.caption).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
+                }
+            }
+            if isPlan {
+                planEditor
+            } else {
+                ReportText(text: text.isEmpty ? "적은 일이 여기 보고서 꼴로 만들어집니다." : text, placeholder: text.isEmpty)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("레드마인 일감 이름으로, QA는 건수로 모아 쓰기", isOn: $settings.reportByIssue)
                     .tip("일감 줄은 `데이터 수집 > 공유 파일 관리 API 연동 (100%)`처럼, QA 건은 `QA 수정사항 N건 반영`으로 적습니다")
                 Toggle("같은 메뉴는 묶어 쓰기", isOn: $settings.reportGrouped)
                     .tip("`데이터 수집 > 수집 관리`처럼 앞 경로가 같은 줄이 둘 이상이면 경로를 한 번만 적고 그 아래 `· 끝 이름 (상태)`로 늘어놓습니다")
                 if page.mode == .day || page.mode == .issues {
-                    Toggle("맨 위에 [금일 진행 사항] 붙이기", isOn: $settings.dailyHeader)
+                    Toggle("맨 위에 \(dayHeader) 붙이기", isOn: $settings.dailyHeader)
+                        .tip("복사할 때 맨 위에 붙입니다. 팀즈에는 켜고 끄는 것과 상관없이 늘 이 줄을 제목으로 올립니다")
                 }
-                if page.mode != .month {
+                // 진행 예정에는 상태가 없어 순서도 쓰지 않는다
+                if page.mode != .month && !isPlan {
                     Toggle("상시 → 완료 → 진행 순서로", isOn: $settings.doneFirst)
                 }
                 if page.mode == .week {
@@ -141,25 +196,34 @@ struct WorkLogPreview: View {
             .font(WL.meta)
             VStack(spacing: 8) {
                 Button {
-                    copy(text, message: "\(reportTitle)를 복사했습니다")
+                    copy(text, message: "\(copyName)를 복사했습니다")
                 } label: {
-                    Label("\(reportTitle) 복사", systemImage: "doc.on.doc")
+                    Label("\(copyName) 복사", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(NotionButtonStyle(kind: .primary, fill: true))
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(text.isEmpty)
                 .tip("⇧⌘C")
-                if settings.hasTeamsWebhook {
-                    Button { page.confirmingTeams = true } label: {
-                        HStack {
-                            if sync.postingTeams { ProgressView().controlSize(.small) }
-                            Label("팀즈 채팅에 보내기", systemImage: "bubble.left.and.bubble.right")
+                // 나에게는 설정 없이 늘 보낼 수 있고, 보고 채팅은 링크나 웹훅을 넣었을 때만 보인다
+                HStack(spacing: 6) {
+                    if settings.hasTeams(.chat) {
+                        Button { page.confirmingTeams = true } label: {
+                            HStack {
+                                if sync.postingTeams { ProgressView().controlSize(.small) }
+                                Label("팀즈 채팅에 올리기", systemImage: "bubble.left.and.bubble.right")
+                            }
                         }
+                        .buttonStyle(NotionButtonStyle(fill: true))
+                    }
+                    Button { postTeams(to: .me) } label: {
+                        Label("나에게 보내기", systemImage: "person.crop.circle")
                     }
                     .buttonStyle(NotionButtonStyle(fill: true))
-                    .disabled(text.isEmpty || sync.postingTeams)
-                } else {
-                    Button("팀즈 채팅 연결") { page.settingsSection = .teams; page.showsSettings = true }
+                    .tip("나와의 채팅으로 먼저 보내 봅니다")
+                }
+                .disabled(text.isEmpty || sync.postingTeams)
+                if !settings.hasTeams(.chat) {
+                    Button("보고 채팅 연결") { page.settingsSection = .teams; page.showsSettings = true }
                         .buttonStyle(TextLinkButtonStyle())
                         .frame(maxWidth: .infinity)
                 }
@@ -167,9 +231,49 @@ struct WorkLogPreview: View {
         }
     }
 
-    private func postTeams() {
-        sync.postTeams(reportText, title: "\(reportTitle) · \(rangeText)") { error in
-            page.flash(error.map { "팀즈에 보내지 못했습니다: \($0)" } ?? "팀즈 채팅에 보냈습니다")
+    /// 진행 예정 사항은 일지에서 만든 뒤 그대로 고쳐 쓸 수 있다 (`마크업 및 api 연동`처럼 뭉뚱그려 쓰는 관례).
+    private var planEditor: some View {
+        let generated = generatedPlan
+        let edit = page.planEdits[page.day]
+        // 고친 뒤 일지에 프로젝트가 더해지거나 빠졌으면 알린다
+        let stale = edit.map { $0.base != generated } ?? false
+        return VStack(alignment: .trailing, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
+                // 머리줄은 진행 사항 보고서처럼 글 맨 위에 보이되, 날짜에서 만들므로 고쳐 쓰지는 않는다
+                if settings.dailyHeader {
+                    Text(dayHeader).font(.system(size: 13)).foregroundStyle(WL.text)
+                        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
+                        .textSelection(.enabled)
+                }
+                ReportText(text: page.planEdits[page.day]?.text ?? generated, placeholder: false) { text in
+                    let base = page.planEdits[page.day]?.base ?? generated
+                    page.planEdits[page.day] = text == generated ? nil : (text, base)
+                }
+                .frame(minHeight: 140)
+            }
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            .overlay(alignment: .topLeading) {
+                if reportBody.isEmpty {
+                    Text("어제 끝내지 못한 일과 오늘 적은 일로 만들어집니다. 여기에 바로 써도 됩니다.")
+                        .font(.system(size: 13)).foregroundStyle(.tertiary)
+                        .padding(.horizontal, 16).padding(.top, settings.dailyHeader ? 32 : 14).allowsHitTesting(false)
+                }
+            }
+            HStack(spacing: 10) {
+                Text(stale ? "고친 뒤 일지가 바뀌었습니다" : edit != nil ? "고쳐 쓴 계획" : "일지에서 만든 계획 · 바로 고쳐 쓸 수 있습니다")
+                    .font(WL.caption).foregroundStyle(stale ? WL.waiting : .secondary)
+                Spacer()
+                if edit != nil {
+                    Button("일지로 다시 만들기") { page.planEdits[page.day] = nil }.buttonStyle(TextLinkButtonStyle())
+                }
+            }
+        }
+    }
+
+    private func postTeams(to target: TeamsTarget) {
+        sync.postTeams(reportBody, title: postTitle, to: target) { message, _ in
+            page.flash(message)
         }
     }
 
@@ -972,8 +1076,20 @@ struct WorkLogPreview: View {
 private struct ReportText: NSViewRepresentable {
     let text: String
     let placeholder: Bool
+    /// 있으면 고쳐 쓸 수 있다 (진행 예정). 진행 사항과 같은 글꼴·줄 간격으로 보이게 같은 칸을 쓴다.
+    var onEdit: ((String) -> Void)?
     // 화면 모드를 바꾸면 다시 그리게 읽어 둔다
     @Environment(\.colorScheme) private var scheme
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var onEdit: ((String) -> Void)?
+        func textDidChange(_ notification: Notification) {
+            guard let view = notification.object as? NSTextView else { return }
+            onEdit?(view.string)
+        }
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -982,8 +1098,11 @@ private struct ReportText: NSViewRepresentable {
         // 다른 칸과 같은 얇은 막대 (글을 덮지 않게 제 자리를 갖는다)
         SlimScroller.install(on: scroll)
         if let view = scroll.documentView as? NSTextView {
-            view.isEditable = false
+            view.isEditable = onEdit != nil
             view.isSelectable = true
+            view.isRichText = false
+            view.allowsUndo = true
+            view.delegate = context.coordinator
             view.drawsBackground = false
             view.textContainerInset = NSSize(width: 11, height: 14)
         }
@@ -992,6 +1111,12 @@ private struct ReportText: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let view = scroll.documentView as? NSTextView else { return }
+        context.coordinator.onEdit = onEdit
+        view.isEditable = onEdit != nil
+        // 고쳐 쓰는 칸에서 새로 친 글도 같은 글꼴·줄 간격으로
+        view.typingAttributes = Self.base(NSColor(WL.text))
+        // 글자를 치는 중에는 다시 그리지 않는다 (한글 조합이 끊기고 커서가 튄다)
+        if onEdit != nil, view.string == text || view.hasMarkedText() { return }
         let rendered = attributed()
         guard view.attributedString() != rendered else { return }
         // 자동 수집으로 글이 바뀌어도 복사하려고 끌어 둔 선택과 읽던 자리가 풀리지 않게 되돌린다
@@ -1002,6 +1127,13 @@ private struct ReportText: NSViewRepresentable {
         view.selectedRanges = selection.filter { NSMaxRange($0.rangeValue) <= length }.nilIfEmpty ?? [NSValue(range: NSRange(location: 0, length: 0))]
         scroll.contentView.scroll(to: visible)
         scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    static func base(_ color: NSColor) -> [NSAttributedString.Key: Any] {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 5
+        style.lineBreakStrategy = .hangulWordPriority
+        return [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: color, .paragraphStyle: style]
     }
 
     private func attributed() -> NSAttributedString {

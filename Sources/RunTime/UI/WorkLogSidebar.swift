@@ -345,7 +345,8 @@ struct WorkLogSidebar: View {
                 status("레드마인", on: settings.redmineReady, error: sync.issuesError != nil,
                        detail: sync.issuesError != nil ? "확인 필요" : settings.redmineReady ? "연결됨" : "꺼짐")
                     .tip(sync.issuesError ?? "")
-                status("팀즈", on: settings.hasTeamsWebhook, error: false, detail: settings.hasTeamsWebhook ? "연결됨" : "복사로 올림")
+                status("팀즈", on: settings.hasTeams(.chat), error: false,
+                       detail: settings.teamsDirect(.chat) ? "웹훅 연결" : settings.hasTeams(.chat) ? "채팅 연결" : "나에게만")
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)

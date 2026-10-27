@@ -74,7 +74,7 @@ public enum WorkLogCommand {
                                       레드마인에 올린 것으로 표시 (redmine과 같은 범위)
       capture                         GitLab MR과 로컬 커밋을 지금 가져오기
       issues                          나에게 배정된 레드마인 일감과 보고서 이름
-      teams-test [report]             팀즈 채팅 웹훅으로 시험 카드(report면 오늘 일일보고) 보내기
+      teams-test [report] [me]        팀즈 웹훅으로 시험 카드(report면 오늘 일일보고, me면 나에게) 보내기
       path                            일지 파일 위치
     """
 

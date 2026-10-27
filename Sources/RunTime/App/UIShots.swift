@@ -41,7 +41,6 @@ enum UIShots {
         let page = WorkLogPage()
         page.settingsSection = section
         // 긴 웹훅 주소를 붙여 넣었을 때 창 너비를 넘지 않는지 본다
-        if section == .teams { page.teamsDraft = String(repeating: "https://example.environment.api.powerplatform.com/workflows/", count: 3) }
         return page
     }
 
@@ -284,6 +283,16 @@ enum UIShots {
             // 업무 일지는 RUNTIME_WORKLOG로 예시 파일을 가리키고 찍는다 (내 일지가 그림에 남지 않게)
             ("worklog-day", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
             ("worklog-day-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
+            ("worklog-plan-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: {
+                let page = workLogPage(.day)
+                page.dayReport = .plan
+                return page
+            }()))),
+            ("worklog-progress-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: {
+                let page = workLogPage(.day)
+                page.dayReport = .progress
+                return page
+            }()))),
             ("worklog-redmine", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
             // 카드 아래 MR 화면 첨부 미리보기까지 보이게 길게 찍는다
             ("worklog-redmine-tall", .darkAqua, 1400, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
@@ -350,6 +359,7 @@ enum UIShots {
                 .padding(.horizontal, 32).frame(width: 600).background(WL.canvas))),
             ("main-settings-redmine-dark", .darkAqua, nil, mainSettings(.redmine, engine: engine)),
             ("main-settings-teams", .darkAqua, nil, mainSettings(.teams, engine: engine)),
+            ("main-settings-teams-light", .aqua, nil, mainSettings(.teams, engine: engine)),
         ] + designScreens(engine: engine)
         // RUNTIME_SHOTS=main-,worklog-day처럼 이름 앞부분을 주면 그 화면만 찍는다
         let only = ProcessInfo.processInfo.environment["RUNTIME_SHOTS"].flatMap { $0.isEmpty ? nil : $0.split(separator: ",").map(String.init) }

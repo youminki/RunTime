@@ -7,6 +7,11 @@ final class WorkLogPage: ObservableObject {
     enum Preview { case report, redmine }
 
     @Published var mode = Mode.day
+    /// 하루 보고서: 퇴근 때 올리는 진행 사항, 출근 때 올리는 진행 예정 사항. 오전에 열면 예정부터 보인다.
+    enum DayReport: String, CaseIterable { case plan = "진행 예정", progress = "진행 사항" }
+    @Published var dayReport: DayReport = Calendar.current.component(.hour, from: Date()) < 12 ? .plan : .progress
+    /// 날짜별로 고쳐 쓴 진행 예정 사항과, 고칠 때 일지에서 만든 글. 일지가 바뀌면 알아채려고 함께 둔다.
+    @Published var planEdits: [String: (text: String, base: String)] = [:]
     /// 고른 날. 바꾸면 왼쪽 달력도 그 달로 간다.
     @Published var day = WorkDay.today() { didSet { calendarMonth = WorkDay.month(of: day).lowerBound } }
     /// 왼쪽 달력에 보이는 달의 1일. 달력 화살표로는 고른 날을 두고 달력만 넘긴다.
@@ -79,7 +84,6 @@ final class WorkLogPage: ObservableObject {
     @Published var showsSettings = false
     /// 저장하기 전 API 키·웹훅. 저장하면 비운다.
     @Published var keyDraft = ""
-    @Published var teamsDraft = ""
     /// 고정 업무 새로 만들기 칸.
     @Published var recurringProject = ""
     @Published var recurringTitle = ""

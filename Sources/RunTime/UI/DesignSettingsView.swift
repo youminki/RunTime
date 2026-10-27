@@ -78,6 +78,13 @@ struct DesignSettingsView: View {
     private var token: some View {
         VStack(spacing: 0) {
             SettingRow("피그마 토큰", "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 날짜 비교까지 쓰려면 file_versions:read도 더합니다. 키체인에 둡니다.") {
+                HStack(alignment: .top, spacing: 6) {
+                    if !settings.hasToken {
+                        // 토큰을 만드는 곳(피그마 설정의 Security 탭)으로 바로 보낸다
+                        Button("토큰 만들기") { NSWorkspace.shared.open(URL(string: "https://www.figma.com/settings")!) }
+                            .buttonStyle(NotionButtonStyle())
+                            .tip("피그마 설정을 엽니다. Security > Personal access tokens에서 만들고 복사해 오세요")
+                    }
                 SecretInput(saved: settings.hasToken, hint: settings.tokenHint, placeholder: "figd_…", draft: $form.tokenDraft,
                             save: { value in
                                 guard settings.saveToken(value) else { return "키체인에 저장하지 못했습니다" }
@@ -89,6 +96,7 @@ struct DesignSettingsView: View {
                                 form.tokenStatus = nil
                                 form.tokenFailed = false
                             })
+                }
             }
             if settings.hasToken {
                 SettingRow("연결 상태", form.tokenStatus ?? "토큰으로 화면설계서를 읽을 수 있는지 피그마에 물어봅니다.",
@@ -120,9 +128,17 @@ struct DesignSettingsView: View {
                 HStack(spacing: 6) {
                     TextField("https://www.figma.com/design/…", text: $form.urlDraft).textFieldStyle(.roundedBorder).frame(width: 220)
                         .onSubmit(add)
-                    Button(form.adding ? "확인하는 중…" : "더하기", action: add)
-                        .buttonStyle(NotionButtonStyle(kind: .primary))
-                        .disabled(form.adding || form.urlDraft.trimmingCharacters(in: .whitespaces).isEmpty || !settings.hasToken)
+                    if form.urlDraft.trimmingCharacters(in: .whitespaces).isEmpty {
+                        // 피그마 주소창에서 복사해 온 주소를 한 번에 넣고 더한다
+                        Button(form.adding ? "확인하는 중…" : "붙여넣기") { pasteAndAdd() }
+                            .buttonStyle(NotionButtonStyle(kind: .primary))
+                            .disabled(form.adding || !settings.hasToken)
+                            .tip("복사해 둔 figma.com/design/… 주소를 넣고 바로 더합니다")
+                    } else {
+                        Button(form.adding ? "확인하는 중…" : "더하기", action: add)
+                            .buttonStyle(NotionButtonStyle(kind: .primary))
+                            .disabled(form.adding || !settings.hasToken)
+                    }
                 }
             }
         }
@@ -178,6 +194,16 @@ struct DesignSettingsView: View {
                     .tip("지켜보지 않고 기록도 지웁니다")
             }
         }
+    }
+
+    private func pasteAndAdd() {
+        let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard text.contains("figma.com/") else {
+            form.addProblem = text.isEmpty ? "클립보드가 비어 있습니다. 피그마 주소창의 주소를 복사해 오세요." : "클립보드에 피그마 주소가 없습니다."
+            return
+        }
+        form.urlDraft = text
+        add()
     }
 
     private func add() {

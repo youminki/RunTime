@@ -19,6 +19,35 @@ public enum WorkReport {
         return numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped)
     }
 
+    /// 일일보고 머리줄. 오늘이면 `[10/27 금일 진행 사항]`, 출근 때 올리는 계획은 `[10/27 금일 진행 예정 사항]`.
+    /// 지난날을 보고 있으면 `금일` 없이 `[10/24 진행 사항]`.
+    public static func dayHeader(_ day: String, plan: Bool = false, today: String = WorkDay.today()) -> String {
+        let parts = day.split(separator: "-")
+        let date = parts.count == 3 ? "\(parts[1])/\(parts[2])" : day
+        return "[\(date) \(day == today ? "금일 " : "")진행\(plan ? " 예정" : "") 사항]"
+    }
+
+    /// 진행 예정 사항에 프로젝트마다 적는 한 줄 (사내 관례로 늘 같은 말을 쓴다).
+    public static let planLine = "마크업 및 API 연동"
+
+    /// 출근 때 올리는 오늘 할 일. 오늘 적은 일과 앞선 날 끝나지 않은 일이 있는 프로젝트마다 `planLine` 한 줄.
+    /// ```
+    /// 1. UxHub
+    /// - 마크업 및 API 연동
+    /// 2. VeloX
+    /// - 마크업 및 API 연동
+    /// ```
+    /// 상시(회의 등)만 있는 프로젝트는 뺀다.
+    public static func plan(day: String, in log: WorkLog) -> String {
+        let carried = log.previousDay(before: day).map { log.carryCandidates(from: $0, to: day) } ?? []
+        let rows = (log.entries(on: day) + carried).filter {
+            $0.status != .ongoing && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return log.orderedProjects(of: rows).enumerated()
+            .map { "\($0.offset + 1). \($0.element)\n- \(planLine)" }
+            .joined(separator: "\n")
+    }
+
     /// 레드마인 일감 기준 보고 줄. 같은 일감은 한 줄(가장 많이 한 상태), QA 건은 프로젝트마다 한 줄로 앞에 둔다.
     /// 장부에 없는 일감과 일감 없는 줄(회의 등)은 그대로 둔다.
     public static func issueLines(_ entries: [WorkEntry], in log: WorkLog) -> [WorkEntry] {

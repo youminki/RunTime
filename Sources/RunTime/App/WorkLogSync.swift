@@ -22,6 +22,17 @@ final class WorkLogSettings: ObservableObject {
     @Published var reminderMinutes: Int { didSet { defaults.set(reminderMinutes, forKey: "workLog.reminderMinutes") } }
     @Published private(set) var hasRedmineKey: Bool
     @Published private(set) var hasTeamsWebhook: Bool
+    @Published private(set) var hasTeamsMeWebhook: Bool
+    /// 저장한 주소가 회사 계정 인증을 요구하는지 (서명 없음, 401). 키체인을 읽지 않고 보이려고 따로 둔다.
+    @Published private(set) var teamsNeedsAnyone: Set<TeamsTarget>
+    /// 채팅 링크(⋯ > 링크 복사). 웹훅이 없거나 막혔을 때 그 채팅을 팀즈 앱에서 열어 붙여 넣는다.
+    @Published private(set) var teamsLinks: [TeamsTarget: String]
+    /// 채팅을 연 뒤 입력 칸에 붙여 넣기까지 한다 (손쉬운 사용 권한이 있을 때).
+    @Published var teamsAutoPaste: Bool { didSet { defaults.set(teamsAutoPaste, forKey: "workLog.teamsAutoPaste") } }
+    /// 붙여 넣은 뒤 Enter까지 누른다. 확인 없이 나가므로 기본은 끔.
+    @Published var teamsAutoSend: Bool { didSet { defaults.set(teamsAutoSend, forKey: "workLog.teamsAutoSend") } }
+    /// 보낸 뒤 쓰던 앱으로 돌아간다 (팀즈를 띄워 둔 채로 두지 않음).
+    @Published var teamsReturn: Bool { didSet { defaults.set(teamsReturn, forKey: "workLog.teamsReturn") } }
     /// 보고서 꼴: 상시 → 완료 → 진행 순서, 주간 보고 끝에 차주 계획.
     @Published var doneFirst: Bool { didSet { defaults.set(doneFirst, forKey: "workLog.doneFirst") } }
     @Published var weeklyPlan: Bool { didSet { defaults.set(weeklyPlan, forKey: "workLog.weeklyPlan") } }
@@ -52,8 +63,18 @@ final class WorkLogSettings: ObservableObject {
         reminderMinutes = defaults.object(forKey: "workLog.reminderMinutes") as? Int ?? 18 * 60
         // 값을 읽지 않고 있는지만 본다 (값을 읽으면 다른 서명의 빌드에서 키체인 창이 뜬다)
         hasRedmineKey = !Self.keychainOff && Keychain.exists(Self.keyAccount)
-        hasTeamsWebhook = !Self.keychainOff && Keychain.exists(Self.teamsAccount)
+        hasTeamsWebhook = !Self.keychainOff && Keychain.exists(TeamsTarget.chat.account)
+        hasTeamsMeWebhook = !Self.keychainOff && Keychain.exists(TeamsTarget.me.account)
+        teamsNeedsAnyone = Set((defaults.stringArray(forKey: "workLog.teamsNeedsAnyone") ?? []).compactMap(TeamsTarget.init(rawValue:)))
+        let store = defaults
+        teamsLinks = Dictionary(uniqueKeysWithValues: TeamsTarget.allCases.compactMap { target in
+            store.string(forKey: "workLog.teamsLink.\(target.rawValue)").map { (target, $0) }
+        })
+        teamsAutoPaste = defaults.object(forKey: "workLog.teamsAutoPaste") as? Bool ?? true
+        teamsAutoSend = defaults.object(forKey: "workLog.teamsAutoSend") as? Bool ?? false
+        teamsReturn = defaults.object(forKey: "workLog.teamsReturn") as? Bool ?? true
         teamsHint = defaults.string(forKey: "workLog.teamsHost")
+        teamsMeHint = defaults.string(forKey: "workLog.teamsMeHost")
         doneFirst = defaults.object(forKey: "workLog.doneFirst") as? Bool ?? true
         weeklyPlan = defaults.object(forKey: "workLog.weeklyPlan") as? Bool ?? false
         dailyHeader = defaults.object(forKey: "workLogReportHeader") as? Bool ?? false
@@ -72,29 +93,108 @@ final class WorkLogSettings: ObservableObject {
     }
 
     static let keyAccount = "redmine-api-key"
-    static let teamsAccount = "teams-webhook"
+    static let teamsAccount = TeamsTarget.chat.account
 
     /// 웹훅 주소는 아는 사람 누구나 그 채팅에 글을 올릴 수 있어 키체인에 둔다.
-    var teamsWebhook: URL? {
+    func teamsWebhook(_ target: TeamsTarget) -> URL? {
         // 점검용: 다른 서명의 빌드가 키체인을 묻지 않게 환경 변수로 받는다
         if let text = ProcessInfo.processInfo.environment["RUNTIME_TEAMS_WEBHOOK"], TeamsWebhook.isValid(text) { return URL(string: text) }
         guard !Self.keychainOff else { return nil }
-        return Keychain.read(Self.teamsAccount).flatMap(URL.init(string:))
+        return Keychain.read(target.account).flatMap(URL.init(string:))
+    }
+
+    func hasWebhook(_ target: TeamsTarget) -> Bool { target == .me ? hasTeamsMeWebhook : hasTeamsWebhook }
+    func teamsHint(_ target: TeamsTarget) -> String? { target == .me ? teamsMeHint : teamsHint }
+
+    /// 열 채팅. 나에게는 넣지 않아도 나와의 채팅이다.
+    func teamsLink(_ target: TeamsTarget) -> String? { teamsLinks[target] ?? (target == .me ? TeamsLink.notes : nil) }
+
+    /// 웹훅으로 앱 밖에서 바로 보낼 수 있는지. 회사 계정 인증 주소면 채팅을 여는 길로 간다.
+    func teamsDirect(_ target: TeamsTarget) -> Bool {
+        // 점검용 환경 변수 웹훅은 키체인 없이도 바로 보낸다
+        if ProcessInfo.processInfo.environment["RUNTIME_TEAMS_WEBHOOK"].map(TeamsWebhook.isValid) == true { return true }
+        return hasWebhook(target) && !teamsNeedsAnyone.contains(target)
+    }
+
+    /// 실제로 보낼 길이 있는지. 회사 계정 인증으로 막힌 웹훅만 있으면 없는 것으로 본다.
+    func hasTeams(_ target: TeamsTarget) -> Bool { teamsLink(target) != nil || teamsDirect(target) }
+
+    /// 보고서를 보낼 곳. 보고 채팅이 없으면 나에게 보낸다.
+    var reportTarget: TeamsTarget { hasTeams(.chat) ? .chat : .me }
+
+    /// 설정 화면에 보일 한 줄.
+    func teamsSummary(_ target: TeamsTarget) -> String {
+        if teamsDirect(target) { return "웹훅 · 앱에서 바로 보냄" }
+        guard let link = teamsLink(target) else { return "아직 없음" }
+        // 한 번 보낸 채팅은 이름을 기억해 두어 어디로 가는지 보이게 한다
+        let name = defaults.string(forKey: "workLog.teamsTitle.\(target.rawValue)").flatMap(TeamsOpener.chatName)
+        return "\(name ?? TeamsLink.kind(link)) · " + (TeamsWeb.shared.everReady ? "팀즈 창 없이 보냄" : "팀즈를 열어 붙여 넣음")
+    }
+
+    /// 채팅 링크나 웹훅 주소를 알아보고 저장한다. 문제가 있으면 그 이유.
+    func setTeams(_ text: String, target: TeamsTarget) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if TeamsLink.isValid(trimmed) {
+            // 다른 채팅이면 기억해 둔 채팅 이름도 잊는다
+            if teamsLinks[target] != trimmed { defaults.removeObject(forKey: "workLog.teamsTitle.\(target.rawValue)") }
+            teamsLinks[target] = trimmed
+            defaults.set(trimmed, forKey: "workLog.teamsLink.\(target.rawValue)")
+            return nil
+        }
+        guard TeamsWebhook.isValid(trimmed) else {
+            return "팀즈 채팅 링크(⋯ > 링크 복사)나 Workflows 웹훅 주소가 아닙니다."
+        }
+        return setTeamsWebhook(trimmed, target: target) ? nil : "키체인에 저장하지 못했습니다."
+    }
+
+    /// 링크와 웹훅을 모두 지운다. 나에게는 나와의 채팅으로 돌아간다.
+    func clearTeams(_ target: TeamsTarget) {
+        teamsLinks[target] = nil
+        defaults.removeObject(forKey: "workLog.teamsLink.\(target.rawValue)")
+        defaults.removeObject(forKey: "workLog.teamsTitle.\(target.rawValue)")
+        if hasWebhook(target) { setTeamsWebhook("", target: target) }
     }
 
     @discardableResult
-    func setTeamsWebhook(_ text: String) -> Bool {
+    func setTeamsWebhook(_ text: String, target: TeamsTarget = .chat) -> Bool {
         guard !Self.keychainOff else { return false }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            Keychain.delete(Self.teamsAccount)
+            Keychain.delete(target.account)
         } else {
-            guard TeamsWebhook.isValid(trimmed), Keychain.write(trimmed, account: Self.teamsAccount) else { return false }
+            guard TeamsWebhook.isValid(trimmed), Keychain.write(trimmed, account: target.account) else { return false }
         }
-        hasTeamsWebhook = Keychain.exists(Self.teamsAccount)
-        teamsHint = trimmed.isEmpty ? nil : URL(string: trimmed)?.host
-        defaults.set(teamsHint, forKey: "workLog.teamsHost")
+        let exists = Keychain.exists(target.account)
+        let host = trimmed.isEmpty ? nil : URL(string: trimmed)?.host
+        switch target {
+        case .chat:
+            hasTeamsWebhook = exists
+            teamsHint = host
+            defaults.set(host, forKey: "workLog.teamsHost")
+        case .me:
+            hasTeamsMeWebhook = exists
+            teamsMeHint = host
+            defaults.set(host, forKey: "workLog.teamsMeHost")
+        }
+        // 워크플로 ID는 비밀이 아니라 기본값에 두고, 새로 복사한 주소가 어느 칸 것인지 맞출 때 쓴다
+        defaults.set(trimmed.isEmpty ? nil : TeamsWebhook.workflowID(trimmed), forKey: "workLog.teamsWorkflow.\(target.rawValue)")
+        markTeams(target, needsAnyone: !trimmed.isEmpty && TeamsWebhook.needsAnyone(trimmed))
         return true
+    }
+
+    func noteSavedTeams(_ text: String, target: TeamsTarget) {
+        defaults.set(TeamsWebhook.workflowID(text), forKey: "workLog.teamsWorkflow.\(target.rawValue)")
+        markTeams(target, needsAnyone: TeamsWebhook.needsAnyone(text))
+    }
+
+    func markTeams(_ target: TeamsTarget, needsAnyone: Bool) {
+        if needsAnyone { teamsNeedsAnyone.insert(target) } else { teamsNeedsAnyone.remove(target) }
+        defaults.set(teamsNeedsAnyone.map(\.rawValue).sorted(), forKey: "workLog.teamsNeedsAnyone")
+    }
+
+    /// 저장해 둔 칸 가운데 이 워크플로를 가리키는 곳 (서명만 바뀐 새 주소를 같은 칸에 다시 넣으려고).
+    func teamsTarget(forWorkflow id: String) -> TeamsTarget? {
+        TeamsTarget.allCases.first { defaults.string(forKey: "workLog.teamsWorkflow.\($0.rawValue)") == id }
     }
 
     /// 보낼 때만 키체인에서 읽고, 한 번 읽으면 앱이 켜져 있는 동안 메모리에 둔다.
@@ -139,6 +239,7 @@ final class WorkLogSettings: ObservableObject {
     @Published private(set) var redmineKeyHint: String?
     /// 웹훅 주소의 호스트만 (서명 값이 든 주소 전체는 키체인에만).
     @Published private(set) var teamsHint: String?
+    @Published private(set) var teamsMeHint: String?
 
     /// 점검용 환경 변수(RUNTIME_REDMINE_URL)가 있으면 그 주소를 쓴다. 설정에는 쓰지 않아 앱 설정이 바뀌지 않는다.
     var effectiveRedmineURL: String { ProcessInfo.processInfo.environment["RUNTIME_REDMINE_URL"] ?? redmineURL }
@@ -287,9 +388,16 @@ final class WorkLogSync: ObservableObject {
         // 예전 항목이 남아 있으면 켤 때 한꺼번에 옮긴다. 보낼 때 따로따로 다시 묻지 않게
         if !WorkLogSettings.keychainOff {
             DispatchQueue.global(qos: .utility).async {
-                for account in [WorkLogSettings.keyAccount, WorkLogSettings.teamsAccount]
+                for account in [WorkLogSettings.keyAccount] + TeamsTarget.allCases.map(\.account)
                 where AppKeychain.exists(account, service: AppKeychain.worklogService) {
                     _ = Keychain.read(account)
+                }
+                // 예전에 저장한 웹훅도 회사 계정 인증 주소인지 보고 워크플로를 기억해, 설정 화면이 고치는 길과 자동 연결 칸을 맞춘다
+                // 워크플로를 이미 기억한 칸은 다시 읽지 않는다 (값을 읽으면 다른 서명의 빌드에서 키체인 창이 뜬다)
+                for target in TeamsTarget.allCases where Keychain.exists(target.account)
+                    && UserDefaults.standard.string(forKey: "workLog.teamsWorkflow.\(target.rawValue)") == nil {
+                    guard let text = Keychain.read(target.account) else { continue }
+                    DispatchQueue.main.async { WorkLogSettings.shared.noteSavedTeams(text, target: target) }
                 }
             }
         }
@@ -304,6 +412,7 @@ final class WorkLogSync: ObservableObject {
         // 내 일감은 30분마다 새로 받는다
         if settings.redmineReady, Date().timeIntervalSince(issuesLoadedAt ?? .distantPast) >= 1800 { loadMyIssues() }
         remindIfDue()
+        TeamsWeb.shared.refreshIfDue()
     }
 
     // MARK: 가져오기
@@ -439,7 +548,7 @@ final class WorkLogSync: ObservableObject {
     }
 
     /// 폴더 바로 아래와 그 아래의 git 저장소.
-    private static func repositories(in folder: String) -> [String] {
+    static func repositories(in folder: String) -> [String] {
         let manager = FileManager.default
         func children(_ path: String) -> [String] {
             ((try? manager.contentsOfDirectory(atPath: path)) ?? [])
@@ -697,25 +806,96 @@ final class WorkLogSync: ObservableObject {
 
     // MARK: 팀즈
 
-    func postTeams(_ report: String, title: String, done: @escaping (String?) -> Void) {
-        guard let url = settings.teamsWebhook else {
-            done("팀즈 웹훅 주소를 설정하세요")
-            return
-        }
-        guard !postingTeams, let request = try? TeamsWebhook.request(url: url, report: report, title: title) else {
-            done("이미 보내는 중입니다")
-            return
+    /// 웹훅이 있으면 앱에서 바로 보내고, 없거나 회사 계정 인증으로 막히면 그 채팅을 팀즈에서 열어 붙여 넣는다.
+    /// `done`에는 알릴 말과 실패 여부가 온다.
+    /// `fallback`이 false면 웹훅으로만 보낸다 (웹훅 시험이 채팅 열기로 넘어가 성공처럼 보이지 않게).
+    func postTeams(_ report: String, title: String, to target: TeamsTarget? = nil, fallback: Bool = true,
+                   done: @escaping (_ message: String, _ failed: Bool) -> Void) {
+        let target = target ?? settings.reportTarget
+        guard !postingTeams else { return done("이미 보내는 중입니다", true) }
+        guard settings.teamsDirect(target), let url = settings.teamsWebhook(target),
+              let request = try? TeamsWebhook.request(url: url, report: report, title: title) else {
+            guard fallback else { return done("\(target.name) 웹훅으로 보낼 수 없습니다", true) }
+            return openTeams(report, title: title, target: target, done: done)
         }
         postingTeams = true
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             let message: String? = error?.localizedDescription
                 ?? ((try? Self.check(response)) == nil ? TeamsWebhook.failure(status: (response as? HTTPURLResponse)?.statusCode,
                                                                                 body: data ?? Data()) : nil)
+            let status = (response as? HTTPURLResponse)?.statusCode
             DispatchQueue.main.async {
-                self?.postingTeams = false
-                done(message)
+                guard let self else { return }
+                self.postingTeams = false
+                guard let message else {
+                    self.settings.markTeams(target, needsAnyone: false)
+                    return done("\(target.name) 보냈습니다", false)
+                }
+                // 회사 계정 인증으로 막히면 표시해 두고, 채팅 링크가 있으면 그 길로 이어서 보낸다
+                if status == 401 || status == 403 {
+                    self.settings.markTeams(target, needsAnyone: true)
+                    if fallback, self.settings.teamsLink(target) != nil {
+                        return self.openTeams(report, title: title, target: target, done: done)
+                    }
+                }
+                done("\(target.name) 보내지 못했습니다: \(message)", true)
             }
         }.resume()
+    }
+
+    private func openTeams(_ report: String, title: String, target: TeamsTarget,
+                           done: @escaping (_ message: String, _ failed: Bool) -> Void) {
+        guard let link = settings.teamsLink(target) else {
+            return done("\(target.name) 채팅 링크를 넣으세요 (팀즈 채팅 ⋯ > 링크 복사)", true)
+        }
+        // 팀즈 웹에 로그인해 두었으면 창을 띄우지 않고 보낸다. 로그인이 풀렸으면 팀즈 앱을 여는 길로 넘어간다
+        let web = TeamsWeb.shared
+        if web.everReady, TeamsWeb.canSend(link) {
+            postingTeams = true
+            web.send(report, title: title, link: link, key: target.rawValue) { [weak self] outcome in
+                guard let self else { return }
+                self.postingTeams = false
+                switch outcome {
+                case .sent:
+                    done("\(target.name) 보냈습니다", false)
+                case .unsure(let message):
+                    // 늦게 나갔을 수 있어 다시 보내지 않게 실패로 보이지 않는다
+                    Diagnostics.record("팀즈", "\(target.name) 웹: \(message)")
+                    done("\(target.name): \(message)", false)
+                case .failed(let message):
+                    Diagnostics.record("팀즈", "\(target.name) 웹: \(message)")
+                    guard web.state == .needsLogin else { return done("\(target.name) 보내지 못했습니다: \(message)", true) }
+                    self.openWithApp(report, title: title, target: target, link: link) { text, failed in
+                        done("팀즈 웹 로그인이 풀려 팀즈 앱으로 엽니다. " + text, failed)
+                    }
+                }
+            }
+            return
+        }
+        openWithApp(report, title: title, target: target, link: link, done: done)
+    }
+
+    private func openWithApp(_ report: String, title: String, target: TeamsTarget, link: String,
+                             done: @escaping (_ message: String, _ failed: Bool) -> Void) {
+        postingTeams = true
+        TeamsOpener.deliver(report, title: title, link: link, key: target.rawValue, autoPaste: settings.teamsAutoPaste,
+                            autoSend: settings.teamsAutoSend, returnBack: settings.teamsReturn) { [weak self] result in
+            self?.postingTeams = false
+            // 보고서 내용은 남기지 않고 어디서 멈췄는지만 (다른 Mac에서 안 될 때 원인을 보려고)
+            switch result {
+            case .copied(let reason?), .pasted(let reason?): Diagnostics.record("팀즈", "\(target.name): \(reason)")
+            case .failed(let message): Diagnostics.record("팀즈", "\(target.name): \(message)")
+            default: break
+            }
+            switch result {
+            case .copied(let reason):
+                done((reason.map { $0 + ". " } ?? "") + "팀즈에서 \(target.name) 채팅을 열었습니다. ⌘V로 붙여 넣고 Enter를 누르세요", reason != nil)
+            case .pasted(let reason):
+                done("\(target.name) 채팅에 붙여 넣었습니다. " + (reason ?? "확인하고 Enter를 누르세요"), false)
+            case .sent: done("\(target.name) 보냈습니다", false)
+            case .failed(let message): done(message, true)
+            }
+        }
     }
 
     /// 일감마다 차례로 지금 값을 다시 읽고 댓글·진척률과 함께 상태·시작일·기한·담당자를 보낸다.

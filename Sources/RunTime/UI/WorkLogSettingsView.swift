@@ -9,6 +9,8 @@ struct WorkLogSettingsView: View {
     @ObservedObject var sync: WorkLogSync
     @ObservedObject var page: WorkLogPage
     @ObservedObject var store: WorkLogStore
+    @ObservedObject private var linker = TeamsLinker.shared
+    @ObservedObject private var web = TeamsWeb.shared
 
     var body: some View {
         SlimScrollView {
@@ -42,7 +44,6 @@ struct WorkLogSettingsView: View {
             // 화면을 열자마자 첫 글 칸(GitLab 주소)이 글자를 통째로 고른 채 잡히지 않게 초점을 푼다
             DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
             page.keyDraft = ""
-            page.teamsDraft = ""
             if settings.redmineReady { sync.loadStatuses() }
         }
         .onDisappear { finish() }
@@ -54,10 +55,6 @@ struct WorkLogSettingsView: View {
         if !page.keyDraft.isEmpty {
             if let problem = saveKey(page.keyDraft) { page.flash("레드마인 API 키를 저장하지 못했습니다: \(problem)") }
             else { page.keyDraft = "" }
-        }
-        if !page.teamsDraft.isEmpty {
-            if let problem = saveTeams(page.teamsDraft) { page.flash("팀즈 웹훅을 저장하지 못했습니다: \(problem)") }
-            else { page.teamsDraft = "" }
         }
         settings.normalizeRedmineURL()
         if settings.captureEnabled { sync.capture() }
@@ -71,7 +68,7 @@ struct WorkLogSettingsView: View {
         switch section {
         case .gitlab: return sync.captureError != nil ? WL.waiting : settings.captureEnabled ? WL.done : .clear
         case .redmine: return sync.issuesError != nil ? WL.waiting : settings.redmineReady ? WL.done : .clear
-        case .teams: return settings.hasTeamsWebhook ? WL.done : .clear
+        case .teams: return settings.hasTeams(.chat) ? WL.done : .clear
         case .recurring: return store.log.recurring.isEmpty ? .clear : WL.done
         case .shortcuts: return GlobalHotKey.shared.quickClashes || GlobalHotKey.shared.quickFailed ? WL.waiting : .clear
         }
@@ -81,7 +78,7 @@ struct WorkLogSettingsView: View {
         switch page.settingsSection {
         case .gitlab: return "머지한 MR은 머지한 날 완료로, main·dev·release에 들어가지 않은 커밋은 브랜치마다 진행중으로 들어옵니다. MR 설명은 일감별 레드마인 댓글로 나눠 씁니다."
         case .redmine: return "진척률과 댓글을 레드마인 API로 직접 보내 Claude 토큰을 쓰지 않습니다. 레드마인 탭에서 보내기를 눌러야 나갑니다."
-        case .teams: return "일일·주간·월간 보고를 팀즈 채팅에 카드로 보냅니다. 처음에는 나와의 채팅으로 시험해 보세요."
+        case .teams: return "보고서를 팀즈 채팅에 올립니다. 나에게는 설정 없이 나와의 채팅으로 가고, 보고 채팅은 채팅 링크 하나만 넣으면 됩니다."
         case .recurring: return "정한 요일이 되면 그날 일지에 자동으로 들어갑니다. 그날 지우면 다시 넣지 않습니다."
         case .shortcuts: return "어디서든 한 줄 적기와 퇴근 무렵 알림."
         }
@@ -105,8 +102,7 @@ struct WorkLogSettingsView: View {
                     .buttonStyle(NotionButtonStyle())
                 }
             }
-            SettingRow("저장소 폴더", repoFolderExists ? "이 폴더와 그 아래 폴더의 저장소에서 내 커밋을 찾습니다." : "폴더가 없습니다. 고르기로 저장소를 둔 폴더를 고르세요.",
-                       detailTint: repoFolderExists ? nil : WL.waiting) {
+            SettingRow("저장소 폴더", repoFolderDetail, detailTint: repoFolderExists && repoCount > 0 ? nil : WL.waiting) {
                 HStack(spacing: 6) {
                     TextField("~/GitHub", text: $settings.repoFolder).textFieldStyle(.roundedBorder).frame(width: 240)
                         .help(settings.repoFolder)
@@ -135,6 +131,16 @@ struct WorkLogSettingsView: View {
                 }
             }
         }
+    }
+
+    /// 폴더 바로 아래와 그 아래의 git 저장소 수. 폴더 목록만 읽어 빠르다.
+    private var repoCount: Int { WorkLogSync.repositories(in: (settings.repoFolder as NSString).expandingTildeInPath).count }
+
+    private var repoFolderDetail: String {
+        guard repoFolderExists else { return "폴더가 없습니다. 고르기로 저장소를 둔 폴더를 고르세요." }
+        let count = repoCount
+        return count == 0 ? "이 폴더와 그 아래에 git 저장소가 없습니다. 저장소를 둔 폴더를 고르세요."
+                          : "git 저장소 \(count)개에서 내 커밋을 찾습니다 (폴더 바로 아래와 그 아래까지)."
     }
 
     private var repoFolderExists: Bool {
@@ -180,48 +186,60 @@ struct WorkLogSettingsView: View {
                     .frame(width: 240)
             }
             SettingRow("API 키", "레드마인 > 내 계정 > API 접근 키. 복사해 두고 붙여넣기를 누르면 바로 저장하고 연결을 확인합니다.") {
-                SecretInput(saved: settings.hasRedmineKey, hint: settings.redmineKeyHint ?? "키체인에 저장됨",
-                            placeholder: "API 접근 키", draft: $page.keyDraft,
-                            save: saveKey, clear: { settings.setRedmineKey(""); page.flash("API 키를 지웠습니다") })
+                HStack(alignment: .top, spacing: 6) {
+                    // 키가 있는 내 계정 화면으로 바로 보낸다
+                    if !settings.hasRedmineKey, let base = RedmineAPI.baseURL(settings.redmineURL) {
+                        Button("키 페이지 열기") { NSWorkspace.shared.open(base.appendingPathComponent("my/account")) }
+                            .buttonStyle(NotionButtonStyle())
+                            .tip("레드마인 내 계정을 엽니다. 오른쪽 API 접근 키 > 보기에서 복사해 오세요")
+                    }
+
+                    SecretInput(saved: settings.hasRedmineKey, hint: settings.redmineKeyHint ?? "키체인에 저장됨",
+                                placeholder: "API 접근 키", draft: $page.keyDraft,
+                                save: saveKey, clear: { settings.setRedmineKey(""); page.flash("API 키를 지웠습니다") })
+                }
             }
             SettingRow("연결", redmineStatus, detailTint: sync.issuesError == nil ? nil : WL.waiting) {
                 Button("연결 확인") { sync.loadMyIssues() }
                     .buttonStyle(NotionButtonStyle())
                     .disabled(!settings.redmineReady)
             }
-            SettingRow("댓글을 HTML로 보내기", "웹 편집기를 쓰는 레드마인은 HTML로 보내야 줄바꿈이 살아납니다.") {
-                Toggle("", isOn: $settings.redmineHTML).toggleStyle(.switch).labelsHidden()
-            }
-            SettingRow("상태·날짜도 맞추기", "할일 일감은 일지 상태에 맞춰 진행·완료로 옮기고, 비어 있는 시작일·완료 기한은 일지 날짜로 채웁니다. 테스트·반려 같은 다른 상태는 그대로 둡니다.") {
-                Toggle("", isOn: $settings.syncIssueFields).toggleStyle(.switch).labelsHidden()
-                    .onChange(of: settings.syncIssueFields) { if $0 { sync.loadStatuses() } }
-            }
-            if settings.syncIssueFields {
-                SettingRow("진행 · 완료 상태", sync.statuses.isEmpty ? "레드마인을 연결하면 상태 목록을 받습니다." : "일지가 진행·완료일 때 옮길 상태입니다.") {
-                    HStack(spacing: 6) {
-                        statusPicker($settings.progressStatusID)
-                        Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.faint)
-                        statusPicker($settings.doneStatusID)
+            // 연결하기 전에는 고를 것이 없어 숨긴다 (처음 화면은 주소·키·연결만)
+            if settings.redmineReady {
+                SettingRow("댓글을 HTML로 보내기", "웹 편집기를 쓰는 레드마인은 HTML로 보내야 줄바꿈이 살아납니다.") {
+                    Toggle("", isOn: $settings.redmineHTML).toggleStyle(.switch).labelsHidden()
+                }
+                SettingRow("상태·날짜도 맞추기", "할일 일감은 일지 상태에 맞춰 진행·완료로 옮기고, 비어 있는 시작일·완료 기한은 일지 날짜로 채웁니다. 테스트·반려 같은 다른 상태는 그대로 둡니다.") {
+                    Toggle("", isOn: $settings.syncIssueFields).toggleStyle(.switch).labelsHidden()
+                        .onChange(of: settings.syncIssueFields) { if $0 { sync.loadStatuses() } }
+                }
+                if settings.syncIssueFields {
+                    SettingRow("진행 · 완료 상태", sync.statuses.isEmpty ? "레드마인을 연결하면 상태 목록을 받습니다." : "일지가 진행·완료일 때 옮길 상태입니다.") {
+                        HStack(spacing: 6) {
+                            statusPicker($settings.progressStatusID)
+                            Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.faint)
+                            statusPicker($settings.doneStatusID)
+                        }
                     }
-                }
-                if !sync.blockedTransitions.isEmpty {
-                    SettingRow("막힌 상태 전환", blockedText + " · 레드마인 워크플로가 막아 자동으로 보내지 않습니다. 워크플로를 고쳤으면 지우세요.",
-                               detailTint: WL.waiting) {
-                        Button("기억 지우기") { sync.clearBlockedTransitions(); page.flash("막힌 상태 전환 기억을 지웠습니다") }
-                            .buttonStyle(NotionButtonStyle())
+                    if !sync.blockedTransitions.isEmpty {
+                        SettingRow("막힌 상태 전환", blockedText + " · 레드마인 워크플로가 막아 자동으로 보내지 않습니다. 워크플로를 고쳤으면 지우세요.",
+                                   detailTint: WL.waiting) {
+                            Button("기억 지우기") { sync.clearBlockedTransitions(); page.flash("막힌 상태 전환 기억을 지웠습니다") }
+                                .buttonStyle(NotionButtonStyle())
+                        }
                     }
+                SettingRow("진행중 진척률", "일지 줄이 몇 %인지 정하지 않은 진행중일 때 보낼 진척률입니다. 그대로 두면 진척률은 건드리지 않고 댓글만 보냅니다. 카드마다 진척률 > 고치기로 따로 고를 수 있습니다.") {
+                    Picker("", selection: Binding(get: { settings.inProgressRatio ?? -1 },
+                                                  set: { settings.inProgressRatio = $0 < 0 ? nil : $0 })) {
+                        Text("그대로").tag(-1)
+                        ForEach(Array(stride(from: 10, through: 90, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
                 }
-            SettingRow("진행중 진척률", "일지 줄이 몇 %인지 정하지 않은 진행중일 때 보낼 진척률입니다. 그대로 두면 진척률은 건드리지 않고 댓글만 보냅니다. 카드마다 진척률 > 고치기로 따로 고를 수 있습니다.") {
-                Picker("", selection: Binding(get: { settings.inProgressRatio ?? -1 },
-                                              set: { settings.inProgressRatio = $0 < 0 ? nil : $0 })) {
-                    Text("그대로").tag(-1)
-                    ForEach(Array(stride(from: 10, through: 90, by: 10)), id: \.self) { Text("\($0)%").tag($0) }
+                SettingRow("MR 화면 붙이기", "MR 본문이나 AI 검증 댓글에 수정 전·후 그림이 있으면 레드마인에 첨부하고 댓글 끝에 붙입니다. 카드마다 끌 수도 있습니다.") {
+                    Toggle("", isOn: $settings.attachScreens).toggleStyle(.switch).labelsHidden()
                 }
-                .labelsHidden()
-                .frame(width: 110)
-            }
-            SettingRow("MR 화면 붙이기", "MR 본문이나 AI 검증 댓글에 수정 전·후 그림이 있으면 레드마인에 첨부하고 댓글 끝에 붙입니다. 카드마다 끌 수도 있습니다.") {
-                Toggle("", isOn: $settings.attachScreens).toggleStyle(.switch).labelsHidden()
             }
             }
         }
@@ -269,55 +287,120 @@ struct WorkLogSettingsView: View {
 
     private var teams: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingRow("웹훅 주소", "아래 순서로 만든 주소를 복사해 두고 붙여넣기를 누르세요. 주소는 키체인에 둡니다.") {
-                SecretInput(saved: settings.hasTeamsWebhook, hint: settings.teamsHint ?? "키체인에 저장됨", placeholder: "https://…powerplatform.com/…",
-                            draft: $page.teamsDraft, save: saveTeams,
-                            clear: { settings.setTeamsWebhook(""); page.flash("팀즈 웹훅을 지웠습니다") })
+            SettingRow("팀즈 웹 연결", webDetail, detailTint: webFailed ? WL.waiting : nil) {
+                HStack(spacing: 6) {
+                    if web.everReady || web.lostLogin {
+                        Button("로그아웃") { web.signOut(); page.flash("팀즈 웹에서 로그아웃했습니다") }
+                            .buttonStyle(NotionButtonStyle())
+                    }
+                    if !web.everReady {
+                        Button(web.loggingIn ? "로그인 창 보기" : web.lostLogin ? "다시 로그인" : "로그인") { web.showLogin() }
+                            .buttonStyle(NotionButtonStyle(kind: .primary))
+                            .tip("회사 계정으로 한 번 로그인해 두면 팀즈 창을 띄우지 않고 보냅니다")
+                    }
+                }
             }
-            SettingRow("시험 보내기", teamsTestNote, detailTint: page.teamsTestFailed ? WL.waiting : nil) {
-                Button(sync.postingTeams ? "보내는 중…" : "시험 글 보내기") { sendTest() }
-                    .buttonStyle(NotionButtonStyle())
-                    .disabled(!settings.hasTeamsWebhook || sync.postingTeams)
+            ForEach(TeamsTarget.allCases, id: \.self) { target in
+                SettingRow(target.name, teamsDetail(target),
+                           detailTint: settings.teamsNeedsAnyone.contains(target) ? WL.waiting : nil) {
+                    HStack(spacing: 6) {
+                        Button("링크 붙여넣기") { pasteTeams(target) }
+                            .buttonStyle(NotionButtonStyle(kind: settings.hasTeams(target) ? .secondary : .primary))
+                            .tip("팀즈 채팅 ⋯ > ‘링크 복사’ 한 것을 넣습니다. 웹훅 주소도 됩니다")
+                        if settings.teamsLinks[target] != nil || settings.hasWebhook(target) {
+                            Button("지우기") { settings.clearTeams(target); page.flash("\(target.name) 설정을 지웠습니다") }
+                                .buttonStyle(NotionButtonStyle())
+                        }
+                        Button("시험") { sendTest(target) }
+                            .buttonStyle(NotionButtonStyle())
+                            .disabled(!settings.hasTeams(target) || sync.postingTeams)
+                            .tip("\(target.name) 짧은 시험 글을 보냅니다")
+                    }
+                }
+            }
+            // 팀즈 웹에 로그인해 두면 쓰지 않는 길이라, 그때만 보인다
+            if !web.everReady {
+                SettingRow("입력 칸에 붙여 넣기", linker.accessibility
+                           ? "채팅을 연 뒤 보고서를 입력 칸에 붙여 넣습니다. 끄면 복사만 하고 ⌘V는 직접 누릅니다."
+                           : "손쉬운 사용 권한을 주면 채팅을 연 뒤 붙여 넣기까지 합니다. 지금은 복사하고 채팅만 엽니다.",
+                           detailTint: settings.teamsAutoPaste && !linker.accessibility ? WL.waiting : nil) {
+                    HStack(spacing: 8) {
+                        if settings.teamsAutoPaste && !linker.accessibility {
+                            Button("권한 주기") { TeamsOpener.requestPermission() }.buttonStyle(NotionButtonStyle(kind: .primary))
+                        }
+                        Toggle("", isOn: $settings.teamsAutoPaste).toggleStyle(.switch).labelsHidden()
+                    }
+                }
+                SettingRow("붙여 넣고 바로 보내기", "Enter까지 누르고 입력 칸이 비었는지로 나갔는지 확인합니다. 끄면 붙여 넣은 글을 보고 직접 보냅니다.") {
+                    Toggle("", isOn: $settings.teamsAutoSend).toggleStyle(.switch).labelsHidden()
+                        .disabled(!settings.teamsAutoPaste || !linker.accessibility)
+                }
+                SettingRow("보낸 뒤 쓰던 앱으로 돌아가기", "팀즈가 1초쯤 앞에 나왔다가 보내고 나면 원래 창으로 돌아갑니다. 붙여 넣기만 했을 때는 팀즈에 남습니다.") {
+                    Toggle("", isOn: $settings.teamsReturn).toggleStyle(.switch).labelsHidden()
+                        .disabled(!settings.teamsAutoSend || !settings.teamsAutoPaste || !linker.accessibility)
+                }
+            }
+            if let status = page.teamsTestResult ?? linker.status {
+                Text(status).font(.system(size: 12)).foregroundStyle(page.teamsTestFailed || linker.failed ? WL.waiting : WL.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
             }
             Callout {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("채팅 웹훅 주소 만들기").font(.system(size: 13, weight: .semibold))
-                    // 채팅용 웹훅 템플릿은 워크플로 앱 목록에는 없고, 보낼 채팅의 ⋯ 메뉴에서 열어야 보인다
-                    ForEach(Array(["팀즈 채팅 목록에서 보낼 채팅(나와의 채팅은 내 이름 옆 ‘(나)’)에 마우스를 올리고 ⋯를 누릅니다.",
-                                   "‘워크플로’를 누르고 ‘웹후크 경고를 채팅으로 보내기’ 템플릿을 고릅니다. 검색은 ‘웹후크’로 합니다.",
-                                   "받을 채팅이 그 채팅으로 채워져 있는지 보고 저장합니다.",
-                                   "워크플로 앱에서 만든 흐름을 열고 편집 > ‘팀즈 웹후크 요청을 받은 경우’에서 ‘흐름을 트리거할 수 있는 사람’(Who can trigger the flow)을 ‘누구나’(Anyone)로 바꿔 저장합니다. 기본값(회사 사용자만)이면 앱이 보낼 수 없습니다.",
-                                   "웹훅 주소를 복사해 위의 붙여넣기를 누르고 ‘시험 글 보내기’로 확인합니다."].enumerated()), id: \.offset) { index, step in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("\(index + 1)").font(.system(size: 12, weight: .semibold)).foregroundStyle(WL.muted).monospacedDigit()
-                            Text(step).font(.system(size: 12.5)).foregroundStyle(WL.text)
-                        }
-                    }
+                    Text("처음 한 번").font(.system(size: 13, weight: .semibold))
+                    steps(["‘로그인’을 눌러 뜬 창에서 회사 계정으로 팀즈에 로그인합니다. 다 뜨면 창은 저절로 닫힙니다.",
+                           "보고를 올릴 채팅에 마우스를 올리고 ⋯ > ‘링크 복사’를 누릅니다. 이 화면이 열려 있으면 복사만으로 보고 채팅에 들어갑니다.",
+                           "‘시험’으로 확인합니다. 그다음부터는 보고서 화면의 단추 하나로 팀즈 창 없이 올라갑니다."])
                 }
             }
             .padding(.top, 16)
         }
+        .onAppear { linker.start() }
+        .onDisappear { linker.stop() }
     }
 
-    private var teamsTestNote: String {
-        if let result = page.teamsTestResult { return result }
-        return settings.hasTeamsWebhook ? "연결한 채팅에 짧은 시험 카드를 보냅니다." : "웹훅 주소를 먼저 넣으세요."
+    private var webFailed: Bool {
+        if case .failed = web.state { return true }
+        return web.lostLogin
     }
 
-    private func sendTest() {
-        sync.postTeams("[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 연결됐습니다 (완료)",
-                       title: "RunTime 연결 시험 · \(WorkLogFormat.when(Date()))") { error in
-            page.teamsTestFailed = error != nil
-            page.teamsTestResult = error.map { "보내지 못했습니다: \($0)" } ?? "보냈습니다. 팀즈 채팅에 카드가 왔는지 보세요."
+    private var webDetail: String {
+        if web.loggingIn { return "뜬 창에서 회사 계정으로 로그인하세요. 팀즈가 다 뜨면 창이 저절로 닫힙니다." }
+        if case .failed(let message) = web.state { return message }
+        if web.lostLogin { return "로그인이 풀렸습니다. 다시 로그인하세요. 그동안은 팀즈 앱을 열어 붙여 넣습니다." }
+        return web.everReady ? "연결됨 · 팀즈 창을 띄우지 않고 앱 안에서 바로 보냅니다."
+                             : "한 번 로그인해 두면 팀즈 창을 띄우지 않고 보냅니다. 로그인 정보는 이 Mac에만 남습니다."
+    }
+
+    private func teamsDetail(_ target: TeamsTarget) -> String {
+        guard settings.hasTeams(target) else { return "팀즈 채팅 ⋯ > ‘링크 복사’ 한 뒤 붙여 넣으세요. 비워 두면 보고서는 나에게 갑니다." }
+        var text = settings.teamsSummary(target)
+
+        return text
+    }
+
+    private func steps(_ items: [String]) -> some View {
+        ForEach(Array(items.enumerated()), id: \.offset) { index, step in
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(index + 1)").font(.system(size: 12, weight: .semibold)).foregroundStyle(WL.muted).monospacedDigit()
+                Text(step).font(.system(size: 12.5)).foregroundStyle(WL.text).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
-    private func saveTeams(_ text: String) -> String? {
-        let url = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard TeamsWebhook.isValid(url) else { return "Workflows 웹훅 주소(https, logic.azure.com 등)가 아닙니다." }
-        guard settings.setTeamsWebhook(url) else { return "키체인에 저장하지 못했습니다." }
-        page.flash("팀즈 웹훅을 저장했습니다")
-        return nil
+    private func pasteTeams(_ target: TeamsTarget) {
+        page.teamsTestResult = nil
+        let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else { return page.flash("클립보드가 비어 있습니다. 팀즈 채팅 ⋯ > ‘링크 복사’를 먼저 누르세요") }
+        linker.preferred = target
+        if let problem = linker.link(text, to: target) { page.flash(problem) } else { page.flash("\(target.name) 설정을 넣었습니다") }
+    }
+
+    private func sendTest(_ target: TeamsTarget) {
+        sync.postTeams(TeamsLinker.testReport, title: TeamsLinker.testTitle, to: target) { message, failed in
+            page.teamsTestFailed = failed
+            page.teamsTestResult = message
+        }
     }
 
     // MARK: 고정 업무

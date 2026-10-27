@@ -105,7 +105,26 @@ import Testing
         #expect(TeamsWebhook.needsAnyone(company))
         #expect(!TeamsWebhook.needsAnyone(anyone))
         #expect(TeamsWebhook.workflowID(company) == TeamsWebhook.workflowID(anyone))
-        #expect(TeamsWebhook.flowEditURL(company)?.absoluteString
-                == "https://make.powerautomate.com/environments/Default-9cc8af3e-c399-451c-923a-3b56304249a6/flows/65545a98-097d-4686-a3fa-3f2142640901/details")
+        #expect(TeamsWebhook.flowsURL(company)?.absoluteString
+                == "https://make.powerautomate.com/environments/Default-9cc8af3e-c399-451c-923a-3b56304249a6/flows")
+    }
+}
+
+@Suite struct TeamsLinkTests {
+    @Test func readsChatLinks() {
+        let notes = "https://teams.cloud.microsoft/l/chat/48%3Anotes/conversations?context=%7B%22contextType%22%3A%22chat%22%7D"
+        #expect(TeamsLink.isValid(notes))
+        #expect(TeamsLink.conversationID(notes) == "48:notes")
+        #expect(TeamsLink.kind(notes) == "나와의 채팅")
+        #expect(TeamsLink.kind("https://teams.microsoft.com/l/chat/19:abc@thread.v2/conversations") == "그룹 채팅")
+        #expect(TeamsLink.appURL(notes)?.absoluteString.hasPrefix("msteams:/l/chat/48%3Anotes/conversations?context=") == true)
+        #expect(!TeamsLink.isValid("https://evil.example.com/l/chat/48:notes"))
+        #expect(!TeamsLink.isValid("https://default9cc8.a6.environment.api.powerplatform.com/workflows/x"))
+        #expect(TeamsLink.isValid(TeamsLink.notes))
+    }
+
+    @Test func formatsPasteText() {
+        let html = TeamsLink.html("[주간 진행 사항]\n1. 포털 <A>\n  - 목록 & 상세", title: "주간 보고")
+        #expect(html == "<b>주간 보고</b><br><b>[주간 진행 사항]</b><br><b>1. 포털 &lt;A&gt;</b><br>\u{2003}- 목록 &amp; 상세")
     }
 }

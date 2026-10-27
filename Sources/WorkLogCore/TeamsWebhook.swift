@@ -71,19 +71,19 @@ public enum TeamsWebhook {
         return id.isEmpty ? nil : id.lowercased()
     }
 
-    /// 웹훅 주소에서 Power Automate 편집 화면 주소를 만든다.
+    /// 웹훅 주소가 속한 환경의 Power Automate ‘내 흐름’ 화면.
     /// 호스트 `default9cc8…4249.a6.environment.api.powerplatform.com`은 환경 ID(`Default-9cc8…-…49a6`)를 점 하나 넣어 쓴 것이다.
-    public static func flowEditURL(_ text: String) -> URL? {
+    /// 주소의 워크플로 ID는 흐름 ID와 달라 흐름 화면으로 바로 가지 못한다.
+    public static func flowsURL(_ text: String) -> URL? {
         guard let host = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines))?.host?.lowercased(),
-              host.hasSuffix(".environment.api.powerplatform.com"),
-              let id = workflowID(text), let flow = guid(id) else { return nil }
+              host.hasSuffix(".environment.api.powerplatform.com") else { return URL(string: "https://make.powerautomate.com/") }
         let labels = host.split(separator: ".")
         guard labels.count > 2 else { return nil }
         var environment = String(labels[0] + labels[1])
         let isDefault = environment.hasPrefix("default")
         if isDefault { environment.removeFirst("default".count) }
-        guard let environmentGUID = guid(environment) else { return nil }
-        return URL(string: "https://make.powerautomate.com/environments/\(isDefault ? "Default-" : "")\(environmentGUID)/flows/\(flow)/details")
+        guard let environmentGUID = guid(environment) else { return URL(string: "https://make.powerautomate.com/") }
+        return URL(string: "https://make.powerautomate.com/environments/\(isDefault ? "Default-" : "")\(environmentGUID)/flows")
     }
 
     /// 32자리 16진수 → 8-4-4-4-12. 이미 줄표가 있으면 그대로.

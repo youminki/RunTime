@@ -22,6 +22,33 @@ private let sample = """
         #expect(entries[3].title == "데이터 수집 > 파이프라인 목록 및 상태조회 API 연동")
     }
 
+    @Test func writesMorningPlanFromUnfinishedWork() {
+        let yesterday = WorkReport.parse("""
+        1. UxHub
+        - QA 수정사항 3건 반영 (완료)
+        - 사용자포털 마이페이지 마크업 수정 (80%)
+        2. VeloX
+        - 데이터 탐색 > 쿼리 목록 마크업 (80%)
+        - 데이터 탐색 > BI 대시보드 마크업 (진행중)
+        """, day: "2026-10-26")
+        let today = [WorkEntry(day: "2026-10-27", project: "UxHub", title: "사용자포털 마이페이지 마크업 수정", status: .inProgress),
+                     WorkEntry(day: "2026-10-27", project: "UxHub", title: "버그수정", status: .inProgress),
+                     WorkEntry(day: "2026-10-27", project: "UxHub", title: "배포", status: .done)]
+        let log = WorkLog(projects: ["UxHub", "VeloX"], entries: yesterday + today)
+        #expect(WorkReport.dayHeader("2026-10-27", today: "2026-10-27") == "[10/27 금일 진행 사항]")
+        #expect(WorkReport.dayHeader("2026-10-27", plan: true, today: "2026-10-27") == "[10/27 금일 진행 예정 사항]")
+        #expect(WorkReport.dayHeader("2026-10-24", today: "2026-10-27") == "[10/24 진행 사항]")
+        #expect(WorkReport.plan(day: "2026-10-27", in: log) == """
+        1. UxHub
+        - 마크업 및 API 연동
+        2. VeloX
+        - 마크업 및 API 연동
+        """)
+        // 상시만 있는 날은 비운다
+        let meetings = WorkLog(projects: ["UxHub"], entries: [WorkEntry(day: "2026-10-28", project: "UxHub", title: "주간 회의", status: .ongoing)])
+        #expect(WorkReport.plan(day: "2026-10-28", in: meetings).isEmpty)
+    }
+
     @Test func keepsDoneAndHundredPercentApart() {
         let log = WorkLog(projects: ["uxhub", "VeloX"], entries: WorkReport.parse(sample, day: "2026-10-20"))
         #expect(WorkReport.daily(log.entries, in: log) == """

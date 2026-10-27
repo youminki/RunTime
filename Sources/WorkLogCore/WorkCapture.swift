@@ -220,7 +220,8 @@ public enum WorkCapture {
         if title.hasPrefix("Resolve \""), title.hasSuffix("\"") {
             title = String(title.dropFirst("Resolve \"".count).dropLast())
         }
-        if let range = title.range(of: #"^[A-Za-z]+(\([^)]*\))?!?:\s*"#, options: .regularExpression) {
+        // `fix : 제목`, `feat(x) : 제목`처럼 콜론 앞에 빈칸을 두는 커밋도 있다
+        if let range = title.range(of: #"^[A-Za-z]+\s*(\([^)]*\))?\s*!?\s*:\s*"#, options: .regularExpression) {
             title.removeSubrange(range)
         }
         return title.trimmingCharacters(in: .whitespaces)

@@ -36,9 +36,23 @@ if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
             ? WorkReport.daily(log.entries(on: today), in: log, doneFirst: true, byIssue: true)
             : "[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 연결됐습니다 (완료)"
         let title = args.dropFirst().first == "report" ? "일일보고 · \(WorkReport.shortDate(today))" : "RunTime 연결 시험"
-        WorkLogSync.shared.postTeams(report.isEmpty ? "오늘 기록 없음" : report, title: title) { error in
-            print(error.map { "보내지 못함: \($0)" } ?? "보냄")
-            exit(error == nil ? 0 : 1)
+        // 셋째 값이 me면 나와의 채팅으로
+        let target: TeamsTarget? = args.contains("me") ? .me : nil
+        let started = Date()
+        WorkLogSync.shared.postTeams(report.isEmpty ? "오늘 기록 없음" : report, title: title, to: target) { message, failed in
+            print(message, String(format: "(%.1f초)", Date().timeIntervalSince(started)))
+            // 보낸 뒤 쓰던 앱으로 돌아가는 일이 끝나게 잠깐 두고 끝낸다
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(failed ? 1 : 0) }
+        }
+        RunLoop.main.run()
+    }
+    // 숨은 팀즈 웹이 뜨는지, 로그인돼 있는지 본다 (보내지 않음)
+    if args.first == "teams-web" {
+        _ = NSApplication.shared
+        let started = Date()
+        TeamsWeb.shared.prepare { ready in
+            print(ready ? "팀즈 웹 로그인됨" : "팀즈 웹: \(TeamsWeb.shared.state)", String(format: "(%.1f초)", Date().timeIntervalSince(started)))
+            exit(ready ? 0 : 1)
         }
         RunLoop.main.run()
     }

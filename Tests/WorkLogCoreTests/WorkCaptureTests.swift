@@ -59,6 +59,8 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
     @Test func cleansTitlesAndFindsIssues() {
         #expect(WorkCapture.cleanTitle("feat(destination): 수정 화면 연결") == "수정 화면 연결")
         #expect(WorkCapture.cleanTitle("Draft: Resolve \"QA 반영\"") == "QA 반영")
+        #expect(WorkCapture.cleanTitle("fix : 위젯 수정 화면 UI 정리") == "위젯 수정 화면 UI 정리")
+        #expect(WorkCapture.cleanTitle("feat(portal) : 마이페이지") == "마이페이지")
         #expect(WorkCapture.issueNumber(in: ["QA 반영 #4512"]) == 4512)
         #expect(WorkCapture.issueNumber(in: ["x"], branch: "feature/45123-pipeline") == 45123)
         #expect(WorkCapture.issueNumber(in: ["x"], branch: "feat/destination-api") == nil)
