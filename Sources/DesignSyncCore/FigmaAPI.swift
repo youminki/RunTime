@@ -32,7 +32,13 @@ public enum FigmaAPI {
                     + (reason.map { " (\($0))" } ?? "")
             case .notFound: return "파일을 찾지 못했습니다. 주소와, 토큰을 만든 계정이 이 파일을 볼 수 있는지 확인하세요"
             case .rateLimited(let after):
-                return after.map { "피그마 호출 한도에 걸렸습니다. \($0)초 뒤에 다시 받습니다" } ?? "피그마 호출 한도에 걸렸습니다"
+                // 몇 초가 아니라 몇 시에 풀리는지 (한도는 몇 시간·며칠일 수도 있다)
+                guard let after else { return "피그마 호출 한도에 걸렸습니다. 잠시 뒤 다시 받습니다" }
+                let at = Date().addingTimeInterval(TimeInterval(after))
+                let format = DateFormatter()
+                format.locale = Locale(identifier: "ko_KR")
+                format.dateFormat = after > 20 * 3600 ? "M월 d일 a h:mm" : "a h:mm"
+                return "피그마 호출 한도에 걸렸습니다. \(format.string(from: at)) 뒤에 다시 받습니다"
             case .server(let status): return "피그마 응답 오류 (\(status))"
             case .malformed: return "피그마 응답을 읽지 못했습니다"
             }
@@ -162,8 +168,8 @@ public enum FigmaAPI {
         return (raw.images ?? [:]).compactMapValues { $0.flatMap(URL.init(string:)) }
     }
 
-    public static func outlineRequest(fileKey: String, pageIDs: [String], token: String) -> URLRequest {
-        nodesRequest(fileKey: fileKey, ids: pageIDs, depth: outlineDepth, token: token)
+    public static func outlineRequest(fileKey: String, pageIDs: [String], version: String? = nil, token: String) -> URLRequest {
+        nodesRequest(fileKey: fileKey, ids: pageIDs, depth: outlineDepth, version: version, token: token)
     }
 
     // MARK: 응답

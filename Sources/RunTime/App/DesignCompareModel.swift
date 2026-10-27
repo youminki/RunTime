@@ -128,7 +128,11 @@ final class DesignCompareModel: ObservableObject {
                 // 오늘과 견주면 마지막으로 가져온 상태를 쓴다. 자동 저장이 30분마다 새 버전을 만들어 매번 파일 전체를 다시 받게 된다.
                 // 그 기록이 기준보다 오래됐거나, 메뉴를 골라 받아 고른 범위의 내용이 옛것일 수 있으면 피그마 최신 버전을 받는다
                 var recorded: (snapshot: VersionSnapshot, version: FigmaAPI.FileVersion)?
-                if calendar.isDateInToday(to), let record = sync.history.files[fileKey], let snapshot = VersionSnapshot(record: record, fileKey: fileKey) {
+                let todayRecord = calendar.isDateInToday(to) ? sync.history.files[fileKey] : nil
+                let recordSnapshot = await Task.detached(priority: .userInitiated) {
+                    todayRecord.flatMap { VersionSnapshot(record: $0, fileKey: fileKey) }
+                }.value
+                if let record = todayRecord, let snapshot = recordSnapshot {
                     let at = record.lastModified.flatMap { ISO8601DateFormatter().date(from: $0) } ?? record.syncedAt
                     let menus = Set(sync.source(fileKey)?.menus ?? [])
                     let scoped = record.screens.values.filter(include)
@@ -155,7 +159,11 @@ final class DesignCompareModel: ObservableObject {
                         snapshots.append(recorded.snapshot)
                         continue
                     }
-                    var snapshot = DesignVersionCache.load(fileKey: fileKey, version: version.id) ?? VersionSnapshot(fileKey: fileKey, version: version.id)
+                    // 저장해 둔 스냅샷은 수 MB JSON이라 메인 스레드 밖에서 읽는다 (비교를 누를 때 화면이 멈추지 않게)
+                    let id = version.id
+                    var snapshot = await Task.detached(priority: .userInitiated) {
+                        DesignVersionCache.load(fileKey: fileKey, version: id)
+                    }.value ?? VersionSnapshot(fileKey: fileKey, version: version.id)
                     let loaded = snapshot
                     try await DesignCompare.fill(&snapshot, skippedPages: skipped, pageIDs: pageIDs, token: token, wanted: wanted,
                                                  transport: { try await FigmaClient.shared.send($0) },

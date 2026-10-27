@@ -15,13 +15,17 @@ final class DesignImages: ObservableObject {
     }
 
     @Published private(set) var states: [String: State] = [:]
-    /// 화면을 다시 그릴 때마다 파일을 읽지 않게 한 번 읽은 그림을 둔다.
-    private var decoded: [URL: NSImage] = [:]
+    /// 화면을 다시 그릴 때마다 파일을 읽지 않게 한 번 읽은 그림을 둔다. 세로로 긴 화면은 한 장에 십수 MB라, 몇 주씩 켜 두는 앱이 계속 늘지 않게 최근 것만 둔다.
+    private let decoded: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 30
+        return cache
+    }()
 
     func image(_ url: URL) -> NSImage? {
-        if let image = decoded[url] { return image }
+        if let image = decoded.object(forKey: url as NSURL) { return image }
         let image = NSImage(contentsOf: url)
-        decoded[url] = image
+        if let image { decoded.setObject(image, forKey: url as NSURL) }
         return image
     }
     /// 이보다 많으면 오래된 것부터 지운다 (반으로 줄인 PNG라 장당 수백 KB).

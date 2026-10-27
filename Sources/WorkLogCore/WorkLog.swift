@@ -223,8 +223,11 @@ public struct WorkLog: Codable, Equatable {
         var added = 0
         for item in recurring where item.weekdays.contains(weekday) {
             let source = "recurring:\(item.id.uuidString)"
+            // 고정 업무를 지웠다 다시 만들면 id가 바뀌므로, 같은 프로젝트에 같은 제목 줄이 그날 있으면(손으로 적은 것 포함) 넣지 않는다
+            let title = Self.titleKey(item.title)
             guard !dismissed.contains(day + "|" + source),
-                  !entries.contains(where: { $0.day == day && $0.source == source }) else { continue }
+                  !entries.contains(where: { $0.day == day && ($0.source == source
+                      || ($0.project == item.project && Self.titleKey($0.title) == title)) }) else { continue }
             register(project: item.project)
             entries.append(WorkEntry(day: day, project: item.project, title: item.title, status: item.status,
                                      issue: item.issue, updatedAt: now, source: source))
@@ -311,12 +314,21 @@ public struct WorkLog: Codable, Equatable {
     /// 앞선 날에서 이어 쓸 줄: 끝나지 않았고, 그날 같은 제목이 없고, 고정 업무가 아닌 것.
     /// 고정 업무는 정한 요일에만 들어가야 해서 옮기지 않는다.
     public func carryCandidates(from source: String, to target: String) -> [WorkEntry] {
-        let existing = Set(entries(on: target).map { $0.project + "\u{1F}" + $0.title })
+        let today = entries(on: target)
+        let existing = Set(today.map { $0.project + "\u{1F}" + $0.title })
+        // 오늘 가져오기가 같은 브랜치 줄을 이미 만들었으면(제목은 오늘 첫 커밋이라 다르다) 그 줄을 다시 옮기지 않는다.
+        // 오늘 지운 줄도 되살리지 않는다
+        let sources = Set(today.compactMap(\.source))
         return entries(on: source).filter {
             !$0.status.isFinished && $0.source?.hasPrefix("recurring:") != true
+                && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty
                 && !existing.contains($0.project + "\u{1F}" + $0.title)
+                && !($0.source.map { sources.contains($0) || dismissed.contains(target + "|" + $0) } ?? false)
         }
     }
+
+    /// 같은 제목인지 볼 때 쓰는 꼴 (대소문자·빈칸 무시).
+    static func titleKey(_ title: String) -> String { title.lowercased().filter { !$0.isWhitespace } }
 
     /// 앞선 날에서 끝나지 않은 일을 이어 쓴다.
     @discardableResult

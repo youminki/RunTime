@@ -105,6 +105,8 @@ import Testing
         let key = "AbCdEfGh1jKlMnOpQrStUv"
         #expect(FigmaFileURL.fileKey(from: "https://www.figma.com/design/\(key)/-Demo-%ED%99%94?m=auto&t=abc") == key)
         #expect(FigmaFileURL.fileKey(from: "https://figma.com/file/\(key)/Demo") == key)
+        #expect(FigmaFileURL.fileKey(from: "www.figma.com/design/\(key)/Demo") == key)
+        #expect(FigmaFileURL.fileKey(from: "https://www.figma.com/proto/\(key)/Demo?node-id=1-2") == key)
         #expect(FigmaFileURL.fileKey(from: "https://www.figma.com/design/\(key)/branch/BRANCHkey1234567890abcd/Demo") == "BRANCHkey1234567890abcd")
         #expect(FigmaFileURL.fileKey(from: "  \(key) ") == key)
         #expect(FigmaFileURL.fileKey(from: "https://www.figma.com/board/\(key)/Board") == nil)

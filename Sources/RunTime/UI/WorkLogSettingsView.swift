@@ -111,6 +111,11 @@ struct WorkLogSettingsView: View {
             }
             SettingRow("상태", captureStatus, detailTint: sync.captureError == nil ? nil : WL.waiting) {
                 HStack(spacing: 6) {
+                    if sync.captureError?.contains("user.email") == true {
+                        Button("회사 이메일로 채우기") { sync.fillMissingEmails { page.flash($0) } }
+                            .buttonStyle(NotionButtonStyle(kind: .primary))
+                            .tip("GitLab 계정의 커밋 이메일을 user.email이 없는 저장소에 넣고 다시 가져옵니다")
+                    }
                     if let command = fixCommand {
                         Button("명령 복사") {
                             NSPasteboard.general.clearContents()
@@ -172,6 +177,7 @@ struct WorkLogSettingsView: View {
                     if settings.importFromClaude() {
                         page.flash("redmine MCP의 주소와 키를 가져왔습니다")
                         sync.loadMyIssues()
+                        sync.loadStatuses()
                     } else {
                         page.flash("redmine MCP 설정을 찾지 못했거나 키체인에 저장하지 못했습니다")
                     }
@@ -200,14 +206,20 @@ struct WorkLogSettingsView: View {
                 }
             }
             SettingRow("연결", redmineStatus, detailTint: sync.issuesError == nil ? nil : WL.waiting) {
-                Button("연결 확인") { sync.loadMyIssues() }
+                Button("연결 확인") { settings.retryKeychain(); sync.loadMyIssues(); sync.loadStatuses() }
                     .buttonStyle(NotionButtonStyle())
                     .disabled(!settings.redmineReady)
             }
             // 연결하기 전에는 고를 것이 없어 숨긴다 (처음 화면은 주소·키·연결만)
             if settings.redmineReady {
-                SettingRow("댓글을 HTML로 보내기", "웹 편집기를 쓰는 레드마인은 HTML로 보내야 줄바꿈이 살아납니다.") {
-                    Toggle("", isOn: $settings.redmineHTML).toggleStyle(.switch).labelsHidden()
+                SettingRow("댓글을 HTML로 보내기", UserDefaults.standard.bool(forKey: "workLog.redmineHTMLAuto")
+                           ? "이 레드마인의 기존 댓글을 보고 자동으로 정했습니다. 직접 바꾸면 그대로 둡니다."
+                           : "웹 편집기를 쓰는 레드마인은 HTML로 보내야 줄바꿈이 살아납니다.") {
+                    // 직접 바꾸면 자동 판별이 다시 덮지 않게 한다
+                    Toggle("", isOn: Binding(get: { settings.redmineHTML }, set: {
+                        UserDefaults.standard.set(false, forKey: "workLog.redmineHTMLAuto")
+                        settings.redmineHTML = $0
+                    })).toggleStyle(.switch).labelsHidden()
                 }
                 SettingRow("상태·날짜도 맞추기", "할일 일감은 일지 상태에 맞춰 진행·완료로 옮기고, 비어 있는 시작일·완료 기한은 일지 날짜로 채웁니다. 테스트·반려 같은 다른 상태는 그대로 둡니다.") {
                     Toggle("", isOn: $settings.syncIssueFields).toggleStyle(.switch).labelsHidden()

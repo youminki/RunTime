@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Combine
 import Security
 import UsageCore
@@ -202,11 +202,34 @@ final class WorkLogSettings: ObservableObject {
         // 점검용: 다른 서명의 빌드가 키체인을 묻지 않게 환경 변수로 받는다
         if let key = ProcessInfo.processInfo.environment["RUNTIME_REDMINE_KEY"], !key.isEmpty { return key }
         // 허용 창에서 거부해도 한 번만 묻는다 (보낼 때마다 다시 뜨지 않게). 키를 새로 저장하면 다시 읽는다
+        // 키는 저장할 때의 레드마인에만 보낸다. 주소를 다른 곳으로 바꾸면 키를 다시 넣게 한다
+        guard keyMatchesHost else { return nil }
         if keyLoaded { return cachedKey }
         guard !Self.keychainOff else { return nil }
         cachedKey = Keychain.read(Self.keyAccount)
         keyLoaded = true
+        keyDenied = cachedKey == nil && hasRedmineKey
         return cachedKey
+    }
+
+    /// 키체인 허용 창에서 거부해 키를 못 읽었다. ‘연결 확인’을 누르면 다시 묻는다.
+    @Published private(set) var keyDenied = false
+
+    func retryKeychain() {
+        guard keyDenied else { return }
+        keyLoaded = false
+        keyDenied = false
+    }
+
+    /// 키를 저장한 레드마인 호스트와 지금 주소가 같은지. 예전 판에서 저장한 키는 처음 쓸 때 지금 호스트로 묶는다.
+    var keyMatchesHost: Bool {
+        guard let host = RedmineAPI.baseURL(effectiveRedmineURL)?.host else { return false }
+        if envKey { return true }
+        guard let saved = defaults.string(forKey: "workLog.redmineKeyHost") else {
+            if hasRedmineKey { defaults.set(host, forKey: "workLog.redmineKeyHost") }
+            return true
+        }
+        return saved == host
     }
     private var cachedKey: String?
     private var keyLoaded = false
@@ -222,6 +245,8 @@ final class WorkLogSettings: ObservableObject {
         let saved = trimmed.isEmpty || Keychain.write(trimmed, account: Self.keyAccount)
         cachedKey = saved && !trimmed.isEmpty ? trimmed : nil
         keyLoaded = saved
+        keyDenied = false
+        defaults.set(saved && !trimmed.isEmpty ? RedmineAPI.baseURL(effectiveRedmineURL)?.host : nil, forKey: "workLog.redmineKeyHost")
         hasRedmineKey = Keychain.exists(Self.keyAccount)
         redmineKeyHint = saved && !trimmed.isEmpty ? "••••" + trimmed.suffix(4) : nil
         return saved
@@ -245,6 +270,14 @@ final class WorkLogSettings: ObservableObject {
     var effectiveRedmineURL: String { ProcessInfo.processInfo.environment["RUNTIME_REDMINE_URL"] ?? redmineURL }
     private var envKey: Bool { !(ProcessInfo.processInfo.environment["RUNTIME_REDMINE_KEY"] ?? "").isEmpty }
 
+    /// 키가 있는데 쓸 수 없는 까닭 (설정 화면·보내기 실패에 그대로 보인다).
+    var redmineKeyProblem: String? {
+        guard hasRedmineKey, !envKey else { return nil }
+        if !keyMatchesHost { return "레드마인 주소가 키를 저장할 때와 달라 키를 보내지 않았습니다. 이 주소의 API 키를 다시 넣으세요" }
+        if keyDenied { return "키체인에서 API 키를 읽지 못했습니다. 설정 > 레드마인에서 ‘연결 확인’을 누르고 ‘항상 허용’을 고르세요" }
+        return nil
+    }
+
     var redmineReady: Bool { RedmineAPI.baseURL(effectiveRedmineURL) != nil && (hasRedmineKey || envKey) }
 
     /// Claude Code의 redmine MCP 설정에서 주소와 키를 옮겨 온다. 키는 그 레드마인에만 보낸다.
@@ -252,6 +285,7 @@ final class WorkLogSettings: ObservableObject {
         let url = URL(fileURLWithPath: NSHomeDirectory() + "/.claude.json")
         guard let data = try? Data(contentsOf: url), let found = RedmineAPI.mcpCredentials(in: data) else { return false }
         redmineURL = found.url
+        normalizeRedmineURL()
         return setRedmineKey(found.key)
     }
 
@@ -361,6 +395,7 @@ final class WorkLogSync: ObservableObject {
     static let shared = WorkLogSync()
 
     @Published private(set) var capturing = false
+    private var wakeObserver: NSObjectProtocol?
     /// 가져오는 중에 들어온 completion. 끝난 뒤 함께 불러 알림이 가져오기 전 줄 수로 나가지 않게 한다.
     private var captureWaiters: [() -> Void] = []
     @Published private(set) var lastCapture: Date?
@@ -404,6 +439,16 @@ final class WorkLogSync: ObservableObject {
         timer?.invalidate()
         // 1분마다 깨서 10분이 지났으면 가져오고, 알림 시각이 됐으면 알린다
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.tick() }
+        // 잠에서 깨면 망이 붙을 틈을 30초 주고 바로 가져온다 (깨자마자 받다 실패한 오류가 남지 않게)
+        if wakeObserver == nil {
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil,
+                                                                             queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                    guard let self, self.settings.captureEnabled else { return }
+                    self.capture()
+                }
+            }
+        }
         tick()
     }
 
@@ -411,6 +456,8 @@ final class WorkLogSync: ObservableObject {
         if settings.captureEnabled, Date().timeIntervalSince(lastCapture ?? .distantPast) >= 600 { capture() }
         // 내 일감은 30분마다 새로 받는다
         if settings.redmineReady, Date().timeIntervalSince(issuesLoadedAt ?? .distantPast) >= 1800 { loadMyIssues() }
+        // 자정을 넘기면 그날 고정 업무를 넣는다 (가져오기를 꺼 두었거나 창을 켜 둔 채여도). 이미 있으면 아무것도 하지 않는다
+        store.applyRecurringToday()
         remindIfDue()
         TeamsWeb.shared.refreshIfDue()
     }
@@ -446,7 +493,7 @@ final class WorkLogSync: ObservableObject {
                 mrs = try Self.fetchMRs(host: host, since: since)
                 gotMRs = true
                 // MR을 못 받은 채 커밋만 넣으면 이미 머지된 브랜치가 진행중으로 남아, MR을 받을 때만 커밋도 넣는다
-                commits = Self.localCommits(folder: folder, host: host, since: since, errors: &errors)
+                commits = Self.localCommits(folder: folder, host: host, since: since, mrs: mrs, errors: &errors)
             } catch {
                 errors.append("GitLab: \(Self.gitLabHint(error.localizedDescription, host: host))")
             }
@@ -455,7 +502,8 @@ final class WorkLogSync: ObservableObject {
                 self.lastAdded = self.store.applyCapture(mrs: mrs, commits: commits)
                 self.store.applyRecurringToday()
                 self.capturing = false
-                self.lastCapture = Date()
+                // MR을 못 받았으면(잠에서 막 깨 VPN이 붙기 전 등) 10분을 다 기다리지 않고 2분 뒤 다시 해 본다
+                self.lastCapture = gotMRs ? Date() : Date().addingTimeInterval(-480)
                 self.captureError = errors.first
                 // 저장소 하나의 git 오류로 기간이 멈추지 않게, MR을 받았으면 다음엔 그 뒤부터 받는다
                 if gotMRs { self.defaults.set(Date(), forKey: "workLog.lastCapture") }
@@ -513,54 +561,123 @@ final class WorkLogSync: ObservableObject {
     }
 
     /// 회사 GitLab 저장소가 아닌 곳은 조용히 건너뛰고, 회사 저장소에서 git이 실패하면 오류로 알린다.
-    private static func localCommits(folder: String, host: String, since: Date, errors: inout [String]) -> [WorkCapture.Commit] {
+    private static func localCommits(folder: String, host: String, since: Date, mrs: [WorkCapture.MergedMR],
+                                     errors: inout [String]) -> [WorkCapture.Commit] {
+        let mrPaths = Set(mrs.map(\.path))
         let iso = ISO8601DateFormatter().string(from: since)
+        // 저장소마다 git을 띄우기 전에 .git/config를 파일로 읽어 회사 GitLab 원격이 없는 저장소는 바로 거른다
+        // (저장소가 수십 개면 git 호출만 수백 번이라 가져오기가 느려진다)
+        let candidates = repositories(in: folder).filter { repo in
+            gitConfig(repo).range(of: host, options: .caseInsensitive) != nil
+        }
         var commits: [WorkCapture.Commit] = []
         var noEmail: [String] = []
-        defer {
-            // 회사 저장소인데 작성자를 몰라 건너뛰면 진행중 줄이 조용히 비므로 알린다
-            if !noEmail.isEmpty {
-                errors.append("git user.email이 없어 건너뛴 저장소: \(noEmail.prefix(3).joined(separator: ", "))\(noEmail.count > 3 ? " 외 \(noEmail.count - 3)개" : "")")
-            }
-        }
-        for repo in repositories(in: folder) {
-            guard let remote = try? text(run("/usr/bin/git", ["-C", repo, "remote", "get-url", "origin"])),
-                  let path = WorkCapture.namespacePath(remote: remote, host: host)
-            else { continue }
-            guard let email = try? text(run("/usr/bin/git", ["-C", repo, "config", "user.email"])), !email.isEmpty else {
-                noEmail.append(URL(fileURLWithPath: repo).lastPathComponent)
-                continue
+        var problems: [String] = []
+        let lock = NSLock()
+        // 회사 저장소만 네 개씩 함께 읽는다
+        let lanes = DispatchSemaphore(value: 4)
+        DispatchQueue.concurrentPerform(iterations: candidates.count) { index in
+            lanes.wait()
+            defer { lanes.signal() }
+            let repo = candidates[index]
+            let name = URL(fileURLWithPath: repo).lastPathComponent
+            // origin이 GitHub이고 upstream이 회사 GitLab이거나, 포크에서 일하는 저장소도 잡게 원격을 모두 본다
+            guard let remotes = try? text(run("/usr/bin/git", ["-C", repo, "config", "--get-regexp", "^remote\\..*\\.url$"], timeout: 15)),
+                  let path = WorkCapture.projectPath(remotes: remotes, host: host, mrPaths: mrPaths)
+            else { return }
+            guard let email = try? text(run("/usr/bin/git", ["-C", repo, "config", "user.email"], timeout: 15)), !email.isEmpty else {
+                lock.lock(); noEmail.append(name); lock.unlock()
+                return
             }
             do {
-                let refs = try text(run("/usr/bin/git", ["-C", repo, "for-each-ref", "--format=%(refname)", "refs/remotes"]))
-                // main·dev·release에 이미 들어간 커밋은 MR 줄에 있으니, 아직 머지 전인 커밋만 받는다
-                // --author는 정규식이라 이메일의 +, . 을 그대로 맞추게 이스케이프한다
-                let log = try text(run("/usr/bin/git", ["-C", repo, "log", "--all", "--no-merges",
-                                                        "--author=\(NSRegularExpression.escapedPattern(for: email))",
+                let refs = try text(run("/usr/bin/git", ["-C", repo, "for-each-ref", "--format=%(refname)", "refs/remotes", "refs/heads"],
+                                        timeout: 15))
+                    .components(separatedBy: "\n")
+                // main·dev·release와 이미 머지된 MR의 대상·원본 브랜치에 들어간 커밋은 MR 줄에 있으니, 아직 머지 전인 커밋만 받는다.
+                // --all은 stash·태그까지 읽어 브랜치와 원격만 본다. --branches/--remotes는 %S를 짧은 이름(origin/x)으로 내
+                // 지난 줄과 브랜치가 어긋나므로 --glob으로 전체 ref 이름을 받는다. 이메일은 글자 그대로(--fixed-strings) <…>까지 맞춘다
+                let excluded = WorkCapture.sharedBranches(refs) + WorkCapture.mergedRefs(mrs, path: path, refs: refs)
+                let log = try text(run("/usr/bin/git", ["-C", repo, "log", "--glob=refs/heads/*", "--glob=refs/remotes/*", "--no-merges",
+                                                        "--fixed-strings", "--author=<\(email)>",
                                                         "--since=\(iso)", "--format=\(WorkCapture.gitLogFormat)", "--not"]
-                                       + WorkCapture.sharedBranches(refs.components(separatedBy: "\n"))))
-                commits += WorkCapture.parseCommits(log, path: path)
+                                       + Array(Set(excluded))))
+                let found = WorkCapture.parseCommits(log, path: path)
+                lock.lock(); commits += found; lock.unlock()
             } catch {
-                errors.append("\(URL(fileURLWithPath: repo).lastPathComponent): \(error.localizedDescription)")
+                lock.lock(); problems.append("\(name): \(error.localizedDescription)"); lock.unlock()
             }
         }
-        return commits
+        errors += problems.sorted()
+        // 회사 저장소인데 작성자를 몰라 건너뛰면 진행중 줄이 조용히 비므로 알린다
+        if !noEmail.isEmpty {
+            let names = noEmail.sorted()
+            errors.append("git user.email이 없어 건너뛴 저장소: \(names.prefix(3).joined(separator: ", "))\(names.count > 3 ? " 외 \(names.count - 3)개" : "")")
+        }
+        // 함께 읽어 순서가 섞이니 날짜순으로 둔다 (같은 날 줄 순서가 가져올 때마다 바뀌지 않게)
+        return commits.sorted { $0.date < $1.date }
     }
 
-    /// 폴더 바로 아래와 그 아래의 git 저장소.
+    /// user.email이 없는 회사 저장소에 GitLab 계정의 커밋 이메일을 채우고 다시 가져온다 (그 저장소 설정에만 쓴다).
+    func fillMissingEmails(done: @escaping (String) -> Void) {
+        let host = settings.gitlabHostName
+        let folder = (settings.repoFolder as NSString).expandingTildeInPath
+        queue.async { [weak self] in
+            let repos = Self.repositories(in: folder).filter { repo in
+                Self.gitConfig(repo).range(of: host, options: .caseInsensitive) != nil
+                    && ((try? Self.text(Self.run("/usr/bin/git", ["-C", repo, "config", "user.email"], timeout: 15))) ?? "").isEmpty
+            }
+            struct User: Decodable { let commit_email: String?; let email: String? }
+            let user = (try? Self.glab(host: host, "user")).flatMap { try? JSONDecoder().decode(User.self, from: $0) }
+            guard let email = [user?.commit_email, user?.email].compactMap({ $0 }).first(where: { !$0.isEmpty }) else {
+                return DispatchQueue.main.async { done("GitLab 계정 이메일을 받지 못했습니다. glab 로그인을 확인하세요") }
+            }
+            var filled = 0
+            for repo in repos where (try? Self.run("/usr/bin/git", ["-C", repo, "config", "user.email", email], timeout: 15)) != nil {
+                filled += 1
+            }
+            DispatchQueue.main.async {
+                done("저장소 \(filled)곳에 \(email)을 넣었습니다")
+                self?.capture()
+            }
+        }
+    }
+
+    /// 저장소의 git 설정 글. 서브모듈은 `.git`이 `gitdir: …` 한 줄짜리 파일이라 그 자리의 설정을 읽는다.
+    private static func gitConfig(_ repo: String) -> String {
+        let dotGit = repo + "/.git"
+        if let pointer = try? String(contentsOfFile: dotGit, encoding: .utf8), pointer.hasPrefix("gitdir:") {
+            let dir = pointer.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            let path = dir.hasPrefix("/") ? dir : repo + "/" + dir
+            return (try? String(contentsOfFile: path + "/config", encoding: .utf8)) ?? ""
+        }
+        return (try? String(contentsOfFile: dotGit + "/config", encoding: .utf8)) ?? ""
+    }
+
+    /// 폴더 아래 네 단계까지의 git 저장소. 저장소를 찾으면 그 안으로는 내려가지 않고,
+    /// 빌드·의존성 폴더와 연결된 워크트리(같은 저장소를 두 번 읽게 됨)는 건너뛴다.
     static func repositories(in folder: String) -> [String] {
         let manager = FileManager.default
+        let skipped: Set<String> = ["node_modules", ".build", "build", "Pods", "DerivedData", "vendor", "dist", "Library"]
         func children(_ path: String) -> [String] {
             ((try? manager.contentsOfDirectory(atPath: path)) ?? [])
-                .filter { !$0.hasPrefix(".") && $0 != "node_modules" }
+                .filter { !$0.hasPrefix(".") && !skipped.contains($0) }
                 .map { path + "/" + $0 }
                 .filter { var dir: ObjCBool = false; return manager.fileExists(atPath: $0, isDirectory: &dir) && dir.boolValue }
         }
         var repos: [String] = []
-        for child in children(folder) {
-            if manager.fileExists(atPath: child + "/.git") { repos.append(child); continue }
-            repos += children(child).filter { manager.fileExists(atPath: $0 + "/.git") }
+        func walk(_ path: String, depth: Int) {
+            var isDirectory: ObjCBool = false
+            if manager.fileExists(atPath: path + "/.git", isDirectory: &isDirectory) {
+                // `.git`이 파일이면 워크트리다. 본 저장소에서 이미 모든 브랜치를 읽는다
+                let worktree = !isDirectory.boolValue
+                    && ((try? String(contentsOfFile: path + "/.git", encoding: .utf8)) ?? "").contains("/worktrees/")
+                if !worktree { repos.append(path) }
+                return
+            }
+            guard depth < 4 else { return }
+            for child in children(path) { walk(child, depth: depth + 1) }
         }
+        for child in children(folder) { walk(child, depth: 1) }
         return repos
     }
 
@@ -692,6 +809,7 @@ final class WorkLogSync: ObservableObject {
                     self.store.updateIssues(book.infos, assignedIDs: book.assignedIDs)
                     if assigned { self.issuesLoadedAt = Date() }
                     self.issuesError = nil
+                    self.detectNoteFormat()
                 case .failure(let error):
                     self.issuesError = error.localizedDescription
                 }
@@ -730,6 +848,36 @@ final class WorkLogSync: ObservableObject {
 
     func info(_ id: Int) -> IssueInfo? { store.log.issue(id) }
 
+    /// 댓글을 HTML로 보낼지 평문으로 보낼지 이 레드마인의 기존 댓글을 보고 정한다. 웹 편집기(CKEditor 등)를 쓰는 곳은
+    /// 댓글에 `<p>`·`<br`가 있고, Textile·Markdown 레드마인은 없다. 사용자가 스위치를 직접 바꿨으면 그대로 둔다.
+    private func detectNoteFormat() {
+        guard defaults.object(forKey: "workLog.redmineHTML") == nil || defaults.bool(forKey: "workLog.redmineHTMLAuto"),
+              !defaults.bool(forKey: "workLog.redmineHTMLChecked"),
+              let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
+        let ids = Array(store.log.issues.values.filter(\.assigned).map(\.id).sorted(by: >).prefix(6))
+        guard !ids.isEmpty else { return }
+        defaults.set(true, forKey: "workLog.redmineHTMLChecked")
+        queue.async { [weak self] in
+            var html = 0, plain = 0
+            for id in ids where html + plain < 8 {
+                let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: id))
+                guard response.ok, let data = response.data, let journals = try? RedmineAPI.parseJournals(data) else { continue }
+                for note in journals.map(\.notes) where note.count > 10 {
+                    if note.contains("<p>") || note.contains("<br") { html += 1 } else { plain += 1 }
+                }
+            }
+            guard html + plain > 0 else {
+                DispatchQueue.main.async { self?.defaults.set(false, forKey: "workLog.redmineHTMLChecked") }
+                return
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.settings.redmineHTML = html >= plain
+                self.defaults.set(true, forKey: "workLog.redmineHTMLAuto")
+            }
+        }
+    }
+
     func loadStatuses() {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
         URLSession.shared.dataTask(with: RedmineAPI.statusesRequest(base: base, key: key)) { [weak self] data, response, _ in
@@ -738,10 +886,14 @@ final class WorkLogSync: ObservableObject {
                 guard let self else { return }
                 self.statuses = list
                 self.defaults.set(try? JSONEncoder().encode(list), forKey: "workLog.statuses")
-                // 고른 상태가 없거나 사라졌으면 이름으로 어림한다
+                // 고른 적이 없거나 고른 상태가 사라졌을 때만 이름으로 어림한다.
+                // ‘바꾸지 않음’(nil, 0으로 저장)을 고른 것은 그대로 둔다 (어림하면 완료로 바뀌어 일감이 닫힌다)
                 let guess = WorkReport.defaultStatuses(list)
-                if !list.contains(where: { $0.id == self.settings.progressStatusID }) { self.settings.progressStatusID = guess.progress }
-                if !list.contains(where: { $0.id == self.settings.doneStatusID }) { self.settings.doneStatusID = guess.done }
+                func lost(_ id: Int?, _ key: String) -> Bool {
+                    self.defaults.object(forKey: key) == nil || (id != nil && !list.contains { $0.id == id })
+                }
+                if lost(self.settings.progressStatusID, "workLog.progressStatus") { self.settings.progressStatusID = guess.progress }
+                if lost(self.settings.doneStatusID, "workLog.doneStatus") { self.settings.doneStatusID = guess.done }
             }
         }.resume()
     }
@@ -771,6 +923,8 @@ final class WorkLogSync: ObservableObject {
         let todo = updates.filter { $0.needsNote && checkedNotes[$0.issue] != $0.note }
         guard !todo.isEmpty else { return }
         for update in todo { checkedNotes[update.issue] = update.note }
+        // 앱이 전에 올린 자기 댓글은 ‘이미 올린 댓글’로 보지 않는다 (이어 쓰는 오늘 댓글이 빠지지 않게)
+        let mine = Dictionary(grouping: store.log.sent.filter { $0.undoneAt == nil }, by: \.issue)
         queue.async { [weak self] in
             for update in todo {
                 let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: update.issue))
@@ -781,7 +935,8 @@ final class WorkLogSync: ObservableObject {
                 }
                 // Claude는 MR을 올릴 때(머지 전날일 수 있다) 댓글을 다니, 첫날 사흘 전부터 본다
                 let since = update.days.first.flatMap(WorkDay.date).map { $0.addingTimeInterval(-3 * 86_400) } ?? .distantPast
-                let hit = RedmineComment.alreadyPosted(update.note, journals: journals, since: since)
+                let own = Set((mine[update.issue] ?? []).compactMap { $0.matchJournal(journals)?.id })
+                let hit = RedmineComment.alreadyPosted(update.note, journals: journals.filter { !own.contains($0.id) }, since: since)
                 DispatchQueue.main.async { self?.postedHints[update.issue] = hit }
             }
         }
@@ -908,10 +1063,12 @@ final class WorkLogSync: ObservableObject {
             return
         }
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
-            done(0, ["레드마인 주소(https)와 API 키를 설정하세요"])
+            done(0, [settings.redmineKeyProblem ?? "레드마인 주소(https)와 API 키를 설정하세요"])
             return
         }
         sending = true
+        // 보내는 동안 고친 줄은 보낸 것으로 찍지 않게 시작 시각을 잡아 둔다
+        let startedAt = Date()
         // 진행중 기본 진척률과 카드에서 직접 고른 진척률을 먼저 얹는다 (100%로 고르면 완료 상태도 따라온다)
         let updates = updates.map { prepared($0, edit: edits[$0.issue]) }
         // 설정과 장부는 메인에서 읽어 두고, 보내기는 뒤에서 한 건씩 차례로 한다
@@ -951,7 +1108,7 @@ final class WorkLogSync: ObservableObject {
                                           screens: screens, noteless: withoutNotes.contains(update.issue), plan: plan)
                 failures += result.failures
                 if result.record != nil || result.markOnly { sent += 1 }
-                DispatchQueue.main.async { self?.apply(result, update: update) }
+                DispatchQueue.main.async { self?.apply(result, update: update, startedAt: startedAt) }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -1203,16 +1360,16 @@ final class WorkLogSync: ObservableObject {
         return output
     }
 
-    private func apply(_ result: SendResult, update: WorkReport.RedmineUpdate) {
+    private func apply(_ result: SendResult, update: WorkReport.RedmineUpdate, startedAt: Date) {
         if let blocked = result.blocked {
             blockedTransitions.insert(Self.transitionKey(blocked.from, blocked.to))
             defaults.set(Array(blockedTransitions).sorted(), forKey: "workLog.blockedTransitions")
         }
-        if result.markOnly { store.markPosted(update.entryIDs) }
-        guard let record = result.record else { return }
-        // 보낸 뒤 줄을 고쳐 다시 보낼 목록에 오르면, 방금 올린 댓글과 겹치는지 다시 보게 한다
+        if result.markOnly { store.markPosted(update.entryIDs, unchangedSince: startedAt) }
+        // 실패해도 시간 초과처럼 서버에는 올라갔을 수 있다. 다시 보내기 전에 레드마인 댓글을 다시 읽어 겹침을 알리게 한다
         checkedNotes[update.issue] = nil
-        store.markPosted(update.entryIDs)
+        guard let record = result.record else { return }
+        store.markPosted(update.entryIDs, unchangedSince: startedAt)
         // 보낸 값을 장부에도 적어 다시 받기 전에도 화면이 새 값을 보이게
         store.setIssueState(update.issue, ratio: update.doneRatio, fields: Self.fields(record.after, statuses: statuses))
         store.addSent(record)
@@ -1248,6 +1405,8 @@ final class WorkLogSync: ObservableObject {
                 let reverted = Self.perform(request)
                 if !reverted.ok { problems.append("칸을 되돌리지 못했습니다 (\(reverted.message))") }
             }
+            // 댓글을 지우지 못했으면 줄을 다시 보낼 목록에 돌리지 않는다 (그대로 다시 보내면 댓글이 둘이 된다)
+            var keepPosted = false
             if !record.note.isEmpty {
                 let journals = (try? RedmineAPI.parseJournals(data)) ?? []
                 if let journal = record.matchJournal(journals) {
@@ -1258,8 +1417,9 @@ final class WorkLogSync: ObservableObject {
                             manual = journal.id
                             DispatchQueue.main.async { self?.defaults.set(false, forKey: "workLog.journalAPI") }
                         } else if !cleared.ok {
-                            problems.append("댓글을 지우지 못했습니다 (\(cleared.message))")
+                            problems.append("댓글을 지우지 못했습니다 (\(cleared.message)). 지운 뒤 줄을 고치면 다시 보낼 목록에 오릅니다")
                             manual = journal.id
+                            keepPosted = true
                         }
                     }
                 } else {
@@ -1273,7 +1433,7 @@ final class WorkLogSync: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.store.markUndone(record)
+                self.store.markUndone(record, reopenNote: !keepPosted)
                 self.sending = false
                 self.loadMyIssues()
                 done(problems, manual)

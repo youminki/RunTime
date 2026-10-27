@@ -523,7 +523,16 @@ private struct AccountSection: View {
                         if account.id == switcher.activeID {
                             Text("사용 중").foregroundStyle(.secondary)
                         } else {
-                            Button("지우기") { switcher.remove(account.id) }
+                            // 저장한 로그인까지 지워져 그 계정으로 /login을 다시 해야 하므로 한 번 묻는다
+                            Button("지우기") {
+                                let alert = NSAlert()
+                                alert.messageText = "\(account.email)의 저장된 로그인을 지울까요?"
+                                alert.informativeText = "다시 쓰려면 그 계정으로 Claude Code에서 /login 해야 합니다."
+                                alert.addButton(withTitle: "지우기")
+                                alert.addButton(withTitle: "취소")
+                                alert.buttons.first?.hasDestructiveAction = true
+                                if alert.runModal() == .alertFirstButtonReturn { switcher.remove(account.id) }
+                            }
                             Button("바꾸기") { switcher.switchTo(account.id) }
                                 .disabled(switcher.switching)
                         }
@@ -533,9 +542,11 @@ private struct AccountSection: View {
             if switcher.accounts.isEmpty {
                 GroupedRow("기억한 계정 없음", icon: "person.crop.circle.badge.questionmark", tint: Palette.gray) { EmptyView() }
             }
-            ToggleRow(title: "한도에 닿으면 자동으로 바꾸기", icon: "arrow.left.arrow.right", tint: Palette.blue,
-                      isOn: $switcher.autoSwitch)
-                .disabled(switcher.accounts.count < 2)
+            // 바꿀 계정이 하나뿐이면 쓸 일이 없어 숨긴다
+            if switcher.accounts.count >= 2 {
+                ToggleRow(title: "한도에 닿으면 자동으로 바꾸기", icon: "arrow.left.arrow.right", tint: Palette.blue,
+                          isOn: $switcher.autoSwitch)
+            }
             if let error = switcher.lastError {
                 GroupedRow(error, icon: "exclamationmark.triangle.fill", tint: Palette.orange) { EmptyView() }
             }

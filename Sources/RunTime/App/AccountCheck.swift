@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import UsageCore
 
 /// `--account-check`: 기억한 Claude 계정을 실제로 점검하고 바꿔 본다. 토큰은 찍지 않는다.
@@ -10,6 +10,14 @@ enum AccountCheck {
 
     static func run(_ args: [String]) -> Never {
         DispatchQueue.main.async {
+            // 토큰을 돌리거나 계정을 바꾸는 일은 켜 둔 앱과 같은 리프레시 토큰을 동시에 쓰면 한쪽 로그인이 풀린다.
+            // 앱이 켜져 있으면 읽기만 한다
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: "dev.runtime.RunTime")
+                .contains { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+            if running, ["switch", "simulate-limit", "refresh"].contains(args.first ?? "") {
+                print("RunTime 앱이 켜져 있어 \(args.first ?? "")은 하지 않습니다. 앱을 끄고 다시 실행하거나, 앱 메뉴에서 하세요")
+                exit(1)
+            }
             switch args.first {
             case "switch": switchTo(args.dropFirst().first ?? "")
             case "simulate-limit": simulateLimit()

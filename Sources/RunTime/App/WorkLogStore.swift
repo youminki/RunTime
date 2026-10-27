@@ -73,11 +73,16 @@ final class WorkLogStore: ObservableObject {
         do {
             try WorkLogFile.save(log, to: url)
             saveError = nil
+            base = log
+            lastWritten = modificationDate()
         } catch {
             saveError = "일지를 저장하지 못했습니다: \(error.localizedDescription)"
+            // 못 쓴 내용을 기준으로 삼으면 그사이 바깥에서 고친 파일을 다시 읽을 때 그 내용이 조용히 사라진다.
+            // 기준은 그대로 두고 잠시 뒤 다시 저장해, 지켜보는 쪽이 다시 읽지 않고 합치게 한다
+            let retry = DispatchWorkItem { [weak self] in self?.saveNow() }
+            pendingSave = retry
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: retry)
         }
-        base = log
-        lastWritten = modificationDate()
     }
 
 
@@ -148,8 +153,23 @@ final class WorkLogStore: ObservableObject {
         }
     }
 
+    /// 지운 줄은 ⌘Z로 되살린다. 자동 줄(MR·브랜치)을 지우면 다시 가져오지 않게 남긴 표시도 함께 거둔다
+    /// (제목을 다 지우고 Enter를 누르면 확인 없이 지워져서).
     func delete(_ id: UUID) {
+        guard let index = log.entries.firstIndex(where: { $0.id == id }) else { return }
+        let entry = log.entries[index]
+        let dismissedBefore = log.dismissed
         change { $0.remove(id) }
+        let added = log.dismissed.subtracting(dismissedBefore)
+        guard let undo = NSApp.keyWindow?.undoManager ?? NSApp.mainWindow?.undoManager else { return }
+        undo.registerUndo(withTarget: self) { store in
+            store.change { log in
+                guard !log.entries.contains(where: { $0.id == entry.id }) else { return }
+                log.entries.insert(entry, at: min(index, log.entries.count))
+                log.dismissed.subtract(added)
+            }
+        }
+        undo.setActionName("줄 지우기")
     }
 
     /// 같은 날 같은 프로젝트 안에서 한 칸 올리거나 내린다. 보고서 줄 순서가 이 순서다.
@@ -361,21 +381,23 @@ final class WorkLogStore: ObservableObject {
     }
 
     /// 되돌린 건: 그 줄들을 다시 보낼 목록으로 돌리고, 지운 작업 시간은 다시 남길 수 있게 한다.
-    func markUndone(_ record: RedmineSent) {
+    func markUndone(_ record: RedmineSent, reopenNote: Bool = true) {
         let ids = Set(record.entryIDs)
         change { log in
             if let index = log.sent.firstIndex(where: { $0.id == record.id }) { log.sent[index].undoneAt = Date() }
             for index in log.entries.indices where ids.contains(log.entries[index].id) {
-                if !record.note.isEmpty { log.entries[index].postedAt = nil }
+                if !record.note.isEmpty && reopenNote { log.entries[index].postedAt = nil }
                 if !record.timeEntryIDs.isEmpty { log.entries[index].timeLogged = false }
             }
         }
     }
 
-    func markPosted(_ ids: [UUID]) {
+    /// `unchangedSince`보다 늦게 고친 줄은 보낸 글에 그 고침이 없으니 보낸 것으로 찍지 않는다.
+    func markPosted(_ ids: [UUID], unchangedSince: Date = .distantFuture) {
         let now = Date()
         change { log in
-            for index in log.entries.indices where ids.contains(log.entries[index].id) {
+            for index in log.entries.indices where ids.contains(log.entries[index].id)
+                && log.entries[index].updatedAt <= unchangedSince {
                 // 고친 때보다 늦게 찍어야 다시 올릴 목록에서 빠진다
                 log.entries[index].postedAt = max(now, log.entries[index].updatedAt)
             }

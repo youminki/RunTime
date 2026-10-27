@@ -54,12 +54,17 @@ if [ ! -w "$TARGET" ]; then
   TARGET="$HOME/Applications"
   mkdir -p "$TARGET"
 fi
+# 새 앱을 먼저 옆에 복사해 둔다. 앱을 끈 뒤 복사하다 실패하면(디스크 부족 등) 앱이 사라진 채 다시 켜지지 않는다
+rm -rf "$TARGET/RunTime.app.new"
+cp -R dist/RunTime.app "$TARGET/RunTime.app.new"
 # 옛 이름으로 설치한 앱은 실행 파일 이름이 TokenCat이다.
 # 앱 안의 업데이트는 앱의 자식 프로세스로 돌아서, -a가 없으면 pkill·pgrep이 조상인 앱을 건너뛴다
 pkill -a -x RunTime 2>/dev/null || true
 pkill -a -x TokenCat 2>/dev/null || true
 # 종료가 끝나기 전에 open하면 LaunchServices가 -600으로 실행을 거부한다
 for _ in $(seq 1 50); do pgrep -a -x RunTime > /dev/null || pgrep -a -x TokenCat > /dev/null || break; sleep 0.1; done
+# 여기부터 실패하면 무엇이든 다시 띄운다 (메뉴바 러너가 조용히 사라지지 않게)
+trap 'open "$TARGET/RunTime.app" 2>/dev/null || open "$TARGET/RunTime.app.new" 2>/dev/null || open dist/RunTime.app 2>/dev/null || true' ERR
 
 # 옛 번들 ID로 설치한 앱(TokenCat.app, 이름만 바뀐 RunTime.app)은 지운다. 자동 시작 기록은 번들 ID에 묶여 있어서,
 # 옛 앱에서 켜져 있었으면 새 앱이 처음 켜질 때 다시 등록하도록 남긴다
@@ -95,7 +100,7 @@ if [ ${#OLDS[@]} -gt 0 ]; then
 fi
 
 rm -rf "$TARGET/RunTime.app"
-cp -R dist/RunTime.app "$TARGET/"
+mv "$TARGET/RunTime.app.new" "$TARGET/RunTime.app"
 # 같은 자리에 덮어쓰면 Finder·Dock이 옛 아이콘을 계속 보여 줘서, 날짜를 바꾸고 LaunchServices에 다시 알린다
 touch "$TARGET/RunTime.app"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$TARGET/RunTime.app" 2>/dev/null || true

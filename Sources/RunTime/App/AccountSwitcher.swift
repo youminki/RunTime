@@ -70,6 +70,11 @@ final class AccountSwitcher: ObservableObject {
     private var lastSwitchAt: Date?
     /// 지금 계정으로 바꾸기 시작한 때. 엔진이 앞 계정 토큰을 버리게 알린 시각이다.
     private var activatedAt: Date?
+    /// 메인 전용. 계정별로 지금 계정에서 물러난 때. 그 계정으로 열어 둔 Claude Code 세션은 옛 리프레시 토큰을
+    /// 메모리에 든 채 계속 도니, 그동안 앱이 먼저 토큰을 돌리면 그 세션의 로그인이 풀린다.
+    private var leftAt: [String: Date] = [:]
+    /// 물러난 계정 토큰을 미리 새로 받지 않는 시간 (액세스 토큰 한 번의 수명).
+    static let departedGrace: TimeInterval = 8 * 3600
     /// 쓰지 않는 계정 토큰은 만료 이만큼 전에 새로 받아 둔다. 오래 두면 리프레시 토큰까지 만료된다.
     static let keepAliveMargin: TimeInterval = 30 * 60
     /// 새로 받지 못했으면(429 등) 이만큼 쉬고 다시 해 본다. 계정을 바꿀 때는 기다리지 않는다.
@@ -197,7 +202,10 @@ final class AccountSwitcher: ObservableObject {
         let activatedAt = Date()
         if changed { willActivate() }
         DispatchQueue.main.sync {
-            if changed { self.activatedAt = activatedAt }
+            if changed {
+                self.activatedAt = activatedAt
+                if let previous { self.leftAt[previous] = activatedAt }
+            }
             var account = self.accounts.first { $0.id == info.uuid }
                 ?? Account(id: info.uuid, email: info.email, name: nil, plan: nil, lastUsage: nil)
             account.email = info.email
@@ -279,7 +287,7 @@ final class AccountSwitcher: ObservableObject {
         let target = DispatchQueue.main.sync { self.accounts.first { $0.id == id } }
         let configAccount = target?.configAccount
         // 오래 쉰 계정은 바꾸기 전에 토큰을 새로 받아 둔다. 리프레시 토큰이 죽었으면 바꿔도 Claude Code가 로그인을 다시 묻는다
-        switch freshCredentials(for: id) {
+        switch freshCredentials(for: id, forSwitch: true) {
         case .rejected: return "\(target?.email ?? "그 계정")의 로그인이 풀렸습니다. 그 계정으로 Claude Code에서 /login 해 주세요"
         case .mismatch: return "저장된 \(target?.email ?? "그 계정") 로그인 정보가 다른 계정 것입니다. 그 계정으로 Claude Code에서 /login 해 주세요"
         case .usable, .unavailable: break
@@ -304,6 +312,8 @@ final class AccountSwitcher: ObservableObject {
         willActivate()
         DispatchQueue.main.sync {
             self.activatedAt = activatedAt
+            if let old = self.activeID, old != id { self.leftAt[old] = activatedAt }
+            self.leftAt[id] = nil
             self.activeID = id
             self.persist()
         }
@@ -440,10 +450,13 @@ final class AccountSwitcher: ObservableObject {
 
     /// queue 전용. 쓰지 않는 계정의 저장본을 돌려준다. 액세스 토큰이 곧 만료되면 리프레시 토큰으로 새로 받아 저장한다.
     /// 지금 계정은 Claude Code가 토큰을 돌리므로 손대지 않는다. 계정 바꾸기도 이 큐에서 하므로 그 사이에 지금 계정이 되지 않는다.
-    func freshCredentials(for id: String, retryNow: Bool = true) -> Freshness {
+    /// `forSwitch`면 곧 그 계정으로 바꾸려는 것이라 물러난 지 얼마 안 됐어도 새로 받는다.
+    func freshCredentials(for id: String, retryNow: Bool = true, forSwitch: Bool = false) -> Freshness {
         guard let stored = storedCredentials(for: id), let part = ClaudeLogin.oauthPart(of: stored) else { return .unavailable }
-        let active = DispatchQueue.main.sync { self.activeID }
+        let (active, left) = DispatchQueue.main.sync { (self.activeID, self.leftAt[id]) }
         guard id != active, ClaudeLogin.needsRefresh(part, margin: Self.keepAliveMargin) else { return .usable(part) }
+        // 막 물러난 계정은 그 계정으로 열어 둔 Claude Code 세션이 아직 돌 수 있어 미리 돌리지 않는다
+        if !forSwitch, let left, Date().timeIntervalSince(left) < Self.departedGrace { return .usable(part) }
         // 키체인에 이 리프레시 토큰이 들어 있으면 Claude Code가 쓰는 중이다. 돌리면 Claude Code 로그인이 풀린다
         let refresh = ClaudeLogin.refreshToken(in: part)
         if refresh == nil || ClaudeLogin.liveCredentials().flatMap(ClaudeLogin.refreshToken(in:)) == refresh { return .usable(part) }

@@ -114,11 +114,14 @@ public enum DesignText {
 /// 피그마 주소에서 파일 키를 꺼낸다. 주소를 통째로 붙여넣어도, 키만 넣어도 된다.
 public enum FigmaFileURL {
     public static func fileKey(from input: String) -> String? {
-        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if isKey(text) { return text }
+        // 주소창에서 `www.figma.com/design/…`만 복사해 오기도 한다
+        if !text.contains("://") { text = "https://" + text }
         guard let url = URL(string: text), let host = url.host, host == "figma.com" || host.hasSuffix(".figma.com") else { return nil }
         let parts = url.pathComponents.filter { $0 != "/" }
-        guard parts.count >= 2, ["design", "file"].contains(parts[0]) else { return nil }
+        // 프로토타입(proto) 주소도 같은 파일을 가리킨다
+        guard parts.count >= 2, ["design", "file", "proto"].contains(parts[0]) else { return nil }
         // 브랜치 주소는 브랜치 키가 파일 키다
         if parts.count >= 4, parts[2] == "branch", isKey(parts[3]) { return parts[3] }
         return isKey(parts[1]) ? parts[1] : nil

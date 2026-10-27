@@ -39,13 +39,17 @@ final class DesignSyncSettings: ObservableObject {
         defaults.set(try? JSONEncoder().encode(sources), forKey: "design.sources")
     }
 
-    /// 키체인을 읽는다. 허용 창이 뜰 수 있어 가져올 때만 부른다.
+    /// 키체인을 읽는다. 허용 창이 뜰 수 있어 가져올 때만 부르고, 한 번 읽으면 메모리에 둔다
+    /// (상세 그림을 넘길 때마다 /usr/bin/security를 띄우지 않게).
     var token: String? {
         guard ProcessInfo.processInfo.environment["RUNTIME_NO_KEYCHAIN"] == nil else {
             return ProcessInfo.processInfo.environment["RUNTIME_FIGMA_TOKEN"]
         }
-        return Keychain.read(Self.tokenAccount).flatMap { $0.isEmpty ? nil : $0 }
+        if let cachedToken { return cachedToken }
+        cachedToken = Keychain.read(Self.tokenAccount).flatMap { $0.isEmpty ? nil : $0 }
+        return cachedToken
     }
+    private var cachedToken: String?
 
     var hasToken: Bool { tokenHint != nil }
 
@@ -53,12 +57,14 @@ final class DesignSyncSettings: ObservableObject {
     func saveToken(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, Keychain.write(trimmed, account: Self.tokenAccount) else { return false }
+        cachedToken = trimmed
         tokenHint = "••••" + trimmed.suffix(4)
         return true
     }
 
     func clearToken() {
         Keychain.delete(Self.tokenAccount)
+        cachedToken = nil
         tokenHint = nil
     }
 }
@@ -73,20 +79,36 @@ actor FigmaClient {
     /// 이미지는 누를 때만 묶어서 보내 드물어서 짧게 띄우고, 한도에 걸리면 아래에서 알려 준 만큼 쉰다.
     private func spacing(_ lane: Lane) -> TimeInterval { lane == .content ? 6 : 1.5 }
     private var last: [Lane: Date] = [:]
+    /// 한도에 오래(5분 넘게, 또는 기한 없이) 걸렸을 때 그때까지 모든 호출을 보내지 않는다.
+    /// 프로젝트·이미지·날짜 비교가 저마다 다시 두드려 한도가 길어지지 않게.
+    private(set) var blockedUntil: Date?
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForResource = 120
+        // 큰 화면설계서는 한 묶음 응답이 수십 MB라 2분으로는 끊긴다
+        configuration.timeoutIntervalForResource = 300
         return URLSession(configuration: configuration)
     }()
 
     func send(_ request: URLRequest, lane: Lane = .content) async throws -> Data {
+        if let blockedUntil, blockedUntil > Date() {
+            throw FigmaAPI.Failure.rateLimited(retryAfter: Int(blockedUntil.timeIntervalSinceNow.rounded(.up)))
+        }
+        var transient = 0
         for attempt in 0..<3 {
             // 기다리기 전에 차례를 먼저 잡는다. actor는 sleep 동안 다른 호출을 받아서, 나중에 잡으면 둘이 같이 나간다
             let slot = max(Date(), (last[lane] ?? .distantPast).addingTimeInterval(spacing(lane)))
             last[lane] = slot
             let wait = slot.timeIntervalSinceNow
             if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
-            let (data, response) = try await session.data(for: request)
+            let data: Data, response: URLResponse
+            do {
+                (data, response) = try await session.data(for: request)
+            } catch let error as URLError where [.timedOut, .networkConnectionLost].contains(error.code) && transient < 2 {
+                // 잠깐 끊긴 것이면 몇 초 쉬고 다시 보낸다 (큰 파일을 받다 한 묶음이 끊겨 전부 버리지 않게)
+                transient += 1
+                try await Task.sleep(nanoseconds: UInt64(transient * 3) * 1_000_000_000)
+                continue
+            }
             let http = response as? HTTPURLResponse
             guard let failure = FigmaAPI.failure(status: http?.statusCode ?? 0,
                                                  retryAfter: http?.value(forHTTPHeaderField: "Retry-After"), body: data) else {
@@ -96,6 +118,15 @@ actor FigmaClient {
             // 다시 보낼 때 간격만큼 더 기다리지 않고, 그사이 들어온 다른 호출도 그 뒤로 선다
             if case .rateLimited(let after) = failure, attempt < 2, let after, (0...300).contains(after) {
                 last[lane] = max(last[lane] ?? .distantPast, Date().addingTimeInterval(TimeInterval(after) - spacing(lane)))
+                continue
+            }
+            if case .rateLimited(let after) = failure {
+                blockedUntil = Date().addingTimeInterval(TimeInterval(after ?? 60))
+            }
+            // 피그마 쪽 일시 오류(502·503·504)는 한 번 더 보낸다
+            if case .server(let status) = failure, [500, 502, 503, 504].contains(status), transient < 2 {
+                transient += 1
+                try await Task.sleep(nanoseconds: UInt64(transient * 3) * 1_000_000_000)
                 continue
             }
             throw failure
@@ -147,11 +178,21 @@ final class DesignSync: ObservableObject {
     /// 주기를 바꾸면 다시 맞춘다.
     func reschedule() {
         timer?.invalidate()
-        // 프로젝트마다 주기가 달라 1분마다 둘러보고 때가 된 것만 받는다
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        // 프로젝트마다 주기가 달라 1분마다 둘러보고 때가 된 것만 받는다. 메뉴를 펼친 동안에도 돌게 .common에 건다
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+        // 깨어나면 망이 붙을 틈을 준 뒤 밀린 것을 받는다
+        if wakeObserver == nil {
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil,
+                                                                             queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) { Task { @MainActor in self?.tick() } }
+            }
+        }
     }
+    private var wakeObserver: NSObjectProtocol?
 
     /// 마지막으로 가져오려 한 때. 실패해도 주기만큼은 다시 묻지 않게 한다.
     private var attempted: [String: Date] = [:]
@@ -192,6 +233,14 @@ final class DesignSync: ObservableObject {
         }.map(\.fileKey))
     }
 
+    /// 실패한 프로젝트를 `date`에 다시 받게 마지막 시도 시각을 당겨 둔다 (주기를 정한 프로젝트만 저절로 받는다).
+    private func retry(_ fileKey: String, at date: Date) {
+        guard let source = settings.sources.first(where: { $0.fileKey == fileKey }) else { return }
+        let minutes = interval(for: source)
+        guard minutes > 0 else { return }
+        attempted[fileKey] = date.addingTimeInterval(-Double(minutes * 60))
+    }
+
     /// 마지막으로 받으려 한 때나 받은 때.
     func lastChecked(_ fileKey: String) -> Date {
         max(attempted[fileKey] ?? .distantPast, history.files[fileKey]?.syncedAt ?? .distantPast)
@@ -204,7 +253,17 @@ final class DesignSync: ObservableObject {
     func isBusy(_ fileKey: String) -> Bool { fetching == fileKey || queued.contains(fileKey) || (queuedAll && source(fileKey)?.isHidden == false) }
 
     /// 숨긴 프로젝트·메뉴를 뺀, 확인하지 않은 중요한 변경.
-    var unseenCount: Int { history.events.filter { $0.isImportant && !history.isSeen($0) && !isHidden($0) }.count }
+    /// 사이드바·메뉴바가 그릴 때마다 부르므로 기록이 바뀔 때만 다시 센다 (변경은 수천 건까지 쌓인다).
+    var unseenCount: Int {
+        let key = UnseenKey(events: history.events.count, last: history.events.last?.id, seen: history.seen.count + history.applied.count,
+                            hidden: settings.sources.map { "\($0.isHidden)\($0.hiddenMenus)" })
+        if let cached = unseenCache, cached.key == key { return cached.count }
+        let count = history.events.filter { $0.isImportant && !history.isSeen($0) && !isHidden($0) }.count
+        unseenCache = (key, count)
+        return count
+    }
+    private struct UnseenKey: Equatable { let events: Int; let last: UUID?; let seen: Int; let hidden: [String] }
+    private var unseenCache: (key: UnseenKey, count: Int)?
 
     func source(_ fileKey: String) -> DesignSource? { settings.sources.first { $0.fileKey == fileKey } }
 
@@ -353,8 +412,17 @@ final class DesignSync: ObservableObject {
                     errors[source.fileKey] = nil
                 } catch let failure as FigmaAPI.Failure {
                     errors[source.fileKey] = failure.message
+                    if case .rateLimited = failure {
+                        // 한도가 풀리면 다시 받게 그때로 미뤄 두고, 남은 프로젝트는 한도를 더 두드리지 않게 건너뛴다
+                        let until = await FigmaClient.shared.blockedUntil ?? Date().addingTimeInterval(60)
+                        for rest in sources { retry(rest.fileKey, at: until) }
+                        break
+                    }
+                    if case .server = failure { retry(source.fileKey, at: Date().addingTimeInterval(300)) }
                 } catch {
                     errors[source.fileKey] = error.localizedDescription
+                    // 깬 직후처럼 망이 잠깐 끊긴 것이면 주기를 통째로 기다리지 않고 5분 뒤 다시 받는다
+                    retry(source.fileKey, at: Date().addingTimeInterval(300))
                 }
             }
             persist()
@@ -542,6 +610,12 @@ final class DesignSync: ObservableObject {
 
     /// 연결 확인. 지켜보는 화면설계서가 있으면 실제로 읽어 본다 (가져오기에 필요한 범위는 file_content:read, 날짜 비교는 file_versions:read도 쓴다).
     /// 없으면 토큰이 맞는지만 본다. `/v1/me`는 current_user:read 범위가 따로 있어야 해서, 범위가 없다는 답은 토큰이 맞다는 뜻이다.
+    /// 토큰을 바꿔 연결이 되면 옛 토큰 때문에 남은 오류(만료·권한)를 지운다. 누를 때만 받는 프로젝트도 바로 깨끗해지게.
+    private func clearAuthErrors() {
+        let auth = Set([FigmaAPI.Failure.unauthorized.message, "피그마 토큰을 넣으세요"])
+        for (key, message) in errors where auth.contains(message) || message.hasPrefix("토큰에 ") { errors[key] = nil }
+    }
+
     func checkToken() async -> Result<String, FigmaAPI.Failure> {
         guard let token = settings.token else { return .failure(.unauthorized) }
         do {
@@ -549,10 +623,12 @@ final class DesignSync: ObservableObject {
                 for source in settings.sources {
                     _ = try FigmaAPI.parseFile(await FigmaClient.shared.send(FigmaAPI.fileRequest(fileKey: source.fileKey, token: token)))
                 }
+                clearAuthErrors()
                 return .success("연결됐습니다 · 화면설계서 \(settings.sources.count)개를 읽을 수 있습니다")
             }
             do {
                 let handle = try FigmaAPI.parseMe(await FigmaClient.shared.send(FigmaAPI.meRequest(token: token)))
+                clearAuthErrors()
                 return .success("연결됐습니다 · \(handle) 계정 토큰")
             } catch FigmaAPI.Failure.missingScope {
                 return .success("연결됐습니다 · 화면설계서를 더하면 읽을 수 있는지 바로 확인합니다")

@@ -76,6 +76,7 @@ public enum DesignSyncEngine {
     public static func run(source: DesignSource, token: String, known: DesignFileRecord?, transport: Transport,
                            progress: @Sendable (String) -> Void = { _ in }) async throws -> Outcome {
         let info = try FigmaAPI.parseFile(await transport(FigmaAPI.fileRequest(fileKey: source.fileKey, token: token)))
+        // 몇 분 걸려 받는 사이 디자이너가 고쳐도 모든 쪽이 처음 본 버전 그대로 오게 버전을 고정한다 (이후 그림과 변경 표시가 맞게)
         if let known, known.lastModified == info.lastModified { return .unchanged(info) }
 
         let pages = info.pages.filter { !FigmaAPI.isSkippedPage($0.name) && !source.skippedPages.contains($0.id) }
@@ -83,7 +84,7 @@ public enum DesignSyncEngine {
         for (index, page) in pages.enumerated() {
             progress("\(info.name): 페이지 살펴보는 중 \(index + 1)/\(pages.count)")
             let outline = try FigmaAPI.parseNodes(await transport(
-                FigmaAPI.outlineRequest(fileKey: source.fileKey, pageIDs: [page.id], token: token)))
+                FigmaAPI.outlineRequest(fileKey: source.fileKey, pageIDs: [page.id], version: info.version, token: token)))
             if let node = outline[page.id] { candidates += FigmaAPI.candidates(in: node, pageID: page.id) }
         }
 
@@ -104,7 +105,7 @@ public enum DesignSyncEngine {
         for (index, chunk) in chunks.enumerated() {
             progress("\(info.name): 화면 받는 중 \(index + 1)/\(chunks.count)")
             let nodes = try FigmaAPI.parseNodes(await transport(
-                FigmaAPI.nodesRequest(fileKey: source.fileKey, ids: chunk, token: token)))
+                FigmaAPI.nodesRequest(fileKey: source.fileKey, ids: chunk, version: info.version, token: token)))
             for id in chunk {
                 // null로 온 노드(받는 사이 지워졌거나 권한 없음)는 받지 않은 것으로 둔다
                 guard let node = nodes[id], let candidate = byID[id], let page = pageByID[candidate.pageID] else { continue }

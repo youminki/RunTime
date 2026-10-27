@@ -47,6 +47,20 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(WorkCapture.hostName("git.example.com") == "git.example.com")
     }
 
+    @Test func findsProjectAcrossRemotesAndSkipsMergedBranches() {
+        let remotes = "remote.origin.url https://github.com/me/x.git\nremote.upstream.url git@Git.Example.com:team/x.git"
+        #expect(WorkCapture.projectPath(remotes: remotes, host: "git.example.com", mrPaths: []) == "team/x")
+        let fork = "remote.origin.url git@git.example.com:me/x.git\nremote.upstream.url git@git.example.com:team/x.git"
+        #expect(WorkCapture.projectPath(remotes: fork, host: "git.example.com", mrPaths: ["team/x"]) == "team/x")
+        #expect(WorkCapture.namespacePath(remote: "https://git.example.com.evil.io/a/b.git", host: "git.example.com") == nil)
+        #expect(WorkCapture.branchName("refs/stash") == nil)
+        let mr = WorkCapture.MergedMR(path: "team/x", iid: 1, title: "t", description: "", sourceBranch: "feat/a",
+                                      mergedAt: Date(), targetBranch: "epic/login")
+        let refs = ["refs/remotes/origin/epic/login", "refs/heads/feat/a", "refs/remotes/origin/feat/b", "refs/heads/main"]
+        #expect(WorkCapture.mergedRefs([mr], path: "team/x", refs: refs) == ["refs/remotes/origin/epic/login", "refs/heads/feat/a"])
+        #expect(WorkCapture.mergedRefs([mr], path: "other/y", refs: refs).isEmpty)
+    }
+
     @Test func readsGitLogAndRemotes() {
         let text = "refs/remotes/origin/feat/x\u{1F}feat(dest): 연결 테스트\u{1F}2026-10-20T10:00:00+09:00\nrefs/tags/v1\u{1F}t\u{1F}2026-10-20T10:00:00+09:00"
         let commits = WorkCapture.parseCommits(text, path: "velox/portal")

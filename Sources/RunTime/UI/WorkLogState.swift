@@ -9,11 +9,29 @@ final class WorkLogPage: ObservableObject {
     @Published var mode = Mode.day
     /// 하루 보고서: 퇴근 때 올리는 진행 사항, 출근 때 올리는 진행 예정 사항. 오전에 열면 예정부터 보인다.
     enum DayReport: String, CaseIterable { case plan = "진행 예정", progress = "진행 사항" }
-    @Published var dayReport: DayReport = Calendar.current.component(.hour, from: Date()) < 12 ? .plan : .progress
+    @Published var dayReport: DayReport = WorkLogPage.defaultReport(for: WorkDay.today())
     /// 날짜별로 고쳐 쓴 진행 예정 사항과, 고칠 때 일지에서 만든 글. 일지가 바뀌면 알아채려고 함께 둔다.
     @Published var planEdits: [String: (text: String, base: String)] = [:]
     /// 고른 날. 바꾸면 왼쪽 달력도 그 달로 간다.
-    @Published var day = WorkDay.today() { didSet { calendarMonth = WorkDay.month(of: day).lowerBound } }
+    @Published var day = WorkDay.today() {
+        didSet {
+            calendarMonth = WorkDay.month(of: day).lowerBound
+            if day != oldValue { dayReport = Self.defaultReport(for: day) }
+        }
+    }
+
+    /// 오늘 오전이면 진행 예정, 그 밖에는 진행 사항 (지난날에 올릴 계획은 없다).
+    static func defaultReport(for day: String) -> DayReport {
+        day == WorkDay.today() && Calendar.current.component(.hour, from: Date()) < 12 ? .plan : .progress
+    }
+
+    /// 자정을 넘겨 창을 켜 둔 채면 어제 보던 화면에 머물러 새로 적는 줄이 어제로 들어간다. 오늘로 옮긴다
+    private lazy var dayChange: NSObjectProtocol = NotificationCenter.default.addObserver(
+        forName: .NSCalendarDayChanged, object: nil, queue: .main) { [weak self] _ in
+        guard let self else { return }
+        let yesterday = WorkDay.adding(-1, to: WorkDay.today())
+        if self.day == yesterday { self.resetToToday() }
+    }
     /// 왼쪽 달력에 보이는 달의 1일. 달력 화살표로는 고른 날을 두고 달력만 넘긴다.
     @Published var calendarMonth = WorkDay.month(of: WorkDay.today()).lowerBound
     @Published var search = ""
@@ -179,7 +197,9 @@ final class WorkLogPage: ObservableObject {
 
     /// 창을 다시 열면 오늘로 돌아온다. 자정을 넘겨 켜 둔 창이 어제에 머물지 않게.
     func resetToToday() {
+        _ = dayChange
         day = WorkDay.today()
+        dayReport = Self.defaultReport(for: day)
         editing = nil
         statusPicking = nil
     }

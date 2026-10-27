@@ -14,9 +14,12 @@ public enum WorkCapture {
         public let sourceBranch: String
         public let mergedAt: Date
         public let webURL: String
+        /// 머지한 브랜치. main이 아닌 브랜치(epic/…)로 머지한 커밋도 진행중으로 다시 잡지 않으려고 둔다.
+        public let targetBranch: String
 
         public init(path: String, iid: Int, title: String, description: String, sourceBranch: String,
-                    mergedAt: Date, webURL: String = "") {
+                    mergedAt: Date, webURL: String = "", targetBranch: String = "") {
+            self.targetBranch = targetBranch
             self.path = path
             self.iid = iid
             self.title = title
@@ -53,6 +56,7 @@ public enum WorkCapture {
             let title: String
             let description: String?
             let source_branch: String
+            let target_branch: String?
             let merged_at: String?
             let web_url: String?
             let references: References?
@@ -91,7 +95,7 @@ public enum WorkCapture {
                   let full = raw.references?.full, let bang = full.lastIndex(of: "!") else { return nil }
             return MergedMR(path: String(full[..<bang]), iid: raw.iid, title: raw.title,
                             description: raw.description ?? "", sourceBranch: raw.source_branch,
-                            mergedAt: merged, webURL: raw.web_url ?? "")
+                            mergedAt: merged, webURL: raw.web_url ?? "", targetBranch: raw.target_branch ?? "")
         }
     }
 
@@ -178,7 +182,28 @@ public enum WorkCapture {
             let name = String(rest[rest.index(after: slash)...])
             return name == "HEAD" ? nil : name
         }
-        return ref.isEmpty || ref == "HEAD" ? nil : ref
+        // refs/stash, refs/notes 같은 브랜치가 아닌 ref는 진행중 줄이 되지 않게 뺀다
+        return ref.isEmpty || ref == "HEAD" || ref.hasPrefix("refs/") ? nil : ref
+    }
+
+    /// 이미 머지된 MR의 대상·원본 브랜치 ref. 그 브랜치에 닿는 커밋은 MR 줄에 있으니 진행중으로 다시 적지 않는다.
+    public static func mergedRefs(_ mrs: [MergedMR], path: String, refs: [String]) -> [String] {
+        let names = Set(mrs.filter { $0.path == path }.flatMap { [$0.targetBranch, $0.sourceBranch] }.filter { !$0.isEmpty })
+        return refs.filter { ref in branchName(ref).map(names.contains) ?? false }
+    }
+
+    /// 저장소 원격들(`git config --get-regexp`의 `remote.<이름>.url <주소>`) 가운데 회사 GitLab 프로젝트 경로.
+    /// upstream → origin → 나머지 순서. 포크에서 일하면 MR은 대상(upstream) 프로젝트로 오므로 MR에 나온 경로를 먼저 쓴다.
+    public static func projectPath(remotes: String, host: String, mrPaths: Set<String>) -> String? {
+        let pairs = remotes.split(separator: "\n").compactMap { line -> (String, String)? in
+            let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let path = namespacePath(remote: parts[1], host: host) else { return nil }
+            let name = parts[0].replacingOccurrences(of: "remote.", with: "").replacingOccurrences(of: ".url", with: "")
+            return (name, path)
+        }
+        let rank = { (name: String) in name == "upstream" ? 0 : name == "origin" ? 1 : 2 }
+        let ordered = pairs.sorted { rank($0.0) < rank($1.0) }.map(\.1)
+        return ordered.first(where: mrPaths.contains) ?? ordered.first
     }
 
     /// 설정에 붙여 넣은 주소를 glab `--hostname` 꼴로: `https://git.example.com/` → `git.example.com`.
@@ -192,7 +217,9 @@ public enum WorkCapture {
 
     /// `https://git.example.com/velox/velox-web-portal.git`, `git@git.example.com:velox/x.git` → `velox/velox-web-portal`.
     public static func namespacePath(remote: String, host: String) -> String? {
-        guard let range = remote.range(of: host) else { return nil }
+        // 대소문자를 가리지 않고, 호스트 바로 뒤가 `:`·`/`일 때만 (git.example.com이 git.example.com.evil에 맞지 않게)
+        guard let range = remote.range(of: host, options: .caseInsensitive),
+              range.upperBound < remote.endIndex, [":", "/"].contains(remote[range.upperBound]) else { return nil }
         var path = String(remote[range.upperBound...])
         while let first = path.first, first == ":" || first == "/" { path.removeFirst() }
         if path.hasPrefix("~") { return nil }

@@ -128,3 +128,24 @@ import Testing
         #expect(html == "<b>주간 보고</b><br><b>[주간 진행 사항]</b><br><b>1. 포털 &lt;A&gt;</b><br>\u{2003}- 목록 &amp; 상세")
     }
 }
+
+@Suite struct CarryAndRecurringTests {
+    @Test func carryOverSkipsBranchLineAlreadyCapturedToday() {
+        let source = "branch:a/b:feat/x"
+        var log = WorkLog(projects: ["a"], entries: [
+            WorkEntry(day: "2026-10-26", project: "a", title: "로그인 마크업", status: .inProgress, source: source),
+            WorkEntry(day: "2026-10-26", project: "a", title: "  ", status: .inProgress),
+            WorkEntry(day: "2026-10-27", project: "a", title: "오늘 첫 커밋", status: .inProgress, source: source),
+        ])
+        #expect(log.carryCandidates(from: "2026-10-26", to: "2026-10-27").isEmpty)
+        log.entries.removeLast()
+        log.dismissed.insert("2026-10-27|" + source)
+        #expect(log.carryCandidates(from: "2026-10-26", to: "2026-10-27").isEmpty)
+    }
+
+    @Test func recurringSkipsSameTitleWrittenByHand() {
+        var log = WorkLog(projects: ["a"], entries: [WorkEntry(day: "2026-10-26", project: "a", title: "주간 회의 참석", status: .ongoing)])
+        log.recurring = [RecurringWork(project: "a", title: "주간회의 참석", weekdays: [2])]
+        #expect(log.applyRecurring(on: "2026-10-26") == 0)
+    }
+}

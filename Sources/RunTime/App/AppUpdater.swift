@@ -395,7 +395,10 @@ final class AppUpdater: ObservableObject {
         guard let branch = git(["rev-parse", "--abbrev-ref", "HEAD"], in: path) else {
             return .broken("git을 실행하지 못했습니다.")
         }
-        guard !FileManager.default.fileExists(atPath: NSHomeDirectory() + "/Library/Caches/RunTime/install.lock") else {
+        // 강제로 끝난 설치가 남긴 잠금(30분 넘음)은 install.sh가 치우므로 기다리지 않는다 (남은 잠금 때문에 업데이트가 영영 밀리지 않게)
+        let lock = NSHomeDirectory() + "/Library/Caches/RunTime/install.lock"
+        if let made = (try? FileManager.default.attributesOfItem(atPath: lock))?[.modificationDate] as? Date,
+           Date().timeIntervalSince(made) < 30 * 60 {
             return .wait("다른 설치가 진행 중이라 끝난 뒤 받습니다.")
         }
         // 업데이트 전용 폴더에서 설치한 빌드는 늘 그 폴더에서 다시 받는다 (브랜치 없이 커밋을 꺼내 두므로)

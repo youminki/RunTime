@@ -11,10 +11,12 @@ struct WorkLogPreview: View {
     @ObservedObject private var shots = MRScreenStore.shared
 
     var body: some View {
-        let updates = WorkReport.redmineUpdates(pendingEntries, log: store.log)
+        // 보고서 탭에서는 탭 제목의 건수만 필요해 가볍게 센다 (글자 하나 칠 때마다 전체를 다시 만들지 않게)
+        let updates = page.preview == .redmine ? WorkReport.redmineUpdates(pendingEntries, log: store.log) : []
+        let pendingCount = page.preview == .redmine ? updates.count : Set(pendingEntries.compactMap(\.issue)).count
         VStack(alignment: .leading, spacing: 14) {
             PageTabs(items: [(WorkLogPage.Preview.report, reportTitle),
-                             (WorkLogPage.Preview.redmine, updates.isEmpty ? "레드마인" : "레드마인 \(updates.count)")],
+                             (WorkLogPage.Preview.redmine, pendingCount == 0 ? "레드마인" : "레드마인 \(pendingCount)")],
                      selection: $page.preview, fill: true)
             switch page.preview {
             case .report: report
@@ -110,7 +112,7 @@ struct WorkLogPreview: View {
         switch page.mode {
         case .day, .issues:
             if isPlan { return page.planEdits[page.day]?.text ?? generatedPlan }
-            return WorkReport.daily(scopeEntries, in: store.log, doneFirst: settings.doneFirst, byIssue: settings.reportByIssue,
+            return WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: settings.reportByIssue,
                                     grouped: grouped)
         default:
             // 주간·월간은 첫 줄이 머리줄이다
@@ -133,16 +135,17 @@ struct WorkLogPreview: View {
         switch page.mode {
         case .day, .issues:
             let body = reportBody
-            return body.isEmpty || !settings.dailyHeader ? body : dayHeader + "\n" + body
+            // 머리줄(`[10/27 금일 진행 사항]`)은 팀즈에 올릴 때와 같게 늘 붙인다
+            return body.isEmpty ? body : dayHeader + "\n" + body
         case .week:
             return WorkReport.weekly(scopeEntries, in: store.log, week: WorkDay.week(of: page.day),
-                                     doneFirst: settings.doneFirst, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue,
+                                     doneFirst: true, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue,
                                      grouped: grouped)
         case .month:
             return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: settings.reportByIssue,
                                       grouped: grouped)
         case .project:
-            return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: settings.doneFirst,
+            return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: true,
                                     byIssue: settings.reportByIssue, grouped: grouped)
         }
     }
@@ -180,14 +183,6 @@ struct WorkLogPreview: View {
                     .tip("일감 줄은 `데이터 수집 > 공유 파일 관리 API 연동 (100%)`처럼, QA 건은 `QA 수정사항 N건 반영`으로 적습니다")
                 Toggle("같은 메뉴는 묶어 쓰기", isOn: $settings.reportGrouped)
                     .tip("`데이터 수집 > 수집 관리`처럼 앞 경로가 같은 줄이 둘 이상이면 경로를 한 번만 적고 그 아래 `· 끝 이름 (상태)`로 늘어놓습니다")
-                if page.mode == .day || page.mode == .issues {
-                    Toggle("맨 위에 \(dayHeader) 붙이기", isOn: $settings.dailyHeader)
-                        .tip("복사할 때 맨 위에 붙입니다. 팀즈에는 켜고 끄는 것과 상관없이 늘 이 줄을 제목으로 올립니다")
-                }
-                // 진행 예정에는 상태가 없어 순서도 쓰지 않는다
-                if page.mode != .month && !isPlan {
-                    Toggle("상시 → 완료 → 진행 순서로", isOn: $settings.doneFirst)
-                }
                 if page.mode == .week {
                     Toggle("끝나지 않은 일을 [차주 계획]으로", isOn: $settings.weeklyPlan)
                 }
@@ -240,11 +235,9 @@ struct WorkLogPreview: View {
         return VStack(alignment: .trailing, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
                 // 머리줄은 진행 사항 보고서처럼 글 맨 위에 보이되, 날짜에서 만들므로 고쳐 쓰지는 않는다
-                if settings.dailyHeader {
-                    Text(dayHeader).font(.system(size: 13)).foregroundStyle(WL.text)
-                        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
-                        .textSelection(.enabled)
-                }
+                Text(dayHeader).font(.system(size: 13)).foregroundStyle(WL.text)
+                    .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
+                    .textSelection(.enabled)
                 ReportText(text: page.planEdits[page.day]?.text ?? generated, placeholder: false) { text in
                     let base = page.planEdits[page.day]?.base ?? generated
                     page.planEdits[page.day] = text == generated ? nil : (text, base)
@@ -257,7 +250,7 @@ struct WorkLogPreview: View {
                 if reportBody.isEmpty {
                     Text("어제 끝내지 못한 일과 오늘 적은 일로 만들어집니다. 여기에 바로 써도 됩니다.")
                         .font(.system(size: 13)).foregroundStyle(.tertiary)
-                        .padding(.horizontal, 16).padding(.top, settings.dailyHeader ? 32 : 14).allowsHitTesting(false)
+                        .padding(.horizontal, 16).padding(.top, 32).allowsHitTesting(false)
                 }
             }
             HStack(spacing: 10) {
