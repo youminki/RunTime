@@ -28,7 +28,9 @@ final class MRScreenStore: ObservableObject {
 
     private var noMR: Set<Origin> = []
     private var data: [String: Data] = [:]
-    private var failed: Set<Ref> = []
+    /// 받지 못한 MR·브랜치는 이 시각까지 다시 받지 않는다. 망이 끊긴 동안 화면을 그릴 때마다 glab을 부르지 않게.
+    private var failed: [Ref: Date] = [:]
+    private var retryAt: [Origin: Date] = [:]
     private let queue = DispatchQueue(label: "dev.runtime.worklog.screens", qos: .utility)
     private let lock = NSLock()
 
@@ -76,9 +78,9 @@ final class MRScreenStore: ObservableObject {
     /// 아직 받지 않은 MR의 화면을 받는다. 메인 스레드에서 부른다.
     func load(_ origins: [Origin], host: String) {
         let todo = origins.filter { origin in
-            guard !loading.contains(origin), !noMR.contains(origin) else { return false }
+            guard !loading.contains(origin), !noMR.contains(origin), (retryAt[origin] ?? .distantPast) < Date() else { return false }
             guard let ref = ref(origin) else { return true }
-            return screens[ref] == nil && !failed.contains(ref)
+            return screens[ref] == nil && (failed[ref] ?? .distantPast) < Date()
         }
         guard !todo.isEmpty, !host.isEmpty else { return }
         loading.formUnion(todo)
@@ -87,7 +89,8 @@ final class MRScreenStore: ObservableObject {
             // MR마다 glab 호출과 그림 받기가 1~2초씩 걸려, 한 장씩 차례로 받으면 아래 카드가 오래 기다린다
             DispatchQueue.concurrentPerform(iterations: todo.count) { index in
                 let origin = todo[index]
-                let ref = Self.resolve(origin, host: host)
+                let resolved = Result { try Self.resolve(origin, host: host) }
+                let ref = try? resolved.get()
                 let found = ref.flatMap { try? Self.fetchScreens($0, host: host) }
                 var images: [String: Data] = [:]
                 if let ref {
@@ -97,9 +100,11 @@ final class MRScreenStore: ObservableObject {
                 }
                 DispatchQueue.main.async {
                     self.loading.remove(origin)
-                    guard let ref else { self.noMR.insert(origin); return }
+                    // GitLab에 닿지 못한 것과 MR이 정말 없는 것을 나눠, 앞의 것은 5분 뒤 다시 찾는다
+                    guard case .success(let resolvedRef) = resolved else { self.retryAt[origin] = Date().addingTimeInterval(300); return }
+                    guard let ref = resolvedRef else { self.noMR.insert(origin); return }
                     if case .branch = origin { self.branchMRs[origin] = ref }
-                    guard let found else { self.failed.insert(ref); return }
+                    guard let found else { self.failed[ref] = Date().addingTimeInterval(300); return }
                     self.screens[ref] = found
                     for (path, bytes) in images { self.thumbnails[path] = NSImage(data: bytes) }
                 }
@@ -110,7 +115,7 @@ final class MRScreenStore: ObservableObject {
     /// 보내는 큐에서 부른다. 브랜치면 MR을 찾아 둔 것을 쓰고, 없으면 지금 찾는다.
     func refForSending(_ origin: Origin, host: String) -> Ref? {
         if let known = DispatchQueue.main.sync(execute: { ref(origin) }) { return known }
-        return Self.resolve(origin, host: host)
+        return (try? Self.resolve(origin, host: host)) ?? nil
     }
 
     /// 보내는 큐에서 부른다. 미리 받아 둔 것이 있으면 쓰고, 없으면 지금 받는다.
@@ -125,13 +130,23 @@ final class MRScreenStore: ObservableObject {
         let cached = data[path]
         lock.unlock()
         if let cached { return cached }
-        guard let token = Self.token(host: host),
-              let url = URL(string: "https://\(host)/\(ref.path)\(path)") else { return nil }
-        var request = URLRequest(url: url)
-        // 토큰은 주소가 아닌 머리글로 보내 서버 접근 기록에 남지 않게 한다
-        request.setValue(token, forHTTPHeaderField: "PRIVATE-TOKEN")
-        request.timeoutInterval = 30
-        guard let (bytes, response) = Self.load(request),
+        guard let url = URL(string: "https://\(host)/\(ref.path)\(path)") else { return nil }
+        func fetch(bearer: Bool) -> (Data, URLResponse)? {
+            guard let token = Self.token(host: host) else { return nil }
+            var request = URLRequest(url: url)
+            // 토큰은 주소가 아닌 머리글로 보내 서버 접근 기록에 남지 않게 한다
+            if bearer { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            else { request.setValue(token, forHTTPHeaderField: "PRIVATE-TOKEN") }
+            request.timeoutInterval = 30
+            return Self.load(request)
+        }
+        var result = fetch(bearer: false)
+        if (result?.1 as? HTTPURLResponse)?.statusCode == 401 {
+            // 웹으로 로그인한 glab 토큰은 OAuth라 두 시간쯤 뒤 바뀌고 Bearer로 받아야 한다
+            Self.dropToken(host: host)
+            result = fetch(bearer: true)
+        }
+        guard let (bytes, response) = result,
               (response as? HTTPURLResponse)?.statusCode == 200,
               (response.mimeType ?? "").hasPrefix("image/")
         else { return nil }
@@ -158,9 +173,10 @@ final class MRScreenStore: ObservableObject {
         for origin in origins {
             if let ref = ref(origin) {
                 screens[ref] = nil
-                failed.remove(ref)
+                failed[ref] = nil
             }
             noMR.remove(origin)
+            retryAt[origin] = nil
             if case .branch = origin { branchMRs[origin] = nil }
         }
     }
@@ -168,7 +184,8 @@ final class MRScreenStore: ObservableObject {
     // MARK: - GitLab
 
     /// 브랜치로 연 MR (열린 것과 머지된 것, 가장 최근 것). 닫힌 MR은 화면이 지금 코드와 다를 수 있어 뺀다.
-    private static func resolve(_ origin: Origin, host: String) -> Ref? {
+    /// MR이 없으면 nil, GitLab에 묻지 못하면 던진다.
+    private static func resolve(_ origin: Origin, host: String) throws -> Ref? {
         switch origin {
         case .mr(let ref):
             return ref
@@ -176,9 +193,9 @@ final class MRScreenStore: ObservableObject {
             struct MR: Decodable { let iid: Int; let state: String }
             let project = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? path
             let name = branch.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? branch
-            guard let data = try? WorkLogSync.glab(host: host, "projects/\(project)/merge_requests?source_branch=\(name)&state=all"),
-                  let list = try? JSONDecoder().decode([MR].self, from: data),
-                  let mr = list.filter({ $0.state != "closed" }).max(by: { $0.iid < $1.iid })
+            let data = try WorkLogSync.glab(host: host, "projects/\(project)/merge_requests?source_branch=\(name)&state=all")
+            guard let mr = try JSONDecoder().decode([MR].self, from: data)
+                .filter({ $0.state != "closed" }).max(by: { $0.iid < $1.iid })
             else { return nil }
             return Ref(path: path, iid: mr.iid)
         }
@@ -189,8 +206,10 @@ final class MRScreenStore: ObservableObject {
         struct MR: Decodable { let description: String? }
         struct Note: Decodable { let body: String; let system: Bool }
         let mr = try JSONDecoder().decode(MR.self, from: WorkLogSync.glab(host: host, "projects/\(project)/merge_requests/\(ref.iid)"))
-        let notes = try JSONDecoder().decode([Note].self, from: WorkLogSync.glab(
-            host: host, "projects/\(project)/merge_requests/\(ref.iid)/notes?sort=asc&order_by=created_at&per_page=100"))
+        // 댓글이 100개를 넘는 MR도 뒤에 단 검증 화면까지 보게 모든 쪽을 받는다
+        let pages = WorkCapture.topLevelJSON(try WorkLogSync.glab(
+            host: host, "projects/\(project)/merge_requests/\(ref.iid)/notes?sort=asc&order_by=created_at&per_page=100", paginate: true))
+        let notes = try pages.flatMap { try JSONDecoder().decode([Note].self, from: $0) }
         return MRScreens.screens(description: mr.description ?? "", notes: notes.filter { !$0.system }.map(\.body))
     }
 
@@ -205,6 +224,12 @@ final class MRScreenStore: ObservableObject {
         guard let text = try? WorkLogSync.glabText(["config", "get", "token", "--host", host]), !text.isEmpty else { return nil }
         tokens[host] = text
         return text
+    }
+
+    private static func dropToken(host: String) {
+        tokenLock.lock()
+        tokens[host] = nil
+        tokenLock.unlock()
     }
 
     private static func load(_ request: URLRequest) -> (Data, URLResponse)? {

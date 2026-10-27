@@ -11,6 +11,8 @@ final class WorkLogSettings: ObservableObject {
 
     /// 회사 GitLab 주소 (glab에 로그인한 곳).
     @Published var gitlabHost: String { didSet { defaults.set(gitlabHost, forKey: "workLog.gitlabHost") } }
+    /// `https://`나 경로를 붙여 적어도 glab이 읽는 호스트 이름.
+    var gitlabHostName: String { WorkCapture.hostName(gitlabHost) }
     @Published var captureEnabled: Bool { didSet { defaults.set(captureEnabled, forKey: "workLog.capture") } }
     /// 로컬 커밋을 찾을 폴더. 두 단계 아래까지 본다.
     @Published var repoFolder: String { didSet { defaults.set(repoFolder, forKey: "workLog.repoFolder") } }
@@ -154,8 +156,11 @@ final class WorkLogSettings: ObservableObject {
 
     /// glab 설정에 있는 gitlab.com 밖의 첫 호스트.
     static func detectGitLabHost() -> String? {
-        let path = NSHomeDirectory() + "/Library/Application Support/glab-cli/config.yml"
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        // 예전 glab은 ~/.config/glab-cli에 둔다
+        let paths = [ProcessInfo.processInfo.environment["GLAB_CONFIG_DIR"].map { $0 + "/config.yml" },
+                     NSHomeDirectory() + "/Library/Application Support/glab-cli/config.yml",
+                     NSHomeDirectory() + "/.config/glab-cli/config.yml"].compactMap { $0 }
+        guard let text = paths.lazy.compactMap({ try? String(contentsOfFile: $0, encoding: .utf8) }).first else { return nil }
         var inHosts = false
         var hostIndent: Int?
         for line in text.components(separatedBy: .newlines) {
@@ -255,6 +260,8 @@ final class WorkLogSync: ObservableObject {
     static let shared = WorkLogSync()
 
     @Published private(set) var capturing = false
+    /// 가져오는 중에 들어온 completion. 끝난 뒤 함께 불러 알림이 가져오기 전 줄 수로 나가지 않게 한다.
+    private var captureWaiters: [() -> Void] = []
     @Published private(set) var lastCapture: Date?
     @Published private(set) var captureError: String?
     @Published private(set) var lastAdded = 0
@@ -303,33 +310,36 @@ final class WorkLogSync: ObservableObject {
 
     func capture(completion: (() -> Void)? = nil) {
         guard !capturing else {
-            completion?()
+            if let completion { captureWaiters.append(completion) }
             return
         }
-        let host = settings.gitlabHost.trimmingCharacters(in: .whitespaces)
+        let host = settings.gitlabHostName
         guard !host.isEmpty else {
             captureError = "GitLab 주소를 설정하세요"
             completion?()
             return
         }
         capturing = true
-        let folder = settings.repoFolder
+        let folder = (settings.repoFolder as NSString).expandingTildeInPath
         // 지난번 가져온 날의 앞날 0시부터. 처음이거나 일지에 가져온 줄이 없으면 지난 7일.
         let calendar = WorkDay.calendar
         let hasCaptured = store.log.entries.contains { $0.source != nil }
         let last = hasCaptured ? defaults.object(forKey: "workLog.lastCapture") as? Date : nil
-        let start = last ?? Date().addingTimeInterval(-6 * 86_400)
+        // 오래 꺼 두었거나 실패가 이어져도 14일보다 앞은 받지 않는다 (쪽이 늘어 시간 초과로 다시 실패하지 않게)
+        let start = max(last ?? Date().addingTimeInterval(-6 * 86_400), Date().addingTimeInterval(-14 * 86_400))
         let since = calendar.date(byAdding: .day, value: last == nil ? 0 : -1, to: calendar.startOfDay(for: start)) ?? start
         queue.async { [weak self] in
             var errors: [String] = []
             var mrs: [WorkCapture.MergedMR] = []
             var commits: [WorkCapture.Commit] = []
+            var gotMRs = false
             do {
                 mrs = try Self.fetchMRs(host: host, since: since)
+                gotMRs = true
                 // MR을 못 받은 채 커밋만 넣으면 이미 머지된 브랜치가 진행중으로 남아, MR을 받을 때만 커밋도 넣는다
                 commits = Self.localCommits(folder: folder, host: host, since: since, errors: &errors)
             } catch {
-                errors.append("GitLab: \(error.localizedDescription)")
+                errors.append("GitLab: \(Self.gitLabHint(error.localizedDescription, host: host))")
             }
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -338,28 +348,55 @@ final class WorkLogSync: ObservableObject {
                 self.capturing = false
                 self.lastCapture = Date()
                 self.captureError = errors.first
-                if errors.isEmpty { self.defaults.set(Date(), forKey: "workLog.lastCapture") }
+                // 저장소 하나의 git 오류로 기간이 멈추지 않게, MR을 받았으면 다음엔 그 뒤부터 받는다
+                if gotMRs { self.defaults.set(Date(), forKey: "workLog.lastCapture") }
                 completion?()
+                let waiters = self.captureWaiters
+                self.captureWaiters = []
+                waiters.forEach { $0() }
             }
         }
     }
 
     private static func fetchMRs(host: String, since: Date) throws -> [WorkCapture.MergedMR] {
         let iso = ISO8601DateFormatter().string(from: since)
-        let output = try run(glabPath(), ["api", "--paginate", "--hostname", host,
-                                          "merge_requests?scope=created_by_me&state=merged&updated_after=\(iso)&per_page=100"])
+        let output = try glab(host: host, "merge_requests?scope=created_by_me&state=merged&updated_after=\(iso)&per_page=100",
+                              paginate: true)
         return try WorkCapture.parseMRs(output)
     }
 
+    /// 다른 Mac에서 흔한 실패는 할 일을 함께 알린다.
+    static func gitLabHint(_ message: String, host: String) -> String {
+        let lower = message.lowercased()
+        if lower.contains("401") || lower.contains("unauthorized") || lower.contains("invalid_token")
+            || lower.contains("no token") || lower.contains("not authenticated") || lower.contains("authentication") {
+            return "로그인이 필요합니다. 터미널에서 glab auth login --hostname \(host)"
+        }
+        if lower.contains("timeout") || lower.contains("no such host") || lower.contains("connection refused")
+            || lower.contains("network is unreachable") {
+            return "\(host)에 닿지 않습니다. VPN이나 회사망 연결을 확인하세요"
+        }
+        if lower.contains("403") || lower.contains("forbidden") || lower.contains("insufficient_scope") {
+            return "토큰 권한이 모자랍니다. api 권한으로 glab auth login --hostname \(host)"
+        }
+        return message
+    }
+
+    static var glabInstalled: Bool { (try? glabPath()) != nil }
+
     private static func glabPath() throws -> String {
-        guard let glab = ["/opt/homebrew/bin/glab", "/usr/local/bin/glab"].first(where: FileManager.default.isExecutableFile)
-        else { throw SyncError("glab이 없습니다. brew install glab 뒤 glab auth login") }
+        let candidates = ["/opt/homebrew/bin/glab", "/usr/local/bin/glab", "/opt/local/bin/glab",
+                          NSHomeDirectory() + "/.local/bin/glab", NSHomeDirectory() + "/bin/glab"]
+        guard let glab = candidates.first(where: FileManager.default.isExecutableFile)
+        else { throw SyncError("glab이 없습니다. 터미널에서 brew install glab 뒤 glab auth login") }
         return glab
     }
 
     /// GitLab API 한 번 (`glab api`).
-    static func glab(host: String, _ endpoint: String) throws -> Data {
-        try run(glabPath(), ["api", "--hostname", host, endpoint])
+    /// 여러 쪽을 받을 때는 쪽마다 1~2초씩 걸려 시간을 넉넉히 준다.
+    static func glab(host: String, _ endpoint: String, paginate: Bool = false) throws -> Data {
+        try run(glabPath(), ["api"] + (paginate ? ["--paginate"] : []) + ["--hostname", host, endpoint],
+                timeout: paginate ? 120 : 30)
     }
 
     static func glabText(_ args: [String]) throws -> String {
@@ -370,11 +407,21 @@ final class WorkLogSync: ObservableObject {
     private static func localCommits(folder: String, host: String, since: Date, errors: inout [String]) -> [WorkCapture.Commit] {
         let iso = ISO8601DateFormatter().string(from: since)
         var commits: [WorkCapture.Commit] = []
+        var noEmail: [String] = []
+        defer {
+            // 회사 저장소인데 작성자를 몰라 건너뛰면 진행중 줄이 조용히 비므로 알린다
+            if !noEmail.isEmpty {
+                errors.append("git user.email이 없어 건너뛴 저장소: \(noEmail.prefix(3).joined(separator: ", "))\(noEmail.count > 3 ? " 외 \(noEmail.count - 3)개" : "")")
+            }
+        }
         for repo in repositories(in: folder) {
             guard let remote = try? text(run("/usr/bin/git", ["-C", repo, "remote", "get-url", "origin"])),
-                  let path = WorkCapture.namespacePath(remote: remote, host: host),
-                  let email = try? text(run("/usr/bin/git", ["-C", repo, "config", "user.email"])), !email.isEmpty
+                  let path = WorkCapture.namespacePath(remote: remote, host: host)
             else { continue }
+            guard let email = try? text(run("/usr/bin/git", ["-C", repo, "config", "user.email"])), !email.isEmpty else {
+                noEmail.append(URL(fileURLWithPath: repo).lastPathComponent)
+                continue
+            }
             do {
                 let refs = try text(run("/usr/bin/git", ["-C", repo, "for-each-ref", "--format=%(refname)", "refs/remotes"]))
                 // main·dev·release에 이미 들어간 커밋은 MR 줄에 있으니, 아직 머지 전인 커밋만 받는다
@@ -408,7 +455,7 @@ final class WorkLogSync: ObservableObject {
         return repos
     }
 
-    private static func run(_ tool: String, _ args: [String]) throws -> Data {
+    private static func run(_ tool: String, _ args: [String], timeout: TimeInterval = 30) throws -> Data {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = args
@@ -416,6 +463,7 @@ final class WorkLogSync: ObservableObject {
         // 메뉴바 앱은 셸 PATH를 물려받지 않아 glab이 git을 찾도록 넣어 준다
         environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         environment["GIT_TERMINAL_PROMPT"] = "0"
+        environment["GLAB_NO_PROMPT"] = "1"
         environment["NO_PROMPT"] = "1"
         process.environment = environment
         let out = Pipe(), err = Pipe()
@@ -423,7 +471,7 @@ final class WorkLogSync: ObservableObject {
         process.standardError = err
         process.standardInput = FileHandle.nullDevice
         try process.run()
-        // 두 파이프를 함께 비워야 한쪽이 가득 차 멈추지 않는다. 망이 끊겨 glab이 멈추면 30초 뒤 끊는다
+        // 두 파이프를 함께 비워야 한쪽이 가득 차 멈추지 않는다. 망이 끊겨 glab이 멈추면 timeout 뒤 끊는다
         var errorData = Data()
         let group = DispatchGroup()
         group.enter()
@@ -432,17 +480,23 @@ final class WorkLogSync: ObservableObject {
             group.leave()
         }
         let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30, execute: watchdog)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: watchdog)
         let data = out.fileHandleForReading.readDataToEndOfFile()
         group.wait()
         process.waitUntilExit()
         watchdog.cancel()
         if process.terminationReason == .uncaughtSignal {
-            throw SyncError("\(URL(fileURLWithPath: tool).lastPathComponent)이 30초 안에 끝나지 않았습니다")
+            throw SyncError("응답이 느려 \(Int(timeout))초 뒤 멈췄습니다. 잠시 뒤 다시 가져오세요")
         }
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw SyncError(message.isEmpty ? "\(URL(fileURLWithPath: tool).lastPathComponent) 실패" : String(message.prefix(160)))
+            // glab은 오류를 색과 빈 줄로 꾸민 ERROR 상자에 담아 낸다
+            let message = String(decoding: errorData, as: UTF8.self)
+                .replacingOccurrences(of: #"\u{1B}\[[0-9;]*[A-Za-z]"#, with: "", options: .regularExpression)
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty && $0 != "ERROR" && !$0.hasPrefix("DEPRECATION WARNING") }
+                .joined(separator: " ")
+            throw SyncError(message.isEmpty ? "\(URL(fileURLWithPath: tool).lastPathComponent) 실패" : String(message.prefix(200)))
         }
         return data
     }
@@ -694,7 +748,7 @@ final class WorkLogSync: ObservableObject {
         }
         let known = Dictionary(uniqueKeysWithValues: updates.compactMap { update in store.log.issue(update.issue).map { (update.issue, $0) } })
         // 줄이 MR에서 왔으면 그 MR의 수정 전·후 화면을 함께 붙인다. 이미 붙여 보낸 MR은 다시 붙이지 않는다
-        let host = settings.gitlabHost.trimmingCharacters(in: .whitespaces)
+        let host = settings.gitlabHostName
         var attach: [Int: (origins: [MRScreenStore.Origin], previous: String)] = [:]
         // 화면은 댓글에 붙으므로 댓글을 빼고 보내는 일감에는 붙이지 않는다
         for update in updates where settings.attachScreens && !withoutScreens.contains(update.issue)

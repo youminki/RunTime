@@ -889,7 +889,7 @@ struct WorkLogPreview: View {
         guard settings.attachScreens else { return }
         let ids = Set(updates.flatMap(\.entryIDs))
         let origins = MRScreenStore.origins(store.log.entries.filter { ids.contains($0.id) }.map(\.source))
-        shots.load(origins, host: settings.gitlabHost.trimmingCharacters(in: .whitespaces))
+        shots.load(origins, host: settings.gitlabHostName)
     }
 
     /// 썸네일 하나. 캡처가 없으면 빈 칸으로 두어 어느 쪽이 빠졌는지 보인다. 누르면 원본을 연다.

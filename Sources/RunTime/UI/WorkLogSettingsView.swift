@@ -94,9 +94,10 @@ struct WorkLogSettingsView: View {
             SettingRow("자동으로 가져오기", "10분마다, 그리고 업무 일지를 열 때 가져옵니다.") {
                 Toggle("", isOn: $settings.captureEnabled).toggleStyle(.switch).labelsHidden()
             }
-            SettingRow("GitLab 주소", "glab에 로그인한 회사 GitLab입니다.") {
+            SettingRow("GitLab 주소", WorkLogSync.glabInstalled ? "glab에 로그인한 회사 GitLab입니다." : "glab이 없습니다. 터미널에서 brew install glab 뒤 glab auth login",
+                       detailTint: WorkLogSync.glabInstalled ? nil : WL.waiting) {
                 HStack(spacing: 6) {
-                    TextField("git.example.com", text: $settings.gitlabHost).textFieldStyle(.roundedBorder).frame(width: 190)
+                    TextField("git.example.com", text: $settings.gitlabHost).textFieldStyle(.roundedBorder).frame(width: 240)
                     Button("glab에서 찾기") {
                         if let host = WorkLogSettings.detectGitLabHost() { settings.gitlabHost = host; page.flash("\(host)를 찾았습니다") }
                         else { page.flash("glab 설정에서 회사 GitLab을 찾지 못했습니다") }
@@ -104,18 +105,50 @@ struct WorkLogSettingsView: View {
                     .buttonStyle(NotionButtonStyle())
                 }
             }
-            SettingRow("저장소 폴더", "이 폴더와 그 아래 폴더의 저장소에서 내 커밋을 찾습니다.") {
+            SettingRow("저장소 폴더", repoFolderExists ? "이 폴더와 그 아래 폴더의 저장소에서 내 커밋을 찾습니다." : "폴더가 없습니다. 고르기로 저장소를 둔 폴더를 고르세요.",
+                       detailTint: repoFolderExists ? nil : WL.waiting) {
                 HStack(spacing: 6) {
-                    TextField("~/GitHub", text: $settings.repoFolder).textFieldStyle(.roundedBorder).frame(width: 190)
+                    TextField("~/GitHub", text: $settings.repoFolder).textFieldStyle(.roundedBorder).frame(width: 240)
+                        .help(settings.repoFolder)
                     Button("고르기") { chooseFolder() }.buttonStyle(NotionButtonStyle())
                 }
             }
             SettingRow("상태", captureStatus, detailTint: sync.captureError == nil ? nil : WL.waiting) {
-                Button(sync.capturing ? "가져오는 중…" : "지금 가져오기") { sync.capture { page.flash("\(sync.lastAdded)줄을 가져왔습니다") } }
+                HStack(spacing: 6) {
+                    if let command = fixCommand {
+                        Button("명령 복사") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(command, forType: .string)
+                            page.flash("터미널에 붙여 넣어 실행하세요")
+                        }
+                        .buttonStyle(NotionButtonStyle())
+                        .help(command)
+                    }
+                    Button(sync.capturing ? "가져오는 중…" : "지금 가져오기") {
+                        sync.capture {
+                            if sync.captureError != nil { page.flash("가져오지 못했습니다. 상태를 확인하세요") }
+                            else { page.flash(sync.lastAdded == 0 ? "새로 들어온 줄이 없습니다" : "\(sync.lastAdded)줄을 가져왔습니다") }
+                        }
+                    }
                     .buttonStyle(NotionButtonStyle())
-                    .disabled(sync.capturing || settings.gitlabHost.isEmpty)
+                    .disabled(sync.capturing || settings.gitlabHostName.isEmpty)
+                }
             }
         }
+    }
+
+    private var repoFolderExists: Bool {
+        var directory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: (settings.repoFolder as NSString).expandingTildeInPath, isDirectory: &directory)
+            && directory.boolValue
+    }
+
+    /// 오류 문구가 알려 준 터미널 명령 (`glab auth login --hostname …`, `brew install glab`).
+    private var fixCommand: String? {
+        guard let error = sync.captureError else { return nil }
+        if let range = error.range(of: "glab auth login") { return String(error[range.lowerBound...]) }
+        if error.contains("brew install glab") { return "brew install glab && glab auth login --hostname \(settings.gitlabHostName)" }
+        return nil
     }
 
     private var captureStatus: String {
@@ -398,7 +431,7 @@ struct WorkLogSettingsView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.directoryURL = URL(fileURLWithPath: (settings.repoFolder as NSString).expandingTildeInPath)
-        if panel.runModal() == .OK, let url = panel.url { settings.repoFolder = url.path }
+        if panel.runModal() == .OK, let url = panel.url { settings.repoFolder = (url.path as NSString).abbreviatingWithTildeInPath }
     }
 }
 

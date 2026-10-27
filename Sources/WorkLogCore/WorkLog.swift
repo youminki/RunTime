@@ -389,12 +389,19 @@ public enum WorkDay {
         return f
     }()
 
+    /// 보내는 큐와 메인 스레드가 함께 부르므로 시간대를 바꾸고 쓰는 동안 잠근다.
+    private static let formatterLock = NSLock()
+
     public static func key(_ date: Date) -> String {
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
         formatter.timeZone = .current
         return formatter.string(from: date)
     }
 
     public static func date(_ key: String) -> Date? {
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
         formatter.timeZone = .current
         return formatter.date(from: key)
     }

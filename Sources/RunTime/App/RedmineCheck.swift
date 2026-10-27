@@ -80,7 +80,7 @@ enum RedmineCheck {
         let fields = sync.fields(for: update)
         print("진척률: \(update.doneRatio.map { "\($0)%" } ?? "그대로"), 상태: \(store.log.issue(issue)?.status ?? "?") → \(fields.status?.name ?? "그대로")")
         let html = settings.redmineHTML
-        let host = settings.gitlabHost
+        let host = settings.gitlabHostName
         DispatchQueue.global().async {
             let refs = MRScreenStore.shared.refsForSending(origins, host: host)
             print("MR: " + (refs.isEmpty ? "없음 (\(origins))" : refs.map { "\($0.path)!\($0.iid)" }.joined(separator: ", ")))

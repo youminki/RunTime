@@ -49,11 +49,54 @@ public enum TeamsWebhook {
     public static func failure(status: Int?, body: Data) -> String {
         let text = String(decoding: body, as: UTF8.self)
         if text.contains("DirectApiAuthorizationRequired") || status == 401 {
-            return "워크플로가 회사 계정 인증을 요구합니다. 워크플로 편집 > ‘팀즈 웹후크 요청을 받은 경우’ > ‘흐름을 트리거할 수 있는 사람’을 ‘누구나’로 바꾸고 저장한 뒤 새 주소를 넣으세요."
+            return "워크플로가 회사 계정 인증을 요구합니다. ‘흐름을 트리거할 수 있는 사람’을 ‘누구나’로 바꿔야 합니다."
         }
         if status == 404 { return "워크플로를 찾지 못했습니다. 지웠거나 꺼져 있는지 보세요. (404)" }
         if status == 400 { return "워크플로가 카드 꼴을 받지 않았습니다. ‘웹후크 경고를 채팅으로 보내기’ 템플릿인지 보세요. (400)" }
         return "팀즈가 받지 않았습니다 (HTTP \(status ?? 0))"
+    }
+
+    /// 트리거를 ‘누구나’로 두면 주소에 서명(`sig`)이 붙는다. 없으면 회사 계정 토큰을 요구해 앱이 보낼 수 없다.
+    public static func needsAnyone(_ text: String) -> Bool {
+        guard let parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              parts.path.contains("/workflows/") else { return false }
+        return !(parts.queryItems ?? []).contains { $0.name == "sig" && !($0.value ?? "").isEmpty }
+    }
+
+    /// 주소가 가리키는 워크플로 (`/workflows/<id>/`). 서명만 바뀐 새 주소가 같은 흐름인지 볼 때 쓴다.
+    public static func workflowID(_ text: String) -> String? {
+        guard let path = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines))?.path,
+              let range = path.range(of: "/workflows/") else { return nil }
+        let id = path[range.upperBound...].prefix { $0 != "/" }
+        return id.isEmpty ? nil : id.lowercased()
+    }
+
+    /// 웹훅 주소에서 Power Automate 편집 화면 주소를 만든다.
+    /// 호스트 `default9cc8…4249.a6.environment.api.powerplatform.com`은 환경 ID(`Default-9cc8…-…49a6`)를 점 하나 넣어 쓴 것이다.
+    public static func flowEditURL(_ text: String) -> URL? {
+        guard let host = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines))?.host?.lowercased(),
+              host.hasSuffix(".environment.api.powerplatform.com"),
+              let id = workflowID(text), let flow = guid(id) else { return nil }
+        let labels = host.split(separator: ".")
+        guard labels.count > 2 else { return nil }
+        var environment = String(labels[0] + labels[1])
+        let isDefault = environment.hasPrefix("default")
+        if isDefault { environment.removeFirst("default".count) }
+        guard let environmentGUID = guid(environment) else { return nil }
+        return URL(string: "https://make.powerautomate.com/environments/\(isDefault ? "Default-" : "")\(environmentGUID)/flows/\(flow)/details")
+    }
+
+    /// 32자리 16진수 → 8-4-4-4-12. 이미 줄표가 있으면 그대로.
+    static func guid(_ text: String) -> String? {
+        let hex = text.replacingOccurrences(of: "-", with: "").lowercased()
+        guard hex.count == 32, hex.allSatisfy(\.isHexDigit) else { return nil }
+        var parts: [Substring] = []
+        var rest = Substring(hex)
+        for length in [8, 4, 4, 4, 12] {
+            parts.append(rest.prefix(length))
+            rest = rest.dropFirst(length)
+        }
+        return parts.joined(separator: "-")
     }
 
     public static func request(url: URL, report: String, title: String) throws -> URLRequest {

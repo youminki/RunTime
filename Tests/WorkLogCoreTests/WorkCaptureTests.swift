@@ -21,6 +21,32 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(try WorkCapture.parseMRs(Data(pages.utf8)).map(\.iid) == [1, 2])
     }
 
+    @Test func readsPagedGitLabResponsesWithoutTouchingText() throws {
+        let mr = { (iid: Int) in
+            #"{"iid":\#(iid),"title":"[FE][게시판] 목록 ][ 정리","description":"[작업 내용] [연동 API]","source_branch":"x","merged_at":"2026-10-20T00:00:00Z","references":{"full":"a/b!\#(iid)"}}"#
+        }
+        // 빈 마지막 쪽과 앞에 붙은 안내 문구도 견딘다
+        let pages = "glab notice\n[" + mr(1) + "]\n[" + mr(2) + "][]"
+        let mrs = try WorkCapture.parseMRs(Data(pages.utf8))
+        #expect(mrs.map(\.iid) == [1, 2])
+        #expect(mrs[0].title == "[FE][게시판] 목록 ][ 정리")
+        #expect(try WorkCapture.parseMRs(Data("[]".utf8)).isEmpty)
+    }
+
+    @Test func explainsNonListGitLabResponses() {
+        #expect(throws: WorkCapture.GitLabResponseError(message: "401 Unauthorized")) {
+            try WorkCapture.parseMRs(Data(#"{"message":"401 Unauthorized"}"#.utf8))
+        }
+        #expect(throws: WorkCapture.GitLabResponseError(message: "빈 응답이 왔습니다")) {
+            try WorkCapture.parseMRs(Data())
+        }
+        #expect(throws: WorkCapture.GitLabResponseError.self) {
+            try WorkCapture.parseMRs(Data("\n<!DOCTYPE html><script>var a = []</script>".utf8))
+        }
+        #expect(WorkCapture.hostName(" https://Git.Example.com/group/ ") == "git.example.com")
+        #expect(WorkCapture.hostName("git.example.com") == "git.example.com")
+    }
+
     @Test func readsGitLogAndRemotes() {
         let text = "refs/remotes/origin/feat/x\u{1F}feat(dest): 연결 테스트\u{1F}2026-10-20T10:00:00+09:00\nrefs/tags/v1\u{1F}t\u{1F}2026-10-20T10:00:00+09:00"
         let commits = WorkCapture.parseCommits(text, path: "velox/portal")

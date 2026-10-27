@@ -57,14 +57,34 @@ public enum WorkCapture {
             let web_url: String?
             let references: References?
         }
-        let raws: [Raw]
-        do {
-            raws = try JSONDecoder().decode([Raw].self, from: data)
-        } catch {
-            // glab api --paginate는 쪽마다 배열을 이어 붙여 낸다 (`[...][...]`)
-            let joined = String(decoding: data, as: UTF8.self)
-                .replacingOccurrences(of: #"\]\s*\["#, with: ",", options: .regularExpression)
-            raws = try JSONDecoder().decode([Raw].self, from: Data(joined.utf8))
+        // glab api --paginate는 쪽마다 배열을 이어 붙여 낸다 (`[...][...]`, 빈 마지막 쪽 `[]`도).
+        // 문자열 안의 `][`까지 바꾸지 않게 최상위 값만 잘라 따로 읽는다.
+        // 사내 SSO·프록시가 GitLab 대신 로그인 웹 페이지를 주면 그 안의 `[]`를 빈 목록으로 읽지 않게 먼저 거른다
+        if data.first(where: { !" \t\r\n".utf8.contains($0) }) == UInt8(ascii: "<") {
+            throw GitLabResponseError(message: "GitLab 대신 웹 페이지(로그인·프록시)가 응답했습니다. VPN과 glab 로그인을 확인하세요")
+        }
+        var raws: [Raw] = []
+        var arrays = 0
+        var lastError: Error?
+        for value in topLevelJSON(data) {
+            if value.first == UInt8(ascii: "{") {
+                // 토큰 만료·권한 없음은 `{"message":"401 Unauthorized"}` 꼴로 온다
+                let object = (try? JSONSerialization.jsonObject(with: value)) as? [String: Any] ?? [:]
+                let key = ["message", "error_description", "error"].first { object[$0] != nil }
+                let message: String = key.map { "\(object[$0]!)" } ?? "MR 목록 대신 다른 응답이 왔습니다"
+                throw GitLabResponseError(message: message)
+            }
+            do {
+                raws += try JSONDecoder().decode([Raw].self, from: value)
+                arrays += 1
+            } catch {
+                lastError = error
+            }
+        }
+        if arrays == 0 {
+            if let lastError { throw GitLabResponseError(message: "MR 목록을 읽지 못했습니다 (\(describe(lastError)))") }
+            let text = String(decoding: data.prefix(120), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw GitLabResponseError(message: text.isEmpty ? "빈 응답이 왔습니다" : "MR 목록이 아닌 응답: \(text)")
         }
         return raws.compactMap { raw in
             guard let merged = raw.merged_at.flatMap(parseDate),
@@ -72,6 +92,51 @@ public enum WorkCapture {
             return MergedMR(path: String(full[..<bang]), iid: raw.iid, title: raw.title,
                             description: raw.description ?? "", sourceBranch: raw.source_branch,
                             mergedAt: merged, webURL: raw.web_url ?? "")
+        }
+    }
+
+    public struct GitLabResponseError: LocalizedError, Equatable {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    /// 이어 붙은 JSON 값들을 하나씩 자른다. 값 밖의 글자(안내 문구 등)는 건너뛴다.
+    public static func topLevelJSON(_ data: Data) -> [Data] {
+        let bytes = [UInt8](data)
+        var values: [Data] = []
+        var depth = 0, start = 0
+        var inString = false, escaped = false
+        for (index, byte) in bytes.enumerated() {
+            if inString {
+                if escaped { escaped = false }
+                else if byte == UInt8(ascii: "\\") { escaped = true }
+                else if byte == UInt8(ascii: "\"") { inString = false }
+                continue
+            }
+            switch byte {
+            case UInt8(ascii: "\"") where depth > 0:
+                inString = true
+            case UInt8(ascii: "["), UInt8(ascii: "{"):
+                if depth == 0 { start = index }
+                depth += 1
+            case UInt8(ascii: "]"), UInt8(ascii: "}"):
+                guard depth > 0 else { continue }
+                depth -= 1
+                if depth == 0 { values.append(Data(bytes[start...index])) }
+            default:
+                break
+            }
+        }
+        return values
+    }
+
+    private static func describe(_ error: Error) -> String {
+        switch error as? DecodingError {
+        case .keyNotFound(let key, _): return "\(key.stringValue) 없음"
+        case .typeMismatch(_, let context), .valueNotFound(_, let context):
+            return context.codingPath.map(\.stringValue).joined(separator: ".") + " 형식이 다름"
+        case .dataCorrupted: return "JSON이 아님"
+        default: return error.localizedDescription
         }
     }
 
@@ -114,6 +179,15 @@ public enum WorkCapture {
             return name == "HEAD" ? nil : name
         }
         return ref.isEmpty || ref == "HEAD" ? nil : ref
+    }
+
+    /// 설정에 붙여 넣은 주소를 glab `--hostname` 꼴로: `https://git.example.com/` → `git.example.com`.
+    public static func hostName(_ text: String) -> String {
+        var host = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let scheme = host.range(of: "://") { host = String(host[scheme.upperBound...]) }
+        if let at = host.lastIndex(of: "@") { host = String(host[host.index(after: at)...]) }
+        if let slash = host.firstIndex(of: "/") { host = String(host[..<slash]) }
+        return host.lowercased()
     }
 
     /// `https://git.example.com/velox/velox-web-portal.git`, `git@git.example.com:velox/x.git` → `velox/velox-web-portal`.

@@ -100,5 +100,12 @@ import Testing
         #expect(!TeamsWebhook.isValid("https://evil-office.com/hook"))
         #expect(TeamsWebhook.isValid("https://default9cc8.a6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/x/triggers/manual/paths/invoke?api-version=1"))
         #expect(TeamsWebhook.failure(status: 401, body: Data(#"{"error":{"code":"DirectApiAuthorizationRequired"}}"#.utf8)).contains("누구나"))
+        let company = "https://default9cc8af3ec399451c923a3b56304249.a6.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/20/workflows/65545a98097d4686a3fa3f2142640901/triggers/manual/paths/invoke?api-version=1"
+        let anyone = company + "&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=abc"
+        #expect(TeamsWebhook.needsAnyone(company))
+        #expect(!TeamsWebhook.needsAnyone(anyone))
+        #expect(TeamsWebhook.workflowID(company) == TeamsWebhook.workflowID(anyone))
+        #expect(TeamsWebhook.flowEditURL(company)?.absoluteString
+                == "https://make.powerautomate.com/environments/Default-9cc8af3e-c399-451c-923a-3b56304249a6/flows/65545a98-097d-4686-a3fa-3f2142640901/details")
     }
 }
