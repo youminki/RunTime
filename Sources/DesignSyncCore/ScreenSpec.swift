@@ -136,6 +136,46 @@ public struct ChangelogEntry: Codable, Equatable, Hashable, Sendable {
     }
 
     var key: String { "\(pageID)|\(version ?? "")|\(date)|\(order)" }
+
+    /// 이름이 같은 마디 → 한쪽이 다른 쪽을 품는 마디 → 비슷한 마디 순으로, 앞 단계에서 찾으면 뒤는 보지 않는다.
+    /// 찾은 마디까지 자른 경로들.
+    static func match(_ name: String, in paths: Set<String>, squeeze: (String) -> String) -> Set<String> {
+        let rules: [(String) -> Bool] = [
+            { $0 == name },
+            { $0.count >= 3 && name.count >= 3 && ($0.contains(name) || name.contains($0)) },
+            { $0.count >= 4 && name.count >= 4 && SpecDiff.similarity($0, name) >= 0.7 },
+        ]
+        for rule in rules {
+            var hits = Set<String>()
+            for path in paths {
+                let parts = path.components(separatedBy: " > ")
+                if let index = parts.indices.first(where: { rule(squeeze(parts[$0])) }) { hits.insert(parts[...index].joined(separator: " > ")) }
+            }
+            if !hits.isEmpty { return hits }
+        }
+        return []
+    }
+
+    /// 글에 `[조치티켓]`, `[정책 관리 > 도메인 정책 탭]`처럼 적은 메뉴를 실제 화면 경로에 잇는다.
+    /// 경로 마디 가운데 이름이 맞는 곳까지 잘라 돌려준다 (`대응 > 조치 티켓`). `[4.2]` 같은 버전은 뺀다.
+    public func menus(in paths: Set<String>) -> [String] {
+        let pattern = try! NSRegularExpression(pattern: "\\[([^\\]]+)\\]")
+        let labels = pattern.matches(in: text, range: NSRange(text.startIndex..., in: text))
+            .compactMap { Range($0.range(at: 1), in: text).map { String(text[$0]) } }
+            .filter { $0.range(of: "^[\\d.\\s]+$", options: .regularExpression) == nil }
+        let squeeze = { (value: String) in value.filter { !$0.isWhitespace && $0 != "·" && $0 != "/" } }
+        var found: [String] = []
+        for label in labels {
+            // 탭·모달 이름은 경로에 없을 때가 많아 뒤 마디부터 앞으로 거슬러 가며 처음 맞는 마디를 쓴다
+            let hits = label.components(separatedBy: ">").map(squeeze).filter { $0.count >= 2 }.reversed()
+                .lazy.map { Self.match($0, in: paths, squeeze: squeeze) }.first { !$0.isEmpty } ?? []
+            // 위 경로가 이미 있으면 아래 경로는 겹치니 뺀다
+            for hit in hits.sorted() where !hits.contains(where: { $0 != hit && DesignStatus.covers($0, hit) }) && !found.contains(hit) {
+                found.append(hit)
+            }
+        }
+        return found
+    }
 }
 
 /// 화면설계서 템플릿(헤더 표, Description 패널)을 읽는다.
@@ -163,7 +203,7 @@ public enum SpecExtractor {
     }
 
     /// 화면이 놓인 페이지.
-    public struct Page: Equatable, Sendable {
+    public struct Page: Codable, Equatable, Sendable {
         public var id: String
         public var name: String
 
@@ -294,9 +334,10 @@ public enum SpecExtractor {
         itemNumber.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
 
-    /// `[완료] 상품 > 목록` → `상품 > 목록`
+    /// `[완료] 상품 > 목록` → `상품 > 목록`, `위젯관리_v0.4` → `위젯관리`. 버전이 오를 때마다 메뉴가 갈라지지 않게 버전도 뗀다.
     public static func stripStatus(_ name: String) -> String {
         name.replacingOccurrences(of: "\\[[^\\]]*\\]\\s*", with: "", options: .regularExpression)
+            .replacingOccurrences(of: DesignStatus.versionSuffix, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
     }
 

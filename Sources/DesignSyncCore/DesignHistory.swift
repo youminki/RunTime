@@ -33,6 +33,13 @@ public struct DesignEvent: Codable, Equatable, Identifiable, Sendable {
     public var afterVersion: String?
     /// 새 프레임으로 바꾼 화면은 이전 이미지를 옛 프레임으로 그린다.
     public var beforeFrameID: String?
+    /// 제·개정 이력 줄이 대괄호로 적은 메뉴들 (화면 경로). 이력을 그 메뉴의 변경으로 보이게 한다.
+    public var menus: [String]?
+
+    /// 이 변경이 그 경로(아래 경로 포함)의 것인지. 이력 줄은 적은 메뉴로도 본다.
+    public func concerns(_ path: String) -> Bool {
+        DesignStatus.covers(path, menuPath) || (menus ?? []).contains { DesignStatus.covers(path, $0) || DesignStatus.covers($0, path) }
+    }
 
     public enum Phase: String, Codable, Sendable {
         /// 완료된 화면이 다시 바뀌었다 (알림 대상)
@@ -357,20 +364,26 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             let known = Dictionary(file.changelog.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
             let watchedScreens = Set(file.screens.values.filter { capture.watches($0.menuPath) }.map(\.screenID))
             let watchedPages = Set(file.screens.values.filter { capture.watches($0.menuPath) }.map(\.pageID))
+            let allPaths = Set(file.screens.values.map(\.menuPath))
             // 페이지 이름은 `(10/19 수정)`처럼 자주 바뀌어서 내용이 같으면 같은 줄로 본다
             for entry in entries where known[entry.key]?.text != entry.text {
                 // 메뉴를 골랐으면 그 화면을 적은 줄, 화면 ID가 없으면 그 화면이 있는 페이지의 줄만
                 let ids = entry.screenIDs
-                guard capture.menus.isEmpty || !watchedScreens.isDisjoint(with: ids) || (ids.isEmpty && watchedPages.contains(entry.pageID))
+                let named = entry.menus(in: allPaths)
+                let watchesNamed = named.contains { menu in capture.menus.contains { DesignStatus.covers(menu, $0) || DesignStatus.covers($0, menu) } }
+                guard capture.menus.isEmpty || !watchedScreens.isDisjoint(with: ids) || watchesNamed
+                        || (ids.isEmpty && named.isEmpty && watchedPages.contains(entry.pageID))
                 else { continue }
                 let before = known[entry.key]
                 let title = [entry.version.map { "v\($0)" }, entry.date].compactMap { $0 }.joined(separator: " ")
                 let changes = before.map { [SpecChange(layer: .header, op: .modified, label: "이력", before: $0.text, after: entry.text)] } ?? []
                 // 디자이너가 이력에 적었다는 것 자체가 손본 시안이라는 뜻이라 중요한 변경으로 둔다
-                created.append(DesignEvent(fileKey: capture.fileKey, fileName: capture.fileName, frameID: entry.frameID,
-                                           screenID: ids.joined(separator: ", "), title: title,
-                                           menuPath: entry.pageName, detectedAt: date, windowStart: min(file.syncedAt, edited),
-                                           windowEnd: edited, kind: .changelog, changes: changes, note: entry.text, phase: .afterDone))
+                var made = DesignEvent(fileKey: capture.fileKey, fileName: capture.fileName, frameID: entry.frameID,
+                                       screenID: ids.joined(separator: ", "), title: title,
+                                       menuPath: named.first ?? entry.pageName, detectedAt: date, windowStart: min(file.syncedAt, edited),
+                                       windowEnd: edited, kind: .changelog, changes: changes, note: entry.text, phase: .afterDone)
+                made.menus = named.isEmpty ? nil : named
+                created.append(made)
             }
             file.changelog = entries
         }
@@ -469,11 +482,14 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             }
         }
         for event in events {
-            let id = event.fileKey + "|" + event.menuPath
-            var menu = table[id] ?? Menu(fileKey: event.fileKey, fileName: event.fileName, path: event.menuPath, screenCount: 0, unseen: 0)
-            if event.isImportant && !isSeen(event) { menu.unseen += 1 }
-            menu.lastChange = max(menu.lastChange ?? event.detectedAt, event.detectedAt)
-            table[id] = menu
+            // 이력 줄이 메뉴 여럿을 적었으면 그 메뉴마다 센다
+            for path in Set([event.menuPath] + (event.menus ?? [])) {
+                let id = event.fileKey + "|" + path
+                var menu = table[id] ?? Menu(fileKey: event.fileKey, fileName: event.fileName, path: path, screenCount: 0, unseen: 0)
+                if event.isImportant && !isSeen(event) { menu.unseen += 1 }
+                menu.lastChange = max(menu.lastChange ?? event.detectedAt, event.detectedAt)
+                table[id] = menu
+            }
         }
         return table.values.sorted { ($0.fileName, $0.path) < ($1.fileName, $1.path) }
     }

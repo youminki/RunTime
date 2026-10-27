@@ -91,3 +91,25 @@ private final class FakeFigma: @unchecked Sendable {
         #expect(events.first?.changes.map(\.op) == [.added])
     }
 }
+
+/// 화면 하나를 견줄 때는 그 페이지만 살펴 받는다.
+@Suite struct DesignCompareFillTests {
+    @Test func outlinesOnlyTheChosenPages() async throws {
+        let figma = FakeFigma()
+        figma.pages = [Spec.page("1:1", "주문", [Spec.section("2:1", "주문_v1", [Spec.screen("10:1", screenID: "SC-ORD-001", items: [("1", "검색")])])]),
+                       Spec.page("1:2", "배송", [Spec.section("3:1", "배송_v1", [Spec.screen("20:1", screenID: "SC-DLV-001", items: [("1", "조회")])])])]
+        var snapshot = VersionSnapshot(fileKey: "Demo", version: "v1")
+        try await DesignCompare.fill(&snapshot, pageIDs: ["1:1"], token: "t", wanted: { _ in true }, transport: figma.transport)
+        #expect(figma.count == 2)
+        #expect(snapshot.allScreens.map(\.screenID) == ["SC-ORD-001"])
+        #expect(snapshot.outlines("1:1") && !snapshot.outlines("1:2"))
+
+        try await DesignCompare.fill(&snapshot, pageIDs: ["1:1"], token: "t", wanted: { _ in true }, transport: figma.transport)
+        #expect(figma.count == 2)
+
+        try await DesignCompare.fill(&snapshot, token: "t", wanted: { _ in true }, transport: figma.transport)
+        #expect(figma.count == 5)
+        #expect(snapshot.outlined == nil)
+        #expect(Set(snapshot.allScreens.map(\.screenID)) == ["SC-ORD-001", "SC-DLV-001"])
+    }
+}

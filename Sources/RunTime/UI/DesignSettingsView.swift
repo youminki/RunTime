@@ -77,7 +77,7 @@ struct DesignSettingsView: View {
 
     private var token: some View {
         VStack(spacing: 0) {
-            SettingRow("피그마 토큰", "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 키체인에 둡니다.") {
+            SettingRow("피그마 토큰", "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 날짜 비교까지 쓰려면 file_versions:read도 더합니다. 키체인에 둡니다.") {
                 SecretInput(saved: settings.hasToken, hint: settings.tokenHint, placeholder: "figd_…", draft: $form.tokenDraft,
                             save: { value in
                                 guard settings.saveToken(value) else { return "키체인에 저장하지 못했습니다" }
@@ -238,7 +238,7 @@ struct DesignSettingsView: View {
                 Toggle("", isOn: $settings.notifyWorking).toggleStyle(.switch).labelsHidden()
                     .disabled(!settings.notify)
             }
-            SettingRow("상태 표시가 없는 화면", "섹션 이름에 [완료]·[수정중]을 쓰지 않는 화면설계서의 화면을 어떻게 볼지 정합니다. 메뉴마다 오른쪽 클릭으로 따로 정할 수도 있습니다.") {
+            SettingRow("상태 표시가 없는 화면", "섹션에 [완료]·[수정중]이나 _v0.4 같은 버전을 쓰는 화면설계서에서 표시가 빠진 화면을 어떻게 볼지 정합니다. 버전을 단 섹션은 완료로, 표시를 전혀 쓰지 않는 화면설계서는 완료로 봅니다. 프로젝트·메뉴마다 오른쪽 클릭으로 따로 정할 수 있습니다.") {
                 Picker("", selection: $settings.untaggedIsDone) {
                     Text("완료로 보기").tag(true)
                     Text("작업 중으로 보기").tag(false)

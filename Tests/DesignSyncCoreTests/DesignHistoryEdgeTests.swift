@@ -97,6 +97,31 @@ import Testing
         #expect(events.map(\.note) == ["목록 (SC-PRD-LST-001) 수정"])
     }
 
+    /// 화면 ID 대신 `[메뉴 이름]`으로 적는 이력은 그 메뉴의 변경으로 붙고, 메뉴를 골라 받아도 빠지지 않는다.
+    @Test func changelogNamedMenuLandsOnThatMenu() {
+        var history = DesignHistory()
+        let screens = [snap("10:1", id: "SC-PRD-LST-001"), snap("11:1", id: "SC-ORD-LST-001", path: "주문 > 주문 내역")]
+        history.record(capture(screens, changelog: []), at: t0)
+        let row = ChangelogEntry(pageID: "1:1", pageName: "화면설계", version: "1.2", date: "2026-09-01", text: "[주문내역] / 필터 추가")
+        let events = history.record(capture(screens, changelog: [row], menus: ["주문 > 주문 내역"]), at: t1)
+        #expect(events.map(\.menuPath) == ["주문 > 주문 내역"])
+        #expect(events.first?.menus == ["주문 > 주문 내역"])
+        #expect(events.first?.concerns("주문") == true)
+        #expect(events.first?.concerns("상품") == false)
+    }
+
+    /// 이력 줄이 메뉴 둘을 적으면 두 메뉴 모두 미확인 건수가 붙는다.
+    @Test func changelogNamingTwoMenusCountsForBoth() {
+        var history = DesignHistory()
+        let screens = [snap("10:1", id: "SC-PRD-LST-001"), snap("11:1", id: "SC-ORD-LST-001", path: "주문 > 주문 내역")]
+        history.record(capture(screens, changelog: []), at: t0)
+        let row = ChangelogEntry(pageID: "1:1", pageName: "화면설계", version: "1.2", date: "2026-09-01", text: "[주문 내역] [목록] 문구")
+        history.record(capture(screens, changelog: [row]), at: t1)
+        let unseen = Dictionary(history.menus().map { ($0.path, $0.unseen) }, uniquingKeysWith: +)
+        #expect(unseen["주문 > 주문 내역"] == 1)
+        #expect(unseen["상품 > 목록"] == 1)
+    }
+
     @Test func changelogRowsWithSameDateAreNotRepeated() {
         var history = DesignHistory()
         let a = ChangelogEntry(pageID: "1:1", pageName: "상품", version: nil, date: "2026-09-01", order: 0, text: "목록 수정")

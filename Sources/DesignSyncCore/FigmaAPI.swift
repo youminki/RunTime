@@ -85,14 +85,28 @@ public enum FigmaAPI {
         request("me", query: [], token: token)
     }
 
-    public static func fileRequest(fileKey: String, token: String) -> URLRequest {
-        request("files/\(fileKey)", query: [URLQueryItem(name: "depth", value: "1")], token: token)
+    /// `version`을 주면 그 버전 그대로 받는다 (날짜 비교).
+    public static func fileRequest(fileKey: String, version: String? = nil, token: String) -> URLRequest {
+        var query = [URLQueryItem(name: "depth", value: "1")]
+        if let version { query.append(URLQueryItem(name: "version", value: version)) }
+        return request("files/\(fileKey)", query: query, token: token)
     }
 
-    public static func nodesRequest(fileKey: String, ids: [String], depth: Int? = nil, token: String) -> URLRequest {
+    public static func nodesRequest(fileKey: String, ids: [String], depth: Int? = nil, version: String? = nil, token: String) -> URLRequest {
         var query = [URLQueryItem(name: "ids", value: ids.joined(separator: ","))]
         if let depth { query.append(URLQueryItem(name: "depth", value: String(depth))) }
+        if let version { query.append(URLQueryItem(name: "version", value: version)) }
         return request("files/\(fileKey)/nodes", query: query, token: token)
+    }
+
+    /// 파일 버전 기록 (최근 것부터). 자동 저장도 30분 안팎마다 남는다. file_versions:read 범위가 있어야 한다.
+    /// `next`는 피그마가 준 다음(더 오래된) 쪽 주소다.
+    public static func versionsRequest(fileKey: String, next: URL? = nil, token: String) -> URLRequest {
+        guard let next else { return request("files/\(fileKey)/versions", query: [URLQueryItem(name: "page_size", value: "50")], token: token) }
+        var request = URLRequest(url: next)
+        request.setValue(token, forHTTPHeaderField: "X-Figma-Token")
+        request.timeoutInterval = 60
+        return request
     }
 
     /// 프레임을 그 버전 그대로 PNG로 그려 달라는 요청. 받는 것은 잠깐 쓸 수 있는 이미지 주소다.
@@ -102,6 +116,39 @@ public enum FigmaAPI {
                      URLQueryItem(name: "scale", value: String(scale))]
         if let version { query.append(URLQueryItem(name: "version", value: version)) }
         return request("images/\(fileKey)", query: query, token: token)
+    }
+
+    public struct FileVersion: Codable, Equatable, Sendable {
+        public var id: String
+        public var createdAt: Date
+        /// 디자이너가 붙인 이름. 자동 저장은 nil이다.
+        public var label: String?
+        public var description: String?
+
+        public init(id: String, createdAt: Date, label: String? = nil, description: String? = nil) {
+            self.id = id
+            self.createdAt = createdAt
+            self.label = label
+            self.description = description
+        }
+    }
+
+    public static func parseVersions(_ data: Data) throws -> (versions: [FileVersion], next: URL?) {
+        struct Raw: Decodable {
+            struct Version: Decodable { let id: String; let created_at: String; let label: String?; let description: String? }
+            struct Pagination: Decodable { let next_page: String? }
+            let versions: [Version]
+            let pagination: Pagination?
+        }
+        guard let raw = try? JSONDecoder().decode(Raw.self, from: data) else { throw Failure.malformed }
+        let format = ISO8601DateFormatter()
+        let versions = raw.versions.compactMap { item in
+            format.date(from: item.created_at).map {
+                FileVersion(id: item.id, createdAt: $0, label: item.label.flatMap { $0.isEmpty ? nil : $0 },
+                            description: item.description.flatMap { $0.isEmpty ? nil : $0 })
+            }
+        }
+        return (versions, raw.pagination?.next_page.flatMap { URL(string: $0.replacingOccurrences(of: " ", with: "%20")) })
     }
 
     /// 노드 ID → 이미지 주소. 그리지 못한 노드(그 버전에 없던 프레임 등)는 빠진다.
@@ -159,7 +206,7 @@ public enum FigmaAPI {
     // MARK: 후보
 
     /// 화면일 수 있는 프레임. 내용을 받기 전이라 크기와 위치만 보고 고른다.
-    public struct Candidate: Equatable, Hashable, Sendable {
+    public struct Candidate: Codable, Equatable, Hashable, Sendable {
         public var id: String
         public var name: String
         public var pageID: String

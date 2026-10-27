@@ -153,6 +153,33 @@ enum UIShots {
             ("main-design-dark", .darkAqua, nil, mainDesign(engine: engine)),
             ("main-design-working", .aqua, nil, mainDesign(engine: engine, scope: .working, select: false)),
             ("main-design-menu", .aqua, nil, mainDesign(engine: engine, scope: firstGroup.map { .group(fileKey: $0.0, head: $0.1) } ?? .all)),
+            ("main-design-screen", .aqua, nil, mainDesignScreen(engine: engine)),
+            ("main-design-compare", .aqua, nil, {
+                let model = DesignCompareModel.shared
+                // 기록이 가장 많은 프로젝트를 최근 4일로 견준다. 토큰을 주면(RUNTIME_FIGMA_TOKEN) 실제 버전 비교 결과까지 찍는다
+                let history = DesignSync.shared.history
+                let key = Dictionary(grouping: history.events, by: \.fileKey).max { $0.value.count < $1.value.count }?.key
+                model.open(fileKey: key ?? "", path: nil)
+                // RUNTIME_SHOT_COMPARE_SCREEN=<화면 ID>면 그 화면 하나만 견준다
+                if let id = ProcessInfo.processInfo.environment["RUNTIME_SHOT_COMPARE_SCREEN"],
+                   let screen = history.files[key ?? ""]?.screens.values.filter({ $0.screenID == id }).min(by: { $0.frameID < $1.frameID }) {
+                    model.open(fileKey: key ?? "", path: screen.menuPath, screen: DesignCompareModel.Target(screen))
+                }
+                model.from = Calendar.current.date(byAdding: .day, value: -4, to: Date()) ?? Date()
+                model.to = Date()
+                let page = DesignHistoryPage()
+                page.scope = .compare
+                model.run()
+                Task { @MainActor in
+                    while model.running { try? await Task.sleep(nanoseconds: 100_000_000) }
+                    page.selected = model.currentResult?.events.first { $0.kind == .changed }?.id ?? model.recorded().first?.id
+                }
+                let navigator = MainNavigator()
+                navigator.start(at: .design)
+                return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.general), designPage: page)
+                    .frame(width: mainSize.width, height: mainSize.height))
+            }()),
             ("main-settings-design-alerts", .aqua, nil, {
                 let navigator = MainNavigator()
                 navigator.start(at: .settings)
@@ -181,6 +208,24 @@ enum UIShots {
         let page = DesignHistoryPage()
         page.scope = scope
         if select { page.selected = DesignSync.shared.history.events.last(where: { $0.kind == .changed })?.id }
+        let navigator = MainNavigator()
+        navigator.start(at: .design)
+        return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                      workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.general), designPage: page)
+            .frame(width: mainSize.width, height: mainSize.height))
+    }
+
+    /// 바뀐 적 없는 메뉴를 골라 지금 시안 화면 하나를 연 상세. 명세가 가장 많은 화면을 고른다.
+    private static func mainDesignScreen(engine: UsageEngine) -> AnyView {
+        let page = DesignHistoryPage()
+        let changed = Set(DesignSync.shared.history.events.compactMap(\.frameID))
+        let screen = DesignSync.shared.history.files.flatMap { key, file in file.screens.values.map { (key, $0) } }
+            .filter { !changed.contains($0.1.frameID) }
+            .max { ($0.1.items.count, $1.1.frameID) < ($1.1.items.count, $0.1.frameID) }
+        if let (key, screen) = screen {
+            page.scope = .menu(fileKey: key, path: screen.menuPath)
+            page.screen = screen.frameID
+        }
         let navigator = MainNavigator()
         navigator.start(at: .design)
         return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,

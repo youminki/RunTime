@@ -157,6 +157,8 @@ struct DesignChangeTreeView: View {
     @ObservedObject var page: DesignHistoryPage
     let checked: Set<String>
     let toggle: (SpecChange) -> Void
+    /// 기록에 없는 변경(날짜 비교 결과)은 반영 체크를 두지 않는다.
+    var checkable = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -224,7 +226,7 @@ struct DesignChangeTreeView: View {
         let isHovered = page.hoveredChange == item.number
         let isChecked = checked.contains(change.key)
         return HStack(alignment: .top, spacing: 8) {
-            AppliedCheck(on: isChecked) { toggle(change) }.padding(.top, 12)
+            if checkable { AppliedCheck(on: isChecked) { toggle(change) }.padding(.top, 12) }
             ChangeNumber(number: item.number, op: change.op, filled: isSelected, located: change.place?.hasBox == true)
                 .padding(.top, 12.5)
             DesignChangeRow(change: change).opacity(isChecked ? 0.45 : 1)

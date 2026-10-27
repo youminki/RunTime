@@ -25,7 +25,7 @@ final class DesignImages: ObservableObject {
         return image
     }
     /// 이보다 많으면 오래된 것부터 지운다 (반으로 줄인 PNG라 장당 수백 KB).
-    static let keepCount = 400
+    nonisolated static let keepCount = 400
 
     nonisolated static var folder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -50,36 +50,74 @@ final class DesignImages: ObservableObject {
     }
 
     func load(fileKey: String, nodeID: String, version: String) {
-        let key = Self.key(fileKey: fileKey, nodeID: nodeID, version: version)
-        let url = Self.file(key)
-        if FileManager.default.fileExists(atPath: url.path) {
-            if states[key] != .ready(url) { states[key] = .ready(url) }
-            return
-        }
-        guard states[key] != .loading else { return }
-        guard let token = DesignSyncSettings.shared.token else {
-            states[key] = .missing("피그마 토큰이 없어 이미지를 받지 못했습니다")
-            return
-        }
-        states[key] = .loading
-        Task {
-            do {
-                let data = try await FigmaClient.shared.send(FigmaAPI.imagesRequest(fileKey: fileKey, ids: [nodeID], version: version, token: token))
-                guard let remote = try FigmaAPI.parseImages(data)[nodeID] else {
-                    states[key] = .missing("그 버전에는 이 프레임이 없습니다")
-                    return
-                }
-                // 피그마가 준 주소는 잠깐만 쓸 수 있는 저장소 주소라 토큰 없이 바로 받는다
-                let (temporary, _) = try await URLSession.shared.download(from: remote)
-                try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-                try? FileManager.default.removeItem(at: url)
-                try FileManager.default.moveItem(at: temporary, to: url)
-                states[key] = .ready(url)
-            } catch let failure as FigmaAPI.Failure {
-                states[key] = .missing(failure.message)
-            } catch {
-                states[key] = .missing("이미지를 받지 못했습니다: \(error.localizedDescription)")
+        load(fileKey: fileKey, nodeIDs: [nodeID], version: version)
+    }
+
+    /// 한 번에 그려 달라고 할 프레임 수. 많으면 피그마가 다 그릴 때까지 첫 장도 늦어진다.
+    static let batchSize = 6
+
+    /// 같은 버전의 프레임을 한 요청으로 받는다. 맨 앞이 지금 볼 것이고, 뒤는 이어서 누를 것을 미리 받는다.
+    func load(fileKey: String, nodeIDs: [String], version: String) {
+        var wanted: [String] = []
+        for nodeID in nodeIDs where !wanted.contains(nodeID) {
+            let key = Self.key(fileKey: fileKey, nodeID: nodeID, version: version)
+            let url = Self.file(key)
+            if FileManager.default.fileExists(atPath: url.path) {
+                if states[key] != .ready(url) { states[key] = .ready(url) }
+            } else if states[key] != .loading {
+                wanted.append(nodeID)
             }
+        }
+        guard !wanted.isEmpty else { return }
+        guard let token = DesignSyncSettings.shared.token else {
+            for nodeID in wanted { states[Self.key(fileKey: fileKey, nodeID: nodeID, version: version)] = .missing("피그마 토큰이 없어 이미지를 받지 못했습니다") }
+            return
+        }
+        for chunk in stride(from: 0, to: wanted.count, by: Self.batchSize).map({ Array(wanted[$0..<min($0 + Self.batchSize, wanted.count)]) }) {
+            for nodeID in chunk { states[Self.key(fileKey: fileKey, nodeID: nodeID, version: version)] = .loading }
+            Task { await fetch(fileKey: fileKey, nodeIDs: chunk, version: version, token: token) }
+        }
+    }
+
+    private func fetch(fileKey: String, nodeIDs: [String], version: String, token: String) async {
+        let keys = Dictionary(uniqueKeysWithValues: nodeIDs.map { ($0, Self.key(fileKey: fileKey, nodeID: $0, version: version)) })
+        let remote: [String: URL]
+        do {
+            let data = try await FigmaClient.shared.send(FigmaAPI.imagesRequest(fileKey: fileKey, ids: nodeIDs, version: version, token: token),
+                                                         lane: .images)
+            remote = try FigmaAPI.parseImages(data)
+        } catch {
+            let reason = (error as? FigmaAPI.Failure)?.message ?? "이미지를 받지 못했습니다: \(error.localizedDescription)"
+            for key in keys.values { states[key] = .missing(reason) }
+            return
+        }
+        // 피그마가 준 주소는 잠깐만 쓸 수 있는 저장소 주소라 토큰 없이 바로, 한꺼번에 받는다
+        await withTaskGroup(of: (String, State).self) { group in
+            for (nodeID, key) in keys {
+                guard let address = remote[nodeID] else {
+                    states[key] = .missing("그 버전에는 이 프레임이 없습니다")
+                    continue
+                }
+                let url = Self.file(key)
+                group.addTask {
+                    do {
+                        let (temporary, response) = try await URLSession.shared.download(from: address)
+                        // 만료된 주소는 오류 본문을 200이 아닌 상태로 준다. 그대로 두면 깨진 PNG가 남아 다시 받지 않는다
+                        guard (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false,
+                              NSImage(contentsOf: temporary) != nil else {
+                            try? FileManager.default.removeItem(at: temporary)
+                            return (key, .missing("이미지를 받지 못했습니다. 잠시 뒤 다시 열어 보세요"))
+                        }
+                        try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+                        try? FileManager.default.removeItem(at: url)
+                        try FileManager.default.moveItem(at: temporary, to: url)
+                        return (key, .ready(url))
+                    } catch {
+                        return (key, .missing("이미지를 받지 못했습니다: \(error.localizedDescription)"))
+                    }
+                }
+            }
+            for await (key, state) in group { states[key] = state }
         }
     }
 

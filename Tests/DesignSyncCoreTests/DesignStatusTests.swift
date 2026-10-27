@@ -32,9 +32,40 @@ import Testing
     }
 
     @Test func untaggedScreensFollowTheRule() {
-        let plain = screen("상품 > 목록", section: "상품_v0.4")
+        let plain = screen("상품 > 목록", section: "상품 목록")
         #expect(DesignStatus.state(of: plain, rules: DesignStatusRules(untaggedIsDone: true)) == .done)
         #expect(DesignStatus.state(of: plain, rules: DesignStatusRules(untaggedIsDone: false)) == .unknown)
+    }
+
+    /// 상태 대신 배포 버전만 붙이는 화면설계서는 버전을 단 섹션을 완료로 본다.
+    @Test func versionedSectionIsDone() {
+        let rules = DesignStatusRules(untaggedIsDone: false)
+        for section in ["API Gateway_v0.4", "상품 v1.2", "상품 (v2)", "데이터 수집 환경변수_V0.1"] {
+            #expect(DesignStatus.state(of: screen("상품 > 목록", section: section), rules: rules) == .done)
+        }
+        #expect(DesignStatus.state(of: screen("상품 > 목록", section: "[수정중] 상품_v0.5"), rules: rules) == .working)
+        #expect(DesignStatus.state(of: screen("상품 > 목록", section: "dev 서버"), rules: rules) == .unknown)
+        #expect(DesignStatus.state(of: screen("상품 > 목록", section: "상품_v0.4"), rules: DesignStatusRules(overrides: ["상품": false])) == .working)
+        #expect(SpecExtractor.stripStatus("위젯관리_v0.4") == "위젯관리")
+        #expect(SpecExtractor.stripStatus("[완료] 상품 > 목록") == "상품 > 목록")
+    }
+
+    @Test func filesWithoutAnyMarkAreNoticed() {
+        #expect(!DesignStatus.usesMarks([screen("상품", section: "상품 목록"), screen("주문", section: "")]))
+        #expect(DesignStatus.usesMarks([screen("상품", section: "상품 목록"), screen("주문", section: "[완료] 주문")]))
+        #expect(DesignStatus.usesMarks([screen("상품", section: "상품_v0.2")]))
+    }
+
+    /// 이력의 대괄호 메뉴 이름은 같은 이름 → 품는 이름 → 비슷한 이름 순으로 찾고, 탭 이름이 없으면 앞 마디로 거슬러 간다.
+    @Test func changelogLabelsFindMenus() {
+        let paths: Set<String> = ["홈 > 요약 대시보드", "주문 > 주문 내역", "주문 > 주문 내역 > 상세", "회원 > 회원 관리", "로그인 > 재설정 / 회원 관리"]
+        func menus(_ text: String) -> [String] { ChangelogEntry(pageName: "p", version: nil, date: "2026-09-01", text: text).menus(in: paths) }
+        #expect(menus("[주문내역] 필터 추가") == ["주문 > 주문 내역"])
+        #expect(menus("[회원 관리] 상태 추가") == ["회원 > 회원 관리"])
+        #expect(menus("[주문 내역 > 배송 정보 탭] 문구") == ["주문 > 주문 내역"])
+        #expect(menus("[요약룸 대시보드] 위젯 교체") == ["홈 > 요약 대시보드"])
+        #expect(menus("[4.2] / [주문 내역] 수정") == ["주문 > 주문 내역"])
+        #expect(menus("주문 내역 1차 설계 완료").isEmpty)
     }
 
     @Test func manualStatusWinsAndTheMostSpecificPathWins() {

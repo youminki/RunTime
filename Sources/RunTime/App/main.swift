@@ -247,6 +247,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--design-check"),
     MainActor.assumeIsolated { DesignCheck.run(url: url) }
     RunLoop.main.run()
 }
+// 날짜 비교: 두 날짜의 피그마 버전을 앱 코드 그대로 받아 견주고 개수와 걸린 시간만 찍는다 (같은 비교를 두 번 해 저장한 버전을 쓰는지도 본다)
+if let index = CommandLine.arguments.firstIndex(of: "--design-compare") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    MainActor.assumeIsolated { DesignCheck.compare(args) }
+    RunLoop.main.run()
+}
 if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
    CommandLine.arguments.dropFirst(index + 1).first == "dupes" {
     MainActor.assumeIsolated { RedmineCheck.dupes() }

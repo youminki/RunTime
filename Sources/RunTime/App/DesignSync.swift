@@ -66,20 +66,24 @@ final class DesignSyncSettings: ObservableObject {
 /// 피그마 호출 창구. 한 번에 하나씩, 간격을 두고 보내 호출 한도에 덜 걸리게 한다.
 actor FigmaClient {
     static let shared = FigmaClient()
+    /// 이미지는 가져오기와 줄을 따로 세운다. 같은 줄이면 상세를 열 때마다 가져오기가 끝나기를 기다린다.
+    enum Lane { case content, images }
+
     /// 파일 내용 API는 좌석에 따라 분당 10회 안팎이라 6초씩 띄운다.
-    private let spacing: TimeInterval = 6
-    private var last = Date.distantPast
+    /// 이미지는 누를 때만 묶어서 보내 드물어서 짧게 띄우고, 한도에 걸리면 아래에서 알려 준 만큼 쉰다.
+    private func spacing(_ lane: Lane) -> TimeInterval { lane == .content ? 6 : 1.5 }
+    private var last: [Lane: Date] = [:]
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForResource = 120
         return URLSession(configuration: configuration)
     }()
 
-    func send(_ request: URLRequest) async throws -> Data {
+    func send(_ request: URLRequest, lane: Lane = .content) async throws -> Data {
         for attempt in 0..<3 {
             // 기다리기 전에 차례를 먼저 잡는다. actor는 sleep 동안 다른 호출을 받아서, 나중에 잡으면 둘이 같이 나간다
-            let slot = max(Date(), last.addingTimeInterval(spacing))
-            last = slot
+            let slot = max(Date(), (last[lane] ?? .distantPast).addingTimeInterval(spacing(lane)))
+            last[lane] = slot
             let wait = slot.timeIntervalSinceNow
             if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
             let (data, response) = try await session.data(for: request)
@@ -88,10 +92,10 @@ actor FigmaClient {
                                                  retryAfter: http?.value(forHTTPHeaderField: "Retry-After"), body: data) else {
                 return data
             }
-            // 한도에 걸리면 알려 준 만큼(길면 5분까지) 쉬고 두 번까지 다시 보낸다
+            // 한도에 걸리면 알려 준 만큼(길면 5분까지) 쉬고 두 번까지 다시 보낸다. 다음 차례가 그때 오도록 줄을 미뤄 두면
+            // 다시 보낼 때 간격만큼 더 기다리지 않고, 그사이 들어온 다른 호출도 그 뒤로 선다
             if case .rateLimited(let after) = failure, attempt < 2, let after, (0...300).contains(after) {
-                last = Date().addingTimeInterval(TimeInterval(after))
-                try await Task.sleep(nanoseconds: UInt64(after) * 1_000_000_000)
+                last[lane] = max(last[lane] ?? .distantPast, Date().addingTimeInterval(TimeInterval(after) - spacing(lane)))
                 continue
             }
             throw failure
@@ -213,6 +217,35 @@ final class DesignSync: ObservableObject {
     func projectName(_ fileKey: String) -> String {
         let name = source(fileKey)?.name ?? history.files[fileKey]?.name ?? fileKey
         return Self.project(from: name)
+    }
+
+    /// 지금 시안의 화면. `path`가 있으면 그 경로(아래 경로 포함)만, `exact`면 그 경로만.
+    func screens(_ fileKey: String, under path: String? = nil, exact: Bool = false) -> [ScreenSnapshot] {
+        let all = history.files[fileKey]?.screens.values ?? [:].values
+        return all.filter { screen in
+            guard let path else { return true }
+            return exact ? screen.menuPath == path : DesignStatus.covers(path, screen.menuPath)
+        }
+        .sorted { ($0.menuPath, $0.screenID, $0.title, $0.frameID) < ($1.menuPath, $1.screenID, $1.title, $1.frameID) }
+    }
+
+    /// 이 화면에 생긴 변경과 화면 ID를 적은 이력. 최근 것이 앞.
+    func events(for screen: ScreenSnapshot, in fileKey: String) -> [DesignEvent] {
+        history.events.filter { event in
+            guard event.fileKey == fileKey else { return false }
+            if event.kind == .changelog {
+                return event.screenID.components(separatedBy: ", ").contains(screen.screenID)
+                    || (event.menus ?? []).contains { DesignStatus.covers($0, screen.menuPath) }
+            }
+            return event.frameID == screen.frameID || event.beforeFrameID == screen.frameID
+        }
+        .sorted { $0.detectedAt > $1.detectedAt }
+    }
+
+    /// 업무 일지 오늘 칸에 이 화면 마크업을 할 일로 넣는다.
+    func addToWorkLog(_ screen: ScreenSnapshot, in fileKey: String) -> Bool {
+        let title = "\(screen.screenID) \(screen.title) 마크업".trimmingCharacters(in: .whitespaces)
+        return WorkLogStore.shared.add(day: WorkDay.today(), project: projectName(fileKey), title: title, status: .inProgress) != nil
     }
 
     // MARK: 즐겨찾기·숨기기·순서
@@ -389,6 +422,9 @@ final class DesignSync: ObservableObject {
         guard let source = settings.sources.first(where: { $0.fileKey == event.fileKey }), !source.hides(event.menuPath) else { return false }
         guard event.isImportant || settings.notifyWorking else { return false }
         if event.kind != .changelog { return source.alerts(event.menuPath) }
+        if let menus = event.menus, !menus.isEmpty {
+            return menus.contains { menu in source.alerts(menu) || source.alerts.contains { DesignStatus.covers(menu, $0) } }
+        }
         // 이력 줄은 페이지 단위라, 적힌 화면 ID나 그 페이지의 화면이 알림 메뉴에 있을 때만
         let screens = history.files[event.fileKey]?.screens.values.filter { source.alerts($0.menuPath) } ?? []
         let ids = event.screenID.components(separatedBy: ", ").filter { !$0.isEmpty }
@@ -399,8 +435,32 @@ final class DesignSync: ObservableObject {
     // MARK: 알림 메뉴와 상태
 
     func rules(for fileKey: String) -> DesignStatusRules {
-        DesignStatusRules(overrides: settings.sources.first { $0.fileKey == fileKey }?.statusOverrides ?? [:],
-                          untaggedIsDone: settings.untaggedIsDone)
+        let source = settings.sources.first { $0.fileKey == fileKey }
+        return DesignStatusRules(overrides: source?.statusOverrides ?? [:], untaggedIsDone: untaggedIsDone(fileKey, source: source))
+    }
+
+    /// 프로젝트에서 직접 정한 것 → 상태·버전을 쓰는 파일이면 전체 설정 → 쓰지 않는 파일이면 완료.
+    private func untaggedIsDone(_ fileKey: String, source: DesignSource?) -> Bool {
+        if let manual = source?.untaggedIsDone { return manual }
+        return usesMarks(fileKey) ? settings.untaggedIsDone : true
+    }
+
+    /// 파일마다 상태 표시를 쓰는지. 사이드바가 그릴 때마다 화면을 모두 훑지 않게 화면 수가 같으면 다시 쓴다.
+    private var marksCache: [String: (count: Int, uses: Bool)] = [:]
+
+    /// 이 프로젝트에서 상태 표시 없는 화면을 어떻게 보는지 (nil: 자동).
+    func setUntaggedIsDone(_ value: Bool?, for fileKey: String) {
+        guard let index = settings.sources.firstIndex(where: { $0.fileKey == fileKey }) else { return }
+        settings.sources[index].untaggedIsDone = value
+    }
+
+    /// 섹션에 상태나 버전을 쓰는 프로젝트인지. 아직 받지 않았으면 쓰는 것으로 둔다.
+    func usesMarks(_ fileKey: String) -> Bool {
+        guard let screens = history.files[fileKey]?.screens.values else { return true }
+        if let cached = marksCache[fileKey], cached.count == screens.count { return cached.uses }
+        let uses = DesignStatus.usesMarks(screens)
+        marksCache[fileKey] = (screens.count, uses)
+        return uses
     }
 
     func state(of screen: ScreenSnapshot, in fileKey: String) -> ScreenState {
@@ -480,7 +540,7 @@ final class DesignSync: ObservableObject {
         persist()
     }
 
-    /// 연결 확인. 지켜보는 화면설계서가 있으면 실제로 읽어 본다 (이 기능에 필요한 범위는 file_content:read 하나다).
+    /// 연결 확인. 지켜보는 화면설계서가 있으면 실제로 읽어 본다 (가져오기에 필요한 범위는 file_content:read, 날짜 비교는 file_versions:read도 쓴다).
     /// 없으면 토큰이 맞는지만 본다. `/v1/me`는 current_user:read 범위가 따로 있어야 해서, 범위가 없다는 답은 토큰이 맞다는 뜻이다.
     func checkToken() async -> Result<String, FigmaAPI.Failure> {
         guard let token = settings.token else { return .failure(.unauthorized) }

@@ -18,6 +18,8 @@ public struct DesignSource: Codable, Equatable, Identifiable, Sendable {
     public var isHidden: Bool
     /// 이 프로젝트만 따로 정한 가져오기 주기(분). nil이면 전체 설정을, 0이면 손으로만 가져온다.
     public var intervalMinutes: Int?
+    /// 상태 표시가 없는 화면을 완료로 볼지 이 프로젝트만 따로 정한다. nil이면 자동.
+    public var untaggedIsDone: Bool?
 
     public init(fileKey: String, name: String = "", menus: [String] = [], skippedPages: [String] = [],
                 alerts: [String] = [], statusOverrides: [String: Bool] = [:], hiddenMenus: [String] = [], isHidden: Bool = false) {
@@ -31,7 +33,7 @@ public struct DesignSource: Codable, Equatable, Identifiable, Sendable {
         self.statusOverrides = statusOverrides
     }
 
-    private enum CodingKeys: String, CodingKey { case fileKey, name, menus, skippedPages, alerts, statusOverrides, hiddenMenus, isHidden, intervalMinutes }
+    private enum CodingKeys: String, CodingKey { case fileKey, name, menus, skippedPages, alerts, statusOverrides, hiddenMenus, isHidden, intervalMinutes, untaggedIsDone }
 
     /// 알림·상태 칸이 생기기 전에 저장한 설정도 읽는다.
     public init(from decoder: Decoder) throws {
@@ -45,6 +47,7 @@ public struct DesignSource: Codable, Equatable, Identifiable, Sendable {
         hiddenMenus = try container.decodeIfPresent([String].self, forKey: .hiddenMenus) ?? []
         isHidden = try container.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         intervalMinutes = try container.decodeIfPresent(Int.self, forKey: .intervalMinutes)
+        untaggedIsDone = try container.decodeIfPresent(Bool.self, forKey: .untaggedIsDone)
     }
 
     /// 숨긴 프로젝트이거나 숨긴 경로 아래면 true.

@@ -48,9 +48,18 @@ public enum DesignStatus {
         path == prefix || path.hasPrefix(prefix + " > ")
     }
 
+    /// 섹션에 `[완료]` 같은 상태나 `_v0.4` 같은 버전을 적는 화면설계서인지.
+    /// 둘 다 쓰지 않는 디자이너는 다듬은 화면만 올려서, 표시 없는 화면을 작업 중으로 보면 완료 후 변경을 하나도 못 잡는다.
+    public static func usesMarks<S: Sequence>(_ screens: S) -> Bool where S.Element == ScreenSnapshot {
+        screens.contains { !segments($0.sectionName).isEmpty || hasVersion($0.sectionName) }
+    }
+
+    /// 사이드바가 그릴 때마다 화면 수만큼 부르므로 한 번만 만든다.
+    private static let segmentPattern = try! NSRegularExpression(pattern: "\\[([^\\]]+)\\]([^\\[]*)")
+
     /// 섹션 이름의 `[상태] 구간`들. `[완료] 데이터셋 > 목록 / [수정중] 데이터셋 생성`처럼 한 섹션에 여럿일 수 있다.
     static func segments(_ section: String) -> [(tag: String, label: String)] {
-        let pattern = try! NSRegularExpression(pattern: "\\[([^\\]]+)\\]([^\\[]*)")
+        let pattern = segmentPattern
         let range = NSRange(section.startIndex..., in: section)
         return pattern.matches(in: section, range: range).compactMap { match in
             guard let tag = Range(match.range(at: 1), in: section), let label = Range(match.range(at: 2), in: section) else { return nil }
@@ -62,11 +71,19 @@ public enum DesignStatus {
     /// 섹션 상태 표시로 본 상태. 구간이 여럿이면 화면 경로·화면명과 가장 잘 맞는 구간을 쓴다.
     static func tagged(_ screen: ScreenSnapshot) -> ScreenState {
         let parts = segments(screen.sectionName)
-        guard !parts.isEmpty else { return .unknown }
+        // 상태 대신 `API Gateway_v0.4`처럼 배포 버전을 붙이는 디자이너는 버전을 단 섹션을 내보낸 시안으로 쓴다
+        guard !parts.isEmpty else { return hasVersion(screen.sectionName) ? .done : .unknown }
         let best = parts.count == 1 ? parts[0] : parts.max { score($0.label, screen) < score($1.label, screen) }!
         if doneTags.contains(best.tag) { return .done }
         if workingTags.contains(best.tag) { return .working }
         return .unknown
+    }
+
+    static let versionSuffix = "(?:^|[\\s_\\-(])[vV]\\d+(?:\\.\\d+)*\\)?\\s*$"
+
+    /// `위젯관리_v0.4`, `상품 v1.2`, `상품 (v2)` → true
+    static func hasVersion(_ section: String) -> Bool {
+        section.range(of: versionSuffix, options: .regularExpression) != nil
     }
 
     /// 경로가 같으면 가장 높다. 그다음은 화면명에서 경로를 뺀 부분(탭·모달 이름)이 구간 이름과 겹칠 때다.

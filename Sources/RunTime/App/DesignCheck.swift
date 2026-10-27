@@ -70,6 +70,43 @@ enum DesignCheck {
         }
     }
 
+    /// `--design-compare <파일 키> <기준 yyyy-MM-dd> <비교 yyyy-MM-dd> [화면 경로]`
+    static func compare(_ args: [String]) {
+        let format = DateFormatter()
+        format.dateFormat = "yyyy-MM-dd"
+        guard args.count >= 3, let from = format.date(from: args[1]), let to = format.date(from: args[2]) else {
+            finish("쓰는 법: --design-compare <파일 키> <기준 날짜> <비교 날짜> [화면 경로 | screen:화면 ID]", ok: false)
+        }
+        let model = DesignCompareModel.shared
+        let scope = args.count > 3 ? args[3] : nil
+        if let scope, scope.hasPrefix("screen:") {
+            let id = String(scope.dropFirst("screen:".count))
+            guard let screen = DesignSync.shared.history.files[args[0]]?.screens.values.filter({ $0.screenID == id }).min(by: { $0.frameID < $1.frameID }) else {
+                finish("기록에 \(id) 화면이 없습니다", ok: false)
+            }
+            model.open(fileKey: args[0], path: screen.menuPath, screen: DesignCompareModel.Target(screen))
+        } else {
+            model.open(fileKey: args[0], path: scope)
+        }
+        model.from = from
+        model.to = to
+        Task {
+            for round in 1...2 {
+                let started = Date()
+                model.run()
+                while model.running { try? await Task.sleep(nanoseconds: 200_000_000) }
+                if let error = model.error { finish(error, ok: false) }
+                guard let result = model.result else { finish("결과가 없습니다", ok: false) }
+                let kinds = Dictionary(grouping: result.events, by: \.kind.rawValue).mapValues(\.count)
+                let phases = Dictionary(grouping: result.events, by: { $0.phase?.rawValue ?? "-" }).mapValues(\.count)
+                print("\(round)회: \(String(format: "%.1f", Date().timeIntervalSince(started)))초 · 버전 \(DesignFormat.stamp(result.from.createdAt)) → \(DesignFormat.stamp(result.to.createdAt))"
+                      + " · 이름 붙은 버전 \(result.named.count) · 변경 \(result.events.count) \(kinds.sorted { $0.key < $1.key }) · 단계 \(phases.sorted { $0.key < $1.key })"
+                      + " · 기록에 남은 변경 \(model.recorded().count)")
+            }
+            finish("완료", ok: true)
+        }
+    }
+
     private static func finish(_ message: String, ok: Bool) -> Never {
         print(ok ? message : "실패: " + message)
         exit(ok ? 0 : 1)

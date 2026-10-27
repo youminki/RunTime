@@ -21,12 +21,27 @@ final class DesignHistoryPage: ObservableObject {
         case project(fileKey: String)
         /// 마크업에 반영을 마친 변경. 다른 보기에서는 빠진다
         case applied
+        /// 두 날짜의 피그마 버전과 그 사이 기록을 견준다
+        case compare
     }
 
-    @Published var scope: Scope = .important
-    @Published var selected: UUID? {
-        didSet { if selected != oldValue { selectedChange = nil; foldedChangeGroups = [] } }
+    @Published var scope: Scope = .important {
+        // 날짜 비교 결과는 기록에 없어서, 다른 보기로 가면 고른 것을 풀어 상세에 남지 않게 한다
+        didSet { if oldValue == .compare && scope != .compare { selected = nil } }
     }
+    @Published var selected: UUID? {
+        didSet {
+            if selected != oldValue { selectedChange = nil; foldedChangeGroups = [] }
+            if selected != nil { screen = nil }
+        }
+    }
+    /// 변경 대신 고른 지금 시안 화면 (프레임 ID). 바뀐 적 없는 화면도 상세에서 명세·이미지를 본다.
+    @Published var screen: String? {
+        didSet { if screen != nil { selected = nil } }
+    }
+    /// 화면 상세에서 목업 문구·컴포넌트 목록을 펼쳤는지
+    @Published var showsScreenTexts = false
+    @Published var showsScreenComponents = false
     /// 상세에서 고른 목업 변경 번호. 화면 비교 이미지에서 그 자리를 강조한다.
     @Published var selectedChange: Int?
     @Published var hoveredChange: Int?
@@ -90,6 +105,7 @@ struct DesignHistoryView: View {
     @ObservedObject var sync: DesignSync
     @ObservedObject var settings: DesignSyncSettings
     @ObservedObject var page: DesignHistoryPage
+    @ObservedObject var compare = DesignCompareModel.shared
     /// 앱 창에서 숨겨 둔 동안에는 false. 다시 보일 때 오래됐으면 새로 받는다.
     var isActive = true
     /// 화면 점검(`--ui-shots`)에서는 가져오지 않는다.
@@ -114,8 +130,15 @@ struct DesignHistoryView: View {
                 if settings.sources.isEmpty && sync.history.files.isEmpty {
                     DesignOnboarding(settings: settings, page: page)
                 } else {
-                    DesignTimeline(sync: sync, page: page, events: events)
-                        .frame(width: timeline)
+                    Group {
+                        if page.scope == .compare {
+                            DesignCompareView(sync: sync, page: page, model: compare)
+                        } else {
+                            let scoped = screenScope
+                            DesignTimeline(sync: sync, page: page, events: events, screenFile: scoped?.fileKey, screens: scoped?.screens ?? [])
+                        }
+                    }
+                    .frame(width: timeline)
                     ColumnDivider(width: $page.timelineWidth, range: Self.timelineRange, standard: Self.timelineWidth)
                     detail.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -142,10 +165,11 @@ struct DesignHistoryView: View {
             switch page.scope {
             case .project(let key): if event.fileKey != key { return false }
             case .all, .applied: break
+            case .compare: return false
             case .important: if !event.isImportant { return false }
             case .working: if event.isImportant { return false }
-            case .menu(let key, let path): if event.fileKey != key || event.menuPath != path { return false }
-            case .group(let key, let head): if event.fileKey != key || !DesignStatus.covers(head, event.menuPath) { return false }
+            case .menu(let key, let path): if event.fileKey != key || (event.menuPath != path && !(event.menus ?? []).contains(path)) { return false }
+            case .group(let key, let head): if event.fileKey != key || !event.concerns(head) { return false }
             }
             if let layer = page.layer, !event.changes.contains(where: { $0.layer == layer && $0.op != .renumbered }) { return false }
             guard !query.isEmpty else { return true }
@@ -155,10 +179,35 @@ struct DesignHistoryView: View {
         }
     }
 
+    /// 메뉴·묶음·프로젝트를 고르면 바뀐 적 없는 화면도 목록에 보인다. 숨긴 메뉴는 빼고 찾는 말로 거른다.
+    private var screenScope: (fileKey: String, screens: [ScreenSnapshot])? {
+        let found: (String, [ScreenSnapshot])
+        switch page.scope {
+        case .menu(let key, let path): found = (key, sync.screens(key, under: path, exact: true))
+        case .group(let key, let head): found = (key, sync.screens(key, under: head))
+        case .project(let key): found = (key, sync.screens(key))
+        default: return nil
+        }
+        let source = sync.source(found.0)
+        let query = page.search.trimmingCharacters(in: .whitespaces).lowercased()
+        let screens = found.1.filter { screen in
+            guard source?.hides(screen.menuPath) != true else { return false }
+            guard !query.isEmpty else { return true }
+            let haystack = ([screen.screenID, screen.title, screen.menuPath, screen.requirementID]
+                + screen.items.map(\.text) + Array(screen.texts.values)).joined(separator: "\n").lowercased()
+            return haystack.contains(query)
+        }
+        return (found.0, screens)
+    }
+
     // MARK: 상세
 
     @ViewBuilder private var detail: some View {
-        if let id = page.selected, let event = sync.history.events.first(where: { $0.id == id }) {
+        if let frame = page.screen, let key = screenScope?.fileKey, let screen = sync.history.files[key]?.screens[frame] {
+            DesignScreenDetail(fileKey: key, screen: screen, sync: sync, page: page)
+                .id(key + frame)
+        } else if let id = page.selected,
+                  let event = sync.history.events.first(where: { $0.id == id }) ?? compare.currentResult?.events.first(where: { $0.id == id }) {
             DesignEventDetail(event: event, seen: sync.history.isSeen(event), sync: sync, page: page,
                               toggleSeen: {
                                   if sync.history.isSeen(event) { sync.markUnseen(event.id) } else { sync.markSeen([event.id]) }
@@ -168,7 +217,7 @@ struct DesignHistoryView: View {
         } else {
             VStack(spacing: 10) {
                 Image(systemName: "sidebar.squares.leading").font(.system(size: 28, weight: .light)).foregroundStyle(WL.faint)
-                Text("변경을 고르면 바뀐 내용이 여기에 나옵니다").font(WL.body).foregroundStyle(WL.muted)
+                Text(screenScope == nil ? "변경을 고르면 바뀐 내용이 여기에 나옵니다" : "변경이나 화면을 고르면 여기에 나옵니다").font(WL.body).foregroundStyle(WL.muted)
                 let unseen = events.filter { $0.isImportant && !sync.history.isSeen($0) }
                 if !unseen.isEmpty {
                     Button("보이는 변경 \(unseen.count)건 모두 본 것으로 표시") { sync.markSeen(unseen.map(\.id)) }
@@ -311,6 +360,8 @@ private struct DesignSidebar: View {
                     .tip("반영 완료로 넘긴 것을 뺀 변경 전부")
                 row(key: "applied", icon: "checkmark.circle", title: "반영 완료", count: sync.history.applied.count, badge: false, scope: .applied)
                     .tip("마크업에 반영을 마친 변경. 상세에서 반영 완료를 풀면 다시 목록에 나옵니다")
+                row(key: "compare", icon: "calendar.badge.clock", title: "날짜 비교", count: 0, badge: false, scope: .compare)
+                    .tip("두 날짜 사이에 바뀐 디자인을 피그마 버전 기록으로 견줍니다")
             }
             if !settings.sources.isEmpty && settings.sources.allSatisfy({ $0.alerts.isEmpty }) && !sync.history.files.isEmpty {
                 alertHint
@@ -505,12 +556,20 @@ private struct DesignSidebar: View {
         .reorderable(file.key, dragging: $page.draggingProject) { from, to in sync.moveProject(from, to: to) }
         .contextMenu {
             Button("이 프로젝트만 보기") { page.scope = target }
+            Button("날짜별로 비교…") { DesignCompareModel.shared.open(fileKey: file.key, path: nil); page.scope = .compare }
             Button("지금 가져오기") { fetch(file.key, name: name) }
                 .disabled(sync.isBusy(file.key) || !settings.hasToken)
             if let url = URL(string: "https://www.figma.com/design/\(file.key)") {
                 Button("피그마에서 열기") { NSWorkspace.shared.open(url) }
             }
             Button("알림 받을 메뉴…") { page.openSettings(.alerts) }
+            Menu("상태 표시가 없는 화면") {
+                let current = sync.source(file.key)?.untaggedIsDone
+                let auto = sync.usesMarks(file.key) ? "전체 설정대로" : "완료로 봄"
+                Button((current == nil ? "✓ " : "") + "자동 (\(auto))") { sync.setUntaggedIsDone(nil, for: file.key) }
+                Button((current == true ? "✓ " : "") + "완료로 보기") { sync.setUntaggedIsDone(true, for: file.key) }
+                Button((current == false ? "✓ " : "") + "작업 중으로 보기") { sync.setUntaggedIsDone(false, for: file.key) }
+            }
             Menu("가져오기 주기") {
                 ForEach(DesignSync.projectIntervals.indices, id: \.self) { index in
                     let minutes = DesignSync.projectIntervals[index]
@@ -756,6 +815,7 @@ private struct DesignSidebar: View {
         .onHover { hover.update(key, $0) }
         .contextMenu {
             Button(sync.isFavorite(fileKey, node.path) ? "즐겨찾기에서 빼기" : "즐겨찾기에 넣기") { sync.toggleFavorite(fileKey, node.path) }
+            Button("날짜별로 비교…") { DesignCompareModel.shared.open(fileKey: fileKey, path: node.path); page.scope = .compare }
             if screens > 0 { menuActions(fileKey, node.path) }
             Divider()
             Button("숨기기") {
@@ -894,7 +954,7 @@ private struct DesignOnboarding: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             VStack(alignment: .leading, spacing: 0) {
-                step(1, "피그마 토큰 넣기", "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다.", done: settings.hasToken)
+                step(1, "피그마 토큰 넣기", "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 날짜 비교까지 쓰려면 file_versions:read도 더합니다.", done: settings.hasToken)
                 RowDivider()
                 step(2, "화면설계서 주소 붙여넣기", "주소창의 figma.com/design/… 주소를 그대로 넣습니다.", done: !settings.sources.isEmpty)
                 RowDivider()
@@ -933,6 +993,12 @@ private struct DesignTimeline: View {
     @ObservedObject var sync: DesignSync
     @ObservedObject var page: DesignHistoryPage
     let events: [DesignEvent]
+    /// 고른 메뉴의 지금 시안 화면과 그 프로젝트.
+    var screenFile: String?
+    var screens: [ScreenSnapshot] = []
+
+    /// 메뉴 하나를 고르면 화면이 먼저다. 묶음·프로젝트는 화면이 많아 변경을 먼저 둔다.
+    private var screensFirst: Bool { if case .menu = page.scope { return true } else { return false } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -950,11 +1016,12 @@ private struct DesignTimeline: View {
             .padding(.bottom, 12)
             Rectangle().fill(WL.border).frame(height: 1)
             let days = DesignHistory.days(events)
-            if days.isEmpty {
+            if days.isEmpty && screens.isEmpty {
                 empty
             } else {
                 SlimScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        if screensFirst { screenSection(noChanges: days.isEmpty) }
                         ForEach(days) { day in
                             Section {
                                 ForEach(day.events) { event in
@@ -977,9 +1044,45 @@ private struct DesignTimeline: View {
                                 .background(WL.canvas)
                             }
                         }
+                        if !screensFirst { screenSection(noChanges: days.isEmpty) }
                     }
                     .padding(.bottom, 16)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder private func screenSection(noChanges: Bool) -> some View {
+        if let screenFile, !screens.isEmpty {
+            Section {
+                if noChanges {
+                    Text("기록한 변경이 없습니다. 화면을 누르면 지금 시안의 명세와 이미지를 봅니다.")
+                        .font(WL.caption).foregroundStyle(WL.faint)
+                        .padding(.horizontal, WL.gutter).padding(.bottom, 6)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(screens, id: \.frameID) { screen in
+                    DesignScreenRow(screen: screen, state: sync.state(of: screen, in: screenFile),
+                                    changes: sync.events(for: screen, in: screenFile).filter { !sync.history.isApplied($0) && $0.kind != .changelog }.count,
+                                    selected: page.screen == screen.frameID) {
+                        page.screen = screen.frameID
+                    }
+                    .contextMenu {
+                        Button("날짜별로 비교…") { DesignScreenDetail.compareDates(fileKey: screenFile, screen: screen, page: page) }
+                        if let url = FigmaFileURL.link(fileKey: screenFile, nodeID: screen.frameID) {
+                            Button("피그마에서 열기") { NSWorkspace.shared.open(url) }
+                        }
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("화면 · 지금 시안").font(WL.label).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(screens.count)개").font(WL.label).foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, WL.gutter)
+                .padding(.top, 12).padding(.bottom, 6)
+                .background(WL.canvas)
             }
         }
     }
@@ -990,6 +1093,7 @@ private struct DesignTimeline: View {
         case .important: return "완료 후 변경"
         case .working: return "작업 중 변경"
         case .applied: return "반영 완료"
+        case .compare: return "날짜 비교"
         case .menu(_, let path): return path.components(separatedBy: " > ").last ?? path
         case .group(_, let head): return head.components(separatedBy: " > ").last ?? head
         case .project(let key): return sync.projectName(key)
@@ -1062,7 +1166,7 @@ private struct DesignTimeline: View {
     }
 }
 
-private struct DesignEventRow: View {
+struct DesignEventRow: View {
     let event: DesignEvent
     let seen: Bool
     let selected: Bool
@@ -1127,7 +1231,7 @@ private struct DesignEventRow: View {
 }
 
 /// 바뀔 때의 단계. 완료 후 변경은 파랑, 막 완료됨은 초록, 작업 중은 회색.
-private struct DesignPhaseBadge: View {
+struct DesignPhaseBadge: View {
     let phase: DesignEvent.Phase?
 
     var body: some View {
@@ -1177,7 +1281,7 @@ private struct DesignEventDetail: View {
             if geo.size.width >= Self.splitWidth {
                 HStack(spacing: 0) {
                     SlimScrollView {
-                        overview(wide: true).padding(.horizontal, 28).padding(.vertical, 24)
+                        overview(wide: true, width: geo.size.width * 0.55 - 56).padding(.horizontal, 28).padding(.vertical, 24)
                     }
                     .frame(width: (geo.size.width * 0.55).rounded())
                     Rectangle().fill(WL.border).frame(width: 1)
@@ -1189,7 +1293,7 @@ private struct DesignEventDetail: View {
             } else {
                 SlimScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        overview(wide: false)
+                        overview(wide: false, width: min(geo.size.width - 64, 760))
                         changeList
                     }
                     .padding(.horizontal, 32)
@@ -1202,15 +1306,18 @@ private struct DesignEventDetail: View {
     }
 
     private var applied: Bool { sync.history.isApplied(event) }
+    /// 날짜 비교 결과처럼 기록에 없는 변경은 본 것·반영 표시를 두지 않는다.
+    private var stored: Bool { sync.history.events.contains { $0.id == event.id } }
     private var progress: (done: Int, total: Int) { sync.history.progress(event) }
     private var checked: Set<String> { sync.history.checkedKeys(event) }
     private var tree: DesignChangeTree.Node? { DesignChangeTree.mockupChanges(event).map(DesignChangeTree.build) }
 
     /// 머리, 단추, 안내, 화면 비교.
-    private func overview(wide: Bool) -> some View {
+    /// `width`는 이 칸의 글 너비. 단추 줄이 들어가지 않으면 보조 단추를 아이콘만 남긴다.
+    private func overview(wide: Bool, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 22) {
             header
-            actions
+            actions(compact: width < 720)
             if applied {
                 callout("checkmark.circle", "마크업에 반영을 마친 변경입니다. 목록과 알림에서 뺐습니다.")
             }
@@ -1231,7 +1338,7 @@ private struct DesignEventDetail: View {
             comparison(wide: wide)
             if event.phase == .completed {
                 callout("checkmark.seal", "이번 변경으로 완료 표시가 붙은 화면입니다.")
-            } else if event.phase == .working && event.kind == .changed {
+            } else if event.phase == .working && event.kind == .changed && stored {
                 callout("pencil.line", "작업 중인 화면입니다. 같은 날 바뀐 것은 이 한 건에 모아 그날 처음 상태와 비교합니다.")
             }
             if event.kind == .removed {
@@ -1247,7 +1354,7 @@ private struct DesignEventDetail: View {
             layerSection(.spec)
             if let tree {
                 DesignChangeTreeView(root: tree, fileKey: event.fileKey, page: page, checked: checked,
-                                     toggle: { sync.toggleChecked($0, in: event.id) })
+                                     toggle: { sync.toggleChecked($0, in: event.id) }, checkable: stored)
             } else {
                 layerSection(.text)
             }
@@ -1264,8 +1371,10 @@ private struct DesignEventDetail: View {
                 ForEach(Array(changes.enumerated()), id: \.offset) { index, change in
                     if index > 0 { RowDivider(inset: 26) }
                     HStack(alignment: .top, spacing: 8) {
-                        AppliedCheck(on: checked.contains(change.key)) { sync.toggleChecked(change, in: event.id) }
-                            .padding(.top, 12)
+                        if stored {
+                            AppliedCheck(on: checked.contains(change.key)) { sync.toggleChecked(change, in: event.id) }
+                                .padding(.top, 12)
+                        }
                         DesignChangeRow(change: change).opacity(checked.contains(change.key) ? 0.45 : 1)
                     }
                 }
@@ -1290,7 +1399,7 @@ private struct DesignEventDetail: View {
                 }
                 Spacer(minLength: 8)
                 // 좁은 창에서도 단추 줄 끝으로 밀려 사라지지 않게 맨 위에 둔다
-                if !applied {
+                if !applied && stored {
                     Button(seen ? "안 본 것으로 표시" : "본 것으로 표시", action: toggleSeen).buttonStyle(TextLinkButtonStyle())
                         .tip(seen ? "목록에 다시 파란 점을 붙여 나중에 볼 것으로 둡니다" : "확인한 것으로 둡니다")
                 }
@@ -1333,14 +1442,10 @@ private struct DesignEventDetail: View {
         .textSelection(.enabled)
     }
 
-    /// 상세가 좁으면(최소 창 크기) 보조 단추는 아이콘만 남겨 줄이 넘치지 않게 한다.
-    private var actions: some View {
+    private func actions(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            ViewThatFits(in: .horizontal) {
-                actionRow(compact: false)
-                actionRow(compact: true)
-            }
-            if progress.total > 0 && !applied { progressBar }
+            actionRow(compact: compact)
+            if progress.total > 0 && !applied && stored { progressBar }
         }
     }
 
@@ -1365,11 +1470,13 @@ private struct DesignEventDetail: View {
 
     private func actionRow(compact: Bool) -> some View {
         HStack(spacing: 8) {
-            Button(action: toggleApplied) {
-                Label(applied ? "반영 완료 풀기" : "반영 완료", systemImage: applied ? "arrow.uturn.backward" : "checkmark.circle")
+            if stored {
+                Button(action: toggleApplied) {
+                    Label(applied ? "반영 완료 풀기" : "반영 완료", systemImage: applied ? "arrow.uturn.backward" : "checkmark.circle")
+                }
+                .buttonStyle(NotionButtonStyle(kind: applied ? .secondary : .primary))
+                .tip(applied ? "다시 목록에 나오게 합니다" : "마크업에 반영했으면 목록에서 빼고 다음 변경으로 넘어갑니다")
             }
-            .buttonStyle(NotionButtonStyle(kind: applied ? .secondary : .primary))
-            .tip(applied ? "다시 목록에 나오게 합니다" : "마크업에 반영했으면 목록에서 빼고 다음 변경으로 넘어갑니다")
             if let url = DesignFormat.link(event) {
                 let title = event.kind == .changelog ? "이력 표 열기" : "피그마에서 열기"
                 Button { NSWorkspace.shared.open(url) } label: {
@@ -1395,6 +1502,13 @@ private struct DesignEventDetail: View {
                 }
                 .buttonStyle(NotionButtonStyle())
                 .tip("업무 일지에 넣기: 오늘 칸에 ‘디자인 변경 반영’을 진행중으로")
+            }
+            if let frame = event.frameID, let screen = sync.history.files[event.fileKey]?.screens[frame], event.kind != .changelog {
+                Button { DesignScreenDetail.compareDates(fileKey: event.fileKey, screen: screen, page: page) } label: {
+                    if compact { Image(systemName: "calendar.badge.clock") } else { Label("날짜별 비교", systemImage: "calendar.badge.clock") }
+                }
+                .buttonStyle(NotionButtonStyle())
+                .tip("날짜별 비교: 이 화면만 두 날짜의 피그마 버전으로 견줍니다")
             }
             Spacer(minLength: 0)
             if event.kind != .changelog, let state = screenState {
@@ -1495,7 +1609,23 @@ private struct DesignEventDetail: View {
                 }
             }
         }
-        .onAppear { if let version { images.load(fileKey: event.fileKey, nodeID: frame, version: version) } }
+        .onAppear {
+            if let version { images.load(fileKey: event.fileKey, nodeIDs: neighbours(frame, version: version, before: label == "이전"), version: version) }
+        }
+    }
+
+    /// 지금 프레임과, 같은 버전으로 그릴 가까운 변경의 프레임. 한 요청으로 받아 다음 변경은 기다리지 않고 열린다.
+    private func neighbours(_ frame: String, version: String, before: Bool) -> [String] {
+        let all = stored ? sync.history.events : (DesignCompareModel.shared.currentResult?.events ?? [])
+        guard let index = all.firstIndex(where: { $0.id == event.id }) else { return [frame] }
+        var ids = [frame]
+        for i in all.indices.sorted(by: { abs($0 - index) < abs($1 - index) }) where ids.count < DesignImages.batchSize {
+            let other = all[i]
+            guard other.fileKey == event.fileKey, other.kind != .changelog else { continue }
+            let id = before ? (other.kind == .added ? nil : other.beforeFrameID ?? other.frameID) : (other.kind == .removed ? nil : other.frameID)
+            if let id, (before ? other.beforeVersion : other.afterVersion) == version, !ids.contains(id) { ids.append(id) }
+        }
+        return ids
     }
 
     /// 지금 이 화면을 완료로 보는지 (사이드바 상태와 같은 규칙).
