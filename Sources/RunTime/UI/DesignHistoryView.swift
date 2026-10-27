@@ -23,11 +23,53 @@ final class DesignHistoryPage: ObservableObject {
         case applied
         /// 두 날짜의 피그마 버전과 그 사이 기록을 견준다
         case compare
+
+        /// 한 프로젝트 안의 보기면 그 프로젝트.
+        var fileKey: String? {
+            switch self {
+            case .menu(let key, _), .group(let key, _), .project(let key): return key
+            default: return nil
+            }
+        }
     }
 
+    /// 지금 보는 프로젝트. nil이면 모든 프로젝트. 프로젝트가 여럿이면 하나씩 보는 것이 기본이다.
+    @Published var project: String? = DesignHistoryPage.storedProject() {
+        didSet {
+            UserDefaults.standard.set(project ?? "*", forKey: "design.project")
+            guard project != oldValue, !followingScope else { return }
+            // 다른 프로젝트의 메뉴·화면을 고른 채 남지 않게 변경 목록으로 돌아간다
+            if scope != .compare && scope != .applied { scope = .important }
+            selected = nil
+            screen = nil
+        }
+    }
+
+    private static func storedProject() -> String? {
+        let keys = DesignSyncSettings.shared.sources.filter { !$0.isHidden }.map(\.fileKey)
+        switch UserDefaults.standard.string(forKey: "design.project") {
+        case "*": return nil
+        case let key? where keys.contains(key): return key
+        default: return keys.first
+        }
+    }
+
+    /// 다른 프로젝트의 메뉴·화면을 고르면 프로젝트도 따라 바꾼다. 그때는 고른 것을 풀지 않는다.
+    private var followingScope = false
+
+    /// 알림 받을 메뉴를 고르는 창을 띄울 프로젝트.
+    @Published var alertPicker: String?
+
     @Published var scope: Scope = .important {
-        // 날짜 비교 결과는 기록에 없어서, 다른 보기로 가면 고른 것을 풀어 상세에 남지 않게 한다
-        didSet { if oldValue == .compare && scope != .compare { selected = nil } }
+        didSet {
+            // 날짜 비교 결과는 기록에 없어서, 다른 보기로 가면 고른 것을 풀어 상세에 남지 않게 한다
+            if oldValue == .compare && scope != .compare { selected = nil }
+            if let key = scope.fileKey, project != nil, project != key {
+                followingScope = true
+                project = key
+                followingScope = false
+            }
+        }
     }
     @Published var selected: UUID? {
         didSet {
@@ -92,6 +134,51 @@ final class DesignHistoryPage: ObservableObject {
         showsSettings = true
     }
 
+    /// 링크를 더하고 받는 중. 사이드바 링크 단추가 돈다.
+    @Published var addingLink = false
+
+    /// 피그마에서 복사한 링크를 더하고, 받은 뒤 그 화면을 연다. 이미 받은 화면이면 바로 연다.
+    func addLink(_ text: String, sync: DesignSync) {
+        guard text.contains("figma.com/") else {
+            flash(text.isEmpty ? "클립보드가 비어 있습니다. 피그마에서 ‘링크 복사’를 해 오세요" : "클립보드에 피그마 링크가 없습니다")
+            return
+        }
+        guard !addingLink else { return }
+        addingLink = true
+        Task {
+            let result = await sync.addLink(text)
+            switch result {
+            case .failure(let problem):
+                addingLink = false
+                flash(problem.message)
+            case .success(let link):
+                flash(link.needsFetch ? link.message + " · 가져오는 중…" : link.message)
+                guard link.needsFetch else {
+                    addingLink = false
+                    open(link, sync: sync)
+                    return
+                }
+                sync.sync(only: link.fileKey) { [weak self] _ in
+                    guard let self else { return }
+                    self.addingLink = false
+                    if let error = sync.errors[link.fileKey] { self.flash(error) }
+                    self.open(link, sync: sync)
+                }
+            }
+        }
+    }
+
+    /// 링크한 화면을 상세로 연다. 화면을 못 찾았으면 그 프로젝트만 보인다.
+    private func open(_ link: DesignSync.AddedLink, sync: DesignSync) {
+        if project != nil { project = link.fileKey }
+        scope = .project(fileKey: link.fileKey)
+        foldedProjects.remove(link.fileKey)
+        if let node = link.nodeID, let screen = sync.screen(for: node, in: link.fileKey) { self.screen = screen.frameID }
+    }
+
+    /// 변경 보기(완료 후·작업 중·전체)인지. 사이드바에서는 한 줄로, 목록 머리에서 셋으로 나눠 고른다.
+    var showsChanges: Bool { [.important, .working, .all].contains(scope) }
+
     func flash(_ message: String) {
         withAnimation { toast = message }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
@@ -149,9 +236,19 @@ struct DesignHistoryView: View {
         .overlay(alignment: .bottom) {
             if let toast = page.toast { Toast(message: toast).padding(.bottom, 18).transition(.opacity) }
         }
+        .sheet(item: Binding(get: { page.alertPicker.map(AlertPickerTarget.init) }, set: { page.alertPicker = $0?.id })) { target in
+            DesignAlertPicker(sync: sync, fileKey: target.id)
+        }
         .onAppear { if autoStart && isActive { sync.syncIfStale() } }
+        .onChange(of: settings.sources) { sources in
+            // 지우거나 숨긴 프로젝트를 고른 채 빈 화면이 남지 않게 한다
+            let visible = sources.filter { !$0.isHidden }.map(\.fileKey)
+            if let project = page.project, !visible.contains(project) { page.project = visible.first }
+        }
         .onChange(of: isActive) { if $0 && autoStart { sync.syncIfStale() } }
     }
+
+    private struct AlertPickerTarget: Identifiable { let id: String }
 
     // MARK: 거르기
 
@@ -160,14 +257,16 @@ struct DesignHistoryView: View {
         return sync.history.events.filter { event in
             // 숨긴 프로젝트·메뉴는 어느 보기에서도 빼고, 맨 아래 숨긴 항목에서만 다시 켠다
             if sync.isHidden(event) { return false }
+            if let project = page.project, event.fileKey != project { return false }
             // 반영을 마친 변경은 "반영 완료" 보기에만 남긴다
             if sync.history.isApplied(event) != (page.scope == .applied) { return false }
             switch page.scope {
             case .project(let key): if event.fileKey != key { return false }
             case .all, .applied: break
             case .compare: return false
-            case .important: if !event.isImportant { return false }
-            case .working: if event.isImportant { return false }
+            // 알림 받을 메뉴를 고른 프로젝트는 그 메뉴의 변경만 본다. 다른 메뉴는 "전체"에서 본다
+            case .important: if !event.isImportant || !sync.follows(event) { return false }
+            case .working: if event.isImportant || !sync.follows(event) { return false }
             case .menu(let key, let path): if event.fileKey != key || (event.menuPath != path && !(event.menus ?? []).contains(path)) { return false }
             case .group(let key, let head): if event.fileKey != key || !event.concerns(head) { return false }
             }
@@ -347,30 +446,33 @@ private struct DesignSidebar: View {
     @FocusState private var searching: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            searchField
+        VStack(alignment: .leading, spacing: 14) {
+            if visibleFiles.count > 1 || page.project != nil { projectSwitcher }
+            HStack(spacing: 6) {
+                searchField
+                linkButton
+            }
             VStack(spacing: 1) {
-                row(key: "important", icon: "checkmark.seal", title: "완료 후 변경", count: sync.unseenCount, badge: true, scope: .important)
-                    .tip("완료된 화면에 다시 생긴 변경, 막 완료된 화면, 디자이너가 적은 이력")
-                let open = sync.history.events.filter { !sync.history.isApplied($0) }
-                row(key: "working", icon: "pencil.line", title: "작업 중 변경",
-                    count: open.filter { !$0.isImportant }.count, badge: false, scope: .working)
-                    .tip("아직 작업 중인 화면의 변경. 같은 날 바뀐 것은 한 건으로 합칩니다")
-                row(key: "all", icon: "tray.full", title: "모든 변경", count: open.count, badge: false, scope: .all)
-                    .tip("반영 완료로 넘긴 것을 뺀 변경 전부")
-                row(key: "applied", icon: "checkmark.circle", title: "반영 완료", count: sync.history.applied.count, badge: false, scope: .applied)
+                // 알림 메뉴·작업 중·전체는 목록 머리에서 고른다. 여기서는 확인 안 한 건수만 보인다
+                row(key: "changes", icon: "tray.full", title: "변경", count: sync.unseenCount(in: page.project), badge: true,
+                    scope: page.showsChanges ? page.scope : .important, selected: page.showsChanges)
+                    .tip("화면설계서에 생긴 변경. 파란 숫자는 알림 받는 메뉴(고르지 않았으면 전체)에서 확인하지 않은 변경입니다")
+                row(key: "applied", icon: "checkmark.circle", title: "반영 완료", count: appliedCount, badge: false, scope: .applied)
                     .tip("마크업에 반영을 마친 변경. 상세에서 반영 완료를 풀면 다시 목록에 나옵니다")
                 row(key: "compare", icon: "calendar.badge.clock", title: "날짜 비교", count: 0, badge: false, scope: .compare)
                     .tip("두 날짜 사이에 바뀐 디자인을 피그마 버전 기록으로 견줍니다")
             }
-            if !settings.sources.isEmpty && settings.sources.allSatisfy({ $0.alerts.isEmpty }) && !sync.history.files.isEmpty {
-                alertHint
-            }
             SlimScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    alertsSection
                     favoritesSection
-                    if !files.isEmpty { treeControls }
-                    ForEach(files.filter { !(sync.source($0.key)?.isHidden ?? false) }, id: \.key) { file in fileSection(file) }
+                    if !shownFiles.isEmpty { treeControls }
+                    if let project = page.project, let file = shownFiles.first(where: { $0.key == project }) {
+                        // 한 프로젝트만 보면 프로젝트 머리줄 없이 메뉴만 둔다. 프로젝트 동작은 위 전환 메뉴에 있다
+                        fileSection(file, header: false)
+                    } else {
+                        ForEach(shownFiles, id: \.key) { file in fileSection(file, header: true) }
+                    }
                     hiddenSection
                 }
                 .padding(.bottom, 8)
@@ -383,6 +485,154 @@ private struct DesignSidebar: View {
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(WL.sidebar)
+    }
+
+    private var appliedCount: Int {
+        guard let project = page.project else { return sync.history.applied.count }
+        return sync.history.events.filter { $0.fileKey == project && sync.history.isApplied($0) }.count
+    }
+
+    /// 숨기지 않은 프로젝트.
+    private var visibleFiles: [(key: String, name: String)] { files.filter { !(sync.source($0.key)?.isHidden ?? false) } }
+
+    /// 사이드바에 그릴 프로젝트. 한 프로젝트를 고르면 그것만.
+    private var shownFiles: [(key: String, name: String)] {
+        guard let project = page.project else { return visibleFiles }
+        return visibleFiles.filter { $0.key == project }
+    }
+
+    // MARK: 프로젝트 전환
+
+    /// 프로젝트를 하나씩 본다. 셋을 한꺼번에 펼치면 메뉴가 섞여 찾기 어렵다. 고른 프로젝트의 동작(가져오기 주기 등)도 여기 있다.
+    private var projectSwitcher: some View {
+        HStack(spacing: 4) {
+            Menu {
+                Button((page.project == nil ? "✓ " : "") + "모든 프로젝트") { page.project = nil }
+                Divider()
+                ForEach(visibleFiles, id: \.key) { file in
+                    let unseen = sync.unseenCount(in: file.key)
+                    Button((page.project == file.key ? "✓ " : "") + sync.projectName(file.key) + (unseen > 0 ? "  · 확인할 변경 \(unseen)" : "")) {
+                        page.project = file.key
+                    }
+                }
+                if let key = page.project, let file = visibleFiles.first(where: { $0.key == key }) {
+                    Divider()
+                    projectActions(file)
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if let key = page.project {
+                        ProjectSwatch(name: sync.projectName(key))
+                    } else {
+                        Image(systemName: "square.stack").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    }
+                    Text(page.project.map(sync.projectName) ?? "모든 프로젝트").font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                    if let key = page.project, sync.source(key)?.scope.isEmpty == false {
+                        Image(systemName: "link").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            .tip(page.project.map { "\(sync.source($0)?.name ?? sync.projectName($0))\n다른 프로젝트로 바꾸거나 이 프로젝트의 가져오기 주기·상태 판단을 정합니다" }
+                 ?? "프로젝트를 하나 고르면 그 프로젝트의 메뉴와 변경만 봅니다")
+            if let key = page.project, sync.source(key) != nil { fetchButton(key, name: sync.projectName(key)) }
+        }
+    }
+
+    // MARK: 알림 받는 메뉴
+
+    /// 🔔를 켠 메뉴를 한곳에 모은다. 무엇을 알림 받는지 바로 보이고, 눌러서 그 메뉴로 간다.
+    @ViewBuilder private var alertsSection: some View {
+        let keys = shownFiles.map(\.key).filter { sync.source($0) != nil }
+        let items = keys.flatMap { key in (sync.source(key)?.alerts ?? []).filter { !$0.isEmpty }.map { (fileKey: key, path: $0) } }
+        if !keys.isEmpty && keys.contains(where: { sync.history.files[$0] != nil }) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 2) {
+                    SectionLabel("알림 받는 메뉴")
+                    Spacer(minLength: 4)
+                    alertPickButton(keys)
+                }
+                .padding(.leading, 6).padding(.bottom, 3)
+                if items.isEmpty {
+                    Button { pickAlerts(keys) } label: {
+                        Text(keys.count == 1 ? "고른 메뉴가 없어 이 프로젝트의 모든 변경을 봅니다. 맡은 메뉴를 고르면 그 메뉴의 변경만 모아 보고 알림도 그것만 옵니다."
+                                             : "맡은 메뉴를 고르면 그 메뉴의 변경만 모아 보고 알림도 그것만 옵니다.")
+                            .font(WL.caption).foregroundStyle(WL.muted).multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.selected.opacity(0.6)))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .tip("눌러서 알림 받을 메뉴 고르기")
+                }
+                ForEach(items, id: \.path) { item in alertRow(fileKey: item.fileKey, path: item.path) }
+            }
+        }
+    }
+
+    private func pickAlerts(_ keys: [String]) {
+        guard let key = keys.first(where: { sync.history.files[$0] != nil }) else { return }
+        page.alertPicker = key
+    }
+
+    @ViewBuilder private func alertPickButton(_ keys: [String]) -> some View {
+        if keys.count == 1 {
+            Button { pickAlerts(keys) } label: { Image(systemName: "slider.horizontal.3") }
+                .buttonStyle(GhostIconButtonStyle())
+                .disabled(sync.history.files[keys[0]] == nil)
+                .tip("알림 받을 메뉴 고르기")
+        } else {
+            Menu {
+                ForEach(keys, id: \.self) { key in
+                    Button(sync.projectName(key)) { page.alertPicker = key }.disabled(sync.history.files[key] == nil)
+                }
+            } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 24, height: 24)
+                .tip("알림 받을 메뉴 고르기")
+        }
+    }
+
+    private func alertRow(fileKey: String, path: String) -> some View {
+        let hasChildren = sync.history.files[fileKey]?.screens.values.contains { $0.menuPath.hasPrefix(path + " > ") } == true
+        let target: DesignHistoryPage.Scope = hasChildren ? .group(fileKey: fileKey, head: path) : .menu(fileKey: fileKey, path: path)
+        let selected = page.scope == target
+        let key = "a:" + fileKey + path
+        let project = sync.projectName(fileKey)
+        let unseen = sync.history.events.filter { $0.fileKey == fileKey && $0.concerns(path) && $0.isImportant
+            && !sync.history.isSeen($0) && !sync.isHidden($0) }.count
+        return Button { page.scope = target } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "bell.fill").font(.system(size: 9.5)).foregroundStyle(WL.accent).frame(width: 14)
+                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+                if page.project == nil && visibleFiles.count > 1 {
+                    Text(project).font(WL.caption).foregroundStyle(WL.projectColor(project)).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                badge(unseen, fallback: nil)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
+                .fill(selected ? WL.hover.opacity(1.8) : hover.key == key ? WL.hover : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover.update(key, $0) }
+        .tip("\(project) · \(DesignFormat.path(path))" + (hasChildren ? "\n아래 메뉴 모두, 앞으로 생길 화면까지 알림" : ""))
+        .contextMenu {
+            Button("알림 끄기") { sync.setAlert(path, on: false, in: fileKey) }
+            Button("알림 받을 메뉴 고르기…") { page.alertPicker = fileKey }
+        }
     }
 
     // MARK: 찾기
@@ -413,22 +663,22 @@ private struct DesignSidebar: View {
         .tip("화면 ID·화면명·명세·문구에서 찾습니다")
     }
 
-    private var alertHint: some View {
-        Button { page.openSettings(.alerts) } label: {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "bell.badge").font(.system(size: 12)).foregroundStyle(WL.accent)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("알림 받을 메뉴를 고르세요").font(.system(size: 12, weight: .semibold))
-                    Text("메뉴에 마우스를 올리면 나오는 종을 누르거나, 여기를 눌러 한 번에 고릅니다.")
-                        .font(WL.caption).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
-                }
+    /// 피그마에서 ‘링크 복사’한 화면을 붙여 넣으면 그 화면만 가져와 바로 연다.
+    private var linkButton: some View {
+        Button { page.addLink(NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", sync: sync) } label: {
+            Group {
+                if page.addingLink { ProgressView().controlSize(.small) } else { Image(systemName: "link").font(.system(size: 12, weight: .semibold)).foregroundStyle(WL.accent) }
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.selected.opacity(0.6)))
+            .frame(width: 28, height: 28)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .keyboardShortcut("v", modifiers: [.command, .shift])
+        .disabled(page.addingLink || !settings.hasToken)
+        .tip(settings.hasToken ? "피그마 링크 붙여넣기 (⇧⌘V)\n피그마에서 화면을 오른쪽 클릭 > ‘링크 복사’한 주소를 넣으면 그 화면만 가져와 바로 엽니다"
+                               : "피그마 토큰을 넣은 뒤에 쓸 수 있습니다")
     }
 
     /// 경로(묶음이면 그 아래 전부) 화면들의 상태. 모두 완료면 초록, 작업 중이 있으면 주황.
@@ -495,12 +745,12 @@ private struct DesignSidebar: View {
         return DesignMenuTree.build(menus)
     }
 
-    private func fileSection(_ file: (key: String, name: String)) -> some View {
+    private func fileSection(_ file: (key: String, name: String), header: Bool) -> some View {
         let nodes = tree(file.key)
         let rows = DesignMenuTree.rows(nodes) { node, depth in folded(node, depth, fileKey: file.key) }
-        let collapsed = page.foldedProjects.contains(file.key)
+        let collapsed = header && page.foldedProjects.contains(file.key)
         return VStack(alignment: .leading, spacing: 1) {
-            projectHeader(file, nodes: nodes, collapsed: collapsed)
+            if header { projectHeader(file, nodes: nodes, collapsed: collapsed) }
             if !collapsed {
                 if rows.isEmpty {
                     Text(sync.history.files[file.key] == nil ? (sync.syncing ? "처음 가져오는 중…" : "아직 가져오지 않았습니다") : "보이는 메뉴가 없습니다")
@@ -536,13 +786,18 @@ private struct DesignSidebar: View {
                 HStack(spacing: 7) {
                     ProjectSwatch(name: name)
                     Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    if sync.source(file.key)?.scope.isEmpty == false {
+                        // 링크한 화면만 지켜보는 프로젝트
+                        Image(systemName: "link").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.tertiary)
+                    }
                     Spacer(minLength: 4)
                 }
                 .frame(height: 30)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .tip("\(file.name)\n누르면 이 프로젝트의 변경만 봅니다 · 끌어서 순서 바꾸기")
+            .tip("\(file.name)" + (sync.source(file.key).map { $0.scope.isEmpty ? "" : "\n링크한 화면 \($0.scope.count)개만 지켜봅니다 · 오른쪽 클릭으로 전체 지켜보기" } ?? "")
+                 + "\n누르면 이 프로젝트의 변경만 봅니다 · 끌어서 순서 바꾸기")
             // 가져오기 단추는 올려 두거나 받는 동안만 보여 목록을 어지럽히지 않는다
             if sync.source(file.key) != nil && (hover.key == key || sync.isBusy(file.key)) {
                 fetchButton(file.key, name: name)
@@ -554,34 +809,49 @@ private struct DesignSidebar: View {
             .fill(selected ? WL.hover.opacity(1.8) : hover.key == key ? WL.hover : .clear))
         .onHover { hover.update(key, $0) }
         .reorderable(file.key, dragging: $page.draggingProject) { from, to in sync.moveProject(from, to: to) }
-        .contextMenu {
-            Button("이 프로젝트만 보기") { page.scope = target }
-            Button("날짜별로 비교…") { DesignCompareModel.shared.open(fileKey: file.key, path: nil); page.scope = .compare }
-            Button("지금 가져오기") { fetch(file.key, name: name) }
-                .disabled(sync.isBusy(file.key) || !settings.hasToken)
-            if let url = URL(string: "https://www.figma.com/design/\(file.key)") {
-                Button("피그마에서 열기") { NSWorkspace.shared.open(url) }
+        .contextMenu { projectActions(file) }
+    }
+
+    /// 프로젝트 머리줄 오른쪽 클릭과 프로젝트 전환 메뉴에 같이 쓰는 동작.
+    @ViewBuilder private func projectActions(_ file: (key: String, name: String)) -> some View {
+        let name = sync.projectName(file.key)
+        if page.project != file.key {
+            Button("이 프로젝트만 보기") { page.project = file.key }
+        }
+        Button("날짜별로 비교…") { DesignCompareModel.shared.open(fileKey: file.key, path: nil); page.scope = .compare }
+        Button("지금 가져오기") { fetch(file.key, name: name) }
+            .disabled(sync.isBusy(file.key) || !settings.hasToken)
+        if let url = URL(string: "https://www.figma.com/design/\(file.key)") {
+            Button("피그마에서 열기") { NSWorkspace.shared.open(url) }
+        }
+        if let source = sync.source(file.key), !source.scope.isEmpty {
+            Button("프로젝트 전체 지켜보기") {
+                sync.widen(file.key)
+                fetch(file.key, name: name)
             }
-            Button("알림 받을 메뉴…") { page.openSettings(.alerts) }
-            Menu("상태 표시가 없는 화면") {
-                let current = sync.source(file.key)?.untaggedIsDone
-                let auto = sync.usesMarks(file.key) ? "전체 설정대로" : "완료로 봄"
-                Button((current == nil ? "✓ " : "") + "자동 (\(auto))") { sync.setUntaggedIsDone(nil, for: file.key) }
-                Button((current == true ? "✓ " : "") + "완료로 보기") { sync.setUntaggedIsDone(true, for: file.key) }
-                Button((current == false ? "✓ " : "") + "작업 중으로 보기") { sync.setUntaggedIsDone(false, for: file.key) }
+            .disabled(sync.isBusy(file.key) || !settings.hasToken)
+        }
+        Button("알림 받을 메뉴 고르기…") { page.alertPicker = file.key }
+            .disabled(sync.history.files[file.key] == nil)
+        Menu("상태 표시가 없는 화면") {
+            let current = sync.source(file.key)?.untaggedIsDone
+            let global = settings.untaggedIsDone.map { $0 ? "완료로 봄" : "작업 중으로 봄" } ?? "판단하지 않음"
+            Button((current == nil ? "✓ " : "") + "전체 설정대로 (\(global))") { sync.setUntaggedIsDone(nil, for: file.key) }
+            Button((current == true ? "✓ " : "") + "완료로 보기") { sync.setUntaggedIsDone(true, for: file.key) }
+            Button((current == false ? "✓ " : "") + "작업 중으로 보기") { sync.setUntaggedIsDone(false, for: file.key) }
+        }
+        Menu("가져오기 주기") {
+            ForEach(DesignSync.projectIntervals.indices, id: \.self) { index in
+                let minutes = DesignSync.projectIntervals[index]
+                let current = sync.source(file.key)?.intervalMinutes
+                Button((current == minutes ? "✓ " : "") + sync.intervalLabel(minutes)) { sync.setInterval(minutes, for: file.key) }
             }
-            Menu("가져오기 주기") {
-                ForEach(DesignSync.projectIntervals.indices, id: \.self) { index in
-                    let minutes = DesignSync.projectIntervals[index]
-                    let current = sync.source(file.key)?.intervalMinutes
-                    Button((current == minutes ? "✓ " : "") + sync.intervalLabel(minutes)) { sync.setInterval(minutes, for: file.key) }
-                }
-            }
-            Divider()
-            Button("프로젝트 숨기기") {
-                sync.setProjectHidden(file.key, hidden: true)
-                page.flash("‘\(name)’를 숨겼습니다. 숨긴 동안은 가져오지 않습니다")
-            }
+        }
+        Divider()
+        Button("프로젝트 숨기기") {
+            sync.setProjectHidden(file.key, hidden: true)
+            if page.project == file.key { page.project = visibleFiles.first { $0.key != file.key }?.key }
+            page.flash("‘\(name)’를 숨겼습니다. 숨긴 동안은 가져오지 않습니다")
         }
     }
 
@@ -618,7 +888,7 @@ private struct DesignSidebar: View {
     private var scopedFileKey: String? {
         switch page.scope {
         case .project(let key), .menu(let key, _), .group(let key, _): return sync.source(key) == nil ? nil : key
-        default: return nil
+        default: return page.project.flatMap { sync.source($0) == nil ? nil : $0 }
         }
     }
 
@@ -648,7 +918,8 @@ private struct DesignSidebar: View {
         let items = settings.favorites.compactMap { key -> (key: String, fileKey: String, path: String)? in
             guard let bar = key.firstIndex(of: "|") else { return nil }
             let fileKey = String(key[..<bar]), path = String(key[key.index(after: bar)...])
-            guard sync.source(fileKey)?.hides(path) != true, sync.history.files[fileKey] != nil else { return nil }
+            guard sync.source(fileKey)?.hides(path) != true, sync.history.files[fileKey] != nil,
+                  page.project == nil || page.project == fileKey else { return nil }
             return (key, fileKey, path)
         }
         if !items.isEmpty {
@@ -672,7 +943,7 @@ private struct DesignSidebar: View {
                 Image(systemName: "star.fill").font(.system(size: 9.5)).foregroundStyle(Color.yellow.opacity(0.85)).frame(width: 14)
                 Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13, weight: selected ? .semibold : .regular))
                     .lineLimit(1)
-                if settings.sources.filter({ !$0.isHidden }).count > 1 {
+                if page.project == nil && settings.sources.filter({ !$0.isHidden }).count > 1 {
                     Text(project).font(WL.caption).foregroundStyle(WL.projectColor(project)).lineLimit(1)
                 }
                 Spacer(minLength: 4)
@@ -838,8 +1109,8 @@ private struct DesignSidebar: View {
     }
 
     private func row(key: String, icon: String, title: String, count: Int, badge showsBadge: Bool,
-                     scope target: DesignHistoryPage.Scope) -> some View {
-        let selected = page.scope == target
+                     scope target: DesignHistoryPage.Scope, selected: Bool? = nil) -> some View {
+        let selected = selected ?? (page.scope == target)
         return Button { page.scope = target } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon).font(.system(size: 11, weight: .medium)).foregroundStyle(showsBadge ? WL.accent : .secondary)
@@ -956,13 +1227,24 @@ private struct DesignOnboarding: View {
             VStack(alignment: .leading, spacing: 0) {
                 step(1, "피그마 토큰 넣기", "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 날짜 비교까지 쓰려면 file_versions:read도 더합니다.", done: settings.hasToken)
                 RowDivider()
-                step(2, "화면설계서 주소 붙여넣기", "주소창의 figma.com/design/… 주소를 그대로 넣습니다.", done: !settings.sources.isEmpty)
+                step(2, "링크 붙여넣기", "작업할 화면을 피그마에서 오른쪽 클릭 > ‘링크 복사’해 넣으면 그 화면만, 파일 주소를 넣으면 프로젝트 전체를 가져옵니다.", done: !settings.sources.isEmpty)
                 RowDivider()
                 step(3, "필요할 때 가져오기", "처음 가져온 상태가 기준이 되고, 프로젝트의 ↓를 누를 때마다 바뀐 것을 기록합니다. 주기를 정하면 저절로 받습니다.", done: false)
             }
             .wlSurface()
-            Button("피그마 연결하기") { page.openSettings(.figma) }
-                .buttonStyle(NotionButtonStyle(kind: .primary))
+            HStack(spacing: 8) {
+                if settings.hasToken {
+                    Button(page.addingLink ? "가져오는 중…" : "복사한 링크 붙여넣기") {
+                        page.addLink(NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", sync: .shared)
+                    }
+                    .buttonStyle(NotionButtonStyle(kind: .primary))
+                    .disabled(page.addingLink)
+                    Button("설정 열기") { page.openSettings(.figma) }.buttonStyle(NotionButtonStyle())
+                } else {
+                    Button("피그마 연결하기") { page.openSettings(.figma) }
+                        .buttonStyle(NotionButtonStyle(kind: .primary))
+                }
+            }
         }
         .frame(maxWidth: 520, alignment: .leading)
         .padding(40)
@@ -1009,7 +1291,11 @@ private struct DesignTimeline: View {
                     Spacer()
                     Text(summary).font(WL.meta).foregroundStyle(WL.muted)
                 }
-                chips
+                HStack(spacing: 8) {
+                    if page.showsChanges { phasePicker }
+                    Spacer(minLength: 0)
+                    layerMenu
+                }
             }
             .padding(.horizontal, WL.gutter)
             .padding(.top, 18)
@@ -1061,8 +1347,9 @@ private struct DesignTimeline: View {
                         .padding(.horizontal, WL.gutter).padding(.bottom, 6)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                let notes = Self.duplicateNotes(screens)
                 ForEach(screens, id: \.frameID) { screen in
-                    DesignScreenRow(screen: screen, state: sync.state(of: screen, in: screenFile),
+                    DesignScreenRow(screen: screen, state: sync.state(of: screen, in: screenFile), note: notes[screen.frameID],
                                     changes: sync.events(for: screen, in: screenFile).filter { !sync.history.isApplied($0) && $0.kind != .changelog }.count,
                                     selected: page.screen == screen.frameID) {
                         page.screen = screen.frameID
@@ -1087,11 +1374,22 @@ private struct DesignTimeline: View {
         }
     }
 
+    /// 같은 화면 ID를 쓰는 프레임(상태별 화면 등)을 가를 이름. 프레임 이름이 다르면 그것을, 같으면 순번을 붙인다.
+    static func duplicateNotes(_ screens: [ScreenSnapshot]) -> [String: String] {
+        var notes: [String: String] = [:]
+        for group in Dictionary(grouping: screens, by: \.screenID).values where group.count > 1 {
+            let names = Set(group.map(\.frameName))
+            for (index, screen) in group.enumerated() {
+                let name = SpecExtractor.stripStatus(screen.frameName)
+                notes[screen.frameID] = names.count == group.count && name != screen.screenID ? name : "같은 ID \(index + 1)/\(group.count)"
+            }
+        }
+        return notes
+    }
+
     private var title: String {
         switch page.scope {
-        case .all: return "모든 변경"
-        case .important: return "완료 후 변경"
-        case .working: return "작업 중 변경"
+        case .all, .important, .working: return "변경"
         case .applied: return "반영 완료"
         case .compare: return "날짜 비교"
         case .menu(_, let path): return path.components(separatedBy: " > ").last ?? path
@@ -1121,31 +1419,47 @@ private struct DesignTimeline: View {
         return [events.isEmpty ? nil : "\(events.count)건", today > 0 ? "오늘 \(today)" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// 변경 종류로 거르는 칩. 고른 칩을 다시 누르면 모두 보인다.
-    private var chips: some View {
-        HStack(spacing: 6) {
-            chip(nil, "전체")
-            // 칩은 좁은 칸에 들어가게 짧게 부르고, 전체 이름은 툴팁에 둔다
-            ForEach(DesignHistoryView.layerOrder, id: \.self) { layer in
-                chip(layer, ["spec": "명세", "text": "문구"][layer.rawValue] ?? DesignHistoryView.layerName(layer))
-                    .tip(DesignHistoryView.layerName(layer) + " 변경만 보기")
-            }
+    /// 완료 후 변경이 처음 보이는 목록이고, 작업 중 변경과 전체는 여기서 고른다.
+    private var phasePicker: some View {
+        let open = sync.history.events.filter { event in
+            !sync.history.isApplied(event) && (page.project == nil || event.fileKey == page.project) && sync.follows(event)
         }
+        let working = open.filter { !$0.isImportant }.count
+        return Picker("", selection: $page.scope) {
+            Text(hasAlerts ? "알림 메뉴" : "확인할 변경").tag(DesignHistoryPage.Scope.important)
+            Text(working > 0 ? "작업 중 \(working)" : "작업 중").tag(DesignHistoryPage.Scope.working)
+            Text("전체").tag(DesignHistoryPage.Scope.all)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .tip((hasAlerts ? "알림 메뉴: 알림 받는 메뉴의" : "확인할 변경:") + " 완료 후 변경·막 완료된 화면·상태 모르는 화면의 변경·디자이너가 적은 이력\n작업 중: 작업 중 표시가 붙은 화면의 변경 (같은 날 것은 한 건으로)\n전체: 메뉴와 상태를 가리지 않은 변경 전부")
     }
 
-    private func chip(_ layer: SpecChange.Layer?, _ title: String) -> some View {
-        let on = page.layer == layer
-        return Button { page.layer = on ? nil : layer } label: {
-            Text(title)
-                .font(.system(size: 11.5, weight: on ? .semibold : .regular))
-                .foregroundStyle(on ? WL.accent : WL.muted)
-                .padding(.horizontal, 9)
-                .frame(height: 24)
-                .background(Capsule().fill(on ? WL.selected : Color.clear))
-                .overlay(Capsule().strokeBorder(on ? Color.clear : WL.border, lineWidth: 1))
-                .contentShape(Capsule())
+    /// 보이는 프로젝트에 알림 받는 메뉴가 하나라도 있는지.
+    private var hasAlerts: Bool {
+        DesignSyncSettings.shared.sources.contains { !$0.isHidden && !$0.alerts.isEmpty && (page.project == nil || $0.fileKey == page.project) }
+    }
+
+    /// 변경 종류로 거른다. 칩 다섯 개 대신 메뉴 하나로 두고, 고르면 이름이 강조색으로 바뀐다.
+    private var layerMenu: some View {
+        Menu {
+            Button((page.layer == nil ? "✓ " : "") + "모든 종류") { page.layer = nil }
+            Divider()
+            ForEach(DesignHistoryView.layerOrder, id: \.self) { layer in
+                Button((page.layer == layer ? "✓ " : "") + DesignHistoryView.layerName(layer) + " 변경만") { page.layer = layer }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10.5, weight: .semibold))
+                Text(page.layer.map(DesignHistoryView.layerName) ?? "모든 종류").font(.system(size: 12, weight: page.layer == nil ? .regular : .semibold))
+            }
+            .foregroundStyle(page.layer == nil ? WL.muted : WL.accent)
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .tip("기능 명세·목업 문구·화면 정보·컴포넌트 가운데 하나만 봅니다")
     }
 
     private var empty: some View {
@@ -1153,11 +1467,13 @@ private struct DesignTimeline: View {
             Spacer()
             Image(systemName: sync.history.events.isEmpty ? "clock.arrow.circlepath" : "line.3.horizontal.decrease.circle")
                 .font(.system(size: 26, weight: .light)).foregroundStyle(WL.faint)
-            Text(sync.history.events.isEmpty ? "아직 기록한 변경이 없습니다" : "이 조건에 맞는 변경이 없습니다")
+            Text(sync.history.events.isEmpty ? "아직 기록한 변경이 없습니다"
+                 : page.project.map { key in !sync.history.events.contains { $0.fileKey == key } } == true ? "이 프로젝트에는 아직 기록한 변경이 없습니다"
+                 : "이 조건에 맞는 변경이 없습니다")
                 .font(WL.body).foregroundStyle(WL.muted)
-            Text(sync.history.events.isEmpty
-                 ? "처음 가져온 상태가 기준입니다. 왼쪽 프로젝트에 올려 ↓를 누르면 그때부터 바뀐 것을 남깁니다."
-                 : "찾는 말이나 변경 종류를 바꿔 보세요.")
+            Text(sync.history.events.isEmpty || page.project.map { key in !sync.history.events.contains { $0.fileKey == key } } == true
+                 ? "처음 가져온 상태가 기준입니다. 가져오기(↓)를 누를 때마다 그때부터 바뀐 것을 남깁니다. 메뉴를 고르면 지금 시안 화면을 봅니다."
+                 : page.scope == .important ? (hasAlerts ? "알림 받는 메뉴에 새 변경이 없습니다. 다른 메뉴는 위 ‘전체’에서 봅니다." : "확인할 변경이 없습니다. 위에서 ‘작업 중’이나 ‘전체’를 골라 보세요.") : "찾는 말이나 변경 종류를 바꿔 보세요.")
                 .font(WL.meta).foregroundStyle(WL.faint).multilineTextAlignment(.center)
             Spacer()
         }
@@ -1249,6 +1565,7 @@ struct DesignPhaseBadge: View {
         case .afterDone: return ("완료 후 변경", WL.accent)
         case .completed: return ("완료됨", WL.done)
         case .working: return ("작업 중", WL.quiet)
+        case .unmarked: return ("상태 모름", WL.waiting)
         case nil: return nil
         }
     }
@@ -1257,6 +1574,7 @@ struct DesignPhaseBadge: View {
         switch phase {
         case .afterDone: return "완료된 시안에 추가 작업이 들어갔습니다"
         case .completed: return "이번 변경으로 완료됐습니다"
+        case .unmarked: return "섹션에 완료·작업 중 표시가 없어 상태를 모르는 화면입니다. 알림 받는 메뉴면 알립니다"
         default: return "아직 작업 중인 시안입니다"
         }
     }
@@ -1338,6 +1656,8 @@ private struct DesignEventDetail: View {
             comparison(wide: wide)
             if event.phase == .completed {
                 callout("checkmark.seal", "이번 변경으로 완료 표시가 붙은 화면입니다.")
+            } else if event.phase == .unmarked && stored {
+                callout("questionmark.circle", "섹션에 완료·작업 중 표시가 없어 상태를 모르는 화면입니다. 같은 날 바뀐 것은 한 건에 모으고, 알림 받는 메뉴면 알립니다. 상태를 알면 오른쪽 ‘상태’에서 정하세요.")
             } else if event.phase == .working && event.kind == .changed && stored {
                 callout("pencil.line", "작업 중인 화면입니다. 같은 날 바뀐 것은 이 한 건에 모아 그날 처음 상태와 비교합니다.")
             }
@@ -1477,38 +1797,40 @@ private struct DesignEventDetail: View {
                 .buttonStyle(NotionButtonStyle(kind: applied ? .secondary : .primary))
                 .tip(applied ? "다시 목록에 나오게 합니다" : "마크업에 반영했으면 목록에서 빼고 다음 변경으로 넘어갑니다")
             }
+            if event.kind != .changelog && event.kind != .removed {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(sync.claudePrompt(for: event), forType: .string)
+                    page.flash("Claude에 붙일 변경 문구를 복사했습니다")
+                } label: { Label(compact ? "Claude 문구" : "Claude 문구 복사", systemImage: "sparkles") }
+                .buttonStyle(NotionButtonStyle())
+                .tip("이 변경을 마크업에 반영해 달라는 글을 복사합니다. 명세는 전·후 원문, 목업 문구는 화면 위치까지 넣고 체크한 항목은 뺍니다. Claude Code에 그대로 붙여 넣으세요")
+            }
             if let url = DesignFormat.link(event) {
                 let title = event.kind == .changelog ? "이력 표 열기" : "피그마에서 열기"
                 Button { NSWorkspace.shared.open(url) } label: {
-                    if compact { FigmaMark(height: 14) } else { HStack(spacing: 7) { FigmaMark(height: 14); Text(title) } }
+                    if compact || event.kind != .changelog { FigmaMark(height: 14) } else { HStack(spacing: 7) { FigmaMark(height: 14); Text(title) } }
                 }
                 .buttonStyle(NotionButtonStyle())
                 .tip(title)
             }
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(event.report, forType: .string)
-                page.flash("변경 요약을 복사했습니다")
-            } label: {
-                if compact { Image(systemName: "doc.on.doc") } else { Label("요약 복사", systemImage: "doc.on.doc") }
-            }
-            .buttonStyle(NotionButtonStyle())
-            .tip("요약 복사: 레드마인·MR에 붙일 [디자인 변경] 글 (목업 요소는 위치도 붙음)")
-            if event.kind != .changelog && event.kind != .removed {
-                Button {
-                    page.flash(DesignSync.shared.addToWorkLog(event) ? "업무 일지 오늘 칸에 넣었습니다" : "업무 일지에 넣지 못했습니다")
-                } label: {
-                    if compact { Image(systemName: "text.badge.plus") } else { Label("업무 일지에 넣기", systemImage: "text.badge.plus") }
+            let screen = event.frameID.flatMap { sync.history.files[event.fileKey]?.screens[$0] }
+            MoreMenu(tip: "요약 복사·업무 일지에 넣기·날짜별 비교") {
+                Button("요약 복사 (레드마인·MR에 붙일 글)") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(event.report, forType: .string)
+                    page.flash("변경 요약을 복사했습니다")
                 }
-                .buttonStyle(NotionButtonStyle())
-                .tip("업무 일지에 넣기: 오늘 칸에 ‘디자인 변경 반영’을 진행중으로")
-            }
-            if let frame = event.frameID, let screen = sync.history.files[event.fileKey]?.screens[frame], event.kind != .changelog {
-                Button { DesignScreenDetail.compareDates(fileKey: event.fileKey, screen: screen, page: page) } label: {
-                    if compact { Image(systemName: "calendar.badge.clock") } else { Label("날짜별 비교", systemImage: "calendar.badge.clock") }
+                if event.kind != .changelog && event.kind != .removed {
+                    Button("업무 일지 오늘 칸에 넣기") {
+                        page.flash(DesignSync.shared.addToWorkLog(event) ? "업무 일지 오늘 칸에 넣었습니다" : "업무 일지에 넣지 못했습니다")
+                    }
                 }
-                .buttonStyle(NotionButtonStyle())
-                .tip("날짜별 비교: 이 화면만 두 날짜의 피그마 버전으로 견줍니다")
+                if let screen, event.kind != .changelog {
+                    Divider()
+                    Button("지금 시안 보기") { page.scope = .menu(fileKey: event.fileKey, path: screen.menuPath); page.screen = screen.frameID }
+                    Button("이 화면 날짜별 비교…") { DesignScreenDetail.compareDates(fileKey: event.fileKey, screen: screen, page: page) }
+                }
             }
             Spacer(minLength: 0)
             if event.kind != .changelog, let state = screenState {

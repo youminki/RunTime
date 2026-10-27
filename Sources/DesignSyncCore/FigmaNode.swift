@@ -127,6 +127,16 @@ public enum FigmaFileURL {
         return isKey(parts[1]) ? parts[1] : nil
     }
 
+    /// 주소의 `node-id`(`12-345`)를 API가 쓰는 `12:345`로. 없으면 nil.
+    public static func nodeID(from input: String) -> String? {
+        var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.contains("://") { text = "https://" + text }
+        guard fileKey(from: text) != nil, let components = URLComponents(string: text),
+              let value = components.queryItems?.first(where: { $0.name == "node-id" })?.value, !value.isEmpty else { return nil }
+        let id = value.replacingOccurrences(of: "-", with: ":")
+        return id.contains(":") ? id : nil
+    }
+
     /// 프레임으로 바로 가는 주소. 노드 ID의 `:`는 주소에서 `-`로 쓴다.
     public static func link(fileKey: String, nodeID: String) -> URL? {
         var components = URLComponents(string: "https://www.figma.com/design/\(fileKey)")

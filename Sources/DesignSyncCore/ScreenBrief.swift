@@ -30,7 +30,7 @@ public enum ScreenBrief {
 
     /// 마크업을 맡기거나 MR에 붙일 글. 회사 양식대로 대괄호 머리와 줄 항목으로 쓴다.
     public static func text(_ screen: ScreenSnapshot, project: String, state: String, link: URL?,
-                            recent: [DesignEvent] = [], textLimit: Int = 200) -> String {
+                            recent: [DesignEvent] = [], built: Set<String> = [], textLimit: Int = 200) -> String {
         var lines = ["[화면] \(screen.screenID) \(screen.title)".trimmingCharacters(in: .whitespaces)]
         lines.append("- 프로젝트: \(project)")
         if !screen.menuPath.isEmpty { lines.append("- 화면 경로: \(screen.menuPath)") }
@@ -41,10 +41,13 @@ public enum ScreenBrief {
             lines += ["", "[참고]", screen.notes]
         }
         if !screen.items.isEmpty {
-            lines += ["", "[기능 명세]"]
+            let done = screen.items.filter { built.contains($0.text) }.count
+            lines += ["", done == 0 ? "[기능 명세]" : "[기능 명세] 구현 \(done)/\(screen.items.count)"]
             for item in screen.items {
                 let body = item.text.split(separator: "\n", omittingEmptySubsequences: false)
-                lines.append("\(item.number). \(body.first.map(String.init) ?? "")")
+                // 구현을 마친 항목에 표시해 남은 일만 맡길 수 있게 한다
+                let mark = built.contains(item.text) ? " (구현함)" : ""
+                lines.append("\(item.number). \(body.first.map(String.init) ?? "")\(mark)")
                 lines += body.dropFirst().map { "   " + $0 }
             }
         }

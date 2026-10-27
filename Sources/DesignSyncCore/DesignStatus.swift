@@ -12,10 +12,10 @@ public enum ScreenState: String, Codable, Sendable {
 public struct DesignStatusRules: Codable, Equatable, Sendable {
     /// 직접 정한 상태. 키는 화면 경로(그 아래 경로 포함) 또는 `screen:화면 ID`, 값이 true면 완료.
     public var overrides: [String: Bool]
-    /// 상태를 적지 않는 디자이너의 화면은 완료로 본다 (대개 다듬은 뒤에만 고친다).
-    public var untaggedIsDone: Bool
+    /// 상태 표시가 없는 화면. true면 완료, false면 작업 중, nil이면 모르는 채로 둔다 (알림 받는 메뉴만 알린다).
+    public var untaggedIsDone: Bool?
 
-    public init(overrides: [String: Bool] = [:], untaggedIsDone: Bool = true) {
+    public init(overrides: [String: Bool] = [:], untaggedIsDone: Bool? = true) {
         self.overrides = overrides
         self.untaggedIsDone = untaggedIsDone
     }
@@ -33,7 +33,7 @@ public enum DesignStatus {
         if let manual = rules.overrides[DesignStatusRules.screenKey(screen.screenID)] { return manual ? .done : .working }
         if let manual = override(for: screen.menuPath, in: rules.overrides) { return manual ? .done : .working }
         let found = tagged(screen)
-        if found == .unknown { return rules.untaggedIsDone ? .done : .unknown }
+        if found == .unknown { return rules.untaggedIsDone.map { $0 ? .done : .working } ?? .unknown }
         return found
     }
 

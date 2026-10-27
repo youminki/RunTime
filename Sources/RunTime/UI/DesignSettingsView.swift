@@ -10,7 +10,9 @@ final class DesignSettingsForm: ObservableObject {
     @Published var tokenFailed = false
     @Published var urlDraft = ""
     @Published var adding = false
-    @Published var addProblem: String?
+    /// 마지막으로 링크를 더한 결과. 실패면 주황으로 보인다.
+    @Published var addMessage: String?
+    @Published var addFailed = false
     @Published var alertPicker: String?
 }
 
@@ -29,15 +31,14 @@ struct DesignSettingsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(section == .figma
                      ? "피그마 화면설계서를 필요할 때나 정한 주기마다 가져와 메뉴·화면별로 바뀐 것을 디자인 화면에 날짜별로 남깁니다."
-                     : "작업 중인 시안은 계속 바뀌어서, 고른 메뉴에서 완료된 화면이 다시 바뀔 때만 알립니다.")
+                     : "맡은 메뉴를 고르면 디자인 화면은 그 메뉴의 변경만 모아 보이고, 알림도 그 메뉴에서만 옵니다. 작업 중 표시가 붙은 시안의 변경은 알리지 않습니다.")
                     .font(.system(size: 12.5)).foregroundStyle(WL.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 6)
                 switch section {
                 case .figma:
                     group("연결") { token }
-                    group("화면설계서") { files }
-                    group("가져오기") { schedule }
+                    group("지켜보는 화면설계서") { files; schedule }
                     Text("피그마에는 토큰으로 파일 정보와 화면 노드를 묻기만 하고 보내는 것은 없습니다. 가져온 화면 내용은 이 Mac의 Application Support/RunTime/design-history.json에만 둡니다.")
                         .font(WL.caption).foregroundStyle(WL.faint)
                         .fixedSize(horizontal: false, vertical: true)
@@ -76,15 +77,16 @@ struct DesignSettingsView: View {
     // MARK: 연결
 
     private var token: some View {
-        VStack(spacing: 0) {
-            SettingRow("피그마 토큰", "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 날짜 비교까지 쓰려면 file_versions:read도 더합니다. 키체인에 둡니다.") {
-                HStack(alignment: .top, spacing: 6) {
-                    if !settings.hasToken {
-                        // 토큰을 만드는 곳(피그마 설정의 Security 탭)으로 바로 보낸다
-                        Button("토큰 만들기") { NSWorkspace.shared.open(URL(string: "https://www.figma.com/settings")!) }
-                            .buttonStyle(NotionButtonStyle())
-                            .tip("피그마 설정을 엽니다. Security > Personal access tokens에서 만들고 복사해 오세요")
-                    }
+        // 연결 확인 결과는 토큰 줄 설명에 바로 보여 줄을 하나로 둔다. 토큰을 저장하면 저절로 확인한다
+        SettingRow("피그마 토큰", form.tokenStatus ?? "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 날짜 비교까지 쓰려면 file_versions:read도 더합니다. 키체인에 둡니다.",
+                   detailTint: form.tokenFailed ? WL.waiting : form.tokenStatus == nil ? nil : WL.done) {
+            HStack(alignment: .top, spacing: 6) {
+                if !settings.hasToken {
+                    // 토큰을 만드는 곳(피그마 설정의 Security 탭)으로 바로 보낸다
+                    Button("토큰 만들기") { NSWorkspace.shared.open(URL(string: "https://www.figma.com/settings")!) }
+                        .buttonStyle(NotionButtonStyle())
+                        .tip("피그마 설정을 엽니다. Security > Personal access tokens에서 만들고 복사해 오세요")
+                }
                 SecretInput(saved: settings.hasToken, hint: settings.tokenHint, placeholder: "figd_…", draft: $form.tokenDraft,
                             save: { value in
                                 guard settings.saveToken(value) else { return "키체인에 저장하지 못했습니다" }
@@ -96,13 +98,6 @@ struct DesignSettingsView: View {
                                 form.tokenStatus = nil
                                 form.tokenFailed = false
                             })
-                }
-            }
-            if settings.hasToken {
-                SettingRow("연결 상태", form.tokenStatus ?? "토큰으로 화면설계서를 읽을 수 있는지 피그마에 물어봅니다.",
-                           detailTint: form.tokenFailed ? WL.waiting : nil) {
-                    Button("연결 확인") { Task { await check() } }.buttonStyle(NotionButtonStyle())
-                }
             }
         }
     }
@@ -123,17 +118,19 @@ struct DesignSettingsView: View {
     private var files: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(settings.sources) { source in fileRow(source) }
-            SettingRow("화면설계서 더하기", form.addProblem ?? (settings.hasToken ? "피그마 주소창의 figma.com/design/… 주소를 붙여 넣습니다." : "토큰을 넣은 뒤에 더할 수 있습니다."),
-                       detailTint: form.addProblem == nil ? nil : WL.waiting) {
+            SettingRow("링크 더하기", form.addMessage ?? (settings.hasToken
+                        ? "피그마에서 화면을 고르고 ‘링크 복사’한 주소를 넣으면 그 화면만, 파일 주소를 넣으면 프로젝트 전체를 지켜봅니다. 같은 파일의 다른 화면 링크는 그 프로젝트에 더해집니다."
+                        : "토큰을 넣은 뒤에 더할 수 있습니다."),
+                       detailTint: form.addMessage == nil ? nil : form.addFailed ? WL.waiting : WL.done) {
                 HStack(spacing: 6) {
                     TextField("https://www.figma.com/design/…", text: $form.urlDraft).textFieldStyle(.roundedBorder).frame(width: 220)
                         .onSubmit(add)
                     if form.urlDraft.trimmingCharacters(in: .whitespaces).isEmpty {
-                        // 피그마 주소창에서 복사해 온 주소를 한 번에 넣고 더한다
+                        // 피그마에서 복사해 온 링크를 한 번에 넣고 더한다
                         Button(form.adding ? "확인하는 중…" : "붙여넣기") { pasteAndAdd() }
                             .buttonStyle(NotionButtonStyle(kind: .primary))
                             .disabled(form.adding || !settings.hasToken)
-                            .tip("복사해 둔 figma.com/design/… 주소를 넣고 바로 더합니다")
+                            .tip("복사해 둔 피그마 링크를 넣고 바로 더합니다")
                     } else {
                         Button(form.adding ? "확인하는 중…" : "더하기", action: add)
                             .buttonStyle(NotionButtonStyle(kind: .primary))
@@ -144,62 +141,77 @@ struct DesignSettingsView: View {
         }
     }
 
+    /// 파일 한 줄: 이름과 상태, 가져오기와 나머지는 ⋯ 메뉴에 둔다.
     private func fileRow(_ source: DesignSource) -> some View {
         let record = sync.history.files[source.fileKey]
-        let detail = [record.map { "화면 \($0.screens.count)개" } ?? (sync.isBusy(source.fileKey) ? "처음 가져오는 중" : "아직 가져오지 않음"),
+        let names = source.scope.map { $0.name.isEmpty ? $0.nodeID : $0.name }
+        let scope = names.isEmpty ? "전체" : "링크한 화면 " + names.prefix(3).joined(separator: ", ") + (names.count > 3 ? " 외 \(names.count - 3)개" : "")
+        let detail = [scope,
+                      record.map { "화면 \($0.screens.count)개" } ?? (sync.isBusy(source.fileKey) ? "처음 가져오는 중" : "아직 가져오지 않음"),
                       record.map { "\(DesignFormat.stamp($0.syncedAt)) 확인" },
+                      sync.intervalLabel(source.intervalMinutes ?? settings.intervalMinutes),
                       source.menus.isEmpty ? nil : "일부 메뉴만 받는 중",
-                      source.isHidden ? "숨김 · 가져오지 않음" : nil]
+                      source.isHidden ? "숨김" : nil]
             .compactMap { $0 }.joined(separator: " · ")
         return SettingRow(source.name.isEmpty ? source.fileKey : source.name, sync.errors[source.fileKey] ?? detail,
                           detailTint: sync.errors[source.fileKey] == nil ? nil : WL.waiting) {
             HStack(spacing: 6) {
-                // 예전에 받는 범위를 좁혀 둔 파일만. 지금은 모든 화면을 기록하고 알림만 고른다
-                if !source.menus.isEmpty {
-                    Button("모든 메뉴 받기") { sync.setMenus([], for: source.fileKey) }
-                        .buttonStyle(NotionButtonStyle())
-                        .disabled(sync.syncing)
-                }
                 Button(sync.fetching == source.fileKey ? "가져오는 중…" : sync.isBusy(source.fileKey) ? "대기 중" : "가져오기") {
                     sync.sync(only: source.fileKey)
                 }
                 .buttonStyle(NotionButtonStyle())
                 .disabled(sync.isBusy(source.fileKey) || !settings.hasToken)
                 .tip("이 프로젝트만 지금 받습니다")
-                // 프로젝트마다 가져오기 주기: 지금 작업 중인 것은 짧게, 끝난 것은 길게
-                Picker("", selection: Binding(get: { source.intervalMinutes ?? -1 },
-                                              set: { sync.setInterval($0 < 0 ? nil : $0, for: source.fileKey) })) {
-                    ForEach(DesignSync.projectIntervals.indices, id: \.self) { index in
-                        let minutes = DesignSync.projectIntervals[index]
-                        Text(sync.intervalLabel(minutes)).tag(minutes ?? -1)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 150)
-                .disabled(source.isHidden)
-                .tip("이 프로젝트를 가져오는 주기")
-                Button { sync.setProjectHidden(source.fileKey, hidden: !source.isHidden) } label: {
-                    Image(systemName: source.isHidden ? "eye.slash" : "eye")
-                }
-                .buttonStyle(GhostIconButtonStyle())
-                .tip(source.isHidden ? "다시 보이고 가져오기" : "디자인 화면에서 숨기고 가져오지 않기")
-                if let url = URL(string: "https://www.figma.com/design/\(source.fileKey)") {
-                    Button { NSWorkspace.shared.open(url) } label: { FigmaMark(height: 13) }
-                        .buttonStyle(GhostIconButtonStyle())
-                        .tip("피그마에서 열기")
-                }
-                Button { sync.removeSource(source.fileKey) } label: { Image(systemName: "trash") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .disabled(sync.syncing)
-                    .tip("지켜보지 않고 기록도 지웁니다")
+                fileMenu(source)
             }
         }
+    }
+
+    private func fileMenu(_ source: DesignSource) -> some View {
+        Menu {
+            Menu("가져오기 주기") {
+                ForEach(DesignSync.projectIntervals.indices, id: \.self) { index in
+                    let minutes = DesignSync.projectIntervals[index]
+                    Button((source.intervalMinutes == minutes ? "✓ " : "") + sync.intervalLabel(minutes)) { sync.setInterval(minutes, for: source.fileKey) }
+                }
+            }
+            if !source.scope.isEmpty {
+                Button("프로젝트 전체 지켜보기") {
+                    sync.widen(source.fileKey)
+                    sync.sync(only: source.fileKey)
+                }
+                Menu("링크한 화면 빼기") {
+                    ForEach(source.scope, id: \.nodeID) { scope in
+                        Button(scope.name.isEmpty ? scope.nodeID : scope.name) { sync.removeScope(scope.nodeID, from: source.fileKey) }
+                    }
+                }
+                .disabled(sync.syncing)
+            }
+            // 예전에 받는 범위를 메뉴로 좁혀 둔 파일만. 지금은 모든 화면을 기록하고 알림만 고른다
+            if !source.menus.isEmpty {
+                Button("모든 메뉴 받기") { sync.setMenus([], for: source.fileKey) }.disabled(sync.syncing)
+            }
+            if let url = URL(string: "https://www.figma.com/design/\(source.fileKey)") {
+                Button("피그마에서 열기") { NSWorkspace.shared.open(url) }
+            }
+            Button(source.isHidden ? "다시 보이고 가져오기" : "숨기기 (가져오지 않음)") { sync.setProjectHidden(source.fileKey, hidden: !source.isHidden) }
+            Divider()
+            Button("지켜보지 않기 (기록도 지움)") { sync.removeSource(source.fileKey) }.disabled(sync.syncing)
+        } label: {
+            Image(systemName: "ellipsis").foregroundStyle(WL.muted)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: 28, height: 28)
+        .tip("가져오기 주기·범위·숨기기·지우기")
     }
 
     private func pasteAndAdd() {
         let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard text.contains("figma.com/") else {
-            form.addProblem = text.isEmpty ? "클립보드가 비어 있습니다. 피그마 주소창의 주소를 복사해 오세요." : "클립보드에 피그마 주소가 없습니다."
+            form.addMessage = text.isEmpty ? "클립보드가 비어 있습니다. 피그마에서 링크를 복사해 오세요." : "클립보드에 피그마 링크가 없습니다."
+            form.addFailed = true
             return
         }
         form.urlDraft = text
@@ -208,22 +220,25 @@ struct DesignSettingsView: View {
 
     private func add() {
         form.adding = true
-        form.addProblem = nil
+        form.addMessage = nil
         Task {
-            let problem = await sync.addSource(form.urlDraft)
+            let result = await sync.addLink(form.urlDraft)
             form.adding = false
-            form.addProblem = problem
-            if problem == nil {
+            switch result {
+            case .success(let link):
+                form.addMessage = link.message
+                form.addFailed = false
                 form.urlDraft = ""
-                sync.sync(only: settings.sources.last?.fileKey)
+                if link.needsFetch { sync.sync(only: link.fileKey) }
+            case .failure(let problem):
+                form.addMessage = problem.message
+                form.addFailed = true
             }
         }
     }
 
-    // MARK: 가져오기
-
     private var schedule: some View {
-        SettingRow("기본 가져오기 주기", "프로젝트마다 따로 정하지 않았으면 이 주기로 가져옵니다. 누를 때만으로 두면 디자인 화면에서 프로젝트에 올려 ↓를 누를 때만 받습니다. 파일이 그대로면 파일 정보만 한 번 묻고 끝냅니다.") {
+        SettingRow("기본 가져오기 주기", "프로젝트마다 ⋯에서 따로 정하지 않았으면 이 주기로 가져옵니다. 누를 때만으로 두면 디자인 화면에서 가져오기를 누를 때만 받습니다. 파일이 그대로면 파일 정보만 한 번 묻고 끝냅니다.") {
             Picker("", selection: $settings.intervalMinutes) {
                 ForEach(DesignSyncSettings.intervals, id: \.self) { minutes in
                     Text(minutes == 0 ? "누를 때만" : minutes < 60 ? "\(minutes)분마다" : "\(minutes / 60)시간마다").tag(minutes)
@@ -257,17 +272,19 @@ struct DesignSettingsView: View {
 
     private var rules: some View {
         VStack(spacing: 0) {
-            SettingRow("macOS 알림", "고른 메뉴에서 완료된 화면이 다시 바뀌거나, 화면이 완료되거나, 디자이너가 이력에 적으면 알립니다.") {
+            SettingRow("macOS 알림", "고른 메뉴에서 완료된 화면이 다시 바뀌거나, 화면이 완료되거나, 상태 표시가 없는 화면이 바뀌거나, 디자이너가 이력에 적으면 알립니다.") {
                 Toggle("", isOn: $settings.notify).toggleStyle(.switch).labelsHidden()
             }
-            SettingRow("작업 중 변경도 알림", "작업 중인 시안은 계속 바뀌어서 기본은 기록만 합니다.") {
+            SettingRow("작업 중 변경도 알림", "[수정중]처럼 작업 중 표시가 붙은 시안은 계속 바뀌어서 기본은 기록만 합니다.") {
                 Toggle("", isOn: $settings.notifyWorking).toggleStyle(.switch).labelsHidden()
                     .disabled(!settings.notify)
             }
-            SettingRow("상태 표시가 없는 화면", "섹션에 [완료]·[수정중]이나 _v0.4 같은 버전을 쓰는 화면설계서에서 표시가 빠진 화면을 어떻게 볼지 정합니다. 버전을 단 섹션은 완료로, 표시를 전혀 쓰지 않는 화면설계서는 완료로 봅니다. 프로젝트·메뉴마다 오른쪽 클릭으로 따로 정할 수 있습니다.") {
-                Picker("", selection: $settings.untaggedIsDone) {
-                    Text("완료로 보기").tag(true)
-                    Text("작업 중으로 보기").tag(false)
+            SettingRow("상태 표시가 없는 화면", "섹션에 [완료]·[수정중]이나 _v0.4 같은 버전이 없는 화면입니다. 판단하지 않으면 ‘상태 모름’으로 두고, 알림 받는 메뉴에서 바뀔 때마다 알립니다. 표시를 쓰지 않는 디자이너의 화면설계서를 모두 완료로 보면 변경이 전부 완료 후 변경으로 쏟아집니다. 프로젝트마다 오른쪽 클릭으로 따로 정합니다.") {
+                Picker("", selection: Binding(get: { settings.untaggedIsDone.map { $0 ? 1 : 2 } ?? 0 },
+                                              set: { settings.untaggedIsDone = [1: true, 2: false][$0] })) {
+                    Text("판단하지 않음").tag(0)
+                    Text("완료로 보기").tag(1)
+                    Text("작업 중으로 보기").tag(2)
                 }
                 .labelsHidden().frame(width: 140)
             }

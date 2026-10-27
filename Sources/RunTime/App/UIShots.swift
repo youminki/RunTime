@@ -146,6 +146,13 @@ enum UIShots {
             DesignSyncSettings.shared.favorites = files.prefix(2).compactMap { file in
                 Set(file.value.screens.values.map(\.menuPath)).sorted().dropFirst().first.map { DesignSync.favoriteKey(file.key, $0) }
             }
+            // RUNTIME_SHOT_DESIGN_SCOPE=1이면 마지막 파일을 링크한 화면 둘만 지켜보는 것으로 둔다
+            if ProcessInfo.processInfo.environment["RUNTIME_SHOT_DESIGN_SCOPE"] == "1", let last = files.last {
+                let picked = last.value.screens.values.sorted { $0.screenID < $1.screenID }.prefix(2)
+                DesignSyncSettings.shared.sources[files.count - 1].scope = picked.map {
+                    DesignScope(nodeID: $0.frameID, name: $0.title.isEmpty ? $0.screenID : $0.title, pageID: $0.pageID, frames: [$0.frameID])
+                }
+            }
         }
         return [
             ("main-design", .aqua, nil, mainDesign(engine: engine)),

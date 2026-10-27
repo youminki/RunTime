@@ -48,9 +48,15 @@ public struct DesignEvent: Codable, Equatable, Identifiable, Sendable {
         case completed
         /// 작업 중인 화면이 바뀌었다. 같은 날 여러 번 바뀌면 한 건으로 합친다
         case working
+        /// 상태 표시가 없어 완료인지 모르는 화면이 바뀌었다. 작업 중처럼 하루 한 건으로 합치되,
+        /// 걸러 낼 근거가 없으니 알림 받는 메뉴에서는 알린다
+        case unmarked
+
+        /// 같은 날 여러 번 바뀌면 그날 처음 상태와 견준 한 건으로 합치는 단계.
+        public var merges: Bool { self == .working || self == .unmarked }
     }
 
-    /// 완료 후 변경, 막 완료됨, 디자이너가 적은 이력. 미확인 건수와 알림은 이것만 센다.
+    /// 완료 후 변경, 막 완료됨, 상태를 모르는 화면의 변경, 디자이너가 적은 이력. 작업 중으로 확실한 것만 뺀다.
     public var isImportant: Bool { phase != .working }
 
     public init(id: UUID = UUID(), fileKey: String, fileName: String, frameID: String?, screenID: String, title: String,
@@ -148,6 +154,8 @@ public struct DesignFileRecord: Codable, Equatable, Sendable {
     public var ignored: [String: Date]
     /// 오늘 작업 중 변경을 합칠 때 견줄 처음 상태. 프레임 ID → 그날 첫 변경 직전의 화면.
     public var mergeBase: [String: ScreenSnapshot]?
+    /// 마크업하며 구현을 마친 기능 명세. 프레임 ID → 항목 글. 번호가 밀려도 남고, 글이 바뀌면 다시 확인하게 글로 가린다.
+    public var built: [String: Set<String>]?
 
     /// 화면이 아니었던 후보도 디자이너가 고쳤을 수 있어 이만큼 지나면 다시 받아 본다.
     public static let ignoreDays = 7.0
@@ -199,6 +207,14 @@ public struct DesignCapture: Sendable {
     public var menus: Set<String>
     /// 화면이 완료됐는지 정하는 규칙.
     public var rules = DesignStatusRules()
+    /// 링크로 고른 화면만 받았다. `menus`가 비어도 전부가 아니라 아무것도 지켜보지 않는다.
+    public var scoped = false
+    /// 링크로 고른 화면에 찾은 페이지와 프레임을 채운 것. 찾지 못한 링크는 `pageID`가 그대로다.
+    public var resolved: [DesignScope] = []
+    /// 링크로 골랐지만 이번에 파일에서 찾지 못한 노드.
+    public var missing: [String] = []
+    /// 처음 가져오는 링크의 후보. 이 후보에서 나온 화면은 새 화면으로 남기지 않고 기준만 세운다.
+    public var fresh: Set<String> = []
 
     public init(fileKey: String, fileName: String, lastModified: String, coveredPages: Set<String>, present: Set<String>,
                 fetched: Set<String>, screens: [ScreenSnapshot], version: String? = nil, changelog: [ChangelogEntry]?,
@@ -218,7 +234,9 @@ public struct DesignCapture: Sendable {
     /// 받았지만 화면이 하나도 없던 후보.
     var nonScreens: Set<String> { fetched.subtracting(screens.map(\.candidateID)) }
 
-    func watches(_ path: String) -> Bool { menus.isEmpty || menus.contains(path) }
+    var watchesAll: Bool { menus.isEmpty && !scoped }
+
+    func watches(_ path: String) -> Bool { watchesAll || menus.contains(path) }
 }
 
 public struct DesignHistory: Codable, Equatable, Sendable {
@@ -288,11 +306,11 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             let after = new.map(state)
             if before == .done { return .afterDone }
             if after == .done { return old == nil ? .afterDone : .completed }
-            return .working
+            return after == .unknown ? .unmarked : .working
         }
         // 오늘 아직 확인하지 않은 작업 중 변경만 합칠 수 있다. 그 밖의 비교 기준은 버린다
         let mergeable = Dictionary(events.enumerated().filter { _, old in
-            old.fileKey == capture.fileKey && old.kind == .changed && old.phase == .working && !isSeen(old)
+            old.fileKey == capture.fileKey && old.kind == .changed && old.phase?.merges == true && !isSeen(old)
                 && calendar.isDate(old.detectedAt, inSameDayAs: date)
         }.compactMap { index, old in old.frameID.map { ($0, index) } }, uniquingKeysWith: { _, last in last })
         var bases = (file.mergeBase ?? [:]).filter { mergeable[$0.key] != nil }
@@ -315,7 +333,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                 let changes = SpecDiff.changes(from: old, to: screen)
                 let stage = phase(from: old, to: screen)
                 if !changes.isEmpty, capture.watches(screen.menuPath) || capture.watches(old.menuPath) {
-                    if stage == .working, let index = mergeable[screen.frameID], let base = bases[screen.frameID] {
+                    if stage.merges, let index = mergeable[screen.frameID], let base = bases[screen.frameID] {
                         // 작업 중 화면은 하루에 몇 번이고 바뀌어서, 그날 처음 상태와 견준 한 건으로 고친다
                         let merged = SpecDiff.changes(from: base, to: screen)
                         if merged.isEmpty {
@@ -331,7 +349,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                         }
                     } else {
                         created.append(event(.changed, screen, changes, since: file.checkedAt[screen.frameID], phase: stage))
-                        if stage == .working { bases[screen.frameID] = old }
+                        if stage.merges { bases[screen.frameID] = old }
                     }
                 }
             } else if let old = gone.first(where: { $0.screenID == screen.screenID && !replaced.contains($0.frameID) }) {
@@ -342,7 +360,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                     made.beforeFrameID = old.frameID
                     created.append(made)
                 }
-            } else if capture.watches(screen.menuPath) {
+            } else if capture.watches(screen.menuPath) && !capture.fresh.contains(screen.candidateID) {
                 // 완료로 보는 메뉴에 새 화면이 생기면 그것도 추가 작업이다
                 created.append(event(.added, screen, [], since: file.syncedAt, phase: phase(from: nil, to: screen)))
             }
@@ -353,11 +371,12 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         for old in gone {
             if !replaced.contains(old.frameID), capture.watches(old.menuPath) {
                 created.append(event(.removed, old, [], since: file.checkedAt[old.frameID],
-                                     phase: state(old) == .done ? .afterDone : .working))
+                                     phase: state(old) == .done ? .afterDone : state(old) == .unknown ? .unmarked : .working))
             }
             file.screens[old.frameID] = nil
             file.checkedAt[old.frameID] = nil
             file.fetchedVersion[old.frameID] = nil
+            file.built?[old.frameID] = nil
         }
 
         if let entries = capture.changelog {
@@ -371,7 +390,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                 let ids = entry.screenIDs
                 let named = entry.menus(in: allPaths)
                 let watchesNamed = named.contains { menu in capture.menus.contains { DesignStatus.covers(menu, $0) || DesignStatus.covers($0, menu) } }
-                guard capture.menus.isEmpty || !watchedScreens.isDisjoint(with: ids) || watchesNamed
+                guard capture.watchesAll || !watchedScreens.isDisjoint(with: ids) || watchesNamed
                         || (ids.isEmpty && named.isEmpty && watchedPages.contains(entry.pageID))
                 else { continue }
                 let before = known[entry.key]
@@ -453,6 +472,35 @@ public struct DesignHistory: Codable, Equatable, Sendable {
     public func progress(_ event: DesignEvent) -> (done: Int, total: Int) {
         let keys = Set(event.changes.filter { $0.op != .renumbered }.map(\.key))
         return ((checked[event.id.uuidString] ?? []).intersection(keys).count, keys.count)
+    }
+
+    /// 화면에서 구현을 마친 기능 명세 (지금 시안에 남은 항목만).
+    public func built(_ screen: ScreenSnapshot, in fileKey: String) -> Set<String> {
+        (files[fileKey]?.built?[screen.frameID] ?? []).intersection(screen.items.map(\.text))
+    }
+
+    public mutating func toggleBuilt(_ item: SpecItem, of screen: ScreenSnapshot, in fileKey: String) {
+        guard var file = files[fileKey] else { return }
+        // 지금 시안에서 빠진 항목은 이참에 지운다
+        var keys = (file.built?[screen.frameID] ?? []).intersection(screen.items.map(\.text))
+        if keys.remove(item.text) == nil { keys.insert(item.text) }
+        var built = file.built ?? [:]
+        built[screen.frameID] = keys.isEmpty ? nil : keys
+        file.built = built.isEmpty ? nil : built
+        files[fileKey] = file
+    }
+
+    /// 링크로 고른 화면을 그만 지켜볼 때 그 화면 기록을 지운다. 변경 기록은 남긴다.
+    public mutating func forget(frames: [String], in fileKey: String) {
+        guard var file = files[fileKey] else { return }
+        for frame in frames {
+            file.screens[frame] = nil
+            file.checkedAt[frame] = nil
+            file.fetchedVersion[frame] = nil
+            file.built?[frame] = nil
+            file.mergeBase?[frame] = nil
+        }
+        files[fileKey] = file
     }
 
     /// 확인하지 않은 중요한 변경. 작업 중 변경은 세지 않는다.

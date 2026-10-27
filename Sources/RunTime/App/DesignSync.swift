@@ -16,8 +16,11 @@ final class DesignSyncSettings: ObservableObject {
     @Published var notify: Bool { didSet { defaults.set(notify, forKey: "design.notify") } }
     /// 작업 중인 화면의 변경도 알린다. 작업 중 시안은 계속 바뀌어 기본은 끈다.
     @Published var notifyWorking: Bool { didSet { defaults.set(notifyWorking, forKey: "design.notifyWorking") } }
-    /// 섹션에 [완료]·[수정중] 같은 표시가 없는 화면은 완료로 본다.
-    @Published var untaggedIsDone: Bool { didSet { defaults.set(untaggedIsDone, forKey: "design.untaggedIsDone") } }
+    /// 섹션에 [완료]·[수정중] 같은 표시가 없는 화면. nil이면 판단하지 않고(알림 받는 메뉴는 바뀔 때마다 알림),
+    /// true면 완료, false면 작업 중으로 본다. 표시를 아예 안 쓰는 화면설계서를 모두 완료로 보면 변경이 전부 완료 후 변경으로 쏟아진다.
+    @Published var untaggedIsDone: Bool? {
+        didSet { defaults.set(untaggedIsDone.map { $0 ? 1 : 2 } ?? 0, forKey: "design.untagged") }
+    }
     @Published private(set) var tokenHint: String?
     /// 즐겨찾기한 메뉴 (`파일키|화면 경로`). 놓은 순서대로 보인다.
     @Published var favorites: [String] { didSet { defaults.set(favorites, forKey: "design.favorites") } }
@@ -30,7 +33,7 @@ final class DesignSyncSettings: ObservableObject {
         intervalMinutes = defaults.object(forKey: "design.interval") as? Int ?? 0
         notify = defaults.object(forKey: "design.notify") as? Bool ?? true
         notifyWorking = defaults.object(forKey: "design.notifyWorking") as? Bool ?? false
-        untaggedIsDone = defaults.object(forKey: "design.untaggedIsDone") as? Bool ?? true
+        untaggedIsDone = [1: true, 2: false][defaults.integer(forKey: "design.untagged")]
         favorites = defaults.stringArray(forKey: "design.favorites") ?? []
         tokenHint = Keychain.exists(Self.tokenAccount) ? "저장됨" : nil
     }
@@ -169,6 +172,25 @@ final class DesignSync: ObservableObject {
             history = DesignHistory()
             loadError = "디자인 기록 파일을 읽지 못해 새 기록을 저장하지 않습니다: \(error.localizedDescription)"
         }
+        markUnmarkedOnce()
+    }
+
+    /// 상태 표시를 쓰지 않는 화면설계서를 모두 완료로 보던 때 남긴 변경을 "상태 모름"으로 고친다. 한 번만 한다.
+    private func markUnmarkedOnce() {
+        let flag = "design.unmarkedMigrated"
+        guard loadError == nil, !UserDefaults.standard.bool(forKey: flag) else { return }
+        UserDefaults.standard.set(true, forKey: flag)
+        guard settings.untaggedIsDone == nil else { return }
+        let plain = Set(history.files.filter { key, file in
+            source(key)?.untaggedIsDone == nil && source(key)?.statusOverrides.isEmpty != false && !DesignStatus.usesMarks(file.screens.values)
+        }.keys)
+        var changed = false
+        for index in history.events.indices where plain.contains(history.events[index].fileKey) && history.events[index].kind != .changelog
+            && [.afterDone, .completed].contains(history.events[index].phase) {
+            history.events[index].phase = .unmarked
+            changed = true
+        }
+        if changed { persist() }
     }
 
     func start() {
@@ -252,18 +274,43 @@ final class DesignSync: ObservableObject {
     /// 받는 중이거나 받을 차례를 기다리는지.
     func isBusy(_ fileKey: String) -> Bool { fetching == fileKey || queued.contains(fileKey) || (queuedAll && source(fileKey)?.isHidden == false) }
 
-    /// 숨긴 프로젝트·메뉴를 뺀, 확인하지 않은 중요한 변경.
-    /// 사이드바·메뉴바가 그릴 때마다 부르므로 기록이 바뀔 때만 다시 센다 (변경은 수천 건까지 쌓인다).
-    var unseenCount: Int {
+    /// 확인하지 않은 내 변경 (`follows`). 메뉴바·사이드바가 그릴 때마다 부르므로 기록이나 설정이 바뀔 때만 다시 센다
+    /// (변경은 수천 건까지 쌓인다). `fileKey`를 주면 그 프로젝트만.
+    func unseenCount(in fileKey: String? = nil) -> Int {
         let key = UnseenKey(events: history.events.count, last: history.events.last?.id, seen: history.seen.count + history.applied.count,
-                            hidden: settings.sources.map { "\($0.isHidden)\($0.hiddenMenus)" })
-        if let cached = unseenCache, cached.key == key { return cached.count }
-        let count = history.events.filter { $0.isImportant && !history.isSeen($0) && !isHidden($0) }.count
-        unseenCache = (key, count)
+                            sources: settings.sources.map { "\($0.fileKey)\($0.isHidden)\($0.hiddenMenus)\($0.alerts)" }, project: fileKey)
+        if let cached = unseenCache[fileKey ?? ""], cached.key == key { return cached.count }
+        let count = history.events.filter { event in
+            (fileKey == nil || event.fileKey == fileKey) && event.isImportant && !history.isSeen(event) && follows(event)
+        }.count
+        unseenCache[fileKey ?? ""] = (key, count)
         return count
     }
-    private struct UnseenKey: Equatable { let events: Int; let last: UUID?; let seen: Int; let hidden: [String] }
-    private var unseenCache: (key: UnseenKey, count: Int)?
+    var unseenCount: Int { unseenCount() }
+    private struct UnseenKey: Equatable { let events: Int; let last: UUID?; let seen: Int; let sources: [String]; let project: String? }
+    private var unseenCache: [String: (key: UnseenKey, count: Int)] = [:]
+
+    /// 내가 볼 변경. 알림 받을 메뉴를 고른 프로젝트는 그 메뉴의 변경만, 아직 고르지 않은 프로젝트는 전부.
+    /// 숨긴 프로젝트·메뉴는 빠진다.
+    func follows(_ event: DesignEvent) -> Bool {
+        guard let source = source(event.fileKey) else { return true }
+        guard !source.hides(event.menuPath) else { return false }
+        return source.alerts.isEmpty || inAlerts(event, source: source)
+    }
+
+    /// 알림 받는 메뉴의 변경인지. 이력 줄은 적힌 메뉴나 화면 ID로 가린다.
+    func inAlerts(_ event: DesignEvent, source: DesignSource) -> Bool {
+        guard !source.alerts.isEmpty else { return false }
+        if event.kind != .changelog { return source.alerts(event.menuPath) }
+        if let menus = event.menus, !menus.isEmpty {
+            return menus.contains { menu in source.alerts(menu) || source.alerts.contains { DesignStatus.covers(menu, $0) } }
+        }
+        // 이력 줄은 페이지 단위라, 적힌 화면 ID나 그 페이지의 화면이 알림 메뉴에 있을 때만
+        let screens = history.files[event.fileKey]?.screens.values.filter { source.alerts($0.menuPath) } ?? []
+        let ids = event.screenID.components(separatedBy: ", ").filter { !$0.isEmpty }
+        if !ids.isEmpty { return screens.contains { ids.contains($0.screenID) } }
+        return screens.contains { SpecExtractor.stripNote($0.pageName) == event.menuPath }
+    }
 
     func source(_ fileKey: String) -> DesignSource? { settings.sources.first { $0.fileKey == fileKey } }
 
@@ -299,6 +346,29 @@ final class DesignSync: ObservableObject {
             return event.frameID == screen.frameID || event.beforeFrameID == screen.frameID
         }
         .sorted { $0.detectedAt > $1.detectedAt }
+    }
+
+    /// 이 화면에서 아직 반영하지 않은 변경 (이력 줄 제외).
+    func pendingEvents(for screen: ScreenSnapshot, in fileKey: String) -> [DesignEvent] {
+        events(for: screen, in: fileKey).filter { $0.kind != .changelog && !history.isApplied($0) }
+    }
+
+    /// Claude Code에 붙일 글. 반영할 변경이 있으면 그 변경만, 없으면 화면을 처음 마크업하는 글.
+    func claudePrompt(for screen: ScreenSnapshot, in fileKey: String) -> String {
+        let link = FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID)
+        let pending = pendingEvents(for: screen, in: fileKey)
+        guard !pending.isEmpty else { return ClaudePrompt.build(screen, project: projectName(fileKey), link: link, built: history.built(screen, in: fileKey)) }
+        return ClaudePrompt.changes(pending, screen: screen, project: projectName(fileKey), link: link, done: checkedMap(pending))
+    }
+
+    func claudePrompt(for event: DesignEvent) -> String {
+        let screen = event.frameID.flatMap { history.files[event.fileKey]?.screens[$0] }
+        let link = event.frameID.flatMap { FigmaFileURL.link(fileKey: event.fileKey, nodeID: $0) }
+        return ClaudePrompt.changes([event], screen: screen, project: projectName(event.fileKey), link: link, done: checkedMap([event]))
+    }
+
+    private func checkedMap(_ events: [DesignEvent]) -> [UUID: Set<String>] {
+        Dictionary(events.map { ($0.id, history.checkedKeys($0)) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// 업무 일지 오늘 칸에 이 화면 마크업을 할 일로 넣는다.
@@ -401,15 +471,27 @@ final class DesignSync: ObservableObject {
                         // 버전을 기록하기 전에 세운 기준도 다음 변경의 "이전" 이미지를 그릴 수 있게 채운다
                         if history.files[source.fileKey]?.version == nil { history.files[source.fileKey]?.version = info.version }
                     case .captured(var capture):
-                        capture.menus = Set(current)
+                        // 링크로 고른 화면만 받았으면 그 화면의 경로를 엔진이 정해 둔다
+                        if !capture.scoped { capture.menus = Set(current) }
                         capture.rules = rules(for: source.fileKey)
                         let events = history.record(capture, at: Date())
                         found += events
                         counts[source.fileKey] = events.count
                         rename(source.fileKey, to: capture.fileName)
+                        resolve(source.fileKey, capture.resolved)
                     }
                     if menusChanged.remove(source.fileKey) != nil { history.files[source.fileKey]?.lastModified = nil }
                     errors[source.fileKey] = nil
+                    if case .captured(let capture) = outcome {
+                        let blank = capture.resolved.filter { $0.frames?.isEmpty == true && !capture.missing.contains($0.nodeID) }
+                        if !capture.missing.isEmpty {
+                            errors[source.fileKey] = "링크한 화면 \(capture.missing.count)개를 찾지 못했습니다. 지워졌거나 화면 프레임 안쪽 요소의 링크일 수 있습니다"
+                            // 찾지 못한 링크는 다음에 다시 찾게 파일이 그대로여도 다시 받는다
+                            history.files[source.fileKey]?.lastModified = nil
+                        } else if let first = blank.first {
+                            errors[source.fileKey] = "‘\(first.name)’에서 화면설계서 틀(화면 ID·Description)을 찾지 못했습니다. 화면설계서의 화면 프레임 링크인지 확인하세요"
+                        }
+                    }
                 } catch let failure as FigmaAPI.Failure {
                     errors[source.fileKey] = failure.message
                     if case .rateLimited = failure {
@@ -479,7 +561,7 @@ final class DesignSync: ObservableObject {
         let picked = events.filter(shouldAlert)
         guard !picked.isEmpty else { return }
         let completed = picked.filter { $0.phase == .completed }.count
-        let title = completed == picked.count ? "디자인 완료 \(completed)건" : "완료된 디자인에 변경 \(picked.count - completed)건"
+        let title = completed == picked.count ? "디자인 완료 \(completed)건" : "알림 받는 메뉴에 디자인 변경 \(picked.count - completed)건"
             + (completed > 0 && completed < picked.count ? " · 완료 \(completed)건" : "")
         let names = picked.prefix(3).map { $0.title.isEmpty ? $0.screenID : $0.title }
         let body = names.joined(separator: ", ") + (picked.count > 3 ? " 외 \(picked.count - 3)건" : "")
@@ -489,15 +571,7 @@ final class DesignSync: ObservableObject {
     func shouldAlert(_ event: DesignEvent) -> Bool {
         guard let source = settings.sources.first(where: { $0.fileKey == event.fileKey }), !source.hides(event.menuPath) else { return false }
         guard event.isImportant || settings.notifyWorking else { return false }
-        if event.kind != .changelog { return source.alerts(event.menuPath) }
-        if let menus = event.menus, !menus.isEmpty {
-            return menus.contains { menu in source.alerts(menu) || source.alerts.contains { DesignStatus.covers(menu, $0) } }
-        }
-        // 이력 줄은 페이지 단위라, 적힌 화면 ID나 그 페이지의 화면이 알림 메뉴에 있을 때만
-        let screens = history.files[event.fileKey]?.screens.values.filter { source.alerts($0.menuPath) } ?? []
-        let ids = event.screenID.components(separatedBy: ", ").filter { !$0.isEmpty }
-        if !ids.isEmpty { return screens.contains { ids.contains($0.screenID) } }
-        return screens.contains { SpecExtractor.stripNote($0.pageName) == event.menuPath }
+        return inAlerts(event, source: source)
     }
 
     // MARK: 알림 메뉴와 상태
@@ -507,10 +581,9 @@ final class DesignSync: ObservableObject {
         return DesignStatusRules(overrides: source?.statusOverrides ?? [:], untaggedIsDone: untaggedIsDone(fileKey, source: source))
     }
 
-    /// 프로젝트에서 직접 정한 것 → 상태·버전을 쓰는 파일이면 전체 설정 → 쓰지 않는 파일이면 완료.
-    private func untaggedIsDone(_ fileKey: String, source: DesignSource?) -> Bool {
-        if let manual = source?.untaggedIsDone { return manual }
-        return usesMarks(fileKey) ? settings.untaggedIsDone : true
+    /// 프로젝트에서 직접 정한 것, 없으면 전체 설정. 전체 설정의 기본은 판단하지 않음(nil)이다.
+    private func untaggedIsDone(_ fileKey: String, source: DesignSource?) -> Bool? {
+        source?.untaggedIsDone ?? settings.untaggedIsDone
     }
 
     /// 파일마다 상태 표시를 쓰는지. 사이드바가 그릴 때마다 화면을 모두 훑지 않게 화면 수가 같으면 다시 쓴다.
@@ -571,20 +644,120 @@ final class DesignSync: ObservableObject {
 
     // MARK: 파일
 
-    /// 주소를 확인하고 파일을 더한다. 문제가 있으면 그 이유.
-    func addSource(_ input: String) async -> String? {
-        guard let key = FigmaFileURL.fileKey(from: input) else { return "피그마 디자인 파일 주소가 아닙니다" }
-        guard !settings.sources.contains(where: { $0.fileKey == key }) else { return "이미 지켜보는 파일입니다" }
-        guard let token = settings.token else { return "피그마 토큰을 먼저 넣으세요" }
+    /// 붙여 넣은 링크를 더한 결과. `nodeID`가 있으면 그 화면을 연다.
+    struct AddedLink {
+        let fileKey: String
+        let nodeID: String?
+        /// 새로 받아야 그 화면이 보인다.
+        let needsFetch: Bool
+        let message: String
+    }
+
+    struct LinkProblem: Error {
+        let message: String
+    }
+
+    /// 링크로 고를 수 있는 노드. 글자·도형 같은 안쪽 요소는 화면을 가리지 못한다.
+    static let linkableTypes: Set<String> = ["CANVAS", "SECTION", "FRAME", "GROUP", "COMPONENT", "COMPONENT_SET", "INSTANCE"]
+
+    /// 피그마 링크를 더한다. `node-id`가 있으면 그 화면(프레임·섹션·페이지)만, 없으면 파일 전체를 지켜본다.
+    /// 같은 파일의 다른 화면 링크는 그 파일의 화면 목록에 더한다.
+    func addLink(_ input: String) async -> Result<AddedLink, LinkProblem> {
+        guard let key = FigmaFileURL.fileKey(from: input) else { return .failure(LinkProblem(message: "피그마 디자인 파일 주소가 아닙니다")) }
+        let node = FigmaFileURL.nodeID(from: input)
+        guard let token = settings.token else { return .failure(LinkProblem(message: "피그마 토큰을 먼저 넣으세요")) }
         do {
+            if let index = settings.sources.firstIndex(where: { $0.fileKey == key }) {
+                let source = settings.sources[index]
+                let name = projectName(key)
+                guard let node else {
+                    guard !source.scope.isEmpty else { return .failure(LinkProblem(message: "이미 지켜보는 파일입니다")) }
+                    widen(key)
+                    return .success(AddedLink(fileKey: key, nodeID: nil, needsFetch: true, message: "‘\(name)’ 전체를 지켜봅니다"))
+                }
+                if source.isHidden { setProjectHidden(key, hidden: false) }
+                if source.scope.isEmpty || source.scope.contains(where: { $0.nodeID == node }) {
+                    // 이미 받는 화면이면 기다리지 않고 바로 연다
+                    let known = screen(for: node, in: key) != nil
+                    return .success(AddedLink(fileKey: key, nodeID: node, needsFetch: !known,
+                                              message: source.scope.isEmpty ? "‘\(name)’ 전체를 지켜보고 있어 이 화면도 들어 있습니다" : "이미 지켜보는 화면입니다"))
+                }
+                let scope = try await linkedNode(node, in: key, token: token)
+                settings.sources[index].scope.append(scope)
+                // 새 화면은 파일이 그대로여도 받아야 한다
+                history.files[key]?.lastModified = nil
+                persist()
+                return .success(AddedLink(fileKey: key, nodeID: node, needsFetch: true, message: "‘\(scope.name)’ 화면을 더했습니다"))
+            }
             let info = try FigmaAPI.parseFile(await FigmaClient.shared.send(FigmaAPI.fileRequest(fileKey: key, token: token)))
-            settings.sources.append(DesignSource(fileKey: key, name: info.name))
-            return nil
+            guard let node else {
+                settings.sources.append(DesignSource(fileKey: key, name: info.name))
+                return .success(AddedLink(fileKey: key, nodeID: nil, needsFetch: true, message: "‘\(Self.project(from: info.name))’ 전체를 지켜봅니다"))
+            }
+            let scope = try await linkedNode(node, in: key, token: token)
+            settings.sources.append(DesignSource(fileKey: key, name: info.name, scope: [scope]))
+            return .success(AddedLink(fileKey: key, nodeID: node, needsFetch: true, message: "‘\(scope.name)’ 화면만 지켜봅니다"))
+        } catch let problem as LinkProblem {
+            return .failure(problem)
         } catch let failure as FigmaAPI.Failure {
-            return failure.message
+            return .failure(LinkProblem(message: failure.message))
         } catch {
-            return error.localizedDescription
+            return .failure(LinkProblem(message: error.localizedDescription))
         }
+    }
+
+    /// 링크한 노드의 이름과 종류를 묻는다. 한 단계만 받아 가볍다.
+    private func linkedNode(_ node: String, in fileKey: String, token: String) async throws -> DesignScope {
+        let nodes = try FigmaAPI.parseNodes(await FigmaClient.shared.send(FigmaAPI.nodesRequest(fileKey: fileKey, ids: [node], depth: 1, token: token)))
+        guard let found = nodes[node] else { throw LinkProblem(message: "링크한 화면을 찾지 못했습니다. 지워졌거나 볼 권한이 없는 노드입니다") }
+        guard Self.linkableTypes.contains(found.type) else {
+            throw LinkProblem(message: "화면 프레임이나 섹션, 페이지 링크를 붙여 넣으세요. 이 링크는 화면 안쪽 요소(\(found.name))를 가리킵니다")
+        }
+        return DesignScope(nodeID: node, name: found.name, pageID: found.type == "CANVAS" ? node : nil)
+    }
+
+    /// 링크한 노드에서 읽은 화면. 노드가 화면 프레임이 아니면(섹션·틀·페이지) 그 안의 첫 화면.
+    func screen(for nodeID: String, in fileKey: String) -> ScreenSnapshot? {
+        guard let file = history.files[fileKey] else { return nil }
+        if let screen = file.screens[nodeID] { return screen }
+        let frames = source(fileKey)?.scope.first { $0.nodeID == nodeID }?.frames ?? []
+        let screens = file.screens.values.filter { frames.contains($0.frameID) || $0.candidateID == nodeID || $0.pageID == nodeID }
+        return screens.min { ($0.menuPath, $0.screenID) < ($1.menuPath, $1.screenID) }
+    }
+
+    /// 가져오며 찾은 페이지·프레임을 링크에 적어 둔다. 받는 사이 빼거나 더한 링크는 건드리지 않는다.
+    private func resolve(_ fileKey: String, _ resolved: [DesignScope]) {
+        guard !resolved.isEmpty, let index = settings.sources.firstIndex(where: { $0.fileKey == fileKey }) else { return }
+        let byNode = Dictionary(resolved.map { ($0.nodeID, $0) }, uniquingKeysWith: { first, _ in first })
+        let updated = settings.sources[index].scope.map { scope in
+            guard let found = byNode[scope.nodeID] else { return scope }
+            var scope = scope
+            scope.pageID = found.pageID
+            scope.frames = found.frames
+            return scope
+        }
+        if updated != settings.sources[index].scope { settings.sources[index].scope = updated }
+    }
+
+    /// 링크로 고른 화면만 보던 파일을 전체로 넓힌다. 다음에 가져올 때 모든 화면을 받는다.
+    func widen(_ fileKey: String) {
+        guard let index = settings.sources.firstIndex(where: { $0.fileKey == fileKey }), !settings.sources[index].scope.isEmpty else { return }
+        settings.sources[index].scope = []
+        if syncing { menusChanged.insert(fileKey) }
+        history.files[fileKey]?.lastModified = nil
+        persist()
+    }
+
+    /// 링크한 화면 하나를 그만 지켜본다. 마지막 화면이면 파일을 뺀다 (비우면 전체가 되므로).
+    func removeScope(_ nodeID: String, from fileKey: String) {
+        guard let index = settings.sources.firstIndex(where: { $0.fileKey == fileKey }) else { return }
+        let scope = settings.sources[index].scope
+        guard let removed = scope.first(where: { $0.nodeID == nodeID }) else { return }
+        guard scope.count > 1 else { removeSource(fileKey); return }
+        settings.sources[index].scope.removeAll { $0.nodeID == nodeID }
+        let kept = Set(settings.sources[index].scope.flatMap { $0.frames ?? [] })
+        history.forget(frames: (removed.frames ?? []).filter { !kept.contains($0) }, in: fileKey)
+        persist()
     }
 
     func removeSource(_ fileKey: String) {
@@ -663,6 +836,12 @@ final class DesignSync: ObservableObject {
         } else {
             guard history.applied.remove(id) != nil else { return }
         }
+        persist()
+    }
+
+    /// 지금 시안 화면의 기능 명세 하나를 구현했는지 표시한다.
+    func toggleBuilt(_ item: SpecItem, of screen: ScreenSnapshot, in fileKey: String) {
+        history.toggleBuilt(item, of: screen, in: fileKey)
         persist()
     }
 

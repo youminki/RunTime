@@ -6,6 +6,8 @@ import SwiftUI
 struct DesignScreenRow: View {
     let screen: ScreenSnapshot
     let state: ScreenState
+    /// 같은 화면 ID의 다른 프레임과 가를 이름.
+    var note: String?
     let changes: Int
     let selected: Bool
     let select: () -> Void
@@ -26,6 +28,9 @@ struct DesignScreenRow: View {
                     }
                     HStack(spacing: 6) {
                         Text(screen.screenID).font(WL.number).foregroundStyle(WL.muted).lineLimit(1)
+                        if let note, !note.isEmpty {
+                            Text(note).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1)
+                        }
                         Text("명세 \(screen.items.count)").font(WL.meta).foregroundStyle(WL.faint).fixedSize()
                         Spacer(minLength: 0)
                     }
@@ -44,6 +49,31 @@ struct DesignScreenRow: View {
     }
 }
 
+/// 자주 쓰지 않는 동작을 모은 ⋯ 단추. 보조 단추와 같은 테두리로 그린다.
+struct MoreMenu<Content: View>: View {
+    let tip: String
+    let content: Content
+
+    init(tip: String, @ViewBuilder content: () -> Content) {
+        self.tip = tip
+        self.content = content()
+    }
+
+    var body: some View {
+        Menu { content } label: {
+            Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(WL.text)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: 32, height: 32)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+        .contentShape(Rectangle())
+        .tip(tip)
+    }
+}
+
 struct DesignStateDot: View {
     let state: ScreenState
 
@@ -55,7 +85,7 @@ struct DesignStateDot: View {
     }
 
     static func name(_ state: ScreenState) -> String {
-        state == .done ? "완료" : state == .working ? "작업 중" : "상태 표시 없음"
+        state == .done ? "완료" : state == .working ? "작업 중" : "상태 모름"
     }
 }
 
@@ -122,42 +152,71 @@ struct DesignScreenDetail: View {
         }
     }
 
+    /// 마크업을 시작하는 단추가 맨 앞이다. 덜 쓰는 것은 ⋯에 모은다.
     private func actionRow(compact: Bool) -> some View {
         HStack(spacing: 8) {
+            let pending = sync.pendingEvents(for: screen, in: fileKey).count
+            Button(action: copyPrompt) {
+                Label(pending > 0 ? "변경 \(pending)건 Claude 문구 복사" : "Claude 문구 복사", systemImage: "sparkles")
+            }
+            .buttonStyle(NotionButtonStyle(kind: .primary))
+            .tip(pending > 0
+                 ? "반영하지 않은 변경 \(pending)건을 전·후 원문으로 정리해, 이 화면 마크업에 반영해 달라는 글을 복사합니다. 체크한 항목은 뺍니다"
+                 : "이 화면을 마크업해 달라는 글을 복사합니다. 구현 체크한 기능 명세는 빼고 남은 것만 넣습니다")
             if let link {
                 Button { NSWorkspace.shared.open(link) } label: {
-                    HStack(spacing: 7) { FigmaMark(height: 14); Text(compact ? "피그마" : "피그마에서 열기") }
+                    if compact { FigmaMark(height: 14) } else { HStack(spacing: 7) { FigmaMark(height: 14); Text("피그마에서 열기") } }
                 }
-                .buttonStyle(NotionButtonStyle(kind: .primary))
+                .buttonStyle(NotionButtonStyle())
                 .tip("피그마에서 이 화면 프레임 열기")
             }
-            Button(action: copyBrief) {
-                if compact { Image(systemName: "doc.on.doc") } else { Label("작업용 복사", systemImage: "doc.on.doc") }
+            MoreMenu(tip: "이미지·링크 복사, 날짜별 비교, 업무 일지에 넣기") {
+                Button("화면 이미지 복사") { copyImage() }.disabled(readyImage == nil)
+                Button("화면 명세 복사 (MR·레드마인용)") { copyBrief() }
+                if let link {
+                    Button("피그마 링크 복사") { copy(link.absoluteString, "피그마 링크를 복사했습니다") }
+                }
+                Button("화면 ID 복사") { copy(screen.screenID, "‘\(screen.screenID)’를 복사했습니다") }
+                Divider()
+                Button("이 화면 날짜별 비교…") { DesignScreenDetail.compareDates(fileKey: fileKey, screen: screen, page: page) }
+                Button("업무 일지 오늘 칸에 넣기") {
+                    page.flash(sync.addToWorkLog(screen, in: fileKey) ? "업무 일지 오늘 칸에 넣었습니다" : "업무 일지에 넣지 못했습니다")
+                }
             }
-            .buttonStyle(NotionButtonStyle())
-            .tip("작업용 복사: 화면 정보·기능 명세·목업 문구·최근 변경을 한 글로 복사합니다. Claude나 MR에 붙여 마크업을 시작합니다")
-            Button { DesignScreenDetail.compareDates(fileKey: fileKey, screen: screen, page: page) } label: {
-                if compact { Image(systemName: "calendar.badge.clock") } else { Label("날짜별 비교", systemImage: "calendar.badge.clock") }
-            }
-            .buttonStyle(NotionButtonStyle())
-            .tip("날짜별 비교: 이 화면만 두 날짜의 피그마 버전으로 견줍니다")
-            Button {
-                page.flash(sync.addToWorkLog(screen, in: fileKey) ? "업무 일지 오늘 칸에 넣었습니다" : "업무 일지에 넣지 못했습니다")
-            } label: {
-                if compact { Image(systemName: "text.badge.plus") } else { Label("업무 일지에 넣기", systemImage: "text.badge.plus") }
-            }
-            .buttonStyle(NotionButtonStyle())
-            .tip("업무 일지에 넣기: 오늘 칸에 ‘화면 마크업’을 진행중으로")
             Spacer(minLength: 0)
         }
     }
 
+    private var built: Set<String> { sync.history.built(screen, in: fileKey) }
+
+    private func copyPrompt() {
+        copy(sync.claudePrompt(for: screen, in: fileKey), "Claude에 붙일 문구를 복사했습니다")
+    }
+
     private func copyBrief() {
         let text = ScreenBrief.text(screen, project: sync.projectName(fileKey), state: DesignStateDot.name(state), link: link,
-                                    recent: history.filter { $0.kind != .changelog })
+                                    recent: history.filter { $0.kind != .changelog }, built: built)
+        copy(text, "화면 명세를 복사했습니다")
+    }
+
+    private func copy(_ text: String, _ message: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        page.flash("화면 명세를 복사했습니다")
+        page.flash(message)
+    }
+
+    /// 받아 둔 화면 이미지. 아직 그리는 중이면 nil.
+    private var readyImage: NSImage? {
+        guard let version, case .ready(let url) = images.state(fileKey: fileKey, nodeID: screen.frameID, version: version) else { return nil }
+        return images.image(url)
+    }
+
+    /// Claude나 MR, 메신저에 바로 붙이게 화면 이미지를 복사한다.
+    private func copyImage() {
+        guard let image = readyImage else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([image])
+        page.flash("화면 이미지를 복사했습니다")
     }
 
     /// 날짜 비교를 이 화면 하나로 열고, 처음이면 최근 3일을 고른다.
@@ -211,14 +270,23 @@ struct DesignScreenDetail: View {
             }
         }
         if !screen.items.isEmpty {
-            section("기능 명세", count: screen.items.count) {
+            let built = built
+            let done = screen.items.filter { built.contains($0.text) }.count
+            section("기능 명세", trailing: done == 0 ? "\(screen.items.count)" : "구현 \(done)/\(screen.items.count)") {
                 ForEach(Array(screen.items.enumerated()), id: \.offset) { index, item in
-                    if index > 0 { RowDivider(inset: 0) }
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(item.number).font(WL.number).foregroundStyle(WL.accent).frame(minWidth: 22, alignment: .leading)
-                        Text(item.text).font(WL.body).lineSpacing(3).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    if index > 0 { RowDivider(inset: 26) }
+                    // 마크업하며 구현한 항목을 체크한다. 작업용 복사에도 구현 여부가 붙는다
+                    HStack(alignment: .top, spacing: 8) {
+                        AppliedCheck(on: built.contains(item.text)) { sync.toggleBuilt(item, of: screen, in: fileKey) }
+                            .padding(.top, 10)
+                            .tip(built.contains(item.text) ? "구현 표시 풀기" : "구현했으면 체크")
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(item.number).font(WL.number).foregroundStyle(WL.accent).frame(minWidth: 22, alignment: .leading)
+                            Text(item.text).font(WL.body).lineSpacing(3).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 10)
+                        .opacity(built.contains(item.text) ? 0.45 : 1)
                     }
-                    .padding(.vertical, 10)
                 }
             }
         }
@@ -271,8 +339,12 @@ struct DesignScreenDetail: View {
     }
 
     private func section<Content: View>(_ title: String, count: Int?, @ViewBuilder content: () -> Content) -> some View {
+        section(title, trailing: count.map { "\($0)" }, content: content)
+    }
+
+    private func section<Content: View>(_ title: String, trailing: String?, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(title, trailing: count.map { "\($0)" })
+            SectionLabel(title, trailing: trailing)
             VStack(alignment: .leading, spacing: 0) { content() }
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)

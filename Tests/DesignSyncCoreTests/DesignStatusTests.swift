@@ -34,12 +34,13 @@ import Testing
     @Test func untaggedScreensFollowTheRule() {
         let plain = screen("상품 > 목록", section: "상품 목록")
         #expect(DesignStatus.state(of: plain, rules: DesignStatusRules(untaggedIsDone: true)) == .done)
-        #expect(DesignStatus.state(of: plain, rules: DesignStatusRules(untaggedIsDone: false)) == .unknown)
+        #expect(DesignStatus.state(of: plain, rules: DesignStatusRules(untaggedIsDone: false)) == .working)
+        #expect(DesignStatus.state(of: plain, rules: DesignStatusRules(untaggedIsDone: nil)) == .unknown)
     }
 
     /// 상태 대신 배포 버전만 붙이는 화면설계서는 버전을 단 섹션을 완료로 본다.
     @Test func versionedSectionIsDone() {
-        let rules = DesignStatusRules(untaggedIsDone: false)
+        let rules = DesignStatusRules(untaggedIsDone: nil)
         for section in ["API Gateway_v0.4", "상품 v1.2", "상품 (v2)", "데이터 수집 환경변수_V0.1"] {
             #expect(DesignStatus.state(of: screen("상품 > 목록", section: section), rules: rules) == .done)
         }

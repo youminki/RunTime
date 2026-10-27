@@ -92,6 +92,93 @@ private final class FakeFigma: @unchecked Sendable {
     }
 }
 
+/// 링크로 고른 화면만 지켜볼 때.
+@Suite struct DesignScopeTests {
+    private func pages(order: [(String, String)] = [("1", "검색")], delivery: [(String, String)] = [("1", "조회")]) -> [FigmaNode] {
+        [Spec.page("1:1", "주문", [Spec.section("2:1", "주문_v1", [Spec.screen("10:1", screenID: "SC-ORD-001", path: "주문 > 목록", items: order)])]),
+         Spec.page("1:2", "배송", [
+            Spec.section("3:1", "배송_v1", [Spec.screen("20:1", screenID: "SC-DLV-001", path: "배송 > 조회", items: delivery),
+                                            Spec.screen("20:2", screenID: "SC-DLV-002", path: "배송 > 상세")]),
+            Spec.section("4:1", "간지", [Spec.changelog("4:3", rows: [("0.1", "2026-08-20", "최초 작성")])]),
+         ])]
+    }
+
+    @Test func fetchesOnlyTheLinkedScreenAndRemembersItsPage() async throws {
+        let figma = FakeFigma()
+        figma.pages = pages()
+        var source = DesignSource(fileKey: "Demo", scope: [DesignScope(nodeID: "20:1", name: "SC-DLV-001")])
+        var history = DesignHistory()
+
+        guard case .captured(let first) = try await DesignSyncEngine.run(source: source, token: "t", known: nil, transport: figma.transport)
+        else { Issue.record("처음에는 받아야 한다"); return }
+        #expect(first.screens.map(\.screenID) == ["SC-DLV-001"])
+        #expect(first.coveredPages == ["1:2"])
+        // 같은 페이지의 다른 화면은 있는 것으로만 치고 받지 않는다
+        #expect(first.present == ["20:1", "20:2"])
+        #expect(first.fetched == ["20:1"])
+        #expect(first.resolved == [DesignScope(nodeID: "20:1", name: "SC-DLV-001", pageID: "1:2", frames: ["20:1"])])
+        #expect(first.missing.isEmpty)
+        #expect(first.changelog?.count == 1)
+        history.record(first, at: Date(timeIntervalSince1970: 1_790_000_000))
+        source.scope = first.resolved
+
+        // 다음에는 찾아 둔 페이지만 살펴본다: 파일 정보, 페이지 뼈대 하나, 화면과 이력 한 묶음
+        figma.lastModified = "2026-10-21T02:00:00Z"
+        figma.pages = pages(order: [("1", "검색"), ("2", "초기화")], delivery: [("1", "조회"), ("2", "엑셀 다운로드")])
+        let before = figma.count
+        guard case .captured(let second) = try await DesignSyncEngine.run(source: source, token: "t", known: history.files["Demo"],
+                                                                         transport: figma.transport)
+        else { Issue.record("고쳐진 파일은 받아야 한다"); return }
+        #expect(figma.count == before + 3)
+        let events = history.record(second, at: Date(timeIntervalSince1970: 1_790_100_000))
+        // 지켜보지 않는 주문 화면의 변경과 같은 페이지 다른 화면은 남지 않는다
+        #expect(events.map(\.screenID) == ["SC-DLV-001"])
+        #expect(history.files["Demo"].map { Set($0.screens.keys) } == ["20:1"])
+    }
+
+    @Test func newlyLinkedScreenStartsAsBaseline() async throws {
+        let figma = FakeFigma()
+        figma.pages = pages()
+        var source = DesignSource(fileKey: "Demo", scope: [DesignScope(nodeID: "20:1")])
+        var history = DesignHistory()
+        guard case .captured(let first) = try await DesignSyncEngine.run(source: source, token: "t", known: nil, transport: figma.transport)
+        else { Issue.record("처음에는 받아야 한다"); return }
+        history.record(first, at: Date(timeIntervalSince1970: 1_790_000_000))
+        source.scope = first.resolved + [DesignScope(nodeID: "10:1")]
+        history.files["Demo"]?.lastModified = nil
+
+        guard case .captured(let second) = try await DesignSyncEngine.run(source: source, token: "t", known: history.files["Demo"],
+                                                                         transport: figma.transport)
+        else { Issue.record("링크를 더하면 다시 받아야 한다"); return }
+        #expect(second.fresh == ["10:1"])
+        let events = history.record(second, at: Date(timeIntervalSince1970: 1_790_100_000))
+        // 이제 막 지켜보기 시작한 화면은 새 화면 변경이 아니다
+        #expect(events.isEmpty)
+        #expect(history.files["Demo"].map { Set($0.screens.keys) } == ["10:1", "20:1"])
+    }
+
+    @Test func sectionPageAndWrappedScreenLinks() async throws {
+        let figma = FakeFigma()
+        figma.pages = pages() + [Spec.page("1:3", "공통", [
+            Spec.frame("5:1", "틀", height: 3000, [Spec.screen("30:1", screenID: "SC-CMN-001", path: "공통 > 팝업"),
+                                                   Spec.screen("30:2", screenID: "SC-CMN-002", path: "공통 > 알림")]),
+        ])]
+        // 섹션 링크는 그 안의 화면 전부
+        let section = DesignSource(fileKey: "Demo", scope: [DesignScope(nodeID: "3:1")])
+        guard case .captured(let bySection) = try await DesignSyncEngine.run(source: section, token: "t", known: nil, transport: figma.transport)
+        else { Issue.record("받아야 한다"); return }
+        #expect(Set(bySection.screens.map(\.screenID)) == ["SC-DLV-001", "SC-DLV-002"])
+
+        // 공통처럼 기본으로 건너뛰는 페이지도 링크로 고르면 보고, 틀 안쪽 화면 링크는 그 틀을 받아 찾는다
+        let wrapped = DesignSource(fileKey: "Demo", scope: [DesignScope(nodeID: "30:2"), DesignScope(nodeID: "99:9")])
+        guard case .captured(let byInner) = try await DesignSyncEngine.run(source: wrapped, token: "t", known: nil, transport: figma.transport)
+        else { Issue.record("받아야 한다"); return }
+        #expect(byInner.screens.contains { $0.screenID == "SC-CMN-002" })
+        #expect(byInner.resolved.first?.frames == ["30:2"])
+        #expect(byInner.missing == ["99:9"])
+    }
+}
+
 /// 화면 하나를 견줄 때는 그 페이지만 살펴 받는다.
 @Suite struct DesignCompareFillTests {
     @Test func outlinesOnlyTheChosenPages() async throws {

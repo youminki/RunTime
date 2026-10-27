@@ -218,6 +218,8 @@ public enum FigmaAPI {
         public var pageID: String
         public var sectionName: String
         public var isChangelog: Bool
+        /// 이 후보를 감싼 페이지·섹션·그룹과 뼈대에 보인 바로 아래 프레임. 링크로 고른 화면이 이 후보에 드는지 본다.
+        public var within: [String]? = nil
     }
 
     /// 표지·간지 섹션과 화면 크기에 못 미치는 프레임은 뺀다.
@@ -225,14 +227,14 @@ public enum FigmaAPI {
 
     public static func candidates(in page: FigmaNode, pageID: String) -> [Candidate] {
         var found: [Candidate] = []
-        walk(page.children, pageID: pageID, section: "", into: &found)
+        walk(page.children, pageID: pageID, section: "", parents: [pageID], into: &found)
         return found
     }
 
-    private static func walk(_ nodes: [FigmaNode], pageID: String, section: String, into found: inout [Candidate]) {
+    private static func walk(_ nodes: [FigmaNode], pageID: String, section: String, parents: [String], into found: inout [Candidate]) {
         for node in nodes where node.visible {
             if SpecExtractor.isChangelog(node) {
-                found.append(Candidate(id: node.id, name: node.name, pageID: pageID, sectionName: section, isChangelog: true))
+                found.append(Candidate(id: node.id, name: node.name, pageID: pageID, sectionName: section, isChangelog: true, within: parents))
                 continue
             }
             switch node.type {
@@ -240,23 +242,32 @@ public enum FigmaAPI {
                 if skippedSections.contains(SpecExtractor.stripStatus(node.name)) {
                     // 간지 섹션에 제·개정 이력 프레임을 같이 두는 디자이너가 있다
                     for child in node.children where child.visible && SpecExtractor.isChangelog(child) {
-                        found.append(Candidate(id: child.id, name: child.name, pageID: pageID, sectionName: node.name, isChangelog: true))
+                        found.append(Candidate(id: child.id, name: child.name, pageID: pageID, sectionName: node.name, isChangelog: true,
+                                               within: parents + [node.id]))
                     }
                     continue
                 }
-                walk(node.children, pageID: pageID, section: node.name, into: &found)
+                walk(node.children, pageID: pageID, section: node.name, parents: parents + [node.id], into: &found)
             case "GROUP":
                 // 화면 프레임 여럿을 그룹으로 묶어 두기도 해서 섹션처럼 안을 본다
-                walk(node.children, pageID: pageID, section: section, into: &found)
+                walk(node.children, pageID: pageID, section: section, parents: parents + [node.id], into: &found)
             case "FRAME", "COMPONENT", "INSTANCE":
                 // 뼈대만으로는 화면과 화면 여럿을 묶은 틀을 가를 수 없어 큰 프레임은 모두 후보로 받는다.
                 // 틀이면 받은 뒤 SpecExtractor가 안쪽 화면을 찾는다
                 guard (node.height ?? 0) >= SpecExtractor.minimumScreenHeight else { continue }
-                found.append(Candidate(id: node.id, name: node.name, pageID: pageID, sectionName: section, isChangelog: false))
+                // 틀 안쪽 화면의 링크를 붙여 넣어도 이 후보로 찾게 바로 아래 프레임도 적어 둔다
+                let inner = node.children.filter { ["FRAME", "COMPONENT", "INSTANCE", "GROUP"].contains($0.type) }.map(\.id)
+                found.append(Candidate(id: node.id, name: node.name, pageID: pageID, sectionName: section, isChangelog: false,
+                                       within: parents + inner))
             default:
                 continue
             }
         }
+    }
+
+    /// 링크로 고른 노드가 이 후보이거나, 이 후보를 감싸거나, 이 후보 바로 안에 있는지.
+    public static func covers(_ nodeIDs: Set<String>, _ candidate: Candidate) -> Bool {
+        nodeIDs.contains(candidate.id) || !(nodeIDs.isDisjoint(with: candidate.within ?? []))
     }
 
     /// 기본으로 지켜보지 않는 페이지. 구분선, 공통 컴포넌트, 시안, 백업 같은 것.

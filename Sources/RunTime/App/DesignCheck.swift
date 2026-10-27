@@ -18,10 +18,12 @@ enum DesignCheck {
             await counter.add()
             return try await FigmaClient.shared.send(request)
         }
+        // 화면 링크(node-id)를 넣으면 앱처럼 그 화면만 받는다
+        let source = DesignSource(fileKey: key, scope: FigmaFileURL.nodeID(from: url).map { [DesignScope(nodeID: $0)] } ?? [])
         Task {
             do {
                 let started = Date()
-                let outcome = try await DesignSyncEngine.run(source: DesignSource(fileKey: key), token: token, known: nil,
+                let outcome = try await DesignSyncEngine.run(source: source, token: token, known: nil,
                                                              transport: transport, progress: { print("  " + $0) })
                 guard case .captured(let capture) = outcome else { finish("처음 받기인데 받지 않았습니다", ok: false) }
                 let screens = capture.screens
@@ -34,12 +36,15 @@ enum DesignCheck {
                 컴포넌트 \(components.filter { !$0.isImage }.count) · 이미지 \(components.filter(\.isImage).count) · 제·개정 이력 \(capture.changelog.map { "\($0.count)줄" } ?? "받지 못함")
                 요청 \(await counter.requests)번 · \(Int(Date().timeIntervalSince(started)))초
                 """)
+                if capture.scoped {
+                    print("링크한 화면: 찾음 \(capture.resolved.count - capture.missing.count) · 못 찾음 \(capture.missing.count) · 읽은 프레임 \(capture.resolved.flatMap { $0.frames ?? [] }.count)")
+                }
                 // 같은 화면을 다시 견줘도 바뀐 게 없어야 하고, 파일이 그대로면 파일 정보 한 번만 묻고 끝나야 한다
                 var history = DesignHistory()
                 history.record(capture, at: Date())
                 let unstable = screens.filter { !SpecDiff.changes(from: $0, to: $0).isEmpty }.count
                 let before = await counter.requests
-                let again = try await DesignSyncEngine.run(source: DesignSource(fileKey: key), token: token, known: history.files[key],
+                let again = try await DesignSyncEngine.run(source: source, token: token, known: history.files[key],
                                                            transport: transport)
                 let unchanged: Bool
                 if case .unchanged = again { unchanged = true } else { unchanged = false }
