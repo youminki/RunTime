@@ -310,6 +310,8 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         sending = true
         let titleKey = "workLog.teamsTitle.\(key)"
         let expect = UserDefaults.standard.string(forKey: titleKey).flatMap(TeamsOpener.chatName) ?? ""
+        let leftKey = "workLog.teamsWebFirst"
+        let previous = UserDefaults.standard.string(forKey: leftKey) ?? ""
         prepare { [weak self] ready in
             guard let self else { return }
             guard ready, let view = self.webView else {
@@ -320,7 +322,9 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
             let html = TeamsLink.html(report, title: title)
             let plain = TeamsLink.plain(report, title: title)
             let first = plain.components(separatedBy: "\n").first ?? title
+            UserDefaults.standard.set(first, forKey: leftKey)
             let arguments: [String: Any] = ["conversation": conversation, "html": html, "plain": plain, "first": first,
+                                            "previous": previous,
                                             "notes": conversation == "48:notes", "expect": expect,
                                             "already": self.shownConversation == conversation]
             view.callAsyncJavaScript(Self.script, arguments: arguments, in: nil, in: .page) { [weak self] result in
@@ -353,6 +357,7 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     /// 어느 채팅이 떠 있는지 모르면 이미 그 채팅이라 제목이 안 바뀔 수 있어 나와의 채팅을 거쳐 간다.
     /// 돌려주는 값: `sent:<창 제목>`, `unsure:<말>`, `open:<말>`(채팅을 못 엶), `fail:<말>`.
     /// 붙여 넣은 뒤 실패하면 편집기를 거쳐 입력 칸을 비운다 (남기면 다음에 ‘쓰다 만 글’로 막히는데 숨은 창이라 지울 길이 없다).
+    /// 보내기 확인이 안 된 채 남은 글은 팀즈가 초안으로 다시 띄우므로, 우리가 붙인 보고서(첫 줄로 알아본다)면 지우고 보낸다.
     private static let script = """
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const editor = () => document.querySelector('[data-tid="ckeditor"]');
@@ -360,7 +365,8 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     const name = t => { const p = clean(t).split(' | '); return p.length >= 3 ? p[1].trim() : null; };
     const isNotes = t => t.includes('(나)') || t.includes('(You)');
     const isTarget = t => notes ? isNotes(t) : (!expect || name(t) === expect);
-    const flat = t => t.replace(/\\s+/g, ' ').trim();
+    // CKEditor·팀즈가 빈 칸에 남기는 보이지 않는 글자(zero-width, word joiner)는 \\s에 걸리지 않는다
+    const flat = t => t.replace(/[\\u200B-\\u200D\\u2060\\uFEFF]/g, '').replace(/\\s+/g, ' ').trim();
     const go = id => { location.hash = '#/l/chat/' + id + '/conversations'; };
     async function settle(test) {
       let steady = 0, last = '';
@@ -387,15 +393,35 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     }
     const box = editor();
     const empty = () => flat(box.innerText) === '';
-    // CKEditor는 합성 이벤트의 선택 범위를 보지 않아 한 글자씩 지운다 (붙여 넣은 직후라 커서가 끝에 있다)
+    // CKEditor는 합성 이벤트의 선택 범위를 보지 않아 커서를 끝에 두고 한 글자씩 지운다
     const clear = async () => {
       box.focus();
+      const range = document.createRange();
+      range.selectNodeContents(box);
+      range.collapse(false);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      await sleep(50);
       for (let i = 0; i < 6000 && !empty(); i++) {
         box.dispatchEvent(new InputEvent('beforeinput', { inputType: 'deleteContentBackward', bubbles: true, cancelable: true }));
         if (i % 50 === 49) await sleep(0);
       }
     };
-    if (!empty()) return 'fail:그 채팅 입력 칸에 쓰다 만 글이 있어 보내지 않았습니다';
+    // 채팅을 바꾼 직후에는 앞 채팅의 초안이 잠깐 남아 있다가 바뀌어서, 입력 칸 글이 멈출 때까지 본다
+    for (let i = 0, steady = 0, last = null; i < 20 && steady < 3; i++) {
+      await sleep(100);
+      const t = flat(box.innerText);
+      steady = t === last ? steady + 1 : 0;
+      last = t;
+    }
+    if (!empty()) {
+      const left = flat(box.innerText);
+      const ours = [first, previous].map(flat).some(w => w && left.includes(w));
+      if (!ours) return 'fail:그 채팅 입력 칸에 쓰다 만 글이 있어 보내지 않았습니다';
+      await clear();
+      if (!empty()) return 'fail:입력 칸에 남은 지난 보고서를 지우지 못했습니다';
+    }
     box.focus();
     const data = new DataTransfer();
     data.setData('text/html', html);
