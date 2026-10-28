@@ -1,12 +1,12 @@
 #!/bin/zsh
-# 코어 단위 테스트 (사용량 계산, 게임 규칙, 한글 검색, 업무 일지, 디자인 변경 기록).
+# 코어 단위 테스트 (사용량 계산, 게임 규칙, 한글 검색, 업무 일지, 디자인 변경 기록, 호스트).
 # Command Line Tools만 있는 환경에선 실행 타깃과 같은 패키지에서 swift-testing 매크로를 찾지 못한다.
 # 코어 소스와 테스트를 링크한 별도 패키지를 .build 안에 만들어 그쪽에서 돌린다.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT/.build/core-package"
 mkdir -p "$PKG/Sources" "$PKG/Tests"
-for MODULE in UsageCore GameCore SearchCore WorkLogCore DesignSyncCore; do
+for MODULE in UsageCore GameCore SearchCore WorkLogCore DesignSyncCore HostsCore; do
     ln -sfn "$ROOT/Sources/$MODULE" "$PKG/Sources/$MODULE"
     ln -sfn "$ROOT/Tests/${MODULE}Tests" "$PKG/Tests/${MODULE}Tests"
 done
@@ -23,11 +23,13 @@ let package = Package(
         .target(name: "SearchCore"),
         .target(name: "WorkLogCore"),
         .target(name: "DesignSyncCore"),
+        .target(name: "HostsCore"),
         .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"]),
         .testTarget(name: "GameCoreTests", dependencies: ["GameCore"]),
         .testTarget(name: "SearchCoreTests", dependencies: ["SearchCore"]),
         .testTarget(name: "WorkLogCoreTests", dependencies: ["WorkLogCore"]),
         .testTarget(name: "DesignSyncCoreTests", dependencies: ["DesignSyncCore"]),
+        .testTarget(name: "HostsCoreTests", dependencies: ["HostsCore"]),
     ]
 )
 MANIFEST

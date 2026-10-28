@@ -234,6 +234,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.openWorkLog()
             case .design:
                 self.showMain(.design)
+            case .hosts:
+                self.showMain(.hosts)
             }
         }
         // 설정 창을 열어 둔 채 시스템 설정에서 자동 시작을 바꾸고 돌아와도 맞게 보이게
@@ -245,6 +247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         startAccountSwitcher()
         WorkLogSync.shared.start()
         MainActor.assumeIsolated { DesignSync.shared.start() }
+        // 기한 지난 호스트는 켤 때와 한 시간마다 본다 (알림은 하루 한 번)
+        MainActor.assumeIsolated { HostsStore.shared.remindExpired() }
+        Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
+            MainActor.assumeIsolated { HostsStore.shared.remindExpired() }
+        }
         GlobalHotKey.shared.quickAction = { QuickAddPanel.shared.toggle() }
         GlobalHotKey.shared.setQuickAdd(WorkLogSettings.shared.quickAddEnabled)
         // 처음 설치한 사람에게만 한 번. 러너가 메뉴바에 자리 잡은 뒤에 띄운다
@@ -285,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             QuickAddPanel.shared.show()
         }
         addAccountMenu(to: menu)
+        addHostsMenu(to: menu)
         add("일별 사용량") { [weak self] in self?.openDailyDetail() }
         add("토큰 러너 순위") { [weak self] in self?.openLeaderboard() }
         add("새로고침") { [weak self] in self?.engine.refreshNow(forceOfficial: true) }
@@ -325,6 +333,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         sub.addItem(manage)
         parent.submenu = sub
         menu.addItem(parent)
+    }
+
+    /// 호스트 묶음을 바로 켜고 끄는 하위 메뉴. 고르면 그 자리에서 관리자 암호를 묻고 저장한다.
+    private func addHostsMenu(to menu: NSMenu) {
+        MainActor.assumeIsolated {
+            let store = HostsStore.shared
+            store.reloadIfChanged()
+            let parent = NSMenuItem(title: "호스트", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            // 저장 중·고치는 중에 막은 것이 그대로 보이게 (켜 두면 NSMenu가 isEnabled를 덮어쓴다)
+            sub.autoenablesItems = false
+            let sections = store.saved.sections
+            for section in sections {
+                let on = section.items.filter(\.enabled).count
+                let title = section.title ?? "묶음 없음"
+                let item = NSMenuItem(title: "\(title)  \(on)/\(section.items.count)",
+                                      action: #selector(runMenuAction(_:)), keyEquivalent: "")
+                item.target = self
+                item.state = on == section.items.count ? .on : on == 0 ? .off : .mixed
+                item.isEnabled = store.canEdit && !store.saving && !store.dirty
+                let turnOn = on < section.items.count
+                item.representedObject = MenuAction {
+                    MainActor.assumeIsolated {
+                        store.quickToggle(section, turnOn) { failure in
+                            Notifier.shared.send(title: "호스트", body: failure ?? "‘\(title)’ 묶음을 \(turnOn ? "켰습니다" : "껐습니다")",
+                                                 opens: .hosts)
+                        }
+                    }
+                }
+                sub.addItem(item)
+            }
+            if store.dirty {
+                sub.addItem(withTitle: "호스트 화면에 저장하지 않은 변경이 있습니다", action: nil, keyEquivalent: "").isEnabled = false
+            }
+            if !sections.isEmpty { sub.addItem(.separator()) }
+            let manage = NSMenuItem(title: "호스트 관리…", action: #selector(runMenuAction(_:)), keyEquivalent: "")
+            manage.target = self
+            manage.representedObject = MenuAction { [weak self] in self?.showMain(.hosts) }
+            sub.addItem(manage)
+            parent.submenu = sub
+            menu.addItem(parent)
+        }
     }
 
     /// 계정 옆에 붙일 마지막 사용률 (리셋이 지났으면 0%).

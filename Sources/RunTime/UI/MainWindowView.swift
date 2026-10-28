@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 한 창 안에서 오가는 화면. 메뉴바·팝오버·알림의 단추도 새 창을 띄우지 않고 이 창의 화면을 바꾼다.
 enum MainPage: String, CaseIterable {
-    case usage, game, runners, workLog, calendar, design, settings
+    case usage, game, runners, workLog, calendar, design, hosts, settings
 
     /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 순위는 게임).
     init?(windowName: String) {
@@ -19,6 +19,7 @@ enum MainPage: String, CaseIterable {
         case .workLog: return "업무 일지"
         case .calendar: return "캘린더"
         case .design: return "디자인"
+        case .hosts: return "호스트"
         case .settings: return "설정"
         }
     }
@@ -31,6 +32,7 @@ enum MainPage: String, CaseIterable {
         case .workLog: return "checklist"
         case .calendar: return "calendar"
         case .design: return "paintpalette"
+        case .hosts: return "network"
         case .settings: return "gearshape"
         }
     }
@@ -43,6 +45,7 @@ enum MainPage: String, CaseIterable {
         case .workLog: return "업무 일지와 일일·주간 보고, 레드마인 보내기"
         case .calendar: return "업무 일지를 한 달 달력으로 크게, 공휴일과 함께"
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
+        case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 백업"
         case .settings: return "일반, 러너, 사용량 설정"
         }
     }
@@ -232,6 +235,8 @@ struct MainWindowView: View {
             }
         case .design:
             DesignHistoryView(sync: .shared, settings: .shared, page: designPage)
+        case .hosts:
+            HostsView(store: .shared, page: .shared)
         case .settings:
             SettingsView(settings: settings, engine: engine, tab: settingsTab, workLog: workLogPage)
         }
