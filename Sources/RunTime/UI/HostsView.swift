@@ -27,7 +27,21 @@ final class HostsPage: ObservableObject {
         }
     }
 
+    enum Filter: String, CaseIterable {
+        case all = "전체", on = "켜짐", off = "꺼짐", limited = "기한 있음"
+
+        func matches(_ item: HostsFile.Item) -> Bool {
+            switch self {
+            case .all: return true
+            case .on: return item.enabled
+            case .off: return !item.enabled
+            case .limited: return item.expiry != nil
+            }
+        }
+    }
+
     @Published var search = ""
+    @Published var filter = Filter.all
     @Published var collapsed: Set<String> = []
     @Published var sheet: Sheet?
     @Published var toast: String?
@@ -62,10 +76,16 @@ struct HostsView: View {
                 notices
                 if !issues.isEmpty { issueList }
                 searchField
+                if !store.sections.isEmpty { filterBar }
                 if sections.isEmpty {
                     Callout {
-                        Text(page.search.isEmpty ? "등록한 호스트가 없습니다. 추가를 눌러 넣으세요." : "‘\(page.search)’에 맞는 호스트가 없습니다.")
-                            .font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                        HStack {
+                            Text(emptyMessage).font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                            Spacer(minLength: 8)
+                            if !page.search.isEmpty || page.filter != .all {
+                                Button("조건 지우기") { page.search = ""; page.filter = .all }.buttonStyle(NotionButtonStyle())
+                            }
+                        }
                     }
                     .padding(.top, 12)
                 }
@@ -109,17 +129,24 @@ struct HostsView: View {
 
     private var sections: [HostsFile.Section] {
         let query = page.search.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !query.isEmpty else { return store.sections }
+        guard !query.isEmpty || page.filter != .all else { return store.sections }
         return store.sections.compactMap { section in
             var section = section
+            section.items = section.items.filter(page.filter.matches)
             let titleMatches = section.title?.lowercased().contains(query) == true
-            if !titleMatches {
+            if !query.isEmpty, !titleMatches {
                 section.items = section.items.filter {
                     $0.name.lowercased().contains(query) || $0.ip.contains(query) || $0.note?.lowercased().contains(query) == true
                 }
             }
             return section.items.isEmpty ? nil : section
         }
+    }
+
+    private var emptyMessage: String {
+        if store.sections.isEmpty { return "등록한 호스트가 없습니다. 오른쪽 위 추가를 눌러 넣으세요." }
+        let filter = page.filter == .all ? "" : "‘\(page.filter.rawValue)’ 중에 "
+        return page.search.isEmpty ? "\(filter)보일 호스트가 없습니다." : "\(filter)‘\(page.search)’에 맞는 호스트가 없습니다."
     }
 
     // MARK: 머리
@@ -190,9 +217,9 @@ struct HostsView: View {
         Callout {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("살펴볼 곳 \(issues.count)개").font(WL.heading)
+                    Text("확인이 필요한 줄 \(issues.count)개").font(WL.heading)
                     let fixable = issues.filter(\.fixable).count
-                    if fixable > 0 { Text("\(fixable)개는 정리하면 고쳐집니다").font(WL.caption).foregroundStyle(WL.muted) }
+                    if fixable > 0 { Text("\(fixable)개는 오른쪽 위 ‘정리’로 바로 고칩니다").font(WL.caption).foregroundStyle(WL.muted) }
                     Spacer()
                     if issues.count > 3 {
                         Button(page.showAllIssues ? "접기" : "\(issues.count - 3)개 더 보기") { page.showAllIssues.toggle() }
@@ -236,6 +263,38 @@ struct HostsView: View {
         .padding(.bottom, 8)
     }
 
+    /// 켜짐·꺼짐·기한으로 골라 보고, 묶음을 한 번에 접고 편다.
+    private var filterBar: some View {
+        let items = store.sections.flatMap(\.items)
+        let keys = Set(collapseKeys.values)
+        let allCollapsed = !keys.isEmpty && keys.isSubset(of: page.collapsed)
+        return HStack(spacing: 6) {
+            ForEach(HostsPage.Filter.allCases, id: \.self) { filter in
+                let count = items.filter(filter.matches).count
+                Button { page.filter = filter } label: {
+                    HStack(spacing: 5) {
+                        Text(filter.rawValue)
+                        Text("\(count)").monospacedDigit()
+                            .foregroundStyle(page.filter == filter ? Color.white.opacity(0.8) : WL.quiet)
+                    }
+                }
+                .buttonStyle(ChipButtonStyle(selected: page.filter == filter))
+                .fixedSize()
+                .disabled(count == 0 && filter != .all && page.filter != filter)
+            }
+            Spacer(minLength: 8)
+            if store.sections.count > 1 {
+                Button(allCollapsed ? "묶음 모두 펼치기" : "묶음 모두 접기") {
+                    if allCollapsed { page.collapsed.subtract(keys) } else { page.collapsed.formUnion(keys) }
+                }
+                .buttonStyle(TextLinkButtonStyle())
+                .disabled(!page.search.isEmpty || page.filter != .all)
+                .tip(page.search.isEmpty && page.filter == .all ? "묶음 이름만 남겨 한눈에 봅니다" : "찾거나 골라 보는 동안은 모두 펼쳐 둡니다")
+            }
+        }
+        .padding(.bottom, 6)
+    }
+
     // MARK: 묶음
 
     /// 접힘을 기억할 키. 같은 이름 묶음이 여럿이면 순번을 붙여 하나만 접히게 한다.
@@ -254,7 +313,7 @@ struct HostsView: View {
     /// 묶음 머리와 줄들. Group으로 감싸 지연 목록에 줄 하나하나가 따로 들어가게 한다.
     @ViewBuilder
     private func sectionView(_ section: HostsFile.Section, key: String) -> some View {
-        let collapsed = page.collapsed.contains(key) && page.search.isEmpty
+        let collapsed = page.collapsed.contains(key) && page.search.isEmpty && page.filter == .all
         let allOn = section.items.allSatisfy(\.enabled)
         Group {
             ToggleHeading(collapsed: collapsed, toggle: {
@@ -262,7 +321,8 @@ struct HostsView: View {
             }) {
                 HStack(spacing: 8) {
                     Text(section.title ?? "묶음 없음").font(WL.section).foregroundStyle(section.title == nil ? WL.muted : WL.text)
-                    Text("\(section.items.filter(\.enabled).count)/\(section.items.count)").font(WL.number).foregroundStyle(WL.quiet)
+                    Text("\(section.items.count)개 중 \(section.items.filter(\.enabled).count)개 켜짐").font(WL.caption).foregroundStyle(WL.quiet)
+                        .monospacedDigit()
                     // 묶음이 어느 서버를 보는지 한눈에 (환경 전환 뒤 바로 확인하게)
                     let addresses = Array(NSOrderedSet(array: section.items.filter(\.enabled).map(\.ip))) as? [String] ?? []
                     if !addresses.isEmpty {

@@ -47,32 +47,76 @@ struct CalendarPageView: View {
 
     private var header: some View {
         let month = page.calendarMonth
-        let entries = visible(store.log.entries(in: WorkDay.month(of: month)))
+        let all = visible(store.log.entries(in: WorkDay.month(of: month)), filtered: false)
+        let entries = all.filter { page.calendarProject == nil || $0.project == page.calendarProject }
         let parts = month.split(separator: "-")
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(parts.count == 3 ? "\(Int(parts[1]) ?? 0)월" : month).font(WL.pageTitle)
-                Text(String(month.prefix(4)) + "년").font(.system(size: 20, weight: .medium)).foregroundStyle(WL.muted)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(parts.count == 3 ? "\(Int(parts[1]) ?? 0)월" : month).font(WL.pageTitle)
+                    Text(String(month.prefix(4)) + "년").font(.system(size: 20, weight: .medium)).foregroundStyle(WL.muted)
+                }
+                .monospacedDigit()
+                Spacer()
+                HStack(spacing: 4) {
+                    Button { page.calendarMonth = WorkDay.addingMonths(-1, to: month) } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(GhostIconButtonStyle())
+                        .keyboardShortcut("[", modifiers: .command)
+                        .tip("지난달 (⌘[)")
+                        .accessibilityLabel("지난달")
+                    Button("오늘") { select(WorkDay.today()) }
+                        .buttonStyle(NotionButtonStyle())
+                        .keyboardShortcut("t", modifiers: .command)
+                        .tip("오늘로 가기 (⌘T)")
+                    Button { page.calendarMonth = WorkDay.addingMonths(1, to: month) } label: { Image(systemName: "chevron.right") }
+                        .buttonStyle(GhostIconButtonStyle())
+                        .keyboardShortcut("]", modifiers: .command)
+                        .tip("다음 달 (⌘])")
+                        .accessibilityLabel("다음 달")
+                }
             }
+            HStack(spacing: 14) {
+                if entries.isEmpty {
+                    Text(page.calendarProject == nil ? "이 달에 적은 업무가 없습니다" : "이 달에 ‘\(page.calendarProject!)’ 업무가 없습니다")
+                } else {
+                    Tally(title: "일한 날", value: Set(entries.map(\.day)).count)
+                    Tally(title: "업무", value: entries.count)
+                    Tally(title: "완료", value: entries.filter(\.status.isFinished).count, tint: WL.done)
+                    Tally(title: "진행 중", value: entries.filter(isOpen).count, tint: WL.accent)
+                }
+            }
+            .font(WL.meta)
             .monospacedDigit()
-            Text(entries.isEmpty ? "기록 없음" : "\(Set(entries.map(\.day)).count)일 · \(entries.count)줄")
-                .font(WL.meta).foregroundStyle(WL.muted).monospacedDigit()
-            Spacer()
-            HStack(spacing: 4) {
-                Button { page.calendarMonth = WorkDay.addingMonths(-1, to: month) } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .keyboardShortcut("[", modifiers: .command)
-                    .tip("지난달 (⌘[)")
-                Button("오늘") { select(WorkDay.today()) }
-                    .buttonStyle(NotionButtonStyle())
-                    .keyboardShortcut("t", modifiers: .command)
-                    .tip("오늘로 가기 (⌘T)")
-                Button { page.calendarMonth = WorkDay.addingMonths(1, to: month) } label: { Image(systemName: "chevron.right") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .keyboardShortcut("]", modifiers: .command)
-                    .tip("다음 달 (⌘])")
+            projectFilter(all)
+        }
+    }
+
+    /// 이 달의 프로젝트를 색과 함께 늘어놓는다. 누르면 그 프로젝트만 달력에 남긴다.
+    @ViewBuilder
+    private func projectFilter(_ entries: [WorkEntry]) -> some View {
+        let projects = store.log.orderedProjects(of: entries)
+        if projects.count > 1 || page.calendarProject != nil {
+            FlowLayout(spacing: 6) {
+                filterChip(nil, title: "모든 프로젝트", count: entries.count)
+                ForEach(projects, id: \.self) { project in
+                    filterChip(project, title: project, count: entries.filter { $0.project == project }.count)
+                }
             }
         }
+    }
+
+    private func filterChip(_ project: String?, title: String, count: Int) -> some View {
+        let on = page.calendarProject == project
+        return Button { page.calendarProject = on ? nil : project } label: {
+            HStack(spacing: 6) {
+                if let project { ProjectSwatch(name: project, size: 8) }
+                Text(title)
+                Text("\(count)").monospacedDigit().foregroundStyle(on ? Color.white.opacity(0.8) : WL.quiet)
+            }
+        }
+        .buttonStyle(ChipButtonStyle(selected: on))
+        .fixedSize()
+        .tip(project == nil ? "모든 프로젝트 보기" : "‘\(title)’ 업무만 보기 · 다시 누르면 모두 봅니다")
     }
 
     // MARK: 달력 칸
@@ -129,7 +173,7 @@ struct CalendarPageView: View {
                 .frame(height: 14)
             }
             if entries.count > shown {
-                Text("\(entries.count - shown)개 더").font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.muted)
+                Text("+\(entries.count - shown)개 더").font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.muted)
                     .frame(height: 14)
             }
             Spacer(minLength: 0)
@@ -165,69 +209,128 @@ struct CalendarPageView: View {
         let entries = visible(store.log.entries(on: day))
         let holiday = KoreanHolidays.name(on: day)
         return VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(WorkLogFormat.longDay(day)).font(WL.title)
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
+                    Text(WorkLogFormat.longDay(day)).font(WL.title).lineLimit(1).minimumScaleFactor(0.8)
+                    if let relative = relative(day) { DayBadge(text: relative) }
+                    Spacer(minLength: 4)
+                    HStack(spacing: 2) {
+                        Button { select(WorkDay.adding(-1, to: day)) } label: { Image(systemName: "chevron.left") }
+                            .keyboardShortcut(.leftArrow, modifiers: [])
+                            .tip("전날 (←)")
+                            .accessibilityLabel("전날")
+                        Button { select(WorkDay.adding(1, to: day)) } label: { Image(systemName: "chevron.right") }
+                            .keyboardShortcut(.rightArrow, modifiers: [])
+                            .tip("다음 날 (→)")
+                            .accessibilityLabel("다음 날")
+                    }
+                    .buttonStyle(GhostIconButtonStyle())
+                }
+                HStack(spacing: 12) {
                     if let holiday { Text(holiday).foregroundStyle(Palette.red) }
-                    if entries.isEmpty {
-                        Text("기록 없음").foregroundStyle(WL.muted)
-                    } else {
+                    if !entries.isEmpty {
                         Tally(title: "완료", value: entries.filter(\.status.isFinished).count, tint: WL.done)
-                        Tally(title: "진행", value: entries.filter { !$0.status.isFinished && $0.status != .ongoing }.count,
-                              tint: WL.accent)
+                        Tally(title: "진행 중", value: entries.filter(isOpen).count, tint: WL.accent)
+                        let ongoing = entries.filter { $0.status == .ongoing }.count
+                        if ongoing > 0 { Tally(title: "상시", value: ongoing, tint: WL.quiet) }
                     }
                 }
                 .font(WL.meta)
+                if let project = page.calendarProject {
+                    HStack(spacing: 6) {
+                        ProjectSwatch(name: project, size: 8)
+                        Text("‘\(project)’만 보는 중").foregroundStyle(WL.muted)
+                        Button("모두 보기") { page.calendarProject = nil }.buttonStyle(TextLinkButtonStyle())
+                    }
+                    .font(WL.caption)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 22)
             .padding(.bottom, 14)
             Rectangle().fill(WL.border).frame(height: 1)
-            SlimScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(store.log.orderedProjects(of: entries), id: \.self) { project in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 6) {
-                                ProjectSwatch(name: project, size: 8)
-                                Text(project).font(WL.heading)
-                            }
-                            PathGroupedRows(entries: entries.filter { $0.project == project }) { entry, path in
-                                // 제목이 여러 줄이면 상태 표시를 첫 줄에 맞춘다
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    StatusGlyph(status: entry.status)
-                                    Text(path == nil ? entry.title : WorkLogFormat.breadcrumb(entry.title).leaf)
-                                        .font(.system(size: 13.5))
-                                        // 오른쪽 칸은 자리가 넉넉해 한 줄로 자르지 않고 세 줄까지 보인다
-                                        .lineLimit(3)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .tip(entry.title)
-                                    StatusText(status: entry.status)
+            if entries.isEmpty {
+                empty(day, holiday: holiday)
+            } else {
+                SlimScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(store.log.orderedProjects(of: entries), id: \.self) { project in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    ProjectSwatch(name: project, size: 8)
+                                    Text(project).font(WL.heading)
+                                    Text("\(entries.filter { $0.project == project }.count)").font(WL.number).foregroundStyle(WL.quiet)
                                 }
-                                .frame(minHeight: 26)
+                                PathGroupedRows(entries: entries.filter { $0.project == project }) { entry, path in
+                                    // 제목이 여러 줄이면 상태 표시를 첫 줄에 맞춘다
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        StatusGlyph(status: entry.status)
+                                        Text(path == nil ? entry.title : WorkLogFormat.breadcrumb(entry.title).leaf)
+                                            .font(.system(size: 13.5))
+                                            // 오른쪽 칸은 자리가 넉넉해 한 줄로 자르지 않고 세 줄까지 보인다
+                                            .lineLimit(3)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .tip(entry.title)
+                                        StatusText(status: entry.status)
+                                    }
+                                    .frame(minHeight: 26)
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
             }
             Rectangle().fill(WL.border).frame(height: 1)
             Button { openDay(day) } label: {
-                Label("업무 일지에서 열기", systemImage: "checklist")
+                Label(entries.isEmpty ? "이날 업무 일지 쓰기" : "이날 업무 일지 열기", systemImage: entries.isEmpty ? "square.and.pencil" : "checklist")
             }
             .buttonStyle(NotionButtonStyle(kind: .primary, fill: true))
             .keyboardShortcut(.defaultAction)
+            .tip("업무 일지 화면에서 이날을 엽니다 (↩, 달력 칸을 두 번 눌러도 됩니다)")
             .padding(16)
         }
         .background(WL.sidebar)
     }
 
+    private func empty(_ day: String, holiday: String?) -> some View {
+        let weekend = WorkLogFormat.dayTint(day) != nil
+        let message = page.calendarProject.map { "이날은 ‘\($0)’ 업무가 없습니다" }
+            ?? (holiday != nil || weekend ? "쉬는 날입니다" : day > WorkDay.today() ? "아직 오지 않은 날입니다" : "이날 적은 업무가 없습니다")
+        return VStack(spacing: 8) {
+            Image(systemName: "calendar.badge.plus").font(.system(size: 26)).foregroundStyle(WL.faint)
+            Text(message).font(WL.body).foregroundStyle(WL.muted)
+            Text("아래 단추로 이날 업무 일지를 열어 적을 수 있습니다").font(WL.caption).foregroundStyle(WL.quiet)
+        }
+        .multilineTextAlignment(.center)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     // MARK: 도움
 
-    /// 숨긴 프로젝트와 막 지운 빈 줄은 달력에 올리지 않는다.
-    private func visible(_ entries: [WorkEntry]) -> [WorkEntry] {
-        entries.filter { !store.log.hiddenProjects.contains($0.project) && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }
+    /// 숨긴 프로젝트와 막 지운 빈 줄은 달력에 올리지 않는다. `filtered`면 고른 프로젝트만 남긴다.
+    private func visible(_ entries: [WorkEntry], filtered: Bool = true) -> [WorkEntry] {
+        entries.filter {
+            !store.log.hiddenProjects.contains($0.project) && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty
+                && (!filtered || page.calendarProject == nil || $0.project == page.calendarProject)
+        }
+    }
+
+    private func isOpen(_ entry: WorkEntry) -> Bool {
+        !entry.status.isFinished && entry.status != .ongoing
+    }
+
+    private func relative(_ day: String) -> String? {
+        let today = WorkDay.today()
+        switch day {
+        case today: return "오늘"
+        case WorkDay.adding(-1, to: today): return "어제"
+        case WorkDay.adding(1, to: today): return "내일"
+        default: return nil
+        }
     }
 
     private func select(_ day: String) {

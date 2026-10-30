@@ -35,6 +35,8 @@ final class WorkLogPage: ObservableObject {
     /// 왼쪽 달력에 보이는 달의 1일. 달력 화살표로는 고른 날을 두고 달력만 넘긴다.
     @Published var calendarMonth = WorkDay.month(of: WorkDay.today()).lowerBound
     @Published var search = ""
+    /// 달력에서 이 프로젝트만 보인다. nil이면 모두.
+    @Published var calendarProject: String?
     /// 사이드바에서 끌고 있는 프로젝트.
     @Published var draggingProject: String?
     /// 끌어서 정한 칸 너비. nil이면 창 너비에 맞춘 자동 너비를 쓴다.
