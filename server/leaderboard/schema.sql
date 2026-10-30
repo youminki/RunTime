@@ -50,3 +50,22 @@ CREATE TABLE IF NOT EXISTS ghosts (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (player_id, period)
 );
+
+-- 앱의 문제 보고 (업데이트 실패 등). 무작위 설치 ID와 사용자 폴더를 가린 기록 끝부분만 둔다. 예약 작업이 30일 지난 것을 지운다.
+CREATE TABLE IF NOT EXISTS reports (
+  key TEXT PRIMARY KEY,
+  install TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  message TEXT NOT NULL,
+  app TEXT,
+  os TEXT,
+  commit_sha TEXT,
+  log TEXT,
+  mail_key TEXT NOT NULL,
+  mailed INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS reports_install ON reports (install, created_at);
+CREATE INDEX IF NOT EXISTS reports_created ON reports (created_at);
+CREATE INDEX IF NOT EXISTS reports_mail ON reports (mail_key);

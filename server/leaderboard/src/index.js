@@ -7,8 +7,10 @@
 //   GET    /v1/ghosts/top           1위 고스트 (?period=all|week, 고스트를 올린 사람 가운데 가장 높은 점수)
 //   PUT    /v1/players/:id          닉네임 바꾸기
 //   DELETE /v1/players/:id          내 기록 지우기
+//   POST   /v1/reports              앱의 문제 보고 (업데이트 실패 등). 만든 사람에게 메일로 알린다 (reports.js)
 // 매일 한 번(예약 작업) 주간 순위에 쓰지 않는 오래된 판과 제출 횟수 기록을 지운다.
 import { checkRun, cleanGhost, cleanNickname, isPlayerID, MAX_GHOST_INPUTS, SUBMIT_INTERVAL_MS, SUBMITS_PER_MINUTE } from "./rules.js";
+import { submitReport } from "./reports.js";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_BODY = 2048;
@@ -22,6 +24,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/v1/summary") return await summary(request, env);
       if (request.method === "POST" && url.pathname === "/v1/ghosts") return await submitGhost(request, env);
       if (request.method === "GET" && url.pathname === "/v1/ghosts/top") return await topGhost(url, env);
+      if (request.method === "POST" && url.pathname === "/v1/reports") return await submitReport(request, env, { readJSON, json, overIPLimit });
       const player = url.pathname.match(/^\/v1\/players\/([^/]+)$/)?.[1];
       if (player && request.method === "PUT") return await rename(player, request, env);
       if (player && request.method === "DELETE") return await forget(player, env);
@@ -39,6 +42,7 @@ export default {
       env.DB.prepare("DELETE FROM public_cache WHERE at < ?").bind(now - 60 * 60 * 1000),
       env.DB.prepare("DELETE FROM runs WHERE created_at < ?").bind(now - WEEK_MS - 24 * 60 * 60 * 1000),
       env.DB.prepare("DELETE FROM submit_hits WHERE minute < ?").bind(Math.floor(now / 60_000) - 60),
+      env.DB.prepare("DELETE FROM reports WHERE created_at < ?").bind(now - 30 * 24 * 60 * 60 * 1000),
     ]);
   },
 };
@@ -82,17 +86,17 @@ async function readJSON(request, limit = MAX_BODY) {
 }
 
 /// IP는 하루마다 바뀌는 소금과 함께 해시해 1분 단위 횟수만 센다. 원래 IP는 남기지 않는다.
-async function overIPLimit(request, env, now) {
+async function overIPLimit(request, env, now, scope = "", limit = SUBMITS_PER_MINUTE) {
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const day = Math.floor(now / 86_400_000);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${day}:${ip}`));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${day}:${scope}${ip}`));
   const key = [...new Uint8Array(digest).slice(0, 12)].map((b) => b.toString(16).padStart(2, "0")).join("");
   const minute = Math.floor(now / 60_000);
   const row = await env.DB.prepare(
     `INSERT INTO submit_hits (key, minute, count) VALUES (?, ?, 1)
      ON CONFLICT(key, minute) DO UPDATE SET count = count + 1 RETURNING count`,
   ).bind(key, minute).first();
-  return row.count > SUBMITS_PER_MINUTE;
+  return row.count > limit;
 }
 
 async function submitRun(request, env) {

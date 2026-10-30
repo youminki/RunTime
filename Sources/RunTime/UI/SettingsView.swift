@@ -179,7 +179,7 @@ struct SettingsView: View {
                 UpdateRows(updater: AppUpdater.shared)
             }
 
-            GroupedSection("문제 기록", footer: "업데이트를 미루거나 실패한 일, 사용량 창이 화면 밖으로 넘친 일, 공식 사용량을 받지 못한 일을 이 Mac에만 적어 둡니다. 다른 Mac에서 문제가 생기면 그 Mac에서 '진단 복사'를 눌러 붙여 넣으면 빌드·화면 구성·최근 기록을 한 번에 볼 수 있습니다. 키나 일지 내용은 담지 않습니다.") {
+            GroupedSection("문제 기록", footer: "업데이트를 미루거나 실패한 일, 사용량 창이 화면 밖으로 넘친 일, 공식 사용량을 받지 못한 일을 이 Mac에 적어 둡니다. 다른 Mac에서 문제가 생기면 그 Mac에서 '진단 복사'를 눌러 붙여 넣으면 빌드·화면 구성·최근 기록을 한 번에 볼 수 있습니다. 키나 일지 내용은 담지 않습니다.\n'만든 사람에게 알리기'를 켜 두면 업데이트가 실패하거나 멈췄을 때 무작위 설치 ID, 앱·macOS 버전, 까닭, 사용자 폴더·이름·토큰을 가린 업데이트 기록 끝부분만 순위 서버로 보내 만든 사람에게 메일로 알립니다.") {
                 DiagnosticsRows(usage: { officialStatusText })
             }
 
@@ -363,6 +363,8 @@ private struct DiagnosticsRows: View {
     @StateObject private var model = DiagnosticsModel()
 
     var body: some View {
+        ToggleRow(title: "업데이트 문제를 만든 사람에게 알리기", icon: "paperplane.fill", tint: Palette.blue,
+                  isOn: Binding(get: { model.reports }, set: { model.reports = $0 }))
         GroupedRow("최근 기록", icon: "stethoscope", tint: Palette.orange) {
             HStack(spacing: 8) {
                 Text(model.recent.isEmpty ? "없음" : "\(model.recent.count)건").foregroundStyle(.secondary)
@@ -393,6 +395,7 @@ private struct DiagnosticsRows: View {
 final class DiagnosticsModel: ObservableObject {
     @Published private(set) var recent: [String] = []
     @Published private(set) var copied = false
+    @Published var reports = ProblemReporter.isOn { didSet { ProblemReporter.isOn = reports } }
     private var observer: NSObjectProtocol?
 
     init() {
