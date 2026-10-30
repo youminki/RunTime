@@ -138,29 +138,11 @@ public enum DesignSyncEngine {
         // 제·개정 이력은 작아서 늘 받는다
         let fetchIDs = candidates.filter { $0.isChangelog && watchedPages.contains($0.pageID) }.map(\.id) + wanted
         let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let pageByID = Dictionary(pages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        var screens: [ScreenSnapshot] = []
-        var changelog: [ChangelogEntry] = []
-        var received = Set<String>()
+        let (fetchedScreens, changelog, received) = try await fetch(fetchIDs, candidates: candidates, pages: pages, fileKey: source.fileKey,
+                                                                   info: info, token: token, transport: transport, progress: progress)
+        var screens = fetchedScreens
         let changelogIDs = Set(candidates.filter { $0.isChangelog && watchedPages.contains($0.pageID) }.map(\.id))
-        let chunks = stride(from: 0, to: fetchIDs.count, by: FigmaAPI.nodesPerRequest)
-            .map { Array(fetchIDs[$0..<min($0 + FigmaAPI.nodesPerRequest, fetchIDs.count)]) }
-        for (index, chunk) in chunks.enumerated() {
-            progress("\(info.name): 화면 받는 중 \(index + 1)/\(chunks.count)")
-            let nodes = try FigmaAPI.parseNodes(await transport(
-                FigmaAPI.nodesRequest(fileKey: source.fileKey, ids: chunk, version: info.version, token: token)))
-            for id in chunk {
-                // null로 온 노드(받는 사이 지워졌거나 권한 없음)는 받지 않은 것으로 둔다
-                guard let node = nodes[id], let candidate = byID[id], let page = pageByID[candidate.pageID] else { continue }
-                received.insert(id)
-                if candidate.isChangelog {
-                    changelog += SpecExtractor.changelog(in: node, page: page)
-                } else {
-                    screens += SpecExtractor.screens(in: node, page: page, sectionName: candidate.sectionName)
-                }
-            }
-        }
         // 링크가 화면 프레임 자체면 그 화면만, 섹션·틀·페이지면 그 안에서 읽은 화면 전부를 링크의 화면으로 친다
         var frames: [String: [String]] = [:]
         if !scoped.isEmpty {
@@ -197,6 +179,71 @@ public enum DesignSyncEngine {
             capture.fresh = Set(screenCandidates.filter { FigmaAPI.covers(fresh, $0) }.map(\.id))
         }
         return .captured(capture)
+    }
+
+    /// 메뉴(묶음이면 그 아래 전부)의 화면만 받는다. 그 화면이 있는 페이지만 살펴보고, 그 화면을 낸 후보와 그 페이지에서 처음 보는 후보만 받는다.
+    /// 마크업할 메뉴 하나를 볼 때 프로젝트 전체를 받지 않게 한다. 다른 페이지에 새로 생긴 화면은 프로젝트를 받아야 보인다.
+    /// 아직 받은 적 없는 메뉴면 어느 페이지인지 몰라 프로젝트 전체를 받는다.
+    public static func runMenu(source: DesignSource, paths: [String], token: String, known: DesignFileRecord?, transport: Transport,
+                               progress: @Sendable (String) -> Void = { _ in }) async throws -> Outcome {
+        let targets = known?.screens.values.filter { screen in paths.contains { DesignStatus.covers($0, screen.menuPath) } } ?? []
+        guard let known, !targets.isEmpty, source.scope.isEmpty else {
+            return try await run(source: source, token: token, known: known, transport: transport, progress: progress)
+        }
+        let info = try FigmaAPI.parseFile(await transport(FigmaAPI.fileRequest(fileKey: source.fileKey, token: token)))
+        // 그 메뉴 화면을 모두 지금 버전으로 받아 두었으면 더 묻지 않는다
+        if targets.allSatisfy({ known.fetchedVersion[$0.frameID] == info.lastModified }) { return .unchanged(info) }
+
+        let pageIDs = Set(targets.map(\.pageID))
+        let pages = info.pages.filter { pageIDs.contains($0.id) }
+        var candidates: [FigmaAPI.Candidate] = []
+        for (index, page) in pages.enumerated() {
+            progress("\(info.name): 메뉴 페이지 살펴보는 중 \(index + 1)/\(pages.count)")
+            let outline = try FigmaAPI.parseNodes(await transport(
+                FigmaAPI.outlineRequest(fileKey: source.fileKey, pageIDs: [page.id], version: info.version, token: token)))
+            if let node = outline[page.id] { candidates += FigmaAPI.candidates(in: node, pageID: page.id) }
+        }
+        let pageScreens = candidates.filter { !$0.isChangelog }
+        let wanted = known.candidatesToFetch(pageScreens.map(\.id), menus: Set(targets.map(\.menuPath)))
+        let changelogIDs = candidates.filter(\.isChangelog).map(\.id)
+        let (screens, changelog, received) = try await fetch(changelogIDs + wanted, candidates: candidates, pages: pages, fileKey: source.fileKey,
+                                                             info: info, token: token, transport: transport, progress: progress)
+        var capture = DesignCapture(
+            fileKey: source.fileKey, fileName: info.name, lastModified: info.lastModified,
+            coveredPages: Set(pages.map(\.id)), present: Set(pageScreens.map(\.id)), fetched: received.subtracting(changelogIDs),
+            screens: screens, version: info.version,
+            changelog: !changelogIDs.isEmpty && Set(changelogIDs).isSubset(of: received) ? changelog : nil)
+        capture.partial = true
+        return .captured(capture)
+    }
+
+    /// 후보를 몇 개씩 나눠 받아 화면과 제·개정 이력을 읽는다. 버전을 고정해 받는 사이 고쳐져도 한 버전 그대로 읽는다.
+    private static func fetch(_ ids: [String], candidates: [FigmaAPI.Candidate], pages: [SpecExtractor.Page], fileKey: String,
+                              info: FigmaAPI.FileInfo, token: String, transport: Transport,
+                              progress: @Sendable (String) -> Void) async throws -> ([ScreenSnapshot], [ChangelogEntry], Set<String>) {
+        let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let pageByID = Dictionary(pages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var screens: [ScreenSnapshot] = []
+        var changelog: [ChangelogEntry] = []
+        var received = Set<String>()
+        let chunks = stride(from: 0, to: ids.count, by: FigmaAPI.nodesPerRequest)
+            .map { Array(ids[$0..<min($0 + FigmaAPI.nodesPerRequest, ids.count)]) }
+        for (index, chunk) in chunks.enumerated() {
+            progress("\(info.name): 화면 받는 중 \(index + 1)/\(chunks.count)")
+            let nodes = try FigmaAPI.parseNodes(await transport(
+                FigmaAPI.nodesRequest(fileKey: fileKey, ids: chunk, version: info.version, token: token)))
+            for id in chunk {
+                // null로 온 노드(받는 사이 지워졌거나 권한 없음)는 받지 않은 것으로 둔다
+                guard let node = nodes[id], let candidate = byID[id], let page = pageByID[candidate.pageID] else { continue }
+                received.insert(id)
+                if candidate.isChangelog {
+                    changelog += SpecExtractor.changelog(in: node, page: page)
+                } else {
+                    screens += SpecExtractor.screens(in: node, page: page, sectionName: candidate.sectionName)
+                }
+            }
+        }
+        return (screens, changelog, received)
     }
 
     /// 링크로 고른 노드 → 그 노드가 있는 페이지. 후보이거나 후보를 감싸거나 후보 바로 안에 있으면 찾은 것이다.

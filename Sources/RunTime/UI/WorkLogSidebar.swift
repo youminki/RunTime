@@ -29,18 +29,18 @@ struct WorkLogSidebar: View {
 
     private var searchField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
             TextField("찾기", text: $page.search)
                 .textFieldStyle(.plain)
                 .font(WL.meta)
                 .focused($searching)
                 .onExitCommand { page.search = ""; searching = false }
             if !page.search.isEmpty {
-                Button { page.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                Button { page.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.muted) }
                     .buttonStyle(.plain)
                     .tip("찾는 말 지우기 (esc)")
             } else if !searching {
-                Text("⌘F").font(WL.caption).foregroundStyle(.tertiary)
+                Text("⌘F").font(WL.caption).foregroundStyle(WL.muted)
             }
         }
         .background {
@@ -78,7 +78,7 @@ struct WorkLogSidebar: View {
             SevenColumns {
                 ForEach(WorkLogFormat.weekdays, id: \.number) { day in
                     Text(day.name)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(WorkLogFormat.weekdayTint(day.number)?.opacity(0.8) ?? Color.secondary)
                         .frame(maxWidth: .infinity)
                 }
@@ -147,7 +147,7 @@ struct WorkLogSidebar: View {
                         Circle().fill(WL.hover)
                     }
                     Text(WorkLogFormat.dayNumber(day))
-                        .font(.system(size: 11.5, weight: isToday || isSelected ? .semibold : .regular).monospacedDigit())
+                        .font(.system(size: 12.5, weight: isToday || isSelected ? .semibold : .regular).monospacedDigit())
                         .foregroundStyle(isSelected ? Color.white
                                          : isToday ? WL.accent
                                          : (tint ?? WL.text).opacity(inMonth ? 1 : 0.4))
@@ -180,7 +180,7 @@ struct WorkLogSidebar: View {
             HStack {
                 Text("프로젝트").font(WL.label).foregroundStyle(.secondary)
                 Spacer()
-                Text(monthName(page.calendarMonth)).font(WL.label).foregroundStyle(.tertiary)
+                Text(monthName(page.calendarMonth)).font(WL.label).foregroundStyle(WL.muted)
                 Button {
                     page.newProject = ""
                     page.addingProject = true
@@ -230,17 +230,17 @@ struct WorkLogSidebar: View {
         } label: {
             HStack(spacing: 8) {
                 ProjectSwatch(name: name)
-                Text(name).font(.system(size: 13, weight: selected ? .semibold : .regular)).foregroundStyle(WL.text).lineLimit(1)
+                Text(name).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(WL.text).lineLimit(1)
                 Spacer(minLength: 4)
                 if let period = store.log.projectPeriods[name] {
                     // 기간이 끝난 프로젝트는 흐리게 둔다 (진행 예정에서 빠졌다는 뜻)
                     Image(systemName: "calendar")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(period.contains(WorkDay.today()) ? WL.accent : WL.faint)
                 } else if let auto = store.autoPeriods[name] {
                     // 레드마인 일감으로 잡은 기간은 직접 정한 것과 구별해 회색으로 둔다
                     Image(systemName: "calendar")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(auto.isActive(on: WorkDay.today()) ? WL.muted : WL.faint)
                 }
                 if count > 0 { Text("\(count)").font(WL.number).foregroundStyle(.secondary) }
@@ -311,7 +311,7 @@ struct WorkLogSidebar: View {
             Button { page.showsHidden.toggle() } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .rotationEffect(.degrees(page.showsHidden ? 90 : 0))
                         .frame(width: 10)
                     Text("숨긴 프로젝트 \(names.count)").font(WL.caption)
@@ -327,7 +327,7 @@ struct WorkLogSidebar: View {
                 ForEach(names, id: \.self) { name in
                     HStack(spacing: 8) {
                         ProjectSwatch(name: name).opacity(0.5)
-                        Text(name).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(name).font(.system(size: 13.5)).foregroundStyle(.secondary).lineLimit(1)
                         Spacer(minLength: 4)
                         Button { store.setHidden(name, false) } label: { Image(systemName: "eye") }
                             .buttonStyle(GhostIconButtonStyle())

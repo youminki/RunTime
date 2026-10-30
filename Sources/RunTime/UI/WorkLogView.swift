@@ -65,7 +65,7 @@ struct WorkLogView: View {
                             }
                         }
                     }
-                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: WorkLogColumns.middleMax, alignment: .leading)
                     .padding(.horizontal, layout.gutter)
                     .padding(.top, 32)
                     .padding(.bottom, 60)
@@ -194,14 +194,14 @@ struct WorkLogView: View {
                         ProgressView().controlSize(.small).scaleEffect(0.55)
                     } else {
                         Image(systemName: failed ? "exclamationmark.triangle.fill" : "arrow.clockwise")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(failed ? WL.waiting : WL.accent)
                     }
                 }
                 .frame(width: 14, height: 14)
-                if title { Text(busy ? "받는 중" : "새로고침").font(.system(size: 12.5, weight: .semibold)) }
+                if title { Text(busy ? "받는 중" : "새로고침").font(.system(size: 13, weight: .semibold)) }
                 if time, !busy, let last = lastRefresh {
-                    Text(WorkLogFormat.when(last)).font(.system(size: 11.5)).foregroundStyle(WL.faint).monospacedDigit()
+                    Text(WorkLogFormat.when(last)).font(.system(size: 12.5)).foregroundStyle(WL.quiet).monospacedDigit()
                 }
             }
             .lineLimit(1)
@@ -275,7 +275,7 @@ struct WorkLogView: View {
                 HeadingAction(title: "레드마인 \(pending)건 보내기", icon: "paperplane", tint: WL.waiting) { page.preview = .redmine }
                     .tip("오른쪽 레드마인 탭에서 보낼 내용을 확인합니다")
             } else if entries.contains(where: { $0.issue != nil }) {
-                Label("레드마인 모두 보냄", systemImage: "checkmark").font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                Label("레드마인 모두 보냄", systemImage: "checkmark").font(.system(size: 13)).foregroundStyle(WL.muted)
             }
         }
         let projects = shownProjects(dayProjects)
@@ -299,10 +299,10 @@ struct WorkLogView: View {
         if !hidden.isEmpty {
             Button { page.showsHidden.toggle() } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: page.showsHidden ? "eye.slash" : "eye").font(.system(size: 10.5))
+                    Image(systemName: page.showsHidden ? "eye.slash" : "eye").font(.system(size: 11.5))
                     Text(page.showsHidden ? "숨긴 프로젝트 가리기"
                          : "숨긴 프로젝트 \(Set(hidden.map(\.project)).count)개 · \(hidden.count)줄 보기")
-                    Text("보고서에는 들어갑니다").foregroundStyle(WL.faint)
+                    Text("보고서에는 들어갑니다").foregroundStyle(WL.quiet)
                 }
                 .foregroundStyle(WL.muted)
             }
@@ -322,11 +322,11 @@ struct WorkLogView: View {
         Callout {
             VStack(alignment: .leading, spacing: 10) {
                 Text(page.day == WorkDay.today() ? "오늘 적은 일이 아직 없습니다" : "이 날은 기록이 없습니다")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13.5, weight: .semibold))
                 Text(settings.captureEnabled
                      ? "머지한 MR과 머지 전 커밋은 10분마다 자동으로 들어옵니다. 회의처럼 git에 남지 않는 일만 아래에서 프로젝트를 골라 적으세요.\(quickAddHint)"
                      : "GitLab을 연결하면 머지한 MR과 커밋이 자동으로 들어옵니다. 지금은 프로젝트를 골라 직접 적거나 써 둔 보고서를 붙여 넣을 수 있습니다.")
-                    .font(.system(size: 12.5)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 13)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     if settings.captureEnabled {
                         Button("지금 가져오기") { sync.capture() }.buttonStyle(NotionButtonStyle())
@@ -363,7 +363,7 @@ struct WorkLogView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 220)
                     .onExitCommand { page.renaming = nil }
-                    Text("Enter 저장 · Esc 취소").font(.system(size: 12)).foregroundStyle(WL.faint)
+                    Text("Enter 저장 · Esc 취소").font(.system(size: 13)).foregroundStyle(WL.quiet)
                 }
                 .frame(height: 34)
             } else {
@@ -371,7 +371,7 @@ struct WorkLogView: View {
                     HStack(spacing: 8) {
                         ProjectSwatch(name: project, size: 10)
                         Text(project).font(WL.section)
-                        Text("\(entries.count)").font(.system(size: 13)).foregroundStyle(WL.faint).monospacedDigit()
+                        Text("\(entries.count)").font(.system(size: 13.5)).foregroundStyle(WL.quiet).monospacedDigit()
                     }
                 } trailing: {
                     projectMenu(project, isEmpty: entries.isEmpty)
@@ -423,8 +423,8 @@ struct WorkLogView: View {
     private func addField(_ project: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "plus")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(WL.faint)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(WL.quiet)
                 .frame(width: 16)
             TextField("할 일 추가", text: Binding(
                 get: { page.drafts[project] ?? "" },
@@ -452,12 +452,12 @@ struct WorkLogView: View {
         if !others.isEmpty || shown.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text(shown.isEmpty ? "프로젝트를 골라 적기" : "다른 프로젝트에도 적기")
-                    .font(.system(size: 12)).foregroundStyle(WL.faint)
+                    .font(.system(size: 13)).foregroundStyle(WL.quiet)
                 FlowLayout(spacing: 2) {
                     ForEach(others, id: \.self) { name in
                         Button { page.openProjects.insert(name) } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: "plus").font(.system(size: 10, weight: .medium)).foregroundStyle(WL.faint)
+                                Image(systemName: "plus").font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.quiet)
                                 ProjectSwatch(name: name, size: 8)
                                 Text(name).foregroundStyle(WL.muted)
                             }
@@ -466,7 +466,7 @@ struct WorkLogView: View {
                     }
                     Button { page.newProject = ""; page.addingProject = true } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "plus").font(.system(size: 10, weight: .medium))
+                            Image(systemName: "plus").font(.system(size: 11.5, weight: .medium))
                             Text("새 프로젝트")
                         }
                         .foregroundStyle(WL.muted)
@@ -502,7 +502,7 @@ struct WorkLogView: View {
         if merged.isEmpty {
             Callout {
                 Text("\(span)는 기록이 없습니다. 왼쪽 달력에서 점이 찍힌 날을 고르세요.")
-                    .font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                    .font(.system(size: 13)).foregroundStyle(WL.muted)
             }
         } else {
             ForEach(shownProjects(store.log.orderedProjects(of: merged)), id: \.self) { project in
@@ -510,7 +510,7 @@ struct WorkLogView: View {
             }
             hiddenToggle(merged)
             Text("같은 프로젝트의 같은 일은 한 줄로 모으고 \(span) 마지막 상태를 씁니다. 줄을 누르면 그날로 갑니다.")
-                .font(.system(size: 12)).foregroundStyle(WL.faint)
+                .font(.system(size: 13)).foregroundStyle(WL.quiet)
         }
     }
 
@@ -523,7 +523,7 @@ struct WorkLogView: View {
                 HStack(spacing: 8) {
                     ProjectSwatch(name: project, size: 10)
                     Text(project).font(WL.section)
-                    Text("\(done)/\(merged.count) 완료").font(.system(size: 12.5)).foregroundStyle(WL.faint).monospacedDigit()
+                    Text("\(done)/\(merged.count) 완료").font(.system(size: 13)).foregroundStyle(WL.quiet).monospacedDigit()
                 }
             } trailing: { EmptyView() }
             if !collapsed {
@@ -586,7 +586,7 @@ struct WorkLogView: View {
         } else {
             PageHeading("프로젝트") { EmptyView() } accessory: { EmptyView() }
             Callout {
-                Text("하루 보기에서 일을 적거나 GitLab을 연결하면 프로젝트별로 모입니다.").font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                Text("하루 보기에서 일을 적거나 GitLab을 연결하면 프로젝트별로 모입니다.").font(.system(size: 13)).foregroundStyle(WL.muted)
             }
         }
     }
@@ -622,7 +622,7 @@ struct WorkLogView: View {
         if results.isEmpty {
             Callout {
                 Text("맞는 기록이 없습니다. 내용, 댓글, 프로젝트, #일감번호에서 찾고 초성(ㄷㅇㅌ)으로도 찾습니다.")
-                    .font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                    .font(.system(size: 13)).foregroundStyle(WL.muted)
             }
         } else {
             VStack(alignment: .leading, spacing: 1) {
@@ -634,7 +634,7 @@ struct WorkLogView: View {
     private func notice(_ text: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.red)
-            Text(text).font(.system(size: 12.5))
+            Text(text).font(.system(size: 13))
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -643,7 +643,7 @@ struct WorkLogView: View {
 }
 
 /// 업무 일지 칸 너비에 따른 세 칸 너비. 좁을수록 양옆을 줄여 가운데 할 일이 한 줄에 들어오게 하고
-/// 넓은 창에서는 남는 너비를 보고서 칸에 준다 (가운데는 760에서 더 넓어지지 않는다).
+/// 넓은 창에서는 남는 너비를 보고서 칸에 준다 (가운데는 `middleMax`에서 더 넓어지지 않는다).
 /// 경계를 끌어 너비를 정했으면 그 너비를 쓰되, 가운데가 `middleMin`보다 좁아지지 않게 줄인다.
 struct WorkLogColumns {
     let sidebar: CGFloat
@@ -652,9 +652,11 @@ struct WorkLogColumns {
     /// 끌기 전 자동 너비 (두 번 눌러 돌아갈 너비)
     let auto: (sidebar: CGFloat, preview: CGFloat)
 
-    static let sidebarRange: ClosedRange<CGFloat> = 180...360
-    static let previewRange: ClosedRange<CGFloat> = 260...600
-    static let middleMin: CGFloat = 420
+    static let sidebarRange: ClosedRange<CGFloat> = 180...480
+    static let previewRange: ClosedRange<CGFloat> = 260...900
+    static let middleMin: CGFloat = 380
+    /// 가운데 글은 이보다 넓어지지 않는다. 경계를 끌어 양옆을 줄이면 이만큼까지 넓어진다.
+    static let middleMax: CGFloat = 1100
 
     init(width: CGFloat, sidebar custom: CGFloat? = nil, preview customPreview: CGFloat? = nil) {
         let automatic: (CGFloat, CGFloat, CGFloat)
@@ -680,7 +682,7 @@ struct TopBarTextStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12.5, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(WL.muted)
             .padding(.horizontal, 8)
             .frame(height: 24)
@@ -702,7 +704,7 @@ struct GhostTextButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 13))
+                .font(.system(size: 13.5))
                 .padding(.horizontal, 8)
                 .frame(height: 28)
                 .background(RoundedRectangle(cornerRadius: 4)
@@ -725,7 +727,7 @@ private struct SearchResultRow: View {
         } label: {
             HStack(spacing: 10) {
                 Text(WorkLogFormat.shortDay(entry.day))
-                    .font(.system(size: 12.5).monospacedDigit()).foregroundStyle(WL.muted)
+                    .font(.system(size: 13).monospacedDigit()).foregroundStyle(WL.muted)
                     .frame(width: 74, alignment: .leading)
                 StatusGlyph(status: entry.status)
                 let crumb = WorkLogFormat.breadcrumb(entry.title)
@@ -740,7 +742,7 @@ private struct SearchResultRow: View {
                             Text(path).lineLimit(1).truncationMode(.middle)
                         }
                     }
-                    .font(.system(size: 12)).foregroundStyle(WL.muted)
+                    .font(.system(size: 13)).foregroundStyle(WL.muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .tip(entry.title)
@@ -768,10 +770,10 @@ struct WorkLogImportSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("보고서 붙여넣기").font(WL.title)
                 Text("\(WorkLogFormat.dayTitle(page.day))에 넣습니다. ‘1. 프로젝트’ 아래 ‘- 내용 (완료)’ 꼴을 읽고, #1234는 일감 번호로 저장합니다.")
-                    .font(.system(size: 12.5)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 13)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
             }
             TextEditor(text: $page.importText)
-                .font(.system(size: 13))
+                .font(.system(size: 13.5))
                 .scrollContentBackground(.hidden)
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 6).fill(WL.callout))
@@ -780,7 +782,7 @@ struct WorkLogImportSheet: View {
                 Text(parsed.isEmpty ? "읽은 줄 없음"
                      : "프로젝트 \(Set(fresh.map(\.project)).count)개 · \(fresh.count)줄"
                         + (parsed.count > fresh.count ? " · 이미 있는 \(parsed.count - fresh.count)줄 건너뜀" : ""))
-                    .font(.system(size: 12.5)).monospacedDigit()
+                    .font(.system(size: 13)).monospacedDigit()
                     .foregroundStyle(fresh.isEmpty ? WL.muted : WL.done)
                 Spacer()
                 Button("클립보드에서") { page.importText = NSPasteboard.general.string(forType: .string) ?? "" }

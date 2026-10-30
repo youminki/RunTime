@@ -152,6 +152,16 @@ final class DesignSync: ObservableObject {
     @Published private(set) var fetching: String?
     /// 받는 동안 가져오기를 누른 프로젝트. 끝나면 이어서 받는다.
     @Published private(set) var queued = Set<String>()
+    /// 메뉴만 받는 일. 프로젝트 전체를 받지 않고 그 메뉴 화면이 있는 페이지만 본다.
+    struct MenuJob: Equatable {
+        let fileKey: String
+        let paths: [String]
+    }
+    /// 지금 받고 있는 메뉴.
+    @Published private(set) var fetchingMenu: MenuJob?
+    /// 받는 동안 누른 메뉴. 프로젝트 차례가 다 끝나면 이어서 받는다.
+    @Published private(set) var queuedMenus: [MenuJob] = []
+    private var menuCompletions: [(job: MenuJob, done: (Int) -> Void)] = []
     /// 기록 파일을 읽지 못했으면 덮어쓰지 않게 저장을 막는다.
     private(set) var loadError: String?
 
@@ -274,6 +284,25 @@ final class DesignSync: ObservableObject {
     /// 받는 중이거나 받을 차례를 기다리는지.
     func isBusy(_ fileKey: String) -> Bool { fetching == fileKey || queued.contains(fileKey) || (queuedAll && source(fileKey)?.isHidden == false) }
 
+    /// 그 메뉴(또는 그 메뉴를 품은 묶음)를 받는 중이거나 기다리는지. 프로젝트 전체를 받는 중이어도 그렇다.
+    func isBusy(_ fileKey: String, menu path: String) -> Bool {
+        isBusy(fileKey) || ([fetchingMenu].compactMap { $0 } + queuedMenus).contains { job in
+            job.fileKey == fileKey && job.paths.contains { DesignStatus.covers($0, path) || DesignStatus.covers(path, $0) }
+        }
+    }
+
+    /// 그 메뉴 화면을 마지막으로 확인한 때. 화면마다 다르면 가장 오래된 때다 (그 뒤 바뀐 것은 아직 모른다).
+    func menuChecked(_ fileKey: String, _ path: String) -> Date? {
+        guard let file = history.files[fileKey] else { return nil }
+        return file.screens.values.filter { DesignStatus.covers(path, $0.menuPath) }.compactMap { file.checkedAt[$0.frameID] }.min()
+    }
+
+    /// 메뉴만 받을 수 있는지. 링크로 고른 프로젝트는 이미 고른 화면만 받아 메뉴로 나눌 것이 없다.
+    func canFetchMenu(_ fileKey: String, _ path: String) -> Bool {
+        guard let source = source(fileKey), source.scope.isEmpty else { return false }
+        return history.files[fileKey]?.screens.values.contains { DesignStatus.covers(path, $0.menuPath) } == true
+    }
+
     /// 확인하지 않은 내 변경 (`follows`). 메뉴바·사이드바가 그릴 때마다 부르므로 기록이나 설정이 바뀔 때만 다시 센다
     /// (변경은 수천 건까지 쌓인다). `fileKey`를 주면 그 프로젝트만.
     func unseenCount(in fileKey: String? = nil) -> Int {
@@ -367,6 +396,23 @@ final class DesignSync: ObservableObject {
         return ClaudePrompt.changes([event], screen: screen, project: projectName(event.fileKey), link: link, done: checkedMap([event]))
     }
 
+    /// 메뉴(묶음이면 그 아래 전부)에서 반영하지 않은 변경을 화면별로 묶은 글.
+    func claudePrompt(menu path: String, in fileKey: String) -> String {
+        let items = screens(fileKey, under: path).compactMap { screen -> (screen: ScreenSnapshot, events: [DesignEvent], link: URL?)? in
+            let pending = pendingEvents(for: screen, in: fileKey)
+            return pending.isEmpty ? nil : (screen, pending, FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID))
+        }
+        return ClaudePrompt.menu(items, path: path, project: projectName(fileKey), done: checkedMap(items.flatMap(\.events)))
+    }
+
+    /// 메뉴 화면들을 처음 마크업해 달라는 글. 구현을 마친 화면은 뺀다.
+    func claudeBuildPrompt(menu path: String, in fileKey: String) -> String {
+        let items = screens(fileKey, under: path).map { screen in
+            (screen: screen, link: FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID), built: history.built(screen, in: fileKey))
+        }
+        return ClaudePrompt.menuBuild(items, path: path, project: projectName(fileKey))
+    }
+
     private func checkedMap(_ events: [DesignEvent]) -> [UUID: Set<String>] {
         Dictionary(events.map { ($0.id, history.checkedKeys($0)) }, uniquingKeysWith: { first, _ in first })
     }
@@ -431,20 +477,112 @@ final class DesignSync: ObservableObject {
         run(keys: keys) { counts in completion?(counts.values.reduce(0, +)) }
     }
 
+    /// 메뉴(묶음이면 그 아래 전부)만 받는다. 받는 중이면 줄을 세워 두었다가 이어서 받는다.
+    func syncMenu(_ path: String, in fileKey: String, completion: ((Int) -> Void)? = nil) {
+        let job = MenuJob(fileKey: fileKey, paths: [path])
+        guard !syncing else {
+            if fetchingMenu != job && !queuedMenus.contains(job) { queuedMenus.append(job) }
+            if let completion { menuCompletions.append((job, completion)) }
+            return
+        }
+        runMenu(job) { count in completion?(count) }
+    }
+
+    private func runMenu(_ job: MenuJob, completion: @escaping (Int) -> Void) {
+        // 받지 못하고 끝나도 기다리던 요청에 알리고 줄의 다음 차례로 넘긴다
+        func skip() {
+            completion(0)
+            let waiting = menuCompletions.filter { $0.job == job }
+            menuCompletions.removeAll { $0.job == job }
+            waiting.forEach { $0.done(0) }
+            continueQueue()
+        }
+        if let loadError {
+            errors["*"] = loadError
+            skip()
+            return
+        }
+        guard let source = source(job.fileKey) else { skip(); return }
+        guard let token = settings.token else {
+            errors["*"] = "피그마 토큰을 넣으세요"
+            skip()
+            return
+        }
+        errors["*"] = nil
+        syncing = true
+        fetchingMenu = job
+        Task {
+            var found: [DesignEvent] = []
+            do {
+                let outcome = try await DesignSyncEngine.runMenu(
+                    source: source, paths: job.paths, token: token, known: history.files[job.fileKey],
+                    transport: { try await FigmaClient.shared.send($0) },
+                    progress: { text in Task { @MainActor in DesignSync.shared.progress = text } })
+                if self.source(job.fileKey) != nil {
+                    switch outcome {
+                    case .unchanged(let info):
+                        let frames = screens(job.fileKey).filter { screen in job.paths.contains { DesignStatus.covers($0, screen.menuPath) } }
+                        history.confirmUnchanged(fileKey: job.fileKey, frames: frames.map(\.frameID), lastModified: info.lastModified, at: Date())
+                    case .captured(var capture):
+                        // 프로젝트에 지켜볼 메뉴를 정해 두었으면 같은 페이지의 다른 메뉴 화면은 기준만 고친다
+                        capture.menus = Set(self.source(job.fileKey)?.menus ?? [])
+                        capture.rules = rules(for: job.fileKey)
+                        found = history.record(capture, at: Date())
+                        rename(job.fileKey, to: capture.fileName)
+                    }
+                    errors[job.fileKey] = nil
+                }
+            } catch let failure as FigmaAPI.Failure {
+                errors[job.fileKey] = failure.message
+            } catch {
+                errors[job.fileKey] = error.localizedDescription
+            }
+            persist()
+            syncing = false
+            fetchingMenu = nil
+            progress = ""
+            announce(found)
+            completion(found.count)
+            let waiting = menuCompletions.filter { $0.job == job }
+            menuCompletions.removeAll { $0.job == job }
+            waiting.forEach { $0.done(found.count) }
+            continueQueue()
+        }
+    }
+
+    /// 한 차례가 끝난 뒤 기다리는 프로젝트를 먼저, 그다음 메뉴를 받는다.
+    private func continueQueue() {
+        if queuedAll || !queued.isEmpty {
+            let next = queuedAll ? Set(settings.sources.filter { !$0.isHidden }.map(\.fileKey)).union(queued) : queued
+            let waiting = queuedCompletions
+            queuedAll = false
+            queued = []
+            queuedCompletions = []
+            run(keys: next) { counts in
+                for item in waiting { item.done((item.keys ?? next).reduce(0) { $0 + (counts[$1] ?? 0) }) }
+            }
+        } else if !queuedMenus.isEmpty {
+            let job = queuedMenus.removeFirst()
+            runMenu(job) { _ in }
+        }
+    }
+
     /// 한 차례 받는다. 끝나면 프로젝트별로 찾은 변경 수를 넘긴다.
     private func run(keys: Set<String>?, completion: @escaping ([String: Int]) -> Void) {
         if let loadError {
             errors["*"] = loadError
             completion([:])
+            continueQueue()
             return
         }
         // 숨긴 프로젝트는 가져오지 않아 피그마 요청을 아낀다
         let sources = settings.sources.filter { source in keys.map { $0.contains(source.fileKey) } ?? !source.isHidden }
         for source in sources { attempted[source.fileKey] = Date() }
-        guard !sources.isEmpty else { completion([:]); return }
+        guard !sources.isEmpty else { completion([:]); continueQueue(); return }
         guard let token = settings.token else {
             errors["*"] = "피그마 토큰을 넣으세요"
             completion([:])
+            continueQueue()
             return
         }
         errors["*"] = nil
@@ -530,6 +668,7 @@ final class DesignSync: ObservableObject {
             queuedCompletions = []
             guard !next.isEmpty else {
                 carried.forEach { $0.done(0) }
+                continueQueue()
                 return
             }
             run(keys: next) { counts in

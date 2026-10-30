@@ -64,6 +64,8 @@ final class DesignHistoryPage: ObservableObject {
         didSet {
             // 날짜 비교 결과는 기록에 없어서, 다른 보기로 가면 고른 것을 풀어 상세에 남지 않게 한다
             if oldValue == .compare && scope != .compare { selected = nil }
+            // 다른 메뉴로 옮기면 그 메뉴 밖의 변경·화면이 상세에 남지 않게 한다
+            if scope != oldValue, scope.fileKey != nil { dropSelection(outside: scope) }
             if let key = scope.fileKey, project != nil, project != key {
                 followingScope = true
                 project = key
@@ -77,12 +79,33 @@ final class DesignHistoryPage: ObservableObject {
             if selected != nil { screen = nil }
         }
     }
+    /// 메뉴·묶음·프로젝트를 볼 때 화면 목록과 변경 목록 가운데 무엇을 보는지. 마크업할 때는 화면이 먼저다.
+    enum MenuTab: Hashable { case screens, changes }
+    @Published var menuTab: MenuTab = .screens
+
+    private func dropSelection(outside scope: Scope) {
+        let history = DesignSync.shared.history
+        func inside(_ fileKey: String, _ path: String, menus: [String] = []) -> Bool {
+            switch scope {
+            case .menu(let key, let menu): return key == fileKey && (path == menu || menus.contains(menu))
+            case .group(let key, let head): return key == fileKey && ([path] + menus).contains { DesignStatus.covers(head, $0) }
+            case .project(let key): return key == fileKey
+            default: return true
+            }
+        }
+        if let id = selected, let event = history.events.first(where: { $0.id == id }),
+           !inside(event.fileKey, event.menuPath, menus: event.menus ?? []) { selected = nil }
+        if let frame = screen, let key = scope.fileKey, !(history.files[key]?.screens[frame].map { inside(key, $0.menuPath) } ?? false) {
+            screen = nil
+        }
+    }
+
     /// 변경 대신 고른 지금 시안 화면 (프레임 ID). 바뀐 적 없는 화면도 상세에서 명세·이미지를 본다.
     @Published var screen: String? {
         didSet { if screen != nil { selected = nil } }
     }
     /// 화면 상세에서 목업 문구·컴포넌트 목록을 펼쳤는지
-    @Published var showsScreenTexts = false
+    @Published var showsScreenTexts = true
     @Published var showsScreenComponents = false
     /// 상세에서 고른 목업 변경 번호. 화면 비교 이미지에서 그 자리를 강조한다.
     @Published var selectedChange: Int?
@@ -93,6 +116,8 @@ final class DesignHistoryPage: ObservableObject {
     @Published var showsMarks = true
     @Published var layer: SpecChange.Layer?
     @Published var search = ""
+    /// 찾기 칸에 입력 중. 그동안 ⌥↑·⌥↓는 글자 칸이 쓰게 상세 넘기기 단축키를 뺀다.
+    @Published var searchFocused = false
     @Published var toast: String?
     @Published var showRenumbered = false
     /// 기본 접힘에서 손으로 바꾼 마디 (`파일키|경로`). 기본은 셋째 단계부터 접는다.
@@ -202,9 +227,11 @@ struct DesignHistoryView: View {
     static let timelineWidth: CGFloat = 344
 
     /// 상세가 이보다 좁아지면 단추·비교 글이 답답해져서, 창이 좁으면 목록 칸부터 줄인다.
-    static let detailMinWidth: CGFloat = 380
-    static let sidebarRange: ClosedRange<CGFloat> = 200...380
-    static let timelineRange: ClosedRange<CGFloat> = 280...560
+    static let detailMinWidth: CGFloat = 360
+    /// 상세 글은 이보다 넓어지지 않는다. 더 넓으면 줄이 길어 읽기 어렵다.
+    static let detailMaxWidth: CGFloat = 1100
+    static let sidebarRange: ClosedRange<CGFloat> = 190...480
+    static let timelineRange: ClosedRange<CGFloat> = 260...800
 
     var body: some View {
         GeometryReader { geo in
@@ -222,12 +249,14 @@ struct DesignHistoryView: View {
                             DesignCompareView(sync: sync, page: page, model: compare)
                         } else {
                             let scoped = screenScope
-                            DesignTimeline(sync: sync, page: page, events: events, screenFile: scoped?.fileKey, screens: scoped?.screens ?? [])
+                            DesignTimeline(sync: sync, page: page, events: events, screenFile: scoped?.fileKey, screens: scoped?.screens ?? [],
+                                           hasScreens: scoped?.total ?? 0 > 0)
                         }
                     }
                     .frame(width: timeline)
                     ColumnDivider(width: $page.timelineWidth, range: Self.timelineRange, standard: Self.timelineWidth)
                     detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .overlay(alignment: .bottomTrailing) { stepper.padding(16) }
                 }
             }
         }
@@ -279,7 +308,7 @@ struct DesignHistoryView: View {
     }
 
     /// 메뉴·묶음·프로젝트를 고르면 바뀐 적 없는 화면도 목록에 보인다. 숨긴 메뉴는 빼고 찾는 말로 거른다.
-    private var screenScope: (fileKey: String, screens: [ScreenSnapshot])? {
+    private var screenScope: (fileKey: String, screens: [ScreenSnapshot], total: Int)? {
         let found: (String, [ScreenSnapshot])
         switch page.scope {
         case .menu(let key, let path): found = (key, sync.screens(key, under: path, exact: true))
@@ -296,7 +325,66 @@ struct DesignHistoryView: View {
                 + screen.items.map(\.text) + Array(screen.texts.values)).joined(separator: "\n").lowercased()
             return haystack.contains(query)
         }
-        return (found.0, screens)
+        return (found.0, screens, found.1.filter { source?.hides($0.menuPath) != true }.count)
+    }
+
+    // MARK: 넘기기
+
+    /// 가운데에 보이는 것이 화면 목록인지. 화면을 고르고 있거나 메뉴 보기의 화면 탭이면 화면을 넘긴다.
+    private var steppingScreens: Bool {
+        page.screen != nil || (page.selected == nil && page.scope.fileKey != nil && page.menuTab == .screens && !(screenScope?.screens.isEmpty ?? true))
+    }
+
+    private var stepOrder: [String] {
+        steppingScreens ? DesignTimeline.grouped(screenScope?.screens ?? []).flatMap { $0.screens.map(\.frameID) }
+            : DesignHistory.days(events).flatMap(\.events).map(\.id.uuidString)
+    }
+
+    private var stepIndex: Int? {
+        let current = steppingScreens ? page.screen : page.selected?.uuidString
+        return current.flatMap { stepOrder.firstIndex(of: $0) }
+    }
+
+    /// 목록 순서대로 앞뒤 화면이나 변경으로 넘긴다. 아무것도 고르지 않았으면 처음 것을 연다.
+    private func step(_ delta: Int) {
+        let order = stepOrder
+        guard !order.isEmpty else { return }
+        // 고른 것이 목록에 없으면(찾기로 빠짐) 아래로만 첫 항목을 연다
+        guard let next = stepIndex.map({ $0 + delta }) ?? (delta > 0 ? 0 : nil) else { return }
+        guard order.indices.contains(next) else { return }
+        if steppingScreens {
+            page.screen = order[next]
+        } else if let id = UUID(uuidString: order[next]) {
+            page.selected = id
+            page.showRenumbered = false
+            sync.markSeen([id])
+        }
+    }
+
+    /// 상세 오른쪽 아래의 앞뒤 단추. ⌥↑·⌥↓로도 넘긴다.
+    @ViewBuilder private var stepper: some View {
+        let order = stepOrder
+        if order.count > 1 && page.scope != .compare {
+            let index = stepIndex
+            HStack(spacing: 2) {
+                Button { step(-1) } label: { Image(systemName: "chevron.up").frame(width: 28, height: 28).contentShape(Rectangle()) }
+                    .keyboardShortcut(page.searchFocused ? nil : KeyboardShortcut(.upArrow, modifiers: .option))
+                    .disabled((index ?? 0) <= 0)
+                    .tip(steppingScreens ? "이전 화면 (⌥↑)" : "이전 변경 (⌥↑)")
+                Text(index.map { "\($0 + 1) / \(order.count)" } ?? "– / \(order.count)")
+                    .font(WL.number).foregroundStyle(WL.muted).frame(minWidth: 52)
+                Button { step(1) } label: { Image(systemName: "chevron.down").frame(width: 28, height: 28).contentShape(Rectangle()) }
+                    .keyboardShortcut(page.searchFocused ? nil : KeyboardShortcut(.downArrow, modifiers: .option))
+                    .disabled((index ?? -1) >= order.count - 1)
+                    .tip(steppingScreens ? "다음 화면 (⌥↓)" : "다음 변경 (⌥↓)")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(WL.text)
+            .padding(.horizontal, 6)
+            .background(Capsule().fill(WL.surface).shadow(color: .black.opacity(0.12), radius: 6, y: 2))
+            .overlay(Capsule().strokeBorder(WL.border, lineWidth: 1))
+        }
     }
 
     // MARK: 상세
@@ -306,7 +394,9 @@ struct DesignHistoryView: View {
             DesignScreenDetail(fileKey: key, screen: screen, sync: sync, page: page)
                 .id(key + frame)
         } else if let id = page.selected,
-                  let event = sync.history.events.first(where: { $0.id == id }) ?? compare.currentResult?.events.first(where: { $0.id == id }) {
+                  let event = sync.history.events.first(where: { $0.id == id }) ?? compare.currentResult?.events.first(where: { $0.id == id }),
+                  // 다른 프로젝트를 보는 동안 그 전에 고른 변경이 남지 않게 한다
+                  page.scope == .compare || page.project == nil || event.fileKey == page.project {
             DesignEventDetail(event: event, seen: sync.history.isSeen(event), sync: sync, page: page,
                               toggleSeen: {
                                   if sync.history.isSeen(event) { sync.markUnseen(event.id) } else { sync.markSeen([event.id]) }
@@ -315,8 +405,9 @@ struct DesignHistoryView: View {
                 .id(event.id)
         } else {
             VStack(spacing: 10) {
-                Image(systemName: "sidebar.squares.leading").font(.system(size: 28, weight: .light)).foregroundStyle(WL.faint)
+                Image(systemName: "sidebar.squares.leading").font(.system(size: 28, weight: .light)).foregroundStyle(WL.muted)
                 Text(screenScope == nil ? "변경을 고르면 바뀐 내용이 여기에 나옵니다" : "변경이나 화면을 고르면 여기에 나옵니다").font(WL.body).foregroundStyle(WL.muted)
+                Text("⌥↓ 를 누르면 목록의 첫 항목부터 차례로 엽니다").font(WL.meta).foregroundStyle(WL.muted)
                 let unseen = events.filter { $0.isImportant && !sync.history.isSeen($0) }
                 if !unseen.isEmpty {
                     Button("보이는 변경 \(unseen.count)건 모두 본 것으로 표시") { sync.markSeen(unseen.map(\.id)) }
@@ -524,14 +615,14 @@ private struct DesignSidebar: View {
                     if let key = page.project {
                         ProjectSwatch(name: sync.projectName(key))
                     } else {
-                        Image(systemName: "square.stack").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        Image(systemName: "square.stack").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
                     }
                     Text(page.project.map(sync.projectName) ?? "모든 프로젝트").font(.system(size: 14, weight: .semibold)).lineLimit(1)
                     if let key = page.project, sync.source(key)?.scope.isEmpty == false {
-                        Image(systemName: "link").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.tertiary)
+                        Image(systemName: "link").font(.system(size: 11, weight: .semibold)).foregroundStyle(WL.muted)
                     }
                     Spacer(minLength: 4)
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 }
             }
             .menuStyle(.borderlessButton)
@@ -561,18 +652,23 @@ private struct DesignSidebar: View {
                 }
                 .padding(.leading, 6).padding(.bottom, 3)
                 if items.isEmpty {
+                    // 고르지 않아도 모든 변경을 보므로 자리를 적게 차지하는 한 줄로 둔다
                     Button { pickAlerts(keys) } label: {
-                        Text(keys.count == 1 ? "고른 메뉴가 없어 이 프로젝트의 모든 변경을 봅니다. 맡은 메뉴를 고르면 그 메뉴의 변경만 모아 보고 알림도 그것만 옵니다."
-                                             : "맡은 메뉴를 고르면 그 메뉴의 변경만 모아 보고 알림도 그것만 옵니다.")
-                            .font(WL.caption).foregroundStyle(WL.muted).multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.selected.opacity(0.6)))
-                            .contentShape(Rectangle())
+                        HStack(spacing: 7) {
+                            Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).frame(width: 14)
+                            Text("맡은 메뉴 고르기").font(.system(size: 13.5))
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(WL.muted)
+                        .padding(.horizontal, 8)
+                        .frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(hover.key == "alerts-pick" ? WL.hover : .clear))
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .tip("눌러서 알림 받을 메뉴 고르기")
+                    .onHover { hover.update("alerts-pick", $0) }
+                    .tip(keys.count == 1 ? "고른 메뉴가 없어 이 프로젝트의 모든 변경을 봅니다.\n맡은 메뉴를 고르면 그 메뉴의 변경만 모아 보고 알림도 그것만 옵니다."
+                                         : "맡은 메뉴를 고르면 그 메뉴의 변경만 모아 보고 알림도 그것만 옵니다.")
                 }
                 ForEach(items, id: \.path) { item in alertRow(fileKey: item.fileKey, path: item.path) }
             }
@@ -595,7 +691,7 @@ private struct DesignSidebar: View {
                 ForEach(keys, id: \.self) { key in
                     Button(sync.projectName(key)) { page.alertPicker = key }.disabled(sync.history.files[key] == nil)
                 }
-            } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary) }
+            } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 24, height: 24)
                 .tip("알림 받을 메뉴 고르기")
         }
@@ -611,8 +707,8 @@ private struct DesignSidebar: View {
             && !sync.history.isSeen($0) && !sync.isHidden($0) }.count
         return Button { page.scope = target } label: {
             HStack(spacing: 7) {
-                Image(systemName: "bell.fill").font(.system(size: 9.5)).foregroundStyle(WL.accent).frame(width: 14)
-                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                Image(systemName: "bell.fill").font(.system(size: 11)).foregroundStyle(WL.accent).frame(width: 14)
+                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13.5, weight: selected ? .semibold : .regular))
                     .lineLimit(1)
                 if page.project == nil && visibleFiles.count > 1 {
                     Text(project).font(WL.caption).foregroundStyle(WL.projectColor(project)).lineLimit(1)
@@ -621,7 +717,7 @@ private struct DesignSidebar: View {
                 badge(unseen, fallback: nil)
             }
             .padding(.horizontal, 8)
-            .frame(height: 28)
+            .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
                 .fill(selected ? WL.hover.opacity(1.8) : hover.key == key ? WL.hover : .clear))
             .contentShape(Rectangle())
@@ -639,25 +735,26 @@ private struct DesignSidebar: View {
 
     private var searchField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
             TextField("찾기", text: $page.search)
                 .textFieldStyle(.plain)
                 .font(WL.meta)
                 .focused($searching)
+                .onChange(of: searching) { page.searchFocused = $0 }
                 .onExitCommand { page.search = ""; searching = false }
             if !page.search.isEmpty {
-                Button { page.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                Button { page.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.muted) }
                     .buttonStyle(.plain)
                     .tip("찾는 말 지우기 (esc)")
             } else if !searching {
-                Text("⌘F").font(WL.caption).foregroundStyle(.tertiary)
+                Text("⌘F").font(WL.caption).foregroundStyle(WL.muted)
             }
         }
         .background {
             Button("") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
         }
         .padding(.horizontal, 8)
-        .frame(height: 28)
+        .frame(height: 30)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
         .tip("화면 ID·화면명·명세·문구에서 찾습니다")
@@ -667,9 +764,9 @@ private struct DesignSidebar: View {
     private var linkButton: some View {
         Button { page.addLink(NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", sync: sync) } label: {
             Group {
-                if page.addingLink { ProgressView().controlSize(.small) } else { Image(systemName: "link").font(.system(size: 12, weight: .semibold)).foregroundStyle(WL.accent) }
+                if page.addingLink { ProgressView().controlSize(.small) } else { Image(systemName: "link").font(.system(size: 13, weight: .semibold)).foregroundStyle(WL.accent) }
             }
-            .frame(width: 28, height: 28)
+            .frame(width: 28, height: 30)
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
             .contentShape(Rectangle())
@@ -708,7 +805,7 @@ private struct DesignSidebar: View {
         if own || hovered {
             Button { sync.setAlert(path, on: !on, in: fileKey) } label: {
                 Image(systemName: on ? "bell.fill" : "bell")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(on ? WL.accent : .secondary)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
@@ -774,7 +871,7 @@ private struct DesignSidebar: View {
                 if collapsed { page.foldedProjects.remove(file.key) } else { page.foldedProjects.insert(file.key) }
             } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .rotationEffect(.degrees(collapsed ? 0 : 90))
                     .frame(width: 14, height: 30)
                     .contentShape(Rectangle())
@@ -785,10 +882,10 @@ private struct DesignSidebar: View {
             Button { page.scope = target } label: {
                 HStack(spacing: 7) {
                     ProjectSwatch(name: name)
-                    Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    Text(name).font(.system(size: 13.5, weight: .semibold)).lineLimit(1)
                     if sync.source(file.key)?.scope.isEmpty == false {
                         // 링크한 화면만 지켜보는 프로젝트
-                        Image(systemName: "link").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.tertiary)
+                        Image(systemName: "link").font(.system(size: 11, weight: .semibold)).foregroundStyle(WL.muted)
                     }
                     Spacer(minLength: 4)
                 }
@@ -892,6 +989,14 @@ private struct DesignSidebar: View {
         }
     }
 
+    /// 메뉴나 묶음을 보고 있고 그 메뉴만 받을 수 있으면 그 메뉴. ⌘R이 그 메뉴만 받는다.
+    private var scopedMenu: (fileKey: String, path: String)? {
+        switch page.scope {
+        case .menu(let key, let path), .group(let key, let path): return sync.canFetchMenu(key, path) ? (key, path) : nil
+        default: return nil
+        }
+    }
+
     /// 메뉴 트리를 한 번에 펼치거나 접는다.
     private var treeControls: some View {
         HStack(spacing: 2) {
@@ -940,8 +1045,8 @@ private struct DesignSidebar: View {
             && $0.isImportant && !sync.history.isSeen($0) }.count
         return Button { page.scope = target } label: {
             HStack(spacing: 7) {
-                Image(systemName: "star.fill").font(.system(size: 9.5)).foregroundStyle(Color.yellow.opacity(0.85)).frame(width: 14)
-                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                Image(systemName: "star.fill").font(.system(size: 11)).foregroundStyle(Color.yellow.opacity(0.85)).frame(width: 14)
+                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13.5, weight: selected ? .semibold : .regular))
                     .lineLimit(1)
                 if page.project == nil && settings.sources.filter({ !$0.isHidden }).count > 1 {
                     Text(project).font(WL.caption).foregroundStyle(WL.projectColor(project)).lineLimit(1)
@@ -950,7 +1055,7 @@ private struct DesignSidebar: View {
                 badge(unseen, fallback: nil)
             }
             .padding(.horizontal, 8)
-            .frame(height: 28)
+            .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
                 .fill(selected ? WL.hover.opacity(1.8) : hover.key == key ? WL.hover : .clear))
             .contentShape(Rectangle())
@@ -976,7 +1081,7 @@ private struct DesignSidebar: View {
             VStack(alignment: .leading, spacing: 1) {
                 Button { page.showsHidden.toggle() } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
                             .rotationEffect(.degrees(page.showsHidden ? 90 : 0)).frame(width: 14)
                         Text("숨긴 항목 \(count)").font(WL.caption)
                         Spacer()
@@ -1005,14 +1110,14 @@ private struct DesignSidebar: View {
 
     private func hiddenRow(_ title: String, detail: String, show: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
-            Text(title).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+            Text(title).font(.system(size: 13.5)).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 4)
             Button(action: show) { Image(systemName: "eye") }
                 .buttonStyle(GhostIconButtonStyle())
                 .tip("다시 보이기")
         }
         .padding(.leading, 26)
-        .frame(height: 28)
+        .frame(height: 30)
         .tip(detail)
     }
 
@@ -1048,34 +1153,35 @@ private struct DesignSidebar: View {
                     if page.toggled.contains(toggle) { page.toggled.remove(toggle) } else { page.toggled.insert(toggle) }
                 } label: {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .rotationEffect(.degrees(isFolded ? 0 : 90))
-                        .frame(width: 14, height: 28)
+                        .frame(width: 14, height: 30)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .tip(isFolded ? "펼치기" : "접기")
             } else {
-                Color.clear.frame(width: 14, height: 28)
+                Color.clear.frame(width: 14, height: 30)
             }
             Button { page.scope = target } label: {
                 HStack(spacing: 7) {
                     if screens > 0 { statusDot(state(fileKey, node.path)) } else { Color.clear.frame(width: 6, height: 6) }
                     // 지금 화면이 없는 줄은 이유를 붙인다: 지워진 화면이면 "삭제됨", 페이지 이력만 있으면 "이력"
                     (Text(node.name) + Text(screens == 0 ? "  " + emptyReason(fileKey, node.path) : "").font(WL.caption).foregroundColor(WL.faint))
-                        .font(.system(size: 13, weight: selected ? .semibold : parent ? .medium : .regular))
+                        .font(.system(size: 13.5, weight: selected ? .semibold : parent ? .medium : .regular))
                         .foregroundStyle(screens == 0 ? WL.muted : WL.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
                 }
-                .frame(height: 28)
+                .frame(height: 30)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             // 좁은 사이드바에서 잘리는 이름도 전체 경로를 툴팁으로 보인다
             .tip(rowTip(node, screens: screens))
+            if screens > 0 { menuFetchButton(fileKey, node.path, name: node.name, hovered: hover.key == key) }
             if screens > 0 { bell(fileKey, node.path, hovered: hover.key == key) }
             badge(node.unseen, fallback: isFolded ? screens : nil)
         }
@@ -1085,6 +1191,11 @@ private struct DesignSidebar: View {
             .fill(selected ? WL.hover.opacity(1.8) : hover.key == key ? WL.hover : .clear))
         .onHover { hover.update(key, $0) }
         .contextMenu {
+            if sync.canFetchMenu(fileKey, node.path) {
+                Button("이 메뉴만 가져오기") { fetchMenu(fileKey, node.path, name: node.name) }
+                    .disabled(sync.isBusy(fileKey, menu: node.path) || !settings.hasToken)
+                Divider()
+            }
             Button(sync.isFavorite(fileKey, node.path) ? "즐겨찾기에서 빼기" : "즐겨찾기에 넣기") { sync.toggleFavorite(fileKey, node.path) }
             Button("날짜별로 비교…") { DesignCompareModel.shared.open(fileKey: fileKey, path: node.path); page.scope = .compare }
             if screens > 0 { menuActions(fileKey, node.path) }
@@ -1093,6 +1204,26 @@ private struct DesignSidebar: View {
                 sync.setMenuHidden(node.path, hidden: true, in: fileKey)
                 page.flash("‘\(node.name)’를 숨겼습니다. 맨 아래 숨긴 항목에서 다시 보입니다")
             }
+        }
+    }
+
+    /// 올려 두거나 받는 동안만 보이는 ↓. 그 메뉴 화면이 있는 페이지만 받는다.
+    @ViewBuilder private func menuFetchButton(_ fileKey: String, _ path: String, name: String, hovered: Bool) -> some View {
+        let busy = sync.isBusy(fileKey, menu: path)
+        if sync.canFetchMenu(fileKey, path) && (hovered || busy) {
+            Button { fetchMenu(fileKey, path, name: name) } label: {
+                if busy && sync.fetchingMenu?.fileKey == fileKey { ProgressView().controlSize(.mini) }
+                else { Image(systemName: busy ? "clock" : "arrow.down.circle") }
+            }
+            .buttonStyle(GhostIconButtonStyle())
+            .disabled(busy || !settings.hasToken)
+            .tip(busy ? "가져오는 중이거나 차례를 기다립니다" : "‘\(name)’만 가져오기\n이 메뉴 화면이 있는 페이지만 봐서 프로젝트 전체보다 빠르고 피그마 요청이 적습니다")
+        }
+    }
+
+    private func fetchMenu(_ fileKey: String, _ path: String, name: String) {
+        sync.syncMenu(path, in: fileKey) { count in
+            page.flash(count > 0 ? "‘\(name)’ 변경 \(count)건을 찾았습니다" : "‘\(name)’ 새 변경이 없습니다")
         }
     }
 
@@ -1113,15 +1244,15 @@ private struct DesignSidebar: View {
         let selected = selected ?? (page.scope == target)
         return Button { page.scope = target } label: {
             HStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: 11, weight: .medium)).foregroundStyle(showsBadge ? WL.accent : .secondary)
+                Image(systemName: icon).font(.system(size: 12.5, weight: .medium)).foregroundStyle(showsBadge ? WL.accent : .secondary)
                     .frame(width: 16)
-                Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                Text(title).font(.system(size: 13.5, weight: selected ? .semibold : .regular))
                 Spacer(minLength: 4)
                 if showsBadge { badge(count, fallback: nil) }
                 else if count > 0 { Text("\(count)").font(WL.number).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 8)
-            .frame(height: 28)
+            .frame(height: 30)
             .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
                 .fill(selected ? WL.hover.opacity(1.8) : hover.key == key ? WL.hover : .clear))
             .contentShape(Rectangle())
@@ -1133,12 +1264,12 @@ private struct DesignSidebar: View {
     /// 확인 안 한 변경은 파란 알약, 없으면 옅은 숫자(접은 묶음의 화면 수).
     @ViewBuilder private func badge(_ unseen: Int, fallback: Int?) -> some View {
         if unseen > 0 {
-            Text("\(unseen)").font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+            Text("\(unseen)").font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).frame(minWidth: 18, minHeight: 16)
                 .background(Capsule().fill(WL.accent))
         } else if let fallback, fallback > 0 {
-            Text("\(fallback)").font(WL.number).foregroundStyle(.tertiary)
+            Text("\(fallback)").font(WL.number).foregroundStyle(WL.muted)
         }
     }
 
@@ -1168,7 +1299,9 @@ private struct DesignSidebar: View {
             .onHover { hover.update("footer", $0) }
             .tip(problem ?? "피그마 연동 설정")
             Button {
-                if let key = scopedFileKey {
+                if let (key, path) = scopedMenu {
+                    fetchMenu(key, path, name: path.components(separatedBy: " > ").last ?? path)
+                } else if let key = scopedFileKey {
                     fetch(key, name: sync.projectName(key))
                 } else {
                     sync.sync { count in page.flash(count > 0 ? "변경 \(count)건을 찾았습니다" : "새 변경이 없습니다") }
@@ -1180,7 +1313,8 @@ private struct DesignSidebar: View {
             .buttonStyle(GhostIconButtonStyle())
             .keyboardShortcut("r", modifiers: .command)
             .disabled(sync.syncing || settings.sources.isEmpty || !settings.hasToken)
-            .tip(scopedFileKey.map { "‘\(sync.projectName($0))’ 가져오기 (⌘R)" } ?? "숨기지 않은 프로젝트 모두 가져오기 (⌘R)\n하나만 받으려면 프로젝트에 올려 ↓를 누르세요")
+            .tip(scopedMenu.map { "‘\($0.path.components(separatedBy: " > ").last ?? $0.path)’ 메뉴만 가져오기 (⌘R)" }
+                 ?? scopedFileKey.map { "‘\(sync.projectName($0))’ 가져오기 (⌘R)" } ?? "숨기지 않은 프로젝트 모두 가져오기 (⌘R)\n하나만 받으려면 프로젝트에 올려 ↓를 누르세요")
         }
     }
 
@@ -1255,7 +1389,7 @@ private struct DesignOnboarding: View {
         HStack(alignment: .top, spacing: 12) {
             ZStack {
                 Circle().fill(done ? WL.done : WL.callout)
-                if done { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white) }
+                if done { Image(systemName: "checkmark").font(.system(size: 11.5, weight: .bold)).foregroundStyle(.white) }
                 else { Text("\(number)").font(WL.number).foregroundStyle(WL.muted) }
             }
             .frame(width: 22, height: 22)
@@ -1278,9 +1412,22 @@ private struct DesignTimeline: View {
     /// 고른 메뉴의 지금 시안 화면과 그 프로젝트.
     var screenFile: String?
     var screens: [ScreenSnapshot] = []
+    /// 찾기로 거르기 전에도 화면이 있는지. 찾는 말에 맞는 화면이 없어도 화면 탭은 남긴다.
+    var hasScreens = false
 
-    /// 메뉴 하나를 고르면 화면이 먼저다. 묶음·프로젝트는 화면이 많아 변경을 먼저 둔다.
-    private var screensFirst: Bool { if case .menu = page.scope { return true } else { return false } }
+    /// 메뉴·묶음·프로젝트를 고른 보기. 마크업할 곳이라 가져오기·진행·Claude 문구를 위에 두고 화면과 변경을 탭으로 나눈다.
+    private var workspace: Bool { screenFile != nil }
+
+    /// 화면이 없는 경로(지운 화면·이력만 남은 줄)는 변경만 있다.
+    private var tab: DesignHistoryPage.MenuTab { hasScreens ? page.menuTab : .changes }
+
+    /// 메뉴·묶음이면 그 경로. 프로젝트면 nil.
+    private var menuPath: String? {
+        switch page.scope {
+        case .menu(_, let path), .group(_, let path): return path
+        default: return nil
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1289,12 +1436,14 @@ private struct DesignTimeline: View {
                     Text(title).font(WL.title).lineLimit(1).truncationMode(.middle)
                         .tip(fullTitle)
                     Spacer()
-                    Text(summary).font(WL.meta).foregroundStyle(WL.muted)
+                    if !workspace { Text(summary).font(WL.meta).foregroundStyle(WL.muted) }
                 }
+                if let screenFile { workbench(screenFile) }
                 HStack(spacing: 8) {
                     if page.showsChanges { phasePicker }
+                    if workspace && hasScreens { tabPicker }
                     Spacer(minLength: 0)
-                    layerMenu
+                    if tab == .changes { layerMenu }
                 }
             }
             .padding(.horizontal, WL.gutter)
@@ -1302,12 +1451,22 @@ private struct DesignTimeline: View {
             .padding(.bottom, 12)
             Rectangle().fill(WL.border).frame(height: 1)
             let days = DesignHistory.days(events)
-            if days.isEmpty && screens.isEmpty {
+            if workspace && tab == .screens {
+                SlimScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        if screens.isEmpty {
+                            Text("찾는 말에 맞는 화면이 없습니다").font(WL.meta).foregroundStyle(WL.muted)
+                                .padding(.horizontal, WL.gutter).padding(.top, 12)
+                        }
+                        screenList
+                    }
+                    .padding(.top, 8).padding(.bottom, 16)
+                }
+            } else if days.isEmpty {
                 empty
             } else {
                 SlimScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        if screensFirst { screenSection(noChanges: days.isEmpty) }
                         ForEach(days) { day in
                             Section {
                                 ForEach(day.events) { event in
@@ -1323,14 +1482,13 @@ private struct DesignTimeline: View {
                                 HStack {
                                     Text(DesignFormat.day(day.day)).font(WL.label).foregroundStyle(.secondary)
                                     Spacer()
-                                    Text("\(day.events.count)건").font(WL.label).foregroundStyle(.tertiary)
+                                    Text("\(day.events.count)건").font(WL.label).foregroundStyle(WL.muted)
                                 }
                                 .padding(.horizontal, WL.gutter)
                                 .padding(.top, 12).padding(.bottom, 6)
                                 .background(WL.canvas)
                             }
                         }
-                        if !screensFirst { screenSection(noChanges: days.isEmpty) }
                     }
                     .padding(.bottom, 16)
                 }
@@ -1338,19 +1496,109 @@ private struct DesignTimeline: View {
         }
     }
 
-    @ViewBuilder private func screenSection(noChanges: Bool) -> some View {
-        if let screenFile, !screens.isEmpty {
-            Section {
-                if noChanges {
-                    Text("기록한 변경이 없습니다. 화면을 누르면 지금 시안의 명세와 이미지를 봅니다.")
-                        .font(WL.caption).foregroundStyle(WL.faint)
-                        .padding(.horizontal, WL.gutter).padding(.bottom, 6)
-                        .fixedSize(horizontal: false, vertical: true)
+    // MARK: 메뉴 작업대
+
+    /// 화면 수·구현 진행·반영할 변경·확인 시각과, 이 메뉴만 가져오기·메뉴 Claude 문구 단추.
+    private func workbench(_ fileKey: String) -> some View {
+        let items = screens.reduce(into: (built: 0, total: 0)) { sum, screen in
+            sum.built += sync.history.built(screen, in: fileKey).count
+            sum.total += screen.items.count
+        }
+        let pending = screens.reduce(0) { $0 + sync.pendingEvents(for: $1, in: fileKey).count }
+        let checked: Date? = menuPath.map { sync.menuChecked(fileKey, $0) } ?? {
+            let last = sync.lastChecked(fileKey)
+            return last == .distantPast ? nil : last
+        }()
+        let stats = [screens.isEmpty ? nil : "화면 \(screens.count)",
+                     items.total > 0 ? "구현 \(items.built)/\(items.total)" : nil,
+                     pending > 0 ? "반영할 변경 \(pending)" : nil,
+                     checked.map { DesignFormat.stamp($0) + " 확인" } ?? "아직 가져오지 않음"].compactMap { $0 }
+        return VStack(alignment: .leading, spacing: 8) {
+            if let path = menuPath, path.contains(" > ") {
+                Text(DesignFormat.path(path)).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1).truncationMode(.head)
+            }
+            Text(stats.joined(separator: " · ")).font(WL.meta).foregroundStyle(WL.muted).lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            // 칸이 좁으면 짧은 이름으로 바꿔 단추가 칸 밖으로 밀리지 않게 한다
+            ViewThatFits(in: .horizontal) {
+                actionButtons(fileKey, pending: pending, unbuilt: items.built < items.total, compact: false)
+                actionButtons(fileKey, pending: pending, unbuilt: items.built < items.total, compact: true)
+            }
+        }
+    }
+
+    private func actionButtons(_ fileKey: String, pending: Int, unbuilt: Bool, compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            if sync.source(fileKey) != nil { fetchButton(fileKey, compact: compact) }
+            if pending > 0, let path = menuPath {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(sync.claudePrompt(menu: path, in: fileKey), forType: .string)
+                    page.flash("이 메뉴의 반영할 변경 \(pending)건을 Claude 문구로 복사했습니다")
+                } label: { Label(compact ? "변경 \(pending)건 문구" : "변경 \(pending)건 Claude 문구", systemImage: "sparkles") }
+                .buttonStyle(NotionButtonStyle(kind: .primary))
+                .tip("이 메뉴 화면들의 반영하지 않은 변경을 화면별로 묶어 복사합니다. 반영 체크한 항목은 빼고, 전체 명세 대신 화면마다 피그마 링크를 넣어 짧게 만듭니다")
+            } else if unbuilt, let path = menuPath {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(sync.claudeBuildPrompt(menu: path, in: fileKey), forType: .string)
+                    page.flash("이 메뉴를 마크업해 달라는 Claude 문구를 복사했습니다")
+                } label: { Label(compact ? "마크업 문구" : "메뉴 마크업 Claude 문구", systemImage: "sparkles") }
+                .buttonStyle(NotionButtonStyle(kind: .primary))
+                .tip("이 메뉴 화면마다 피그마 링크·참고·남은 기능 명세를 묶어 복사합니다. 목업 문구와 배치는 Claude가 피그마 MCP로 읽게 해 글을 줄이고, 구현을 마친 화면은 뺍니다")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 메뉴를 고르면 그 메뉴 화면이 있는 페이지만, 프로젝트면 프로젝트 전체를 받는다.
+    private func fetchButton(_ fileKey: String, compact: Bool = false) -> some View {
+        let menu = menuPath.flatMap { sync.canFetchMenu(fileKey, $0) ? $0 : nil }
+        let busy = menu.map { sync.isBusy(fileKey, menu: $0) } ?? sync.isBusy(fileKey)
+        return Button {
+            let name = menu.map { $0.components(separatedBy: " > ").last ?? $0 } ?? sync.projectName(fileKey)
+            let done: (Int) -> Void = { count in page.flash(count > 0 ? "‘\(name)’ 변경 \(count)건을 찾았습니다" : "‘\(name)’ 새 변경이 없습니다") }
+            if let menu { sync.syncMenu(menu, in: fileKey, completion: done) } else { sync.sync(only: fileKey, completion: done) }
+        } label: {
+            HStack(spacing: 6) {
+                if busy { ProgressView().controlSize(.mini) } else { Image(systemName: "arrow.down.circle") }
+                Text(busy ? (sync.syncing && (sync.fetchingMenu != nil || sync.fetching == fileKey) ? "가져오는 중…" : "차례 기다리는 중")
+                     : menu == nil || compact ? "가져오기" : "이 메뉴 가져오기")
+            }
+        }
+        .buttonStyle(NotionButtonStyle())
+        .disabled(busy || !DesignSyncSettings.shared.hasToken)
+        .tip(menu == nil ? "‘\(sync.projectName(fileKey))’ 프로젝트를 가져옵니다 (⌘R)"
+             : "이 메뉴 화면이 있는 페이지만 살펴보고 이 메뉴 화면만 받습니다 (⌘R). 프로젝트 전체보다 피그마 요청이 훨씬 적습니다.\n다른 페이지에 새로 생긴 화면은 프로젝트를 가져와야 보입니다")
+    }
+
+    private var tabPicker: some View {
+        Picker("", selection: $page.menuTab) {
+            Text("화면 \(screens.count)").tag(DesignHistoryPage.MenuTab.screens)
+            Text(events.isEmpty ? "변경" : "변경 \(events.count)").tag(DesignHistoryPage.MenuTab.changes)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .tip("화면: 지금 시안의 화면과 구현 진행\n변경: 이 메뉴에 기록한 변경")
+    }
+
+    /// 지금 시안 화면. 묶음이나 프로젝트처럼 메뉴가 여럿이면 메뉴마다 작은 머리를 단다.
+    @ViewBuilder private var screenList: some View {
+        if let screenFile {
+            let notes = Self.duplicateNotes(screens)
+            let groups = Self.grouped(screens)
+            ForEach(groups, id: \.path) { group in
+                if groups.count > 1 {
+                    Text(DesignFormat.path(relative(group.path)))
+                        .font(WL.label).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                        .padding(.horizontal, WL.gutter).padding(.top, 12).padding(.bottom, 4)
+                        .tip(DesignFormat.path(group.path))
                 }
-                let notes = Self.duplicateNotes(screens)
-                ForEach(screens, id: \.frameID) { screen in
+                ForEach(group.screens, id: \.frameID) { screen in
                     DesignScreenRow(screen: screen, state: sync.state(of: screen, in: screenFile), note: notes[screen.frameID],
-                                    changes: sync.events(for: screen, in: screenFile).filter { !sync.history.isApplied($0) && $0.kind != .changelog }.count,
+                                    changes: sync.pendingEvents(for: screen, in: screenFile).count,
+                                    built: sync.history.built(screen, in: screenFile).count,
                                     selected: page.screen == screen.frameID) {
                         page.screen = screen.frameID
                     }
@@ -1361,17 +1609,23 @@ private struct DesignTimeline: View {
                         }
                     }
                 }
-            } header: {
-                HStack {
-                    Text("화면 · 지금 시안").font(WL.label).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(screens.count)개").font(WL.label).foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, WL.gutter)
-                .padding(.top, 12).padding(.bottom, 6)
-                .background(WL.canvas)
             }
         }
+    }
+
+    /// 경로 순으로 정렬된 화면을 경로마다 묶는다.
+    static func grouped(_ screens: [ScreenSnapshot]) -> [(path: String, screens: [ScreenSnapshot])] {
+        var groups: [(path: String, screens: [ScreenSnapshot])] = []
+        for screen in screens {
+            if groups.last?.path == screen.menuPath { groups[groups.count - 1].screens.append(screen) } else { groups.append((screen.menuPath, [screen])) }
+        }
+        return groups
+    }
+
+    /// 묶음 안에서는 묶음 이름을 뺀 나머지 경로만 보인다.
+    private func relative(_ path: String) -> String {
+        guard let head = menuPath, path.hasPrefix(head + " > ") else { return path }
+        return String(path.dropFirst(head.count + 3))
     }
 
     /// 같은 화면 ID를 쓰는 프레임(상태별 화면 등)을 가를 이름. 프레임 이름이 다르면 그것을, 같으면 순번을 붙인다.
@@ -1451,8 +1705,8 @@ private struct DesignTimeline: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10.5, weight: .semibold))
-                Text(page.layer.map(DesignHistoryView.layerName) ?? "모든 종류").font(.system(size: 12, weight: page.layer == nil ? .regular : .semibold))
+                Image(systemName: "line.3.horizontal.decrease").font(.system(size: 11.5, weight: .semibold))
+                Text(page.layer.map(DesignHistoryView.layerName) ?? "모든 종류").font(.system(size: 13, weight: page.layer == nil ? .regular : .semibold))
             }
             .foregroundStyle(page.layer == nil ? WL.muted : WL.accent)
         }
@@ -1466,7 +1720,7 @@ private struct DesignTimeline: View {
         VStack(spacing: 8) {
             Spacer()
             Image(systemName: sync.history.events.isEmpty ? "clock.arrow.circlepath" : "line.3.horizontal.decrease.circle")
-                .font(.system(size: 26, weight: .light)).foregroundStyle(WL.faint)
+                .font(.system(size: 26, weight: .light)).foregroundStyle(WL.muted)
             Text(sync.history.events.isEmpty ? "아직 기록한 변경이 없습니다"
                  : page.project.map { key in !sync.history.events.contains { $0.fileKey == key } } == true ? "이 프로젝트에는 아직 기록한 변경이 없습니다"
                  : "이 조건에 맞는 변경이 없습니다")
@@ -1474,7 +1728,7 @@ private struct DesignTimeline: View {
             Text(sync.history.events.isEmpty || page.project.map { key in !sync.history.events.contains { $0.fileKey == key } } == true
                  ? "처음 가져온 상태가 기준입니다. 가져오기(↓)를 누를 때마다 그때부터 바뀐 것을 남깁니다. 메뉴를 고르면 지금 시안 화면을 봅니다."
                  : page.scope == .important ? (hasAlerts ? "알림 받는 메뉴에 새 변경이 없습니다. 다른 메뉴는 위 ‘전체’에서 봅니다." : "확인할 변경이 없습니다. 위에서 ‘작업 중’이나 ‘전체’를 골라 보세요.") : "찾는 말이나 변경 종류를 바꿔 보세요.")
-                .font(WL.meta).foregroundStyle(WL.faint).multilineTextAlignment(.center)
+                .font(WL.meta).foregroundStyle(WL.muted).multilineTextAlignment(.center)
             Spacer()
         }
         .padding(24)
@@ -1501,10 +1755,10 @@ struct DesignEventRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(DesignFormat.title(event))
-                            .font(.system(size: 13, weight: seen ? .medium : .semibold)).lineLimit(1)
+                            .font(.system(size: 13.5, weight: seen ? .medium : .semibold)).lineLimit(1)
                             .tip(DesignFormat.title(event))
                         Spacer(minLength: 4)
-                        Text(DesignFormat.time(event.detectedAt)).font(WL.number).foregroundStyle(.tertiary)
+                        Text(DesignFormat.time(event.detectedAt)).font(WL.number).foregroundStyle(WL.muted)
                     }
                     HStack(spacing: 5) {
                         if let project {
@@ -1591,34 +1845,19 @@ private struct DesignEventDetail: View {
     let toggleApplied: () -> Void
     @ObservedObject private var images = DesignImages.shared
 
-    /// 이보다 넓으면 왼쪽 화면 비교, 오른쪽 변경 목록 두 칸으로 나눠 큰 모니터의 빈 곳을 쓴다.
-    static let splitWidth: CGFloat = 1040
-
     var body: some View {
+        // 칸을 둘로 나누지 않고 한 칸으로 쌓는다. 너비는 칸 경계를 끌어 정한다
         GeometryReader { geo in
-            if geo.size.width >= Self.splitWidth {
-                HStack(spacing: 0) {
-                    SlimScrollView {
-                        overview(wide: true, width: geo.size.width * 0.55 - 56).padding(.horizontal, 28).padding(.vertical, 24)
-                    }
-                    .frame(width: (geo.size.width * 0.55).rounded())
-                    Rectangle().fill(WL.border).frame(width: 1)
-                    SlimScrollView {
-                        changeList.padding(.horizontal, 24).padding(.vertical, 24)
-                    }
-                    .frame(maxWidth: .infinity)
+            let width = min(geo.size.width - 64, DesignHistoryView.detailMaxWidth)
+            SlimScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    overview(wide: width >= 760, width: width)
+                    changeList
                 }
-            } else {
-                SlimScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        overview(wide: false, width: min(geo.size.width - 64, 760))
-                        changeList
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 26)
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                .padding(.horizontal, 32)
+                .padding(.vertical, 26)
+                .frame(maxWidth: DesignHistoryView.detailMaxWidth + 64, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -1727,13 +1966,13 @@ private struct DesignEventDetail: View {
             title
             breadcrumb
             HStack(spacing: 5) {
-                Image(systemName: "clock").font(.system(size: 10.5))
+                Image(systemName: "clock").font(.system(size: 11.5))
                 Text(DesignFormat.window(event))
                 Text("·")
                 ProjectSwatch(name: DesignSync.shared.projectName(event.fileKey), size: 7)
                 Text(DesignSync.shared.projectName(event.fileKey)).lineLimit(1).tip(event.fileName)
             }
-            .font(WL.meta).foregroundStyle(WL.faint)
+            .font(WL.meta).foregroundStyle(WL.muted)
         }
     }
 
@@ -1743,7 +1982,8 @@ private struct DesignEventDetail: View {
         if let url = DesignFormat.link(event) {
             Button { NSWorkspace.shared.open(url) } label: { text.multilineTextAlignment(.leading) }
                 .buttonStyle(.plain)
-                .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+                // push·pop은 올린 채 상세가 바뀌면 짝이 어긋나 손가락 모양이 남아서 set으로 바꾼다
+                .onHover { inside in (inside ? NSCursor.pointingHand : NSCursor.arrow).set() }
                 .tip("피그마에서 열기")
         } else {
             text.textSelection(.enabled)
@@ -1877,21 +2117,21 @@ private struct DesignEventDetail: View {
                     }
                     let shown = page.showsMarks ? marks : []
                     switch page.compareMode {
-                    case 1: shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, marks: shown, maxHeight: wide ? 1400 : 520)
-                    case 2: shot("이후", version: event.afterVersion, frame: frame, marks: shown, maxHeight: wide ? 1400 : 520)
+                    case 1: shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, marks: shown, maxHeight: wide ? 1400 : 640)
+                    case 2: shot("이후", version: event.afterVersion, frame: frame, marks: shown, maxHeight: wide ? 1400 : 640)
                     default:
-                        // 넓은 칸에서는 위아래로 쌓아 가로로 긴 화면도 칸 너비를 다 쓰게 한다
-                        let layout = wide ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
-                            : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
+                        // 넓으면 나란히 두어 한눈에 견주고, 좁으면 위아래로 쌓아 한 장씩 크게 본다
+                        let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+                            : AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
                         layout {
-                            shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, marks: shown, maxHeight: wide ? 900 : 260)
-                            shot("이후", version: event.afterVersion, frame: frame, marks: shown, maxHeight: wide ? 900 : 260)
+                            shot("이전", version: event.beforeVersion, frame: event.beforeFrameID ?? frame, marks: shown, maxHeight: wide ? 760 : 520)
+                            shot("이후", version: event.afterVersion, frame: frame, marks: shown, maxHeight: wide ? 760 : 520)
                         }
                     }
                 }
             } else if event.kind == .changed || event.kind == .replaced {
                 Text("화면 비교 이미지는 이 기능이 생긴 뒤 기록한 변경부터 볼 수 있습니다.")
-                    .font(WL.caption).foregroundStyle(WL.faint)
+                    .font(WL.caption).foregroundStyle(WL.muted)
             }
         }
     }
@@ -1915,13 +2155,13 @@ private struct DesignEventDetail: View {
                         RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.callout)
                         if version == nil {
                             Text(label == "이전" ? "새로 생긴 화면이라 이전이 없습니다" : "지워진 화면이라 이후가 없습니다")
-                                .font(WL.caption).foregroundStyle(WL.faint).multilineTextAlignment(.center).padding(10)
+                                .font(WL.caption).foregroundStyle(WL.muted).multilineTextAlignment(.center).padding(10)
                         } else if case .missing(let reason) = state {
                             Text(reason).font(WL.caption).foregroundStyle(WL.waiting).multilineTextAlignment(.center).padding(10)
                         } else {
                             VStack(spacing: 6) {
                                 ProgressView().controlSize(.small)
-                                Text("피그마에서 그리는 중…").font(WL.caption).foregroundStyle(WL.faint)
+                                Text("피그마에서 그리는 중…").font(WL.caption).foregroundStyle(WL.muted)
                             }
                         }
                     }
@@ -1968,7 +2208,7 @@ private struct DesignEventDetail: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Button { page.showRenumbered.toggle() } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
                                 .rotationEffect(.degrees(page.showRenumbered ? 90 : 0))
                             Text("번호만 바뀐 명세 \(changes.count)개").font(WL.meta)
                         }
@@ -2004,7 +2244,7 @@ private struct DesignEventDetail: View {
 
     private func callout(_ icon: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon).font(.system(size: 13)).foregroundStyle(WL.muted)
+            Image(systemName: icon).font(.system(size: 13.5)).foregroundStyle(WL.muted)
             Text(text).font(WL.body).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
@@ -2021,9 +2261,9 @@ struct AppliedCheck: View {
     var body: some View {
         Button(action: toggle) {
             Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 14))
-                .foregroundStyle(on ? WL.done : WL.faint)
-                .frame(width: 18, height: 18)
+                .font(.system(size: 16))
+                .foregroundStyle(on ? WL.done : WL.quiet)
+                .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -87,7 +87,7 @@ struct IssueFieldEditor<Footer: View>: View {
     private func row<Control: View>(_ title: String, now: String?, @ViewBuilder control: () -> Control) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 12.5, weight: .medium))
+                Text(title).font(.system(size: 13, weight: .medium))
                 Text("지금 " + (now?.isEmpty == false ? now! : "없음")).font(WL.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(width: 104, alignment: .leading)
@@ -109,7 +109,7 @@ private struct DateRow: View {
         let mode: Mode = value == nil ? .keep : value == "" ? .clear : .set
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 12.5, weight: .medium))
+                Text(title).font(.system(size: 13, weight: .medium))
                 Text("지금 " + (now.map(WorkLogFormat.shortDay) ?? "없음")).font(WL.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(width: 104, alignment: .leading)

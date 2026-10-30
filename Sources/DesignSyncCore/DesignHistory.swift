@@ -156,6 +156,11 @@ public struct DesignFileRecord: Codable, Equatable, Sendable {
     public var mergeBase: [String: ScreenSnapshot]?
     /// 마크업하며 구현을 마친 기능 명세. 프레임 ID → 항목 글. 번호가 밀려도 남고, 글이 바뀌면 다시 확인하게 글로 가린다.
     public var built: [String: Set<String>]?
+    /// 프레임 ID → 내용을 받았을 때의 파일 버전 ID. 메뉴만 받으면 화면마다 받은 버전이 달라, 이미지와 "이전" 비교를 이 버전으로 그린다.
+    public var frameVersion: [String: String]?
+
+    /// 화면을 마지막으로 받은 버전. 이 칸이 생기기 전 기록은 파일 버전.
+    public func version(of frame: String) -> String? { frameVersion?[frame] ?? version }
 
     /// 화면이 아니었던 후보도 디자이너가 고쳤을 수 있어 이만큼 지나면 다시 받아 본다.
     public static let ignoreDays = 7.0
@@ -215,6 +220,8 @@ public struct DesignCapture: Sendable {
     public var missing: [String] = []
     /// 처음 가져오는 링크의 후보. 이 후보에서 나온 화면은 새 화면으로 남기지 않고 기준만 세운다.
     public var fresh: Set<String> = []
+    /// 메뉴 하나만 받았다. 다른 메뉴는 이 버전으로 보지 않았으니 파일의 버전·확인 시각은 그대로 두어 다음 프로젝트 가져오기가 건너뛰지 않게 한다.
+    public var partial = false
 
     public init(fileKey: String, fileName: String, lastModified: String, coveredPages: Set<String>, present: Set<String>,
                 fetched: Set<String>, screens: [ScreenSnapshot], version: String? = nil, changelog: [ChangelogEntry]?,
@@ -295,7 +302,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                                    title: screen.title, menuPath: screen.menuPath, detectedAt: date, windowStart: since.map { min($0, edited) },
                                    windowEnd: edited, kind: kind, changes: changes, note: note, phase: phase)
             // 새 화면은 이전이 없고, 지운 화면은 이후가 없다
-            made.beforeVersion = kind == .added ? nil : file.version
+            made.beforeVersion = kind == .added ? nil : file.version(of: screen.frameID)
             made.afterVersion = kind == .removed ? nil : capture.version
             return made
         }
@@ -323,7 +330,8 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             .filter { old in
                 // 틀을 풀어 다른 후보에서 다시 읽힌 화면은 지워진 것이 아니다
                 guard capture.coveredPages.contains(old.pageID), !extracted.contains(old.frameID) else { return false }
-                if !capture.present.contains(old.candidateID) { return true }
+                // 메뉴만 받았으면 후보가 사라진 화면은 다른 페이지로 옮겼을 수 있어, 모든 페이지를 보는 프로젝트 가져오기에 맡긴다
+                if !capture.present.contains(old.candidateID) { return !capture.partial }
                 return capture.fetched.contains(old.candidateID)
             }
             .sorted { $0.frameID < $1.frameID }
@@ -358,6 +366,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                     var made = event(.replaced, screen, SpecDiff.changes(from: old, to: screen),
                                      since: file.checkedAt[old.frameID], note: old.frameName, phase: phase(from: old, to: screen))
                     made.beforeFrameID = old.frameID
+                    made.beforeVersion = file.version(of: old.frameID)
                     created.append(made)
                 }
             } else if capture.watches(screen.menuPath) && !capture.fresh.contains(screen.candidateID) {
@@ -367,6 +376,10 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             file.screens[screen.frameID] = screen
             file.checkedAt[screen.frameID] = date
             file.fetchedVersion[screen.frameID] = capture.lastModified
+            if let version = capture.version {
+                if file.frameVersion == nil { file.frameVersion = [:] }
+                file.frameVersion?[screen.frameID] = version
+            }
         }
         for old in gone {
             if !replaced.contains(old.frameID), capture.watches(old.menuPath) {
@@ -376,6 +389,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             file.screens[old.frameID] = nil
             file.checkedAt[old.frameID] = nil
             file.fetchedVersion[old.frameID] = nil
+            file.frameVersion?[old.frameID] = nil
             file.built?[old.frameID] = nil
         }
 
@@ -404,7 +418,8 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                 made.menus = named.isEmpty ? nil : named
                 created.append(made)
             }
-            file.changelog = entries
+            // 메뉴만 받았으면 살펴본 페이지의 이력만 바꾼다. 다른 페이지 줄을 지우면 다음에 받을 때 모두 새 줄로 보인다
+            file.changelog = capture.partial ? file.changelog.filter { !capture.coveredPages.contains($0.pageID) } + entries : entries
         }
 
         for index in dropped.sorted(by: >) {
@@ -413,9 +428,11 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         }
         file.mergeBase = bases.isEmpty ? nil : bases
         file.name = capture.fileName
-        file.lastModified = capture.lastModified
-        if let version = capture.version { file.version = version }
-        file.syncedAt = date
+        if !capture.partial {
+            file.lastModified = capture.lastModified
+            if let version = capture.version { file.version = version }
+            file.syncedAt = date
+        }
         // 한때 화면을 냈던 후보는 잠깐 헤더를 숨겼을 수 있어 무시하지 않는다. 무시한 지 오래된 후보는 다시 받아 본다
         let limit = date.addingTimeInterval(-DesignFileRecord.ignoreDays * 86_400)
         file.ignored = file.ignored.filter { $0.value > limit }
@@ -432,6 +449,13 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         guard var file = files[fileKey] else { return }
         for key in file.checkedAt.keys where file.fetchedVersion[key] == file.lastModified { file.checkedAt[key] = date }
         file.syncedAt = date
+        files[fileKey] = file
+    }
+
+    /// 메뉴만 받으려다 그 화면들이 그대로였을 때. 그 화면의 다음 변경 구간 시작만 지금으로 당긴다.
+    public mutating func confirmUnchanged(fileKey: String, frames: [String], lastModified: String, at date: Date) {
+        guard var file = files[fileKey] else { return }
+        for frame in frames where file.fetchedVersion[frame] == lastModified { file.checkedAt[frame] = date }
         files[fileKey] = file
     }
 
@@ -497,6 +521,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             file.screens[frame] = nil
             file.checkedAt[frame] = nil
             file.fetchedVersion[frame] = nil
+            file.frameVersion?[frame] = nil
             file.built?[frame] = nil
             file.mergeBase?[frame] = nil
         }

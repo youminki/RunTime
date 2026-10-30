@@ -212,8 +212,9 @@ enum UIShots {
     /// 앱 창의 디자인 화면. 화면마다 새 상태로 찍고, 가장 최근 변경을 골라 둔다.
     private static func mainDesign(engine: UsageEngine, scope: DesignHistoryPage.Scope = .all, select: Bool = true) -> AnyView {
         let page = DesignHistoryPage()
-        page.scope = scope
+        // 변경을 고른 채 메뉴로 옮겼을 때 메뉴 밖 변경이 상세에 남지 않는지 보게, 고른 뒤 범위를 바꾼다
         if select { page.selected = DesignSync.shared.history.events.last(where: { $0.kind == .changed })?.id }
+        page.scope = scope
         let navigator = MainNavigator()
         navigator.start(at: .design)
         return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,

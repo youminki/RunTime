@@ -21,7 +21,7 @@ struct IssueBoard: View {
             if !settings.redmineReady && all.isEmpty {
                 Callout {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("레드마인을 연결하면 나에게 배정된 일감이 여기 모입니다").font(.system(size: 13, weight: .semibold))
+                        Text("레드마인을 연결하면 나에게 배정된 일감이 여기 모입니다").font(.system(size: 13.5, weight: .semibold))
                         Button("레드마인 연결") { page.settingsSection = .redmine; page.showsSettings = true }
                             .buttonStyle(NotionButtonStyle(kind: .primary))
                     }
@@ -29,16 +29,16 @@ struct IssueBoard: View {
             } else if sync.myIssues.isEmpty {
                 Callout {
                     Text(sync.loadingIssues ? "일감을 받는 중입니다…" : "열린 일감이 없습니다.")
-                        .font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                        .font(.system(size: 13)).foregroundStyle(WL.muted)
                 }
             } else {
                 if !settings.redmineReady {
                     Text("레드마인이 이어지지 않아 마지막으로 받은 목록을 보입니다.")
-                        .font(.system(size: 12)).foregroundStyle(WL.waiting).padding(.bottom, 10)
+                        .font(.system(size: 13)).foregroundStyle(WL.waiting).padding(.bottom, 10)
                 }
                 filterBar(all)
                 if shown.isEmpty {
-                    Text("맞는 일감이 없습니다.").font(.system(size: 12.5)).foregroundStyle(WL.muted).padding(.vertical, 12)
+                    Text("맞는 일감이 없습니다.").font(.system(size: 13)).foregroundStyle(WL.muted).padding(.vertical, 12)
                 }
                 ForEach(projects(of: shown), id: \.self) { project in
                     projectSection(project, issues: shown.filter { $0.project == project })
@@ -68,13 +68,13 @@ struct IssueBoard: View {
         } accessory: {
             HStack(spacing: 8) {
                 if !settings.redmineReady {
-                    Text("레드마인 꺼짐").font(.system(size: 12)).foregroundStyle(WL.faint)
+                    Text("레드마인 꺼짐").font(.system(size: 13)).foregroundStyle(WL.quiet)
                 } else if sync.loadingIssues {
                     ProgressView().controlSize(.small).scaleEffect(0.6)
                 } else if let error = sync.issuesError {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(WL.waiting).tip(error)
                 } else if let loaded = sync.issuesLoadedAt {
-                    Text(WorkLogFormat.when(loaded) + " 받음").font(.system(size: 12)).foregroundStyle(WL.faint).monospacedDigit()
+                    Text(WorkLogFormat.when(loaded) + " 받음").font(.system(size: 13)).foregroundStyle(WL.quiet).monospacedDigit()
                 }
                 Button { sync.loadMyIssues() } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(GhostIconButtonStyle())
@@ -88,12 +88,12 @@ struct IssueBoard: View {
     private func filterBar(_ all: [IssueInfo]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(WL.faint)
+                Image(systemName: "magnifyingglass").font(.system(size: 12.5)).foregroundStyle(WL.quiet)
                 TextField("제목·화면·#번호로 일감 찾기", text: $page.issueQuery)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13.5))
                 if !page.issueQuery.isEmpty {
-                    Button { page.issueQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.faint) }
+                    Button { page.issueQuery = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.quiet) }
                         .buttonStyle(.plain)
                         .tip("찾는 말 지우기")
                 }
@@ -168,7 +168,7 @@ struct IssueBoard: View {
             ToggleHeading(collapsed: collapsed, toggle: { page.toggle(key) }) {
                 HStack(spacing: 8) {
                     Text(project).font(WL.section)
-                    Text("\(issues.count)").font(.system(size: 13)).foregroundStyle(WL.faint).monospacedDigit()
+                    Text("\(issues.count)").font(.system(size: 13.5)).foregroundStyle(WL.quiet).monospacedDigit()
                 }
             } trailing: {
                 Button {
@@ -183,7 +183,7 @@ struct IssueBoard: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(order, id: \.self) { group in
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(group).font(.system(size: 12, weight: .medium)).foregroundStyle(WL.muted)
+                            Text(group).font(.system(size: 13, weight: .medium)).foregroundStyle(WL.muted)
                                 .padding(.horizontal, 6).padding(.bottom, 2)
                             ForEach(groups[group] ?? []) { info in
                                 IssueRow(store: store, page: page, settings: settings, sync: sync, info: info)
@@ -202,12 +202,12 @@ struct IssueBoard: View {
     private func hiddenFooter(_ hidden: [IssueInfo]) -> some View {
         let names = projects(of: hidden)
         return VStack(alignment: .leading, spacing: 6) {
-            Text("숨긴 프로젝트 \(names.count)개 · 일감 \(hidden.count)개").font(.system(size: 12)).foregroundStyle(WL.faint)
+            Text("숨긴 프로젝트 \(names.count)개 · 일감 \(hidden.count)개").font(.system(size: 13)).foregroundStyle(WL.quiet)
             FlowLayout(spacing: 4) {
                 ForEach(names, id: \.self) { name in
                     Button { store.setRedmineHidden(name, false) } label: {
                         HStack(spacing: 5) {
-                            Image(systemName: "eye").font(.system(size: 10))
+                            Image(systemName: "eye").font(.system(size: 11.5))
                             Text(name)
                         }
                         .foregroundStyle(WL.muted)
@@ -224,7 +224,7 @@ struct IssueBoard: View {
     private func reportNameRow(_ project: String, current: String) -> some View {
         HStack(spacing: 6) {
             Color.clear.frame(width: 16, height: 1)
-            Text("보고서 이름").font(.system(size: 12)).foregroundStyle(WL.faint)
+            Text("보고서 이름").font(.system(size: 13)).foregroundStyle(WL.quiet)
             if page.renamingRedmine == project {
                 TextField("VeloX", text: $page.redmineRenameText, onCommit: {
                     store.setReportProject(page.redmineRenameText, for: project)
@@ -243,7 +243,7 @@ struct IssueBoard: View {
                 } label: {
                     HStack(spacing: 5) {
                         ProjectSwatch(name: current, size: 8)
-                        Text(current).font(.system(size: 12.5, weight: .medium))
+                        Text(current).font(.system(size: 13, weight: .medium))
                     }
                 }
                 .menuStyle(.borderlessButton)
@@ -283,7 +283,7 @@ private struct IssueRow: View {
                 // 상태는 왼쪽 표시로 보여, 완료가 아닐 때만 진척률을 덧붙인다
                 Text(dayLabel + (written.count > 1 ? " \(written.count)줄" : "") + " 적음"
                      + (entry.status == .done ? "" : " · " + entry.status.label))
-                    .font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.done).monospacedDigit()
+                    .font(.system(size: 12.5, weight: .medium)).foregroundStyle(WL.done).monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -343,8 +343,8 @@ private struct IssueRow: View {
             Text("#" + String(info.id))
                 .frame(width: 50, alignment: .trailing)
         }
-        .font(.system(size: 11.5).monospacedDigit())
-        .foregroundStyle(WL.faint)
+        .font(.system(size: 12.5).monospacedDigit())
+        .foregroundStyle(WL.quiet)
         .lineLimit(1)
     }
 
@@ -408,7 +408,7 @@ private struct IssueRow: View {
                             VStack(alignment: .trailing, spacing: 8) {
                                 Text("#\(String(info.id))에 " + changes.joined(separator: " · ")
                                      + "을(를) 저장할까요?")
-                                    .font(.system(size: 12)).foregroundStyle(WL.text)
+                                    .font(.system(size: 13)).foregroundStyle(WL.text)
                                     .fixedSize(horizontal: false, vertical: true)
                                 HStack(spacing: 8) {
                                     Button("돌아가기") { page.boardConfirming = false }.buttonStyle(NotionButtonStyle())

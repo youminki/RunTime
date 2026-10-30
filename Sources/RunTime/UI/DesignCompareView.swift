@@ -49,12 +49,12 @@ struct DesignCompareView: View {
             }
             if let screen = model.screen {
                 HStack(spacing: 6) {
-                    Image(systemName: "rectangle.on.rectangle").font(.system(size: 10.5)).foregroundStyle(WL.accent)
-                    Text(screen.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    Image(systemName: "rectangle.on.rectangle").font(.system(size: 11.5)).foregroundStyle(WL.accent)
+                    Text(screen.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     Text(screen.screenID).font(WL.number).foregroundStyle(WL.muted).lineLimit(1)
                     Spacer(minLength: 4)
                     Button { model.open(fileKey: model.fileKey ?? "", path: model.path) } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(WL.muted)
                     }
                     .buttonStyle(.plain)
                     .tip("화면 하나만 보기를 풀고 메뉴 전체를 견줍니다")
@@ -62,11 +62,11 @@ struct DesignCompareView: View {
                 .padding(.horizontal, 8).frame(height: 26)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.selected.opacity(0.7)))
                 Text("이 화면의 변경과 이 화면을 적은 이력만 견줍니다. 피그마에서도 이 화면이 있는 페이지만 받습니다.")
-                    .font(WL.caption).foregroundStyle(WL.faint).fixedSize(horizontal: false, vertical: true)
+                    .font(WL.caption).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 6) {
                 DatePicker("", selection: $model.from, in: ...Date(), displayedComponents: .date).labelsHidden()
-                Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.faint)
+                Image(systemName: "arrow.right").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(WL.muted)
                 DatePicker("", selection: $model.to, in: ...Date(), displayedComponents: .date).labelsHidden()
                 Spacer(minLength: 0)
             }
@@ -150,7 +150,7 @@ struct DesignCompareView: View {
                     }
                     if result.events.isEmpty {
                         Text(result.from.id == result.to.id ? "두 날짜 사이에 저장된 버전이 없습니다." : "고른 범위의 화면은 바뀌지 않았습니다.")
-                            .font(WL.caption).foregroundStyle(WL.faint)
+                            .font(WL.caption).foregroundStyle(WL.muted)
                     }
                 }
                 .padding(.horizontal, WL.gutter).padding(.bottom, 6)
@@ -168,7 +168,7 @@ struct DesignCompareView: View {
         Section {
             if events.isEmpty {
                 Text("이 기간에 기록한 변경이 없습니다. 지켜보기 전이나 가져오지 않은 기간은 ‘버전 비교’로 봅니다.")
-                    .font(WL.caption).foregroundStyle(WL.faint)
+                    .font(WL.caption).foregroundStyle(WL.muted)
                     .padding(.horizontal, WL.gutter).padding(.bottom, 6)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -188,7 +188,7 @@ struct DesignCompareView: View {
         HStack {
             Text(title).font(WL.label).foregroundStyle(.secondary)
             Spacer()
-            Text("\(count)건").font(WL.label).foregroundStyle(.tertiary)
+            Text("\(count)건").font(WL.label).foregroundStyle(WL.muted)
         }
         .padding(.horizontal, WL.gutter)
         .padding(.top, 12).padding(.bottom, 6)

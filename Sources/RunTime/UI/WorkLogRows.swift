@@ -86,14 +86,14 @@ struct EntryRow: View {
         // 노션처럼 줄 왼쪽 바깥에 손잡이를 두어, 글 칸을 끌어 고르는 것과 줄을 옮기는 것이 섞이지 않게 한다
         .overlay(alignment: .leading) {
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(WL.faint)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(WL.quiet)
                 .frame(width: 14, height: 24)
                 .contentShape(Rectangle())
                 .opacity(hover.on ? 1 : 0)
                 .offset(x: -16)
                 .draggable(entry.id.uuidString) {
-                    Text(entry.title).font(.system(size: 13)).padding(6).background(WL.surface)
+                    Text(entry.title).font(.system(size: 13.5)).padding(6).background(WL.surface)
                 }
                 .tip("끌어서 순서 바꾸기")
         }
@@ -152,8 +152,8 @@ struct SourceMark: View {
             return ("repeat", "고정 업무")
         }()
         Image(systemName: icon)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(.tertiary)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(WL.muted)
             .tip(help)
     }
 }
@@ -185,7 +185,7 @@ struct StatusPicker: View {
         return Button { choose(status) } label: {
             HStack(spacing: 5) {
                 StatusGlyph(status: status, size: 12)
-                Text(status.label).font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                Text(status.label).font(.system(size: 12.5, weight: .medium).monospacedDigit())
                     .lineLimit(1).fixedSize()
             }
             .padding(.horizontal, 8)
@@ -235,9 +235,9 @@ struct EntryEditor: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Text("내 일감에서 고르기")
-                                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
                                 }
-                                .font(.system(size: 12.5, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(WL.accent)
                             }
                             .menuStyle(.borderlessButton)
@@ -259,7 +259,7 @@ struct EntryEditor: View {
                                 Button { store.update(id) { $0.issue = info.id } } label: {
                                     HStack(spacing: 6) {
                                         Text("#" + String(info.id)).font(WL.number).foregroundStyle(WL.muted)
-                                        Text(info.reportTitle).font(.system(size: 12)).foregroundStyle(WL.text).lineLimit(1)
+                                        Text(info.reportTitle).font(.system(size: 13)).foregroundStyle(WL.text).lineLimit(1)
                                         Spacer(minLength: 0)
                                     }
                                     .padding(.horizontal, 6).frame(height: 24).contentShape(Rectangle())
@@ -280,7 +280,7 @@ struct EntryEditor: View {
                             get: { store.entry(id)?.note ?? "" },
                             set: { value in store.update(id) { $0.note = value } }
                         ))
-                        .font(.system(size: 12))
+                        .font(.system(size: 13))
                         .scrollContentBackground(.hidden)
                         .padding(6)
                         .background(RoundedRectangle(cornerRadius: WL.inner).fill(WL.canvas))
@@ -293,7 +293,7 @@ struct EntryEditor: View {
                                 .tip("[작업 내용]·[연동 API]·[비고] 머리를 넣습니다")
                             Spacer()
                             if entry.note.isEmpty {
-                                Text("비우면 내용 한 줄로 [작업 내용]을 만듭니다").font(WL.caption).foregroundStyle(.tertiary)
+                                Text("비우면 내용 한 줄로 [작업 내용]을 만듭니다").font(WL.caption).foregroundStyle(WL.muted)
                             }
                         }
                     }
@@ -383,7 +383,7 @@ struct MergedRow: View {
                 }
                 if showsDays {
                     Text(days.count > 1 ? "\(WorkReport.shortDate(days[0])) 외 \(days.count - 1)일" : WorkLogFormat.shortDay(entry.day))
-                        .font(WL.caption).foregroundStyle(WL.faint).monospacedDigit()
+                        .font(WL.caption).foregroundStyle(WL.quiet).monospacedDigit()
                         .lineLimit(1)
                         .fixedSize()
                         .frame(minWidth: 64, alignment: .trailing)

@@ -235,7 +235,7 @@ struct WorkLogPreview: View {
         return VStack(alignment: .trailing, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
                 // 머리줄은 진행 사항 보고서처럼 글 맨 위에 보이되, 날짜에서 만들므로 고쳐 쓰지는 않는다
-                Text(dayHeader).font(.system(size: 13)).foregroundStyle(WL.text)
+                Text(dayHeader).font(.system(size: 13.5)).foregroundStyle(WL.text)
                     .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
                     .textSelection(.enabled)
                 ReportText(text: page.planEdits[page.day]?.text ?? generated, placeholder: false) { text in
@@ -249,7 +249,7 @@ struct WorkLogPreview: View {
             .overlay(alignment: .topLeading) {
                 if reportBody.isEmpty {
                     Text("기간 중인 프로젝트, 어제 끝내지 못한 일, 오늘 적은 일로 만들어집니다. 여기에 바로 써도 됩니다.")
-                        .font(.system(size: 13)).foregroundStyle(.tertiary)
+                        .font(.system(size: 13.5)).foregroundStyle(WL.muted)
                         .padding(.horizontal, 16).padding(.top, 32).allowsHitTesting(false)
                 }
             }
@@ -269,7 +269,7 @@ struct WorkLogPreview: View {
                  : ([auto.isEmpty ? nil : auto.joined(separator: ", ") + "는 레드마인 내 일감으로",
                      manual.isEmpty ? nil : manual.joined(separator: ", ") + "는 직접 정한 기간으로"]
                     .compactMap { $0 }.joined(separator: ", ") + " 줄이 없어도 들어갑니다."))
-                .font(WL.caption).foregroundStyle(WL.faint)
+                .font(WL.caption).foregroundStyle(WL.quiet)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -441,7 +441,7 @@ struct WorkLogPreview: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("레드마인에 \(updates.count)건을 보낼까요?").font(WL.title)
                 Text("보내면 레드마인에 바로 반영됩니다. 잘못 보냈으면 레드마인 탭 > 보낸 기록에서 되돌릴 수 있습니다.")
-                    .font(.system(size: 12.5)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 13)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
             }
             if !lowering.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -450,7 +450,7 @@ struct WorkLogPreview: View {
                          + lowering.map { "#\($0.issue)" }.joined(separator: ", "))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(WL.waiting)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -577,7 +577,7 @@ struct WorkLogPreview: View {
                 .tip(chosen ? "이번에 보내지 않기" : "이번에 보내기")
                 IssueLabel(issue: update.issue)
                 if current?.isQA == true {
-                    Text("QA").font(.system(size: 9.5, weight: .bold)).foregroundStyle(WL.waiting)
+                    Text("QA").font(.system(size: 11, weight: .bold)).foregroundStyle(WL.waiting)
                         .padding(.horizontal, 5).frame(height: 15)
                         .background(Capsule().fill(WL.waiting.opacity(0.14)))
                         .tip("QA 수정사항으로 묶여 보고됩니다")
@@ -598,7 +598,7 @@ struct WorkLogPreview: View {
                     .font(WL.heading).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Text(current.project).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1)
             } else {
-                Text("일감 정보를 받는 중…").font(WL.caption).foregroundStyle(WL.faint)
+                Text("일감 정보를 받는 중…").font(WL.caption).foregroundStyle(WL.quiet)
             }
         }
     }
@@ -650,7 +650,7 @@ struct WorkLogPreview: View {
         func cell(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
             Button(action: action) {
                 Text(title)
-                    .font(.system(size: 12, weight: selected ? .semibold : .medium)).monospacedDigit()
+                    .font(.system(size: 13, weight: selected ? .semibold : .medium)).monospacedDigit()
                     .foregroundStyle(selected ? Color.white : WL.text)
                     .frame(maxWidth: .infinity).frame(height: 28)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selected ? WL.accent : Color.primary.opacity(0.05)))
@@ -680,9 +680,9 @@ struct WorkLogPreview: View {
         let noNote = page.redmineNoNote.contains(update.issue)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "checkmark.bubble").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "checkmark.bubble").font(.system(size: 12.5, weight: .semibold))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("같은 댓글이 이미 있습니다").font(.system(size: 11.5, weight: .semibold))
+                    Text("같은 댓글이 이미 있습니다").font(.system(size: 12.5, weight: .semibold))
                     Text(!noNote ? "댓글도 다시 보냅니다"
                          : nothingElse(update) ? "진척률·칸도 이미 같아, 보내면 보낸 것으로만 표시합니다"
                          : "이번에는 댓글을 빼고 진척률·칸만 보냅니다")
@@ -909,7 +909,7 @@ struct WorkLogPreview: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text(update.note)
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .foregroundStyle(WL.text)
                     .lineLimit(expanded ? nil : noNote ? 2 : 6)
                     .lineSpacing(3)
@@ -923,7 +923,7 @@ struct WorkLogPreview: View {
                     }
                     .buttonStyle(TextLinkButtonStyle(tint: WL.accent))
                     .labelStyle(.titleAndIcon)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: 12.5, weight: .medium))
                 }
             }
             .padding(10)
@@ -988,14 +988,14 @@ struct WorkLogPreview: View {
                             }
                             .buttonStyle(TextLinkButtonStyle(tint: WL.accent))
                             .labelStyle(.titleAndIcon)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(.system(size: 12.5, weight: .medium))
                         }
                         if plan.dropped > 0 {
                             Label("한 댓글에 \(MRScreens.maxImages)장까지 붙어 뒤 화면 \(plan.dropped)장은 빠집니다", systemImage: "exclamationmark.circle")
                                 .font(WL.caption).foregroundStyle(WL.waiting)
                         }
                         Text("댓글 끝 [수정 전·후 화면]에 이 순서로 붙습니다. 누르면 크게 봅니다.")
-                            .font(WL.caption).foregroundStyle(WL.faint)
+                            .font(WL.caption).foregroundStyle(WL.quiet)
                     }
                     if !plan.loading && plan.orphaned > 0 {
                         Label("일지에 줄이 없는 일감 번호가 적힌 화면 \(plan.orphaned)장은 붙지 않습니다", systemImage: "questionmark.circle")
@@ -1048,7 +1048,7 @@ struct WorkLogPreview: View {
                             Button("원래 일감으로") { page.screenPicks.moves[group.key] = nil }
                         }
                     } label: {
-                        Image(systemName: "arrow.left.arrow.right").font(.system(size: 10, weight: .semibold))
+                        Image(systemName: "arrow.left.arrow.right").font(.system(size: 11.5, weight: .semibold))
                     }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .foregroundStyle(WL.muted)
@@ -1057,7 +1057,7 @@ struct WorkLogPreview: View {
             }
             HStack(spacing: 4) {
                 thumb(group.before, kind: .before)
-                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(WL.faint)
+                Image(systemName: "arrow.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(WL.quiet)
                 thumb(group.after, kind: .after)
             }
             .opacity(group.included ? 1 : 0.4)
@@ -1076,7 +1076,7 @@ struct WorkLogPreview: View {
 
     private func badge(_ text: String, tip: String, tint: Color) -> some View {
         Text(text)
-            .font(.system(size: 9.5, weight: .semibold))
+            .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 6)
             .frame(height: 16)
@@ -1159,7 +1159,7 @@ struct WorkLogPreview: View {
                 if let image {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
                 } else {
-                    Text(path == nil ? "캡처 없음" : "불러오는 중").font(WL.caption).foregroundStyle(WL.faint)
+                    Text(path == nil ? "캡처 없음" : "불러오는 중").font(WL.caption).foregroundStyle(WL.quiet)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1169,7 +1169,7 @@ struct WorkLogPreview: View {
                 .strokeBorder(WL.border, style: StrokeStyle(lineWidth: 1, dash: path == nil ? [3, 3] : [])))
             .overlay(alignment: .topLeading) {
                 Text(kind.label)
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .frame(height: 16)
@@ -1332,8 +1332,8 @@ private struct FieldChip: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 8.5, weight: .semibold))
-            Text(text).font(.system(size: 11, weight: .medium)).monospacedDigit()
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Text(text).font(.system(size: 12.5, weight: .medium)).monospacedDigit()
         }
         .foregroundStyle(picked ? Color.white : WL.accent)
         .padding(.horizontal, 7)

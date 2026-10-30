@@ -188,7 +188,7 @@ struct DesignChangeTreeView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .wlSurface()
             Text("번호는 화면 비교의 표시와 같습니다. 줄을 누르면 화면에서 그 자리를 강조하고, 동그라미로 반영한 것을 체크합니다.")
-                .font(WL.caption).foregroundStyle(WL.faint).fixedSize(horizontal: false, vertical: true)
+                .font(WL.caption).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -203,10 +203,10 @@ struct DesignChangeTreeView: View {
             if isFolded { page.foldedChangeGroups.remove(node.id) } else { page.foldedChangeGroups.insert(node.id) }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .bold))
-                    .rotationEffect(.degrees(isFolded ? 0 : 90)).foregroundStyle(WL.faint).frame(width: 12)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                    .rotationEffect(.degrees(isFolded ? 0 : 90)).foregroundStyle(WL.muted).frame(width: 12)
                 Image(systemName: node.name == DesignChangeTree.unknownGroup ? "questionmark.square.dashed" : "square.on.square.dashed")
-                    .font(.system(size: 11)).foregroundStyle(WL.muted)
+                    .font(.system(size: 12.5)).foregroundStyle(WL.muted)
                 Text(node.name).font(WL.heading).foregroundStyle(WL.text).lineLimit(1).truncationMode(.middle)
                     .tip(node.name)
                 Spacer(minLength: 6)
@@ -259,7 +259,7 @@ struct DesignChangeTreeView: View {
                     NSPasteboard.general.setString(text, forType: .string)
                     page.flash(change.op == .removed ? "지운 문구를 복사했습니다" : "바뀐 문구를 복사했습니다")
                 } label: {
-                    Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundStyle(WL.muted).frame(width: 22, height: 22)
+                    Image(systemName: "doc.on.doc").font(.system(size: 12.5)).foregroundStyle(WL.muted).frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
                 .tip(change.op == .removed ? "지운 문구 복사" : "마크업에 넣을 문구 복사")
@@ -279,7 +279,7 @@ struct ChangeNumber: View {
     var body: some View {
         let color = DesignChangeTree.color(op)
         Text("\(number)")
-            .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+            .font(.system(size: 11, weight: .bold).monospacedDigit())
             .foregroundStyle(filled ? Color.white : color)
             .padding(.horizontal, 4)
             .frame(minWidth: 17, minHeight: 17)

@@ -8,7 +8,10 @@ struct DesignScreenRow: View {
     let state: ScreenState
     /// 같은 화면 ID의 다른 프레임과 가를 이름.
     var note: String?
+    /// 반영하지 않은 변경 수.
     let changes: Int
+    /// 구현 체크한 기능 명세 수.
+    var built = 0
     let selected: Bool
     let select: () -> Void
     @StateObject private var hover = HoveredKey()
@@ -20,10 +23,10 @@ struct DesignScreenRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(screen.title.isEmpty ? screen.screenID : screen.title)
-                            .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            .font(.system(size: 13.5, weight: .medium)).lineLimit(1)
                         Spacer(minLength: 4)
                         if changes > 0 {
-                            Text("변경 \(changes)").font(WL.label).foregroundStyle(WL.accent).fixedSize()
+                            Text("반영할 변경 \(changes)").font(WL.label).foregroundStyle(WL.accent).fixedSize()
                         }
                     }
                     HStack(spacing: 6) {
@@ -31,7 +34,12 @@ struct DesignScreenRow: View {
                         if let note, !note.isEmpty {
                             Text(note).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1)
                         }
-                        Text("명세 \(screen.items.count)").font(WL.meta).foregroundStyle(WL.faint).fixedSize()
+                        if built > 0 && !screen.items.isEmpty {
+                            Text("구현 \(built)/\(screen.items.count)").font(WL.meta)
+                                .foregroundStyle(built == screen.items.count ? WL.done : WL.muted).fixedSize()
+                        } else if !screen.items.isEmpty {
+                            Text("명세 \(screen.items.count)").font(WL.meta).foregroundStyle(WL.muted).fixedSize()
+                        }
                         Spacer(minLength: 0)
                     }
                     .tip(DesignFormat.path(screen.menuPath))
@@ -61,7 +69,7 @@ struct MoreMenu<Content: View>: View {
 
     var body: some View {
         Menu { content } label: {
-            Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold)).foregroundStyle(WL.text)
+            Image(systemName: "ellipsis").font(.system(size: 13.5, weight: .semibold)).foregroundStyle(WL.text)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -80,7 +88,7 @@ struct DesignStateDot: View {
     var body: some View {
         Circle()
             .fill(state == .done ? WL.done : state == .working ? WL.waiting : Color.secondary.opacity(0.35))
-            .frame(width: 7, height: 7)
+            .frame(width: 8, height: 8)
             .tip(DesignStateDot.name(state))
     }
 
@@ -96,27 +104,19 @@ struct DesignScreenDetail: View {
     @ObservedObject var sync: DesignSync
     @ObservedObject var page: DesignHistoryPage
     @ObservedObject private var images = DesignImages.shared
+    @StateObject private var hover = HoveredKey()
 
     var body: some View {
+        // 칸을 둘로 나누지 않고 한 칸으로 쌓는다. 너비는 칸 경계를 끌어 정하고, 이미지는 그 너비를 따라 커진다
         GeometryReader { geo in
-            let wide = geo.size.width >= 1040
+            let width = min(geo.size.width - 64, DesignHistoryView.detailMaxWidth)
             SlimScrollView {
-                if wide {
-                    HStack(alignment: .top, spacing: 28) {
-                        VStack(alignment: .leading, spacing: 22) { header; actionRow(compact: geo.size.width * 0.52 < 560); shot(maxHeight: 1400) }
-                            .frame(width: (geo.size.width * 0.52).rounded(), alignment: .leading)
-                        VStack(alignment: .leading, spacing: 22) { content }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(.horizontal, 28).padding(.vertical, 24)
-                } else {
-                    VStack(alignment: .leading, spacing: 22) {
-                        header; actionRow(compact: min(geo.size.width - 64, 760) < 560); shot(maxHeight: 640); content
-                    }
-                    .padding(.horizontal, 32).padding(.vertical, 26)
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 22) {
+                    header; actionRow(compact: width < 560); pendingBlock; shot(maxHeight: max(640, width * 1.2)); content
                 }
+                .padding(.horizontal, 32).padding(.vertical, 26)
+                .frame(maxWidth: DesignHistoryView.detailMaxWidth + 64, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -124,7 +124,8 @@ struct DesignScreenDetail: View {
     private var state: ScreenState { sync.state(of: screen, in: fileKey) }
     private var link: URL? { FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID) }
     private var history: [DesignEvent] { sync.events(for: screen, in: fileKey) }
-    private var version: String? { sync.history.files[fileKey]?.version }
+    /// 메뉴만 받은 화면은 파일 버전보다 새 버전으로 받았을 수 있어 화면마다 받은 버전으로 그린다.
+    private var version: String? { sync.history.files[fileKey]?.version(of: screen.frameID) }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -148,7 +149,7 @@ struct DesignScreenDetail: View {
                 ProjectSwatch(name: sync.projectName(fileKey), size: 7)
                 Text(([sync.projectName(fileKey)] + meta).joined(separator: " · ")).lineLimit(2)
             }
-            .font(WL.meta).foregroundStyle(WL.faint).textSelection(.enabled)
+            .font(WL.meta).foregroundStyle(WL.muted).textSelection(.enabled)
         }
     }
 
@@ -178,6 +179,14 @@ struct DesignScreenDetail: View {
                 }
                 Button("화면 ID 복사") { copy(screen.screenID, "‘\(screen.screenID)’를 복사했습니다") }
                 Divider()
+                if sync.canFetchMenu(fileKey, screen.menuPath) {
+                    Button("이 메뉴 새로 가져오기") {
+                        sync.syncMenu(screen.menuPath, in: fileKey) { count in
+                            page.flash(count > 0 ? "변경 \(count)건을 찾았습니다" : "새 변경이 없습니다")
+                        }
+                    }
+                    .disabled(sync.isBusy(fileKey, menu: screen.menuPath) || !DesignSyncSettings.shared.hasToken)
+                }
                 Button("이 화면 날짜별 비교…") { DesignScreenDetail.compareDates(fileKey: fileKey, screen: screen, page: page) }
                 Button("업무 일지 오늘 칸에 넣기") {
                     page.flash(sync.addToWorkLog(screen, in: fileKey) ? "업무 일지 오늘 칸에 넣었습니다" : "업무 일지에 넣지 못했습니다")
@@ -246,7 +255,7 @@ struct DesignScreenDetail: View {
                         } else {
                             VStack(spacing: 6) {
                                 ProgressView().controlSize(.small)
-                                Text("피그마에서 그리는 중…").font(WL.caption).foregroundStyle(WL.faint)
+                                Text("피그마에서 그리는 중…").font(WL.caption).foregroundStyle(WL.muted)
                             }
                         }
                     }
@@ -259,8 +268,11 @@ struct DesignScreenDetail: View {
 
     /// 이 화면과 같은 메뉴의 화면들. 화면 목록에서 이어서 누를 것들이다.
     private var neighbours: [String] {
+        // 한 번에 한 버전으로 그려 달라고 하므로 같은 버전으로 받은 화면만 함께 받는다
+        let file = sync.history.files[fileKey]
         let siblings = sync.screens(fileKey, under: screen.menuPath, exact: true).map(\.frameID)
-        return [screen.frameID] + siblings.filter { $0 != screen.frameID }.prefix(DesignImages.batchSize - 1)
+            .filter { $0 != screen.frameID && file?.version(of: $0) == version }
+        return [screen.frameID] + siblings.prefix(DesignImages.batchSize - 1)
     }
 
     @ViewBuilder private var content: some View {
@@ -286,7 +298,10 @@ struct DesignScreenDetail: View {
                         }
                         .padding(.vertical, 10)
                         .opacity(built.contains(item.text) ? 0.45 : 1)
+                        Spacer(minLength: 4)
+                        copyButton("spec\(index)", text: item.text, name: "기능 명세 \(item.number)").padding(.top, 9)
                     }
+                    .onHover { hover.update("spec\(index)", $0) }
                 }
             }
         }
@@ -301,7 +316,7 @@ struct DesignScreenDetail: View {
                                 .font(WL.body).lineLimit(1)
                             Spacer(minLength: 4)
                             if sync.history.isApplied(event) { Text("반영 완료").font(WL.label).foregroundStyle(WL.done) }
-                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(WL.faint)
+                            Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(WL.muted)
                         }
                         .padding(.vertical, 10)
                         .contentShape(Rectangle())
@@ -310,9 +325,100 @@ struct DesignScreenDetail: View {
                 }
             }
         }
-        foldable("목업 문구", items: ScreenBrief.orderedTexts(screen), open: $page.showsScreenTexts)
+        textList
         foldable("컴포넌트", items: ScreenBrief.components(screen).map { $0.count > 1 ? "\($0.name) ×\($0.count)" : $0.name },
                  open: $page.showsScreenComponents)
+    }
+
+    /// 이 화면에서 아직 반영하지 않은 변경. 마크업을 마치면 한 번에 반영 완료로 넘긴다.
+    @ViewBuilder private var pendingBlock: some View {
+        let pending = sync.pendingEvents(for: screen, in: fileKey)
+        if !pending.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.circle.fill").font(.system(size: 14)).foregroundStyle(WL.accent)
+                    Text("반영할 변경 \(pending.count)건").font(WL.heading)
+                    Spacer(minLength: 8)
+                    Button("모두 반영 완료") {
+                        pending.forEach { sync.setApplied($0.id, true) }
+                        page.flash("반영할 변경 \(pending.count)건을 반영 완료로 넘겼습니다. 사이드바 ‘반영 완료’에서 되돌립니다")
+                    }
+                    .buttonStyle(NotionButtonStyle())
+                    .tip("이 화면의 변경을 마크업에 다 반영했으면 목록과 알림에서 뺍니다")
+                }
+                ForEach(pending.prefix(5), id: \.id) { event in
+                    Button { page.selected = event.id; sync.markSeen([event.id]) } label: {
+                        HStack(spacing: 8) {
+                            Text(DesignFormat.stamp(event.detectedAt)).font(WL.number).foregroundStyle(WL.muted).fixedSize()
+                            Text(event.summary).font(WL.body).lineLimit(1)
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(WL.muted)
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .tip("눌러서 전·후 비교와 바뀐 항목 보기")
+                }
+                if pending.count > 5 {
+                    Text("외 \(pending.count - 5)건은 아래 ‘이 화면의 변경’에 있습니다").font(WL.caption).foregroundStyle(WL.muted)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: WL.outer, style: .continuous).fill(WL.selected.opacity(0.6)))
+        }
+    }
+
+    /// 목업 문구를 화면 위에서 아래 순서로 한 줄씩. 누르면 그 글자를 복사해 마크업에 그대로 붙인다.
+    @ViewBuilder private var textList: some View {
+        let texts = ScreenBrief.orderedTexts(screen)
+        if !texts.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Button { page.showsScreenTexts.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                            .rotationEffect(.degrees(page.showsScreenTexts ? 90 : 0))
+                        SectionLabel("목업 문구 · 누르면 복사", trailing: "\(texts.count)")
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if page.showsScreenTexts {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(texts.enumerated()), id: \.offset) { index, text in
+                            if index > 0 { RowDivider(inset: 0) }
+                            Button { copy(text, "‘\(DesignText.headline(text, limit: 30))’를 복사했습니다") } label: {
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(text).font(WL.body).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 4)
+                                    Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(WL.muted)
+                                        .opacity(hover.key == "text\(index)" ? 1 : 0)
+                                }
+                                .padding(.vertical, 8)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { hover.update("text\(index)", $0) }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .wlSurface()
+                }
+            }
+        }
+    }
+
+    /// 줄에 올렸을 때만 보이는 복사 단추.
+    private func copyButton(_ key: String, text: String, name: String) -> some View {
+        Button { copy(text, "\(name)를 복사했습니다") } label: {
+            Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(WL.muted).frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hover.key == key ? 1 : 0)
+        .tip("\(name) 글 복사")
     }
 
     @ViewBuilder private func foldable(_ title: String, items: [String], open: Binding<Bool>) -> some View {
@@ -320,7 +426,7 @@ struct DesignScreenDetail: View {
             VStack(alignment: .leading, spacing: 8) {
                 Button { open.wrappedValue.toggle() } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
                             .rotationEffect(.degrees(open.wrappedValue ? 90 : 0))
                         SectionLabel(title, trailing: "\(items.count)")
                     }

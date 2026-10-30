@@ -20,7 +20,7 @@ struct CalendarPageView: View {
                 SevenColumns {
                     ForEach(WorkLogFormat.weekdays, id: \.number) { day in
                         Text(day.name)
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(WorkLogFormat.weekdayTint(day.number) ?? WL.muted)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                             .padding(.trailing, 10)
@@ -108,11 +108,11 @@ struct CalendarPageView: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 if let holiday {
-                    Text(holiday).font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.red).lineLimit(1)
+                    Text(holiday).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Palette.red).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Text(WorkLogFormat.dayNumber(day))
-                    .font(.system(size: 12.5, weight: isToday ? .bold : .medium).monospacedDigit())
+                    .font(.system(size: 13, weight: isToday ? .bold : .medium).monospacedDigit())
                     .foregroundStyle(isToday ? Color.white : tint ?? WL.text)
                     .frame(minWidth: 22, minHeight: 22)
                     .background { if isToday { Circle().fill(Palette.red) } }
@@ -122,14 +122,14 @@ struct CalendarPageView: View {
                 HStack(spacing: 5) {
                     Circle().fill(WL.projectColor(entry.project)).frame(width: 6, height: 6)
                     Text(WorkLogFormat.breadcrumb(entry.title).leaf)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12.5))
                         .foregroundStyle(entry.status.isFinished ? WL.text : WL.accent)
                         .lineLimit(1)
                 }
                 .frame(height: 14)
             }
             if entries.count > shown {
-                Text("\(entries.count - shown)개 더").font(.system(size: 10.5, weight: .medium)).foregroundStyle(WL.muted)
+                Text("\(entries.count - shown)개 더").font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.muted)
                     .frame(height: 14)
             }
             Spacer(minLength: 0)
@@ -195,7 +195,7 @@ struct CalendarPageView: View {
                                 HStack(spacing: 8) {
                                     StatusGlyph(status: entry.status)
                                     Text(path == nil ? entry.title : WorkLogFormat.breadcrumb(entry.title).leaf)
-                                        .font(.system(size: 12.5))
+                                        .font(.system(size: 13))
                                         .lineLimit(1)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .tip(entry.title)

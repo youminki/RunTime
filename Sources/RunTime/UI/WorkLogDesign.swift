@@ -17,12 +17,12 @@ enum WL {
     static let pageTitle = Font.system(size: 26, weight: .bold)
     static let title = Font.system(size: 20, weight: .semibold)
     static let section = Font.system(size: 15, weight: .semibold)
-    static let heading = Font.system(size: 13, weight: .semibold)
-    static let body = Font.system(size: 13)
-    static let meta = Font.system(size: 11.5)
-    static let caption = Font.system(size: 11)
-    static let label = Font.system(size: 10.5, weight: .medium)
-    static let number = Font.system(size: 11.5, weight: .medium).monospacedDigit()
+    static let heading = Font.system(size: 13.5, weight: .semibold)
+    static let body = Font.system(size: 13.5)
+    static let meta = Font.system(size: 12.5)
+    static let caption = Font.system(size: 12)
+    static let label = Font.system(size: 11.5, weight: .medium)
+    static let number = Font.system(size: 12.5, weight: .medium).monospacedDigit()
     static let figure = Font.system(size: 19, weight: .semibold, design: .rounded).monospacedDigit()
 
     // 색: 노션처럼 흰 종이에 따뜻한 회색. 강조는 파랑 하나, 상태색은 채도를 낮춘다
@@ -103,7 +103,7 @@ struct SectionLabel: View {
         HStack {
             Text(text).font(WL.label).foregroundStyle(.secondary)
             Spacer()
-            if let trailing { Text(trailing).font(WL.label).foregroundStyle(.tertiary).monospacedDigit() }
+            if let trailing { Text(trailing).font(WL.label).foregroundStyle(WL.muted).monospacedDigit() }
         }
     }
 }
@@ -179,7 +179,7 @@ struct IssueLabel: View {
         HStack(spacing: 4) {
             if let posted {
                 if posted {
-                    Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(WL.done)
+                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(WL.done)
                 } else {
                     Circle().fill(WL.waiting).frame(width: 5, height: 5)
                 }
@@ -252,9 +252,9 @@ struct MetricBar: View {
                 Button(action: action.run) {
                     HStack(spacing: 4) {
                         Text(action.title)
-                        Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
+                        Image(systemName: "arrow.right").font(.system(size: 11.5, weight: .semibold))
                     }
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(WL.waiting)
                     .fixedSize()
                 }
@@ -275,7 +275,7 @@ struct SquareIconButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11.5, weight: .semibold))
+            .font(.system(size: 12.5, weight: .semibold))
             .foregroundStyle(.secondary)
             .frame(width: size, height: size)
             .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
@@ -297,7 +297,7 @@ struct GhostIconButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(hover.on ? Color.primary : Color.secondary)
                 .frame(width: 24, height: 24)
                 .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
@@ -314,7 +314,7 @@ struct TextLinkButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(tint.opacity(configuration.isPressed ? 0.6 : 1))
             .contentShape(Rectangle())
     }
@@ -342,7 +342,7 @@ struct Toast: View {
 
     var body: some View {
         Text(message)
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(.regularMaterial, in: Capsule())
@@ -402,7 +402,7 @@ struct ChipButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(selected ? Color.white : Color.primary)
             .padding(.horizontal, 10)
             .frame(height: 24)
@@ -432,9 +432,9 @@ struct PageTabs<Value: Hashable>: View {
                 Button { selection = item.value } label: {
                     VStack(spacing: 0) {
                         ZStack {
-                            Text(item.title).font(.system(size: 13, weight: .semibold)).hidden()
+                            Text(item.title).font(.system(size: 13.5, weight: .semibold)).hidden()
                             Text(item.title)
-                                .font(.system(size: 13, weight: on ? .semibold : .regular))
+                                .font(.system(size: 13.5, weight: on ? .semibold : .regular))
                                 .foregroundStyle(on ? WL.text : WL.muted)
                         }
                         .lineLimit(1)
@@ -491,7 +491,7 @@ struct PageHeading<Meta: View, Accessory: View>: View {
 
     private var summary: some View {
         HStack(spacing: 14) { meta }
-            .font(.system(size: 13))
+            .font(.system(size: 13.5))
             .foregroundStyle(WL.muted)
             .lineLimit(1)
             .fixedSize()
@@ -505,7 +505,7 @@ struct DayBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11.5, weight: .semibold))
+            .font(.system(size: 12.5, weight: .semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 7)
             .frame(height: 20)
@@ -538,9 +538,9 @@ struct HeadingAction: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let icon { Image(systemName: icon).font(.system(size: 11, weight: .semibold)) }
-                Text(title).font(.system(size: 12.5, weight: .semibold)).monospacedDigit()
-                Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold))
+                if let icon { Image(systemName: icon).font(.system(size: 12.5, weight: .semibold)) }
+                Text(title).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                Image(systemName: "arrow.right").font(.system(size: 11.5, weight: .bold))
             }
             .foregroundStyle(tint)
             .padding(.horizontal, 11)
@@ -562,7 +562,7 @@ struct NotionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: kind == .primary ? .semibold : .medium))
+            .font(.system(size: 13.5, weight: kind == .primary ? .semibold : .medium))
             .foregroundStyle(kind == .primary ? Color.white : WL.text)
             .lineLimit(1)
             .fixedSize(horizontal: !fill, vertical: false)
@@ -600,7 +600,7 @@ struct ToggleHeading<Trailing: View>: View {
             Button(action: toggle) {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(hover.on ? WL.muted : WL.faint)
                         .rotationEffect(.degrees(collapsed ? 0 : 90))
                         .frame(width: 16, height: 16)
@@ -792,7 +792,7 @@ private struct TipLabel: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11.5, weight: .medium))
+            .font(.system(size: 12.5, weight: .medium))
             .foregroundStyle(WL.text)
             .lineSpacing(2)
             .frame(width: width, alignment: .leading)
@@ -810,7 +810,7 @@ struct PathHeading: View {
 
     var body: some View {
         Text(path)
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(WL.muted)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -909,7 +909,7 @@ struct PillButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: 12.5, weight: .medium))
                 .labelStyle(PillLabelStyle())
                 .foregroundStyle(tint ?? WL.text)
                 .lineLimit(1)
@@ -930,7 +930,7 @@ struct PillButtonStyle: ButtonStyle {
     private struct PillLabelStyle: LabelStyle {
         func makeBody(configuration: Configuration) -> some View {
             HStack(spacing: 4) {
-                configuration.icon.font(.system(size: 10, weight: .semibold))
+                configuration.icon.font(.system(size: 11.5, weight: .semibold))
                 configuration.title
             }
         }
@@ -946,8 +946,8 @@ struct CardSectionHeader<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.muted).frame(width: 14)
-            Text(title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(WL.muted)
+            Image(systemName: icon).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(WL.muted).frame(width: 14)
+            Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(WL.muted)
             if let detail {
                 Text(detail).font(WL.number).foregroundStyle(.primary).lineLimit(1)
             }

@@ -25,6 +25,35 @@ import Testing
         #expect(prompt.contains("[요청]\n- [바뀐 것]만 반영하고"))
     }
 
+    @Test func menuGroupsChangesByScreenAndSkipsDoneScreens() {
+        let first = event([SpecChange(layer: .text, op: .added, label: "", after: "엑셀 다운로드")])
+        let applied = SpecChange(layer: .text, op: .removed, label: "", before: "인쇄")
+        let second = event([applied])
+        let screen = ScreenSnapshot(frameID: "1:1", screenID: "SC-RSV-001", title: "예약 조회", menuPath: "예약 > 예약 조회",
+                                    items: [SpecItem(number: "1", text: "검색")])
+        let other = ScreenSnapshot(frameID: "1:2", screenID: "SC-RSV-002", title: "예약 상세", menuPath: "예약 > 예약 상세")
+        let prompt = ClaudePrompt.menu([(screen, [first], URL(string: "https://figma.com/a")), (other, [second], nil)],
+                                       path: "예약", project: "Demo", done: [second.id: [applied.key]])
+        #expect(prompt.hasPrefix("아래 피그마 화면설계서 ‘예약’ 메뉴의 변경을"))
+        #expect(prompt.contains("[화면] SC-RSV-001 예약 조회\n- 화면 경로: 예약 > 예약 조회\n- 피그마: https://figma.com/a"))
+        #expect(prompt.contains("엑셀 다운로드"))
+        // 모두 반영한 화면과 화면마다의 전체 명세는 넣지 않는다
+        #expect(!prompt.contains("SC-RSV-002"))
+        #expect(!prompt.contains("[지금 기능 명세]"))
+    }
+
+    @Test func menuBuildListsRemainingSpecsAndSkipsFinishedScreens() {
+        let open = ScreenSnapshot(frameID: "1:1", screenID: "SC-RSV-001", title: "예약 조회", menuPath: "예약 > 예약 조회",
+                                  items: [SpecItem(number: "1", text: "검색"), SpecItem(number: "2", text: "목록")])
+        let done = ScreenSnapshot(frameID: "1:2", screenID: "SC-RSV-002", title: "예약 상세", menuPath: "예약 > 예약 상세",
+                                  items: [SpecItem(number: "1", text: "상세")])
+        let prompt = ClaudePrompt.menuBuild([(open, URL(string: "https://figma.com/a"), ["검색"]), (done, nil, ["상세"])],
+                                            path: "예약", project: "Demo")
+        #expect(prompt.contains("[화면] SC-RSV-001 예약 조회\n- 화면 경로: 예약 > 예약 조회\n- 피그마: https://figma.com/a"))
+        #expect(prompt.contains("[남은 기능 명세] 1/2 (나머지는 구현함)\n2. 목록"))
+        #expect(!prompt.contains("SC-RSV-002"))
+    }
+
     @Test func lineDiffKeepsOrder() {
         #expect(ClaudePrompt.lineDiff("a\nb\nc\nd", "a\nB\nc\nd\ne") == ["- b", "+ B", "+ e"])
     }

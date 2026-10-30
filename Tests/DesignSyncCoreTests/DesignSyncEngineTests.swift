@@ -200,3 +200,73 @@ private final class FakeFigma: @unchecked Sendable {
         #expect(Set(snapshot.allScreens.map(\.screenID)) == ["SC-ORD-001", "SC-DLV-001"])
     }
 }
+
+/// 메뉴 하나만 받을 때.
+@Suite struct DesignMenuFetchTests {
+    private func pages(order: [(String, String)] = [("1", "검색")], delivery: [(String, String)] = [("1", "조회")],
+                       history: [(String, String, String)] = [("0.1", "2026-08-20", "최초 작성")]) -> [FigmaNode] {
+        [Spec.page("1:1", "주문", [
+            Spec.section("2:1", "주문_v1", [Spec.screen("10:1", screenID: "SC-ORD-001", path: "주문 > 목록", items: order)]),
+            Spec.section("2:5", "간지", [Spec.changelog("2:6", rows: [("0.1", "2026-08-20", "주문 작성")])]),
+         ]),
+         Spec.page("1:2", "배송", [
+            Spec.section("3:1", "배송_v1", [Spec.screen("20:1", screenID: "SC-DLV-001", path: "배송 > 조회", items: delivery),
+                                            Spec.screen("20:2", screenID: "SC-DLV-002", path: "배송 > 상세")]),
+            Spec.section("4:1", "간지", [Spec.changelog("4:3", rows: history)]),
+         ])]
+    }
+
+    @Test func fetchesOnlyTheMenuPageAndKeepsTheProjectBaseline() async throws {
+        let figma = FakeFigma()
+        figma.pages = pages()
+        let source = DesignSource(fileKey: "Demo")
+        var history = DesignHistory()
+        guard case .captured(let first) = try await DesignSyncEngine.run(source: source, token: "t", known: nil, transport: figma.transport)
+        else { Issue.record("처음에는 받아야 한다"); return }
+        history.record(first, at: Date(timeIntervalSince1970: 1_790_000_000))
+        let baseline = history.files["Demo"]
+
+        // 두 메뉴가 다 바뀌어도 배송만 받으면 배송 페이지만 보고 배송 화면만 남는다
+        figma.lastModified = "2026-10-21T02:00:00Z"
+        figma.pages = pages(order: [("1", "검색"), ("2", "초기화")], delivery: [("1", "조회"), ("2", "엑셀 다운로드")],
+                            history: [("0.1", "2026-08-20", "최초 작성"), ("0.2", "2026-10-21", "엑셀 추가")])
+        let before = figma.count
+        guard case .captured(let menu) = try await DesignSyncEngine.runMenu(source: source, paths: ["배송"], token: "t",
+                                                                           known: history.files["Demo"], transport: figma.transport)
+        else { Issue.record("바뀐 메뉴는 받아야 한다"); return }
+        #expect(figma.count == before + 3)   // 파일 정보, 배송 페이지 뼈대, 화면 한 묶음
+        #expect(menu.coveredPages == ["1:2"])
+        #expect(menu.partial)
+        let events = history.record(menu, at: Date(timeIntervalSince1970: 1_790_100_000))
+        #expect(Set(events.map(\.kind)) == [.changed, .changelog])
+        #expect(events.filter { $0.kind == .changed }.map(\.screenID) == ["SC-DLV-001"])
+        // 파일 기준은 그대로라 다음 프로젝트 가져오기가 주문 변경을 놓치지 않는다
+        #expect(history.files["Demo"]?.lastModified == baseline?.lastModified)
+        #expect(history.files["Demo"]?.syncedAt == baseline?.syncedAt)
+        #expect(history.files["Demo"]?.changelog.filter { $0.pageID == "1:1" }.count == 1)
+
+        // 그대로인 메뉴는 파일 정보만 묻는다
+        let again = figma.count
+        guard case .unchanged = try await DesignSyncEngine.runMenu(source: source, paths: ["배송 > 조회"], token: "t",
+                                                                  known: history.files["Demo"], transport: figma.transport)
+        else { Issue.record("받아 둔 메뉴는 다시 받지 않아야 한다"); return }
+        #expect(figma.count == again + 1)
+
+        guard case .captured(let all) = try await DesignSyncEngine.run(source: source, token: "t", known: history.files["Demo"],
+                                                                      transport: figma.transport)
+        else { Issue.record("프로젝트는 다시 받아야 한다"); return }
+        let rest = history.record(all, at: Date(timeIntervalSince1970: 1_790_200_000))
+        // 배송은 이미 남겼으니 주문 변경만 새로 나오고, 배송 이력 줄이 두 번 나오지 않는다
+        #expect(rest.map(\.screenID) == ["SC-ORD-001"])
+    }
+
+    @Test func unknownMenuFallsBackToTheWholeProject() async throws {
+        let figma = FakeFigma()
+        figma.pages = pages()
+        guard case .captured(let capture) = try await DesignSyncEngine.runMenu(source: DesignSource(fileKey: "Demo"), paths: ["배송"], token: "t",
+                                                                              known: nil, transport: figma.transport)
+        else { Issue.record("처음에는 받아야 한다"); return }
+        #expect(!capture.partial)
+        #expect(capture.coveredPages == ["1:1", "1:2"])
+    }
+}
