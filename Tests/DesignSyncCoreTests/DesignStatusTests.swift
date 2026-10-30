@@ -212,3 +212,20 @@ import Testing
 private extension Array {
     var only: Element? { count == 1 ? first : nil }
 }
+
+/// 알림 메뉴 켜고 끄기: 묶음을 켜면 아래를 덮고, 묶음 안 하나를 끄면 나머지만 남는다.
+@Suite struct DesignAlertToggleTests {
+    let paths = ["계정 > 목록", "계정 > 상세", "계정 > 상세 > 권한", "주문 > 목록"]
+
+    @Test func groupCoversChildrenAndUnfoldsWhenOneIsTurnedOff() {
+        var alerts = DesignStatus.setAlert("계정 > 목록", on: true, in: [], screenPaths: paths)
+        alerts = DesignStatus.setAlert("계정", on: true, in: alerts, screenPaths: paths)
+        #expect(alerts == ["계정"])
+        alerts = DesignStatus.setAlert("계정 > 상세", on: false, in: alerts, screenPaths: paths)
+        #expect(alerts == ["계정 > 목록"])
+        alerts = DesignStatus.setAlert("계정 > 목록", on: false, in: alerts, screenPaths: paths)
+        #expect(alerts.isEmpty)
+        // 묶음 이름이 앞부분만 같은 다른 메뉴는 건드리지 않는다
+        #expect(DesignStatus.setAlert("계", on: false, in: ["계정"], screenPaths: paths) == ["계정"])
+    }
+}

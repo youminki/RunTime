@@ -295,28 +295,36 @@ struct DesignSettingsView: View {
 @MainActor
 final class DesignAlertChoice: ObservableObject {
     @Published var alerts: Set<String> = []
+    /// 접은 묶음
+    @Published var folded: Set<String> = []
 }
 
-/// 알림 받을 메뉴를 고른다. 묶음에 켜면 그 아래 화면(앞으로 생길 것까지)이 모두 들어간다.
+/// 알림 받을 메뉴를 고른다. 모든 단계를 펼친 트리에서 줄마다 스위치로 켜고 끈다.
+/// 묶음에 켜면 그 아래 화면(앞으로 생길 것까지)이 모두 들어가고, 그 안의 하나를 끄면 나머지만 켜진 채로 풀린다.
 struct DesignAlertPicker: View {
     @ObservedObject var sync: DesignSync
     let fileKey: String
     @Environment(\.dismiss) private var dismiss
     @StateObject private var choice = DesignAlertChoice()
 
-    /// 디자인 화면 사이드바와 같은 트리. 여기서는 모두 펼쳐 한눈에 고른다.
-    private var rows: [DesignMenuTree.Row] {
+    private var nodes: [DesignMenuTree.Node] {
         let menus = sync.history.menus().filter { $0.fileKey == fileKey && $0.screenCount > 0 }
-        return DesignMenuTree.rows(DesignMenuTree.build(menus)) { _, _ in false }.filter { $0.kind == .node }
+        return DesignMenuTree.build(menus, compact: false)
+    }
+
+    /// 화면이 있는 경로 전부. 묶음을 풀 때 나머지 메뉴를 하나씩 켜는 데 쓴다.
+    private var screenPaths: [String] {
+        Array(Set(sync.history.files[fileKey]?.screens.values.map(\.menuPath) ?? [])).sorted()
     }
 
     var body: some View {
+        let nodes = nodes
+        let rows = DesignMenuTree.rows(nodes) { node, _ in choice.folded.contains(node.path) }
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("알림 받을 메뉴").font(WL.section)
-                    Text(choice.alerts.isEmpty ? "고른 메뉴가 없으면 알리지 않습니다." : "\(choice.alerts.count)곳에서 완료된 화면이 바뀌면 알립니다.")
-                        .font(WL.meta).foregroundStyle(WL.muted)
+                    Text(summary).font(WL.meta).foregroundStyle(WL.muted)
                 }
                 Spacer()
                 Button("취소") { dismiss() }.buttonStyle(NotionButtonStyle())
@@ -330,22 +338,34 @@ struct DesignAlertPicker: View {
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(18)
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 10)
+            HStack(spacing: 4) {
+                let parents = allParents(nodes)
+                Button(choice.folded.isEmpty ? "모두 접기" : "모두 펼치기") {
+                    choice.folded = choice.folded.isEmpty ? Set(parents) : []
+                }
+                .buttonStyle(TextLinkButtonStyle())
+                .disabled(parents.isEmpty)
+                Spacer()
+                Button("모두 끄기") { choice.alerts = [] }
+                    .buttonStyle(TextLinkButtonStyle())
+                    .disabled(choice.alerts.isEmpty)
+            }
+            .padding(.horizontal, 20).padding(.bottom, 10)
             Rectangle().fill(WL.border).frame(height: 1)
             SlimScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(rows) { item in
-                        let node = item.node
-                        let parent = !node.children.isEmpty
-                        row(parent ? node.path : (node.own?.path ?? node.path), title: node.name,
-                            detail: parent ? "화면 \(node.screens)개 전체" : "화면 \(node.screens)", heading: parent, depth: item.depth)
-                            .padding(.top, item.depth == 0 && item.id != rows.first?.id ? 10 : 0)
+                        row(item.node, depth: item.depth)
+                        if item.depth == 0 && item.id != rows.last?.id && (item.node.children.isEmpty || choice.folded.contains(item.node.path)) {
+                            RowDivider(inset: 0)
+                        }
                     }
                 }
-                .padding(14)
+                .padding(.horizontal, 12).padding(.vertical, 8)
             }
         }
-        .frame(width: 480, height: 540)
+        .frame(width: 520, height: 600)
         .background(WL.canvas)
         .foregroundStyle(WL.text)
         .onAppear {
@@ -353,34 +373,61 @@ struct DesignAlertPicker: View {
         }
     }
 
-    /// 묶음에 켜져 있으면 아래 줄은 함께 켜진 것으로 옅게 두고 따로 끄지 않는다.
-    private func row(_ path: String, title: String, detail: String, heading: Bool, depth: Int) -> some View {
-        let inherited = choice.alerts.contains { $0 != path && DesignStatus.covers($0, path) }
-        let on = inherited || choice.alerts.contains(path)
-        return Button {
-            if choice.alerts.contains(path) {
-                choice.alerts.remove(path)
-            } else if !inherited {
-                choice.alerts = choice.alerts.filter { !DesignStatus.covers(path, $0) }
-                choice.alerts.insert(path)
+    private var summary: String {
+        guard !choice.alerts.isEmpty else { return "고른 메뉴가 없으면 이 프로젝트의 모든 변경을 보고 알림은 보내지 않습니다." }
+        let screens = screenPaths.filter { path in choice.alerts.contains { DesignStatus.covers($0, path) } }.count
+        return "메뉴 \(screens)개에서 완료된 화면이 바뀌면 알립니다. 묶음을 켜면 앞으로 생길 화면도 들어갑니다."
+    }
+
+    private func allParents(_ nodes: [DesignMenuTree.Node]) -> [String] {
+        nodes.flatMap { $0.children.isEmpty ? [] : [$0.path] + allParents($0.children) }
+    }
+
+    private func isOn(_ path: String) -> Bool { choice.alerts.contains { DesignStatus.covers($0, path) } }
+
+    /// 아래 메뉴 가운데 켜진 수와 전체 수. 묶음이 일부만 켜졌는지 보인다.
+    private func coverage(_ path: String) -> (on: Int, total: Int) {
+        let under = screenPaths.filter { DesignStatus.covers(path, $0) }
+        return (under.filter(isOn).count, under.count)
+    }
+
+    /// 사이드바 종 단추와 같은 규칙 (`DesignStatus.setAlert`).
+    private func set(_ path: String, on: Bool) {
+        choice.alerts = Set(DesignStatus.setAlert(path, on: on, in: Array(choice.alerts), screenPaths: screenPaths))
+    }
+
+    private func row(_ node: DesignMenuTree.Node, depth: Int) -> some View {
+        let parent = !node.children.isEmpty
+        let on = isOn(node.path)
+        let count = coverage(node.path)
+        let folded = choice.folded.contains(node.path)
+        return HStack(spacing: 8) {
+            if parent {
+                Button {
+                    if folded { choice.folded.remove(node.path) } else { choice.folded.insert(node.path) }
+                } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                        .rotationEffect(.degrees(folded ? 0 : 90))
+                        .frame(width: 18, height: 30).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(WL.muted)
+                .tip(folded ? "펼치기" : "접기")
+            } else {
+                Color.clear.frame(width: 18, height: 30)
             }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: on ? "bell.fill" : "bell")
-                    .font(.system(size: 12)).foregroundStyle(on ? WL.accent.opacity(inherited ? 0.5 : 1) : WL.faint)
-                    .frame(width: 18)
-                Text(title).font(heading ? WL.heading : WL.body).lineLimit(1).truncationMode(.tail)
-                Spacer()
-                Text(inherited ? "묶음에 포함" : detail).font(WL.meta).foregroundStyle(inherited ? WL.accent.opacity(0.8) : WL.muted)
-            }
-            .padding(.leading, 8 + CGFloat(depth) * 20)
-            .padding(.trailing, 8)
-            .frame(height: 30)
-            .contentShape(Rectangle())
+            Text(node.name).font(parent ? WL.heading : WL.body).lineLimit(1).truncationMode(.tail)
+                .tip(DesignFormat.path(node.path))
+            Spacer(minLength: 8)
+            // 묶음이 일부만 켜졌으면 몇 개인지, 아니면 화면 수
+            Text(!on && count.on > 0 ? "일부 \(count.on)/\(count.total)" : parent ? "메뉴 \(count.total)" : "화면 \(node.screens)")
+                .font(WL.meta).foregroundStyle(!on && count.on > 0 ? WL.accent : WL.muted).monospacedDigit()
+            Toggle("", isOn: Binding(get: { on }, set: { set(node.path, on: $0) }))
+                .toggleStyle(.switch).controlSize(.small).labelsHidden()
+                .tip(parent ? "켜면 이 아래 메뉴 모두, 앞으로 새로 생기는 화면까지 알립니다" : "완료된 화면이 바뀌면 알립니다")
         }
-        .buttonStyle(.plain)
-        // 비활성으로 두면 글자가 흐려져 꺼진 것처럼 보여, 누를 수만 없게 하고 이유를 알린다
-        .tip(DesignFormat.path(path) + "\n" + (inherited ? "묶음에 켠 알림에 들어 있습니다. 따로 끄려면 묶음 알림을 끄세요"
-                                                 : heading ? "켜면 이 아래 화면 모두, 앞으로 새로 생기는 화면까지 알립니다" : detail))
+        .padding(.leading, CGFloat(depth) * 20)
+        .padding(.trailing, 4)
+        .frame(minHeight: 34)
     }
 }

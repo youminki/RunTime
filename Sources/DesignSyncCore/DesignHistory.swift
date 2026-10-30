@@ -56,6 +56,16 @@ public struct DesignEvent: Codable, Equatable, Identifiable, Sendable {
         public var merges: Bool { self == .working || self == .unmarked }
     }
 
+    /// 마크업에 고칠 것이 있는 변경. 새 화면·지운 화면·새 프레임이거나, 번호 이동과 작성자·섹션 표시 말고 바뀐 것이 있을 때다.
+    /// 섹션의 `[수정중]`→`[완료]`만 바뀐 변경은 할 일로 세지 않는다 (Claude 문구에도 들어가지 않는다).
+    public var needsMarkup: Bool {
+        switch kind {
+        case .added, .removed, .replaced: return true
+        case .changelog: return false
+        case .changed: return changes.contains { $0.op != .renumbered && !($0.layer == .header && ClaudePrompt.skippedHeaders.contains($0.label)) }
+        }
+    }
+
     /// 완료 후 변경, 막 완료됨, 상태를 모르는 화면의 변경, 디자이너가 적은 이력. 작업 중으로 확실한 것만 뺀다.
     public var isImportant: Bool { phase != .working }
 

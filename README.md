@@ -180,6 +180,7 @@ python3 -I scripts/update-aliases.py  # Petdex 캐릭터의 한국어 이름을 
 | `--design-compare <파일 키> <기준 날짜> <비교 날짜> [화면 경로 \| screen:화면 ID]` | 날짜 비교를 앱 코드 그대로 두 번 돌려 버전, 변경 종류별 개수, 걸린 시간만 찍음 (두 번째는 저장해 둔 버전을 써서 바로 끝나야 함). 날짜는 `2026-10-25` 꼴 |
 | `--update-check <커밋> <클론 경로> [owner/repo]` | 그 커밋으로 만든 빌드라 치고 GitHub와 견줘, 받을지(낡은 빌드·개발 빌드·판정 미룸) 판정만 찍음 (설치하지 않음) |
 | `--report-preview` | 업데이트 문제를 만든 사람에게 보낼 때의 본문을 보내지 않고 찍음 |
+| `--design-qa <파일 키> <메뉴 경로> <폴더> [notoken \| hide \| verify]` | 디자인 화면을 기록 사본(`RUNTIME_DESIGN_HISTORY`)으로 띄워, 메뉴만 가져오기·대기열·반영·날짜 비교를 앱 함수 그대로 돌리고 피그마 요청 수·사본 파일·스냅숏으로 확인 (`RUNTIME_NO_KEYCHAIN`·`RUNTIME_FIGMA_TOKEN`으로 토큰) |
 | `--diagnose` | 이 Mac의 빌드, macOS, 화면 구성, 업데이트 상태, 최근 문제 기록(`~/Library/Logs/RunTime/events.log`)을 찍음 |
 | `--ui-shots <폴더>` | 팝오버, 앱 창 화면, 업무 일지를 실제 데이터로 찍어 PNG로 저장 (`RUNTIME_SHOTS=main-,worklog-day`처럼 이름 앞부분으로 고를 수 있음) |
 | `--readme-shots <폴더>` | README 그림을 예시 값으로 찍기 (내 사용량과 지갑은 쓰지 않음) |

@@ -282,6 +282,13 @@ if let index = CommandLine.arguments.firstIndex(of: "--update-check") {
     UpdaterCheck.run(args)
     RunLoop.main.run()
 }
+// 디자인 화면 시나리오 시험: 기록 사본(RUNTIME_DESIGN_HISTORY)으로 화면을 띄워 단추를 손쉬운 사용 길로 눌러 본다
+if let index = CommandLine.arguments.firstIndex(of: "--design-qa") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    _ = NSApplication.shared
+    MainActor.assumeIsolated { DesignQA.run(args) }
+    RunLoop.main.run()
+}
 if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
    CommandLine.arguments.dropFirst(index + 1).first == "dupes" {
     MainActor.assumeIsolated { RedmineCheck.dupes() }

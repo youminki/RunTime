@@ -85,6 +85,8 @@ actor FigmaClient {
     /// 한도에 오래(5분 넘게, 또는 기한 없이) 걸렸을 때 그때까지 모든 호출을 보내지 않는다.
     /// 프로젝트·이미지·날짜 비교가 저마다 다시 두드려 한도가 길어지지 않게.
     private(set) var blockedUntil: Date?
+    /// 실제로 보낸 요청 수. 시나리오 시험(`--design-qa`)이 메뉴·프로젝트 가져오기의 요청 수를 견준다.
+    private(set) var sent = 0
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         // 큰 화면설계서는 한 묶음 응답이 수십 MB라 2분으로는 끊긴다
@@ -105,6 +107,7 @@ actor FigmaClient {
             if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
             let data: Data, response: URLResponse
             do {
+                sent += 1
                 (data, response) = try await session.data(for: request)
             } catch let error as URLError where [.timedOut, .networkConnectionLost].contains(error.code) && transient < 2 {
                 // 잠깐 끊긴 것이면 몇 초 쉬고 다시 보낸다 (큰 파일을 받다 한 묶음이 끊겨 전부 버리지 않게)
@@ -377,23 +380,23 @@ final class DesignSync: ObservableObject {
         .sorted { $0.detectedAt > $1.detectedAt }
     }
 
-    /// 이 화면에서 아직 반영하지 않은 변경 (이력 줄 제외).
+    /// 이 화면에서 아직 반영하지 않은, 마크업에 고칠 것이 있는 변경 (이력 줄과 섹션 표시만 바뀐 변경 제외).
     func pendingEvents(for screen: ScreenSnapshot, in fileKey: String) -> [DesignEvent] {
-        events(for: screen, in: fileKey).filter { $0.kind != .changelog && !history.isApplied($0) }
+        events(for: screen, in: fileKey).filter { $0.needsMarkup && !history.isApplied($0) }
     }
 
     /// Claude Code에 붙일 글. 반영할 변경이 있으면 그 변경만, 없으면 화면을 처음 마크업하는 글.
     func claudePrompt(for screen: ScreenSnapshot, in fileKey: String) -> String {
         let link = FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID)
         let pending = pendingEvents(for: screen, in: fileKey)
-        guard !pending.isEmpty else { return ClaudePrompt.build(screen, project: projectName(fileKey), link: link, built: history.built(screen, in: fileKey)) }
-        return ClaudePrompt.changes(pending, screen: screen, project: projectName(fileKey), link: link, done: checkedMap(pending))
+        guard !pending.isEmpty else { return ClaudePrompt.build(screen, link: link, built: history.built(screen, in: fileKey)) }
+        return ClaudePrompt.changes(pending, screen: screen, link: link, done: checkedMap(pending))
     }
 
     func claudePrompt(for event: DesignEvent) -> String {
         let screen = event.frameID.flatMap { history.files[event.fileKey]?.screens[$0] }
         let link = event.frameID.flatMap { FigmaFileURL.link(fileKey: event.fileKey, nodeID: $0) }
-        return ClaudePrompt.changes([event], screen: screen, project: projectName(event.fileKey), link: link, done: checkedMap([event]))
+        return ClaudePrompt.changes([event], screen: screen, link: link, done: checkedMap([event]))
     }
 
     /// 메뉴(묶음이면 그 아래 전부)에서 반영하지 않은 변경을 화면별로 묶은 글.
@@ -402,7 +405,7 @@ final class DesignSync: ObservableObject {
             let pending = pendingEvents(for: screen, in: fileKey)
             return pending.isEmpty ? nil : (screen, pending, FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID))
         }
-        return ClaudePrompt.menu(items, path: path, project: projectName(fileKey), done: checkedMap(items.flatMap(\.events)))
+        return ClaudePrompt.menu(items, path: path, done: checkedMap(items.flatMap(\.events)))
     }
 
     /// 메뉴 화면들을 처음 마크업해 달라는 글. 구현을 마친 화면은 뺀다.
@@ -410,7 +413,20 @@ final class DesignSync: ObservableObject {
         let items = screens(fileKey, under: path).map { screen in
             (screen: screen, link: FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID), built: history.built(screen, in: fileKey))
         }
-        return ClaudePrompt.menuBuild(items, path: path, project: projectName(fileKey))
+        return ClaudePrompt.menuBuild(items, path: path)
+    }
+
+    /// 기간 비교 결과처럼 여러 화면의 변경을 화면별로 묶은 글. 지금 시안에 없는 화면은 변경에 남은 이름으로 적는다.
+    func claudePrompt(events: [DesignEvent], title: String) -> String {
+        let groups = Dictionary(grouping: events.filter { $0.kind != .changelog }) { $0.frameID ?? $0.screenID }
+        let items = groups.values.compactMap { events -> (screen: ScreenSnapshot, events: [DesignEvent], link: URL?)? in
+            guard let latest = events.max(by: { $0.detectedAt < $1.detectedAt }) else { return nil }
+            let screen = latest.frameID.flatMap { history.files[latest.fileKey]?.screens[$0] }
+                ?? ScreenSnapshot(frameID: latest.frameID ?? "", screenID: latest.screenID, title: latest.title, menuPath: latest.menuPath)
+            return (screen, events, latest.frameID.flatMap { FigmaFileURL.link(fileKey: latest.fileKey, nodeID: $0) })
+        }
+        .sorted { ($0.screen.menuPath, $0.screen.screenID) < ($1.screen.menuPath, $1.screen.screenID) }
+        return ClaudePrompt.menu(items, path: title, done: checkedMap(items.flatMap(\.events)))
     }
 
     private func checkedMap(_ events: [DesignEvent]) -> [UUID: Set<String>] {
@@ -750,17 +766,8 @@ final class DesignSync: ObservableObject {
     /// 경로(묶음이면 그 아래 전부)의 알림을 켜고 끈다. 아래 경로에 따로 켠 것은 묶음에 합친다.
     func setAlert(_ path: String, on: Bool, in fileKey: String) {
         guard let index = settings.sources.firstIndex(where: { $0.fileKey == fileKey }) else { return }
-        var alerts = settings.sources[index].alerts.filter { !DesignStatus.covers(path, $0) }
-        if on { alerts.append(path) } else {
-            // 묶음에 켠 알림 안의 한 메뉴만 끄면, 묶음을 풀고 나머지 메뉴를 하나씩 켠다
-            if let parent = alerts.first(where: { DesignStatus.covers($0, path) }) {
-                alerts.removeAll { $0 == parent }
-                let siblings = Set(history.files[fileKey]?.screens.values.map(\.menuPath) ?? [])
-                    .filter { DesignStatus.covers(parent, $0) && !DesignStatus.covers(path, $0) }
-                alerts += siblings
-            }
-        }
-        settings.sources[index].alerts = alerts.sorted()
+        let paths = history.files[fileKey]?.screens.values.map(\.menuPath) ?? []
+        settings.sources[index].alerts = DesignStatus.setAlert(path, on: on, in: settings.sources[index].alerts, screenPaths: paths)
     }
 
     /// 완료·작업 중을 직접 정한다. nil이면 섹션 표시대로 되돌린다.

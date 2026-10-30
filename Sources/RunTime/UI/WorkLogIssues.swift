@@ -255,6 +255,16 @@ struct IssueBoard: View {
     }
 }
 
+/// 가운데 칸이 좁은지. 좁으면 일감 줄에서 진척률을 빼고 기간을 마감일만 보여 제목 자리를 남긴다.
+private struct NarrowRowsKey: EnvironmentKey { static let defaultValue = false }
+
+extension EnvironmentValues {
+    var narrowRows: Bool {
+        get { self[NarrowRowsKey.self] }
+        set { self[NarrowRowsKey.self] = newValue }
+    }
+}
+
 /// 내 일감 한 줄. 이미 그날 적었으면 적은 상태를, 아니면 레드마인 진척률을 보인다.
 private struct IssueRow: View {
     @ObservedObject var store: WorkLogStore
@@ -263,6 +273,7 @@ private struct IssueRow: View {
     @ObservedObject var sync: WorkLogSync
     let info: IssueInfo
     @StateObject private var hover = HoverFlag()
+    @Environment(\.narrowRows) private var narrow
 
     var body: some View {
         let written = store.log.entries(on: page.day).filter { $0.issue == info.id }
@@ -335,16 +346,19 @@ private struct IssueRow: View {
         HStack(spacing: 10) {
             Text(info.status)
                 .lineLimit(1)
-                .frame(width: 52, alignment: .leading)
-            Text(info.doneRatio > 0 ? "\(info.doneRatio)%" : "")
-                .frame(width: 34, alignment: .trailing)
+                .frame(width: 54, alignment: .leading)
+            // 글자를 키운 뒤에도 `100%`, `10.21 ~ 10.21`, `#38063`이 잘리지 않는 너비
+            if !narrow {
+                Text(info.doneRatio > 0 ? "\(info.doneRatio)%" : "")
+                    .frame(width: 42, alignment: .trailing)
+            }
             period
-                .frame(width: 104, alignment: .trailing)
+                .frame(width: narrow ? 86 : 122, alignment: .trailing)
             Text("#" + String(info.id))
-                .frame(width: 50, alignment: .trailing)
+                .frame(width: 60, alignment: .trailing)
         }
         .font(.system(size: 12.5).monospacedDigit())
-        .foregroundStyle(WL.quiet)
+        .foregroundStyle(WL.muted)
         .lineLimit(1)
     }
 
@@ -355,7 +369,7 @@ private struct IssueRow: View {
         if let due = info.dueDate {
             let color: Color = due < today ? Palette.red : due <= WorkDay.adding(3, to: today) ? WL.waiting : WL.faint
             HStack(spacing: 0) {
-                if let start = info.startDate { Text(WorkReport.shortDate(start) + " ~ ") }
+                if let start = info.startDate, !narrow { Text(WorkReport.shortDate(start) + " ~ ") }
                 Text(WorkLogFormat.shortDay(due)).foregroundStyle(color)
             }
         } else if let start = info.startDate {

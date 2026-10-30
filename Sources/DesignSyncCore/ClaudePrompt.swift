@@ -1,134 +1,152 @@
 import Foundation
 
 /// Claude Code에 그대로 붙여 마크업을 맡기는 글. 바뀐 것을 전·후 원문으로 적고 무엇을 할지 분명히 한다.
-/// 요약(`DesignEvent.report`)은 사람에게 보이는 글이라 명세를 이름만 적지만, 여기서는 고칠 내용을 통째로 넣는다.
+/// 피그마 링크가 있으면 Claude가 피그마 MCP로 화면을 읽으니, 링크로 알 수 있는 것(목업 문구 전부, 전체 명세)은 넣지 않아 글을 줄인다.
 public enum ClaudePrompt {
+    /// 마크업과 상관없는 화면 정보. 문구에 넣지 않는다.
+    public static let skippedHeaders: Set<String> = ["작성자", "섹션"]
+
     /// 바뀐 화면을 반영해 달라는 글. `events`는 이 화면의 아직 반영하지 않은 변경, `done`은 이미 반영한 항목(`SpecChange.key`)이다.
-    public static func changes(_ events: [DesignEvent], screen: ScreenSnapshot?, project: String, link: URL?,
-                               done: [UUID: Set<String>] = [:]) -> String {
-        let ordered = events.sorted { $0.detectedAt < $1.detectedAt }
-        guard let latest = ordered.last else { return "" }
-        var lines = ["아래 피그마 화면설계서 변경을 이 저장소의 마크업에 반영해 주세요.", ""]
+    public static func changes(_ events: [DesignEvent], screen: ScreenSnapshot?, link: URL?, done: [UUID: Set<String>] = [:]) -> String {
+        guard let latest = events.max(by: { $0.detectedAt < $1.detectedAt }) else { return "" }
+        var lines = ["아래 피그마 화면설계서 변경을 마크업에 반영해 주세요.", ""]
         lines += header(screenID: screen?.screenID ?? latest.screenID, title: screen?.title ?? latest.title,
-                        path: screen?.menuPath ?? latest.menuPath, project: project, link: link)
-        let (body, count) = changeLines(ordered, done: done)
-        lines += body
-        if count == 0 { lines += ["", "[바뀐 것]", "- 남은 변경이 없습니다 (모두 반영함)"] }
-        if let screen, !screen.items.isEmpty {
-            lines += ["", "[지금 기능 명세] 참고용 전체"]
-            lines += items(screen)
-        }
-        lines += ["", "[요청]",
-                  "- [바뀐 것]만 반영하고 나머지 화면은 바꾸지 마세요.",
-                  "- 먼저 이 화면을 구현한 파일을 화면 ID·화면명·화면 경로·목업 문구로 찾아 어느 파일을 고칠지 알려 주세요.",
-                  "- 피그마 MCP를 쓸 수 있으면 위 피그마 링크의 노드를 열어 바뀐 부분의 배치와 간격을 확인하세요.",
-                  "- 끝나면 반영한 항목과, 디자인만으로 정하기 어려워 확인이 필요한 항목을 나눠 알려 주세요."]
+                        path: screen?.menuPath ?? latest.menuPath, link: link)
+        let body = changeLines(events, done: done)
+        lines += body.isEmpty ? ["- 남은 변경이 없습니다 (모두 반영함)"] : body
+        lines += ["", request(several: false, link: link != nil)]
         return lines.joined(separator: "\n")
     }
 
-    /// 메뉴 하나의 반영할 변경을 화면별로 묶은 글. 화면 여럿을 한 번에 맡기므로 화면마다 전체 기능 명세는 넣지 않고 피그마 링크로 대신한다.
-    public static func menu(_ screens: [(screen: ScreenSnapshot, events: [DesignEvent], link: URL?)], path: String, project: String,
+    /// 메뉴 하나의 반영할 변경을 화면별로 묶은 글.
+    public static func menu(_ screens: [(screen: ScreenSnapshot, events: [DesignEvent], link: URL?)], path: String,
                             done: [UUID: Set<String>] = [:]) -> String {
-        var lines = ["아래 피그마 화면설계서 ‘\(path)’ 메뉴의 변경을 이 저장소의 마크업에 반영해 주세요.", "", "- 프로젝트: \(project)"]
+        var lines = ["아래 피그마 화면설계서 ‘\(path)’ 메뉴의 변경을 마크업에 반영해 주세요."]
         var listed = 0
         for item in screens {
-            let (body, _) = changeLines(item.events.sorted { $0.detectedAt < $1.detectedAt }, done: done)
+            let body = changeLines(item.events, done: done)
             guard !body.isEmpty else { continue }
             listed += 1
-            lines += [""] + header(screenID: item.screen.screenID, title: item.screen.title, path: item.screen.menuPath, project: nil, link: item.link)
-            lines += body
+            lines += [""] + header(screenID: item.screen.screenID, title: item.screen.title, path: item.screen.menuPath, link: item.link) + body
         }
         if listed == 0 { lines += ["", "- 남은 변경이 없습니다 (모두 반영함)"] }
-        lines += ["", "[요청]",
-                  "- 화면마다 [바뀐 것]만 반영하고 나머지는 바꾸지 마세요.",
-                  "- 먼저 화면마다 구현한 파일을 화면 ID·화면명·목업 문구로 찾아 어느 파일을 고칠지 알려 주세요.",
-                  "- 피그마 MCP를 쓸 수 있으면 화면마다 적힌 피그마 링크의 노드를 열어 바뀐 부분의 배치와 간격, 전체 기능 명세를 확인하세요.",
-                  "- 끝나면 화면별로 반영한 항목과 확인이 필요한 항목을 나눠 알려 주세요."]
+        lines += ["", request(several: listed > 1, link: screens.contains { $0.link != nil })]
         return lines.joined(separator: "\n")
     }
 
-    /// 메뉴 화면들을 처음 마크업해 달라는 글. 화면마다 참고와 남은 기능 명세만 넣고, 목업 문구·배치는 피그마 링크로 읽게 해 글을 줄인다.
+    /// 메뉴 화면들을 처음 마크업해 달라는 글. 화면마다 참고와 남은 기능 명세만 넣고, 목업 문구·배치는 피그마 링크로 읽게 한다.
     /// 구현을 마친 화면(남은 명세가 없는 화면)은 뺀다.
-    public static func menuBuild(_ screens: [(screen: ScreenSnapshot, link: URL?, built: Set<String>)], path: String, project: String) -> String {
-        var lines = ["아래 피그마 화면설계서 ‘\(path)’ 메뉴의 화면들을 이 저장소에 마크업해 주세요.", "", "- 프로젝트: \(project)"]
+    public static func menuBuild(_ screens: [(screen: ScreenSnapshot, link: URL?, built: Set<String>)], path: String) -> String {
+        var lines = ["아래 피그마 화면설계서 ‘\(path)’ 메뉴의 화면들을 마크업해 주세요."]
         var listed = 0
         for item in screens {
             let left = item.screen.items.filter { !item.built.contains($0.text) }
             guard !left.isEmpty || item.screen.items.isEmpty else { continue }
             listed += 1
-            lines += [""] + header(screenID: item.screen.screenID, title: item.screen.title, path: item.screen.menuPath, project: nil, link: item.link)
-            if !item.screen.notes.isEmpty { lines += ["[참고]", item.screen.notes] }
-            if !left.isEmpty {
-                lines.append(left.count == item.screen.items.count ? "[기능 명세]" : "[남은 기능 명세] \(left.count)/\(item.screen.items.count) (나머지는 구현함)")
-                lines += items(ScreenSnapshot(frameID: item.screen.frameID, screenID: item.screen.screenID, items: left))
-            }
+            lines += [""] + header(screenID: item.screen.screenID, title: item.screen.title, path: item.screen.menuPath, link: item.link)
+            lines += spec(item.screen, left: left)
         }
         if listed == 0 { lines += ["", "- 남은 화면이 없습니다 (모든 기능 명세를 구현함)"] }
-        lines += ["", "[요청]",
-                  "- 화면마다 피그마 MCP로 위 피그마 링크의 노드를 열어 목업 문구, 배치와 간격을 확인하세요.",
-                  "- 저장소에 이미 있는 공통 컴포넌트와 비슷한 화면을 먼저 찾아 같은 방식으로 만들어 주세요.",
-                  "- 한 화면씩 끝내고, 기능 명세 가운데 API나 동작이 정해지지 않은 것은 자리만 만들고 따로 알려 주세요."]
+        lines += ["", buildRequest(link: screens.contains { $0.link != nil })]
         return lines.joined(separator: "\n")
-    }
-
-    /// 변경들의 `[바뀐 것]` 묶음과 반영할 항목 수. 이미 반영한 항목(`done`)과 번호만 밀린 명세는 뺀다.
-    static func changeLines(_ ordered: [DesignEvent], done: [UUID: Set<String>]) -> ([String], Int) {
-        let format = DateFormatter()
-        format.locale = Locale(identifier: "ko_KR")
-        format.dateFormat = "M/d HH:mm"
-        var lines: [String] = []
-        var count = 0
-        for event in ordered {
-            let pending = event.changes.filter { $0.op != .renumbered && !(done[event.id] ?? []).contains($0.key) }
-            let kind: String? = switch event.kind {
-            case .added: "새 화면"
-            case .removed: "화면 삭제"
-            case .replaced: "새 프레임으로 교체"
-            case .changed, .changelog: nil
-            }
-            guard !pending.isEmpty || kind != nil else { continue }
-            lines += ["", "[바뀐 것] \(format.string(from: event.detectedAt))" + (kind.map { " · " + $0 } ?? "")]
-            for layer in [SpecChange.Layer.spec, .text, .header, .component] {
-                for change in pending where change.layer == layer {
-                    lines += describe(change)
-                    count += 1
-                }
-            }
-        }
-        return (lines, count)
     }
 
     /// 아직 바뀐 것이 없는 화면을 처음 마크업해 달라는 글. 구현을 마친 명세(`built`)는 빼고 남은 것만 맡긴다.
-    public static func build(_ screen: ScreenSnapshot, project: String, link: URL?, built: Set<String> = []) -> String {
-        var lines = ["아래 피그마 화면설계서 화면을 이 저장소에 마크업해 주세요.", ""]
-        lines += header(screenID: screen.screenID, title: screen.title, path: screen.menuPath, project: project, link: link)
-        if !screen.notes.isEmpty { lines += ["", "[참고]", screen.notes] }
-        let left = screen.items.filter { !built.contains($0.text) }
-        if !left.isEmpty {
-            lines += ["", left.count == screen.items.count ? "[기능 명세]" : "[남은 기능 명세] \(left.count)/\(screen.items.count) (나머지는 구현함)"]
-            lines += items(ScreenSnapshot(frameID: screen.frameID, screenID: screen.screenID, items: left))
+    /// 피그마 링크가 없을 때만 목업 문구와 컴포넌트를 적는다 (링크가 있으면 Claude가 피그마에서 읽는다).
+    public static func build(_ screen: ScreenSnapshot, link: URL?, built: Set<String> = []) -> String {
+        var lines = ["아래 피그마 화면설계서 화면을 마크업해 주세요.", ""]
+        lines += header(screenID: screen.screenID, title: screen.title, path: screen.menuPath, link: link)
+        lines += spec(screen, left: screen.items.filter { !built.contains($0.text) })
+        if link == nil {
+            let texts = ScreenBrief.orderedTexts(screen)
+            if !texts.isEmpty {
+                lines += ["[목업 문구] 화면 위에서 아래 순서"] + texts.prefix(150).map { "- " + $0.replacingOccurrences(of: "\n", with: " / ") }
+            }
+            let components = ScreenBrief.components(screen)
+            if !components.isEmpty {
+                lines += ["[쓰인 컴포넌트] " + components.prefix(30).map { $0.count > 1 ? "\($0.name) ×\($0.count)" : $0.name }.joined(separator: ", ")]
+            }
         }
-        let texts = ScreenBrief.orderedTexts(screen)
-        if !texts.isEmpty {
-            lines += ["", "[목업 문구] 화면 위에서 아래 순서"]
-            lines += texts.prefix(150).map { "- " + $0.replacingOccurrences(of: "\n", with: " / ") }
-        }
-        let components = ScreenBrief.components(screen)
-        if !components.isEmpty {
-            lines += ["", "[쓰인 컴포넌트]", components.prefix(30).map { $0.count > 1 ? "\($0.name) ×\($0.count)" : $0.name }.joined(separator: ", ")]
-        }
-        lines += ["", "[요청]",
-                  "- 저장소에 이미 있는 공통 컴포넌트와 비슷한 화면을 먼저 찾아 같은 방식으로 만들어 주세요.",
-                  "- 피그마 MCP를 쓸 수 있으면 위 피그마 링크의 노드를 열어 배치와 간격을 확인하세요.",
-                  "- 기능 명세 가운데 API나 동작이 정해지지 않은 것은 자리만 만들고 따로 알려 주세요."]
+        lines += ["", buildRequest(link: link != nil)]
         return lines.joined(separator: "\n")
     }
 
-    private static func header(screenID: String, title: String, path: String, project: String?, link: URL?) -> [String] {
-        var lines = ["[화면] \(screenID) \(title)".trimmingCharacters(in: .whitespaces)]
-        if let project { lines.append("- 프로젝트: \(project)") }
-        if !path.isEmpty { lines.append("- 화면 경로: \(path)") }
-        if let link { lines.append("- 피그마: \(link.absoluteString)") }
+    /// 변경들을 화면 하나의 `[바뀐 것]`으로. 같은 항목을 여러 번 고쳤으면 처음→마지막 한 줄로 합치고,
+    /// 되돌려 같아졌거나 더했다 지운 항목, 이미 반영한 항목, 번호만 밀린 명세, 마크업과 상관없는 화면 정보는 뺀다.
+    static func changeLines(_ events: [DesignEvent], done: [UUID: Set<String>]) -> [String] {
+        let ordered = events.sorted { $0.detectedAt < $1.detectedAt }
+        let kinds = ordered.compactMap { event -> String? in
+            switch event.kind {
+            case .added: return "새 화면"
+            case .removed: return "화면 삭제"
+            case .replaced: return "새 프레임으로 교체"
+            case .changed, .changelog: return nil
+            }
+        }
+        let pending = ordered.flatMap { event in
+            event.changes.filter { $0.op != .renumbered && !(done[event.id] ?? []).contains($0.key)
+                && !($0.layer == .header && skippedHeaders.contains($0.label)) }
+        }
+        let changes = merged(pending)
+        guard !changes.isEmpty || !kinds.isEmpty else { return [] }
+        var lines = ["[바뀐 것]" + (kinds.isEmpty ? "" : " " + Array(Set(kinds)).sorted().joined(separator: " · "))]
+        for layer in [SpecChange.Layer.spec, .text, .header, .component] {
+            for change in changes where change.layer == layer { lines += describe(change) }
+        }
+        return lines
+    }
+
+    /// 같은 항목의 연이은 변경을 하나로 합친다. 항목은 층과 레이어 ID(없으면 이름)로 가린다.
+    public static func merged(_ changes: [SpecChange]) -> [SpecChange] {
+        var order: [String] = []
+        var groups: [String: [SpecChange]] = [:]
+        for change in changes {
+            let id = change.layer.rawValue + "|" + (change.nodeID ?? change.label)
+            if groups[id] == nil { order.append(id) }
+            groups[id, default: []].append(change)
+        }
+        return order.compactMap { id -> SpecChange? in
+            guard let group = groups[id], let first = group.first, let last = group.last else { return nil }
+            guard group.count > 1 else { return first }
+            let existed = first.op != .added
+            let exists = last.op != .removed
+            var change = last
+            switch (existed, exists) {
+            case (false, false): return nil
+            case (false, true): change.op = .added; change.before = nil
+            case (true, false): change.op = .removed; change.before = first.before; change.after = nil
+            case (true, true):
+                guard first.before != last.after else { return nil }
+                change.op = .modified; change.before = first.before
+            }
+            return change
+        }
+    }
+
+    private static func spec(_ screen: ScreenSnapshot, left: [SpecItem]) -> [String] {
+        var lines: [String] = []
+        if !screen.notes.isEmpty { lines += ["[참고]", screen.notes] }
+        if !left.isEmpty {
+            lines.append(left.count == screen.items.count ? "[기능 명세]" : "[남은 기능 명세] \(left.count)/\(screen.items.count) (나머지는 구현함)")
+            lines += items(ScreenSnapshot(frameID: screen.frameID, screenID: screen.screenID, items: left))
+        }
+        return lines
+    }
+
+    private static func request(several: Bool, link: Bool) -> String {
+        "[요청] " + (several ? "화면마다 " : "") + "[바뀐 것]만 반영하고 나머지는 그대로 두세요. 고칠 파일을 먼저 찾아 알려 주고"
+            + (link ? ", 배치·간격은 피그마 MCP로 링크 노드를 열어 확인하세요." : ".")
+            + " 끝나면 반영한 것과 확인이 필요한 것을 나눠 알려 주세요."
+    }
+
+    private static func buildRequest(link: Bool) -> String {
+        "[요청] " + (link ? "피그마 MCP로 링크 노드를 열어 목업 문구·배치·간격을 확인하고, " : "")
+            + "저장소의 비슷한 화면과 공통 컴포넌트 방식으로 만들어 주세요. 정해지지 않은 API·동작은 자리만 만들고 알려 주세요."
+    }
+
+    private static func header(screenID: String, title: String, path: String, link: URL?) -> [String] {
+        var lines = ["[화면] \(screenID) \(title)".trimmingCharacters(in: .whitespaces) + (path.isEmpty ? "" : " (\(path))")]
+        if let link { lines.append("피그마: \(link.absoluteString)") }
         return lines
     }
 

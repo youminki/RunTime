@@ -57,6 +57,35 @@ struct DesignScreenRow: View {
     }
 }
 
+/// 누르면 복사되는 화면 ID. 코드 주석이나 커밋에 바로 붙인다.
+struct CopyableID: View {
+    let text: String
+    let copied: (String) -> Void
+    @StateObject private var hover = HoveredKey()
+
+    var body: some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied(text)
+        } label: {
+            // 복사 아이콘은 자리를 차지하지 않게 겹쳐 그려, 좁은 머리줄에서 ID가 잘리지 않게 한다
+            Text(text).font(WL.number).foregroundStyle(WL.muted).lineLimit(1).fixedSize()
+                .padding(.horizontal, 4).padding(.vertical, 2)
+                .overlay(alignment: .trailing) {
+                    Image(systemName: "doc.on.doc").font(.system(size: 10.5)).foregroundStyle(WL.muted)
+                        .offset(x: 14)
+                        .opacity(hover.key == "id" ? 1 : 0)
+                }
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(hover.key == "id" ? WL.hover : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover.update("id", $0) }
+        .tip("눌러서 화면 ID 복사")
+    }
+}
+
 /// 자주 쓰지 않는 동작을 모은 ⋯ 단추. 보조 단추와 같은 테두리로 그린다.
 struct MoreMenu<Content: View>: View {
     let tip: String
@@ -135,7 +164,7 @@ struct DesignScreenDetail: View {
                     .padding(.horizontal, 6).frame(height: 18)
                     .background(RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .fill((state == .done ? WL.done : state == .working ? WL.waiting : WL.muted).opacity(0.12)))
-                Text(screen.screenID).font(WL.number).foregroundStyle(WL.muted).textSelection(.enabled)
+                CopyableID(text: screen.screenID) { page.flash("‘\($0)’를 복사했습니다") }
                 Spacer(minLength: 8)
                 Button("목록으로") { page.screen = nil }.buttonStyle(TextLinkButtonStyle())
             }
@@ -174,6 +203,7 @@ struct DesignScreenDetail: View {
             MoreMenu(tip: "이미지·링크 복사, 날짜별 비교, 업무 일지에 넣기") {
                 Button("화면 이미지 복사") { copyImage() }.disabled(readyImage == nil)
                 Button("화면 명세 복사 (MR·레드마인용)") { copyBrief() }
+                Button("구현 체크리스트 복사 (MR용)") { copyChecklist() }.disabled(screen.items.isEmpty)
                 if let link {
                     Button("피그마 링크 복사") { copy(link.absoluteString, "피그마 링크를 복사했습니다") }
                 }
@@ -199,13 +229,22 @@ struct DesignScreenDetail: View {
     private var built: Set<String> { sync.history.built(screen, in: fileKey) }
 
     private func copyPrompt() {
-        copy(sync.claudePrompt(for: screen, in: fileKey), "Claude에 붙일 문구를 복사했습니다")
+        let prompt = sync.claudePrompt(for: screen, in: fileKey)
+        copy(prompt, DesignFormat.copied(prompt))
     }
 
     private func copyBrief() {
         let text = ScreenBrief.text(screen, project: sync.projectName(fileKey), state: DesignStateDot.name(state), link: link,
                                     recent: history.filter { $0.kind != .changelog }, built: built)
         copy(text, "화면 명세를 복사했습니다")
+    }
+
+    /// 기능 명세를 구현 체크와 함께 `- [x]` 꼴로. MR 설명에 붙이면 무엇을 했고 남았는지 보인다.
+    private func copyChecklist() {
+        let built = built
+        let lines = ["[\(screen.screenID)] \(screen.title) 구현 체크".trimmingCharacters(in: .whitespaces)]
+            + screen.items.map { "- [\(built.contains($0.text) ? "x" : " ")] \($0.number). \(DesignText.headline($0.text, limit: 80))" }
+        copy(lines.joined(separator: "\n"), "구현 체크리스트를 복사했습니다")
     }
 
     private func copy(_ text: String, _ message: String) {
@@ -341,7 +380,8 @@ struct DesignScreenDetail: View {
                     Spacer(minLength: 8)
                     Button("모두 반영 완료") {
                         pending.forEach { sync.setApplied($0.id, true) }
-                        page.flash("반영할 변경 \(pending.count)건을 반영 완료로 넘겼습니다. 사이드바 ‘반영 완료’에서 되돌립니다")
+                        page.flash("반영할 변경 \(pending.count)건을 반영 완료로 넘기고 다음 화면을 엽니다. 사이드바 ‘반영 완료’에서 되돌립니다")
+                        page.stepRequest += 1
                     }
                     .buttonStyle(NotionButtonStyle())
                     .tip("이 화면의 변경을 마크업에 다 반영했으면 목록과 알림에서 뺍니다")

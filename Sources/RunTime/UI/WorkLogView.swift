@@ -62,6 +62,7 @@ struct WorkLogView: View {
                             case .month: periodPage(monthEntries, span: "이 달")
                             case .project: projectPage
                             case .issues: IssueBoard(store: store, page: page, sync: sync, settings: settings)
+                                .environment(\.narrowRows, layout.middle < 640)
                             }
                         }
                     }
@@ -649,6 +650,8 @@ struct WorkLogColumns {
     let sidebar: CGFloat
     let preview: CGFloat
     let gutter: CGFloat
+    /// 가운데 칸 너비. 좁으면 줄의 덜 중요한 칸을 줄인다.
+    let middle: CGFloat
     /// 끌기 전 자동 너비 (두 번 눌러 돌아갈 너비)
     let auto: (sidebar: CGFloat, preview: CGFloat)
 
@@ -673,6 +676,7 @@ struct WorkLogColumns {
         let room = max(0, width - Self.middleMin - 2)
         sidebar = min(left, max(Self.sidebarRange.lowerBound, room - Self.previewRange.lowerBound))
         preview = min(right, max(Self.previewRange.lowerBound, room - sidebar))
+        middle = width - sidebar - preview - 2
     }
 }
 

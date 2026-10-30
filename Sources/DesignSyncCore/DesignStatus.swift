@@ -43,6 +43,19 @@ public enum DesignStatus {
             .max { $0.key.count < $1.key.count }?.value
     }
 
+    /// 알림 메뉴를 켜고 끈다. 켜면 그 경로 하나로 아래를 덮고, 끄면 그 경로와 아래를 지운다.
+    /// 켜진 묶음 안의 하나를 끄면 묶음을 풀어 `screenPaths` 가운데 나머지 메뉴를 하나씩 켠다.
+    public static func setAlert(_ path: String, on: Bool, in alerts: [String], screenPaths: [String]) -> [String] {
+        var result = alerts.filter { !covers(path, $0) }
+        if on {
+            result.append(path)
+        } else if let parent = result.first(where: { covers($0, path) }) {
+            result.removeAll { $0 == parent }
+            result += Set(screenPaths).filter { covers(parent, $0) && !covers(path, $0) }
+        }
+        return Array(Set(result)).sorted()
+    }
+
     /// `상품 관리`는 `상품 관리`와 `상품 관리 > 목록`을 덮지만 `상품 관리자`는 덮지 않는다.
     public static func covers(_ prefix: String, _ path: String) -> Bool {
         path == prefix || path.hasPrefix(prefix + " > ")

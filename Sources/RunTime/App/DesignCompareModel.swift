@@ -11,8 +11,21 @@ final class DesignCompareModel: ObservableObject {
     @Published var path: String?
     /// 화면 하나만 견줄 때 그 화면.
     @Published var screen: Target?
-    @Published var from: Date = Calendar.current.date(byAdding: .day, value: -2, to: Date()) ?? Date()
+    @Published var from: Date = Calendar.current.date(byAdding: .day, value: -3, to: Date()) ?? Date()
     @Published var to = Date()
+    /// 빠른 기간(일). 0이면 날짜를 직접 고른다.
+    @Published var preset = 3 {
+        didSet {
+            guard preset > 0 else { return }
+            to = Date()
+            from = Calendar.current.date(byAdding: .day, value: -preset, to: to) ?? to
+        }
+    }
+    static let presets: [(days: Int, title: String)] = [(1, "1일"), (3, "3일"), (7, "1주"), (14, "2주"), (0, "직접")]
+
+    /// 결과를 기록에서 볼지, 피그마 버전 두 개를 받아 견줄지.
+    enum Source: Hashable { case record, figma }
+    @Published var source: Source = .record
     @Published private(set) var running = false
     @Published private(set) var progress = ""
     @Published private(set) var error: String?
@@ -46,6 +59,8 @@ final class DesignCompareModel: ObservableObject {
         var to: FigmaAPI.FileVersion
         /// 뒤 버전으로 마지막으로 가져온 상태를 썼다.
         var toIsRecord: Bool
+        /// 그 상태를 피그마에서 마지막으로 확인한 때. `to.createdAt`은 파일을 고친 때라, 방금 가져와도 오래돼 보일 수 있다.
+        var checkedAt: Date?
         var named: [FigmaAPI.FileVersion]
         var events: [DesignEvent]
     }
@@ -69,6 +84,11 @@ final class DesignCompareModel: ObservableObject {
         let (from, to) = (min(self.from, self.to), max(self.from, self.to))
         guard calendar.isDate(result.fromDay, inSameDayAs: from), calendar.isDate(result.toDay, inSameDayAs: to) else { return nil }
         return result
+    }
+
+    /// 지금 기준(기록·피그마 버전)으로 목록에 보이는 변경.
+    var shownEvents: [DesignEvent] {
+        source == .record ? recorded() : currentResult?.events ?? []
     }
 
     /// 결과가 있지만 조건이 바뀌었다.
@@ -128,6 +148,7 @@ final class DesignCompareModel: ObservableObject {
                 // 오늘과 견주면 마지막으로 가져온 상태를 쓴다. 자동 저장이 30분마다 새 버전을 만들어 매번 파일 전체를 다시 받게 된다.
                 // 그 기록이 기준보다 오래됐거나, 메뉴를 골라 받아 고른 범위의 내용이 옛것일 수 있으면 피그마 최신 버전을 받는다
                 var recorded: (snapshot: VersionSnapshot, version: FigmaAPI.FileVersion)?
+                var checkedAt: Date?
                 let todayRecord = calendar.isDateInToday(to) ? sync.history.files[fileKey] : nil
                 let recordSnapshot = await Task.detached(priority: .userInitiated) {
                     todayRecord.flatMap { VersionSnapshot(record: $0, fileKey: fileKey) }
@@ -138,6 +159,8 @@ final class DesignCompareModel: ObservableObject {
                     let scoped = record.screens.values.filter(include)
                     let fresh = !scoped.isEmpty && (menus.isEmpty || (path != nil && scoped.allSatisfy { menus.contains($0.menuPath) }))
                     if at >= before.createdAt && fresh { recorded = (snapshot, FigmaAPI.FileVersion(id: snapshot.version, createdAt: at)) }
+                    // 메뉴만 가져오면 파일 확인 시각은 그대로라, 고른 범위 화면을 가장 늦게 확인한 때를 쓴다
+                    checkedAt = scoped.compactMap { record.checkedAt[$0.frameID] }.max() ?? record.syncedAt
                 }
                 guard let after = recorded?.version ?? (calendar.isDateInToday(to) ? list.first : DesignCompare.version(atEndOf: to, in: list)) else {
                     error = "\(DesignCompareModel.day(to)) 이전 버전이 없습니다."
@@ -146,7 +169,7 @@ final class DesignCompareModel: ObservableObject {
                 let named = DesignCompare.named(between: before, and: after, in: list)
                 @MainActor func finish(_ events: [DesignEvent]) {
                     result = Result(fileKey: fileKey, path: path, screen: screen, fromDay: from, toDay: to, from: before, to: after,
-                                    toIsRecord: recorded != nil, named: named, events: events)
+                                    toIsRecord: recorded != nil, checkedAt: recorded == nil ? nil : checkedAt, named: named, events: events)
                 }
                 guard before.id != after.id else { finish([]); return }
                 let wanted = wantedCandidates(fileKey, path: path, screen: screen)

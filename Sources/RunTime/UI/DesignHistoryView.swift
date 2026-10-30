@@ -82,6 +82,10 @@ final class DesignHistoryPage: ObservableObject {
     /// 메뉴·묶음·프로젝트를 볼 때 화면 목록과 변경 목록 가운데 무엇을 보는지. 마크업할 때는 화면이 먼저다.
     enum MenuTab: Hashable { case screens, changes }
     @Published var menuTab: MenuTab = .screens
+    /// 기능 명세를 다 구현했고 반영할 변경도 없는 화면을 화면 목록에서 뺀다.
+    @Published var hidesBuiltScreens = false
+    /// 늘리면 상세를 목록의 다음 항목으로 넘긴다. 화면 상세에서 모두 반영한 뒤 다음 화면으로 갈 때 쓴다.
+    @Published var stepRequest = 0
 
     private func dropSelection(outside scope: Scope) {
         let history = DesignSync.shared.history
@@ -250,7 +254,7 @@ struct DesignHistoryView: View {
                         } else {
                             let scoped = screenScope
                             DesignTimeline(sync: sync, page: page, events: events, screenFile: scoped?.fileKey, screens: scoped?.screens ?? [],
-                                           hasScreens: scoped?.total ?? 0 > 0)
+                                           allScreens: scoped?.all ?? [])
                         }
                     }
                     .frame(width: timeline)
@@ -275,6 +279,7 @@ struct DesignHistoryView: View {
             if let project = page.project, !visible.contains(project) { page.project = visible.first }
         }
         .onChange(of: isActive) { if $0 && autoStart { sync.syncIfStale() } }
+        .onChange(of: page.stepRequest) { _ in step(1) }
     }
 
     private struct AlertPickerTarget: Identifiable { let id: String }
@@ -308,7 +313,7 @@ struct DesignHistoryView: View {
     }
 
     /// 메뉴·묶음·프로젝트를 고르면 바뀐 적 없는 화면도 목록에 보인다. 숨긴 메뉴는 빼고 찾는 말로 거른다.
-    private var screenScope: (fileKey: String, screens: [ScreenSnapshot], total: Int)? {
+    private var screenScope: (fileKey: String, screens: [ScreenSnapshot], all: [ScreenSnapshot])? {
         let found: (String, [ScreenSnapshot])
         switch page.scope {
         case .menu(let key, let path): found = (key, sync.screens(key, under: path, exact: true))
@@ -320,12 +325,15 @@ struct DesignHistoryView: View {
         let query = page.search.trimmingCharacters(in: .whitespaces).lowercased()
         let screens = found.1.filter { screen in
             guard source?.hides(screen.menuPath) != true else { return false }
+            if page.hidesBuiltScreens, !screen.items.isEmpty,
+               sync.history.built(screen, in: found.0).count == screen.items.count,
+               sync.pendingEvents(for: screen, in: found.0).isEmpty { return false }
             guard !query.isEmpty else { return true }
             let haystack = ([screen.screenID, screen.title, screen.menuPath, screen.requirementID]
                 + screen.items.map(\.text) + Array(screen.texts.values)).joined(separator: "\n").lowercased()
             return haystack.contains(query)
         }
-        return (found.0, screens, found.1.filter { source?.hides($0.menuPath) != true }.count)
+        return (found.0, screens, found.1.filter { source?.hides($0.menuPath) != true })
     }
 
     // MARK: 넘기기
@@ -395,8 +403,8 @@ struct DesignHistoryView: View {
                 .id(key + frame)
         } else if let id = page.selected,
                   let event = sync.history.events.first(where: { $0.id == id }) ?? compare.currentResult?.events.first(where: { $0.id == id }),
-                  // 다른 프로젝트를 보는 동안 그 전에 고른 변경이 남지 않게 한다
-                  page.scope == .compare || page.project == nil || event.fileKey == page.project {
+                  // 다른 프로젝트를 보는 동안, 날짜 비교에서는 지금 결과 밖의 변경이 상세에 남지 않게 한다
+                  page.scope == .compare ? compare.shownEvents.contains { $0.id == id } : (page.project == nil || event.fileKey == page.project) {
             DesignEventDetail(event: event, seen: sync.history.isSeen(event), sync: sync, page: page,
                               toggleSeen: {
                                   if sync.history.isSeen(event) { sync.markUnseen(event.id) } else { sync.markSeen([event.id]) }
@@ -483,12 +491,13 @@ enum DesignMenuTree {
         path.components(separatedBy: " > ").first?.trimmingCharacters(in: .whitespaces) ?? path
     }
 
-    static func build(_ menus: [DesignHistory.Menu]) -> [Node] {
+    /// `compact`가 false면 하위가 하나뿐인 마디도 합치지 않는다 (알림 고르기처럼 마디마다 따로 켜고 끌 때).
+    static func build(_ menus: [DesignHistory.Menu], compact merges: Bool = true) -> [Node] {
         var roots: [Node] = []
         for menu in menus.sorted(by: { $0.path < $1.path }) {
             insert(menu, menu.path.components(separatedBy: " > ")[...], prefix: "", into: &roots)
         }
-        return roots.map(compact)
+        return merges ? roots.map(compact) : roots
     }
 
     private static func insert(_ menu: DesignHistory.Menu, _ parts: ArraySlice<String>, prefix: String, into nodes: inout [Node]) {
@@ -1405,15 +1414,16 @@ private struct DesignOnboarding: View {
 
 // MARK: - 타임라인
 
-private struct DesignTimeline: View {
+struct DesignTimeline: View {
     @ObservedObject var sync: DesignSync
     @ObservedObject var page: DesignHistoryPage
     let events: [DesignEvent]
     /// 고른 메뉴의 지금 시안 화면과 그 프로젝트.
     var screenFile: String?
     var screens: [ScreenSnapshot] = []
-    /// 찾기로 거르기 전에도 화면이 있는지. 찾는 말에 맞는 화면이 없어도 화면 탭은 남긴다.
-    var hasScreens = false
+    /// 찾기·끝난 화면 숨기기로 거르기 전의 화면. 작업대 요약은 메뉴 전체로 세고, 찾는 말에 맞는 화면이 없어도 화면 탭은 남긴다.
+    var allScreens: [ScreenSnapshot] = []
+    private var hasScreens: Bool { !allScreens.isEmpty }
 
     /// 메뉴·묶음·프로젝트를 고른 보기. 마크업할 곳이라 가져오기·진행·Claude 문구를 위에 두고 화면과 변경을 탭으로 나눈다.
     private var workspace: Bool { screenFile != nil }
@@ -1442,6 +1452,11 @@ private struct DesignTimeline: View {
                 HStack(spacing: 8) {
                     if page.showsChanges { phasePicker }
                     if workspace && hasScreens { tabPicker }
+                    if workspace && hasScreens && tab == .screens {
+                        Toggle("끝난 화면 숨기기", isOn: $page.hidesBuiltScreens)
+                            .toggleStyle(.checkbox).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1).fixedSize()
+                            .tip("기능 명세를 모두 구현 체크했고 반영할 변경도 없는 화면을 목록에서 뺍니다")
+                    }
                     Spacer(minLength: 0)
                     if tab == .changes { layerMenu }
                 }
@@ -1500,16 +1515,16 @@ private struct DesignTimeline: View {
 
     /// 화면 수·구현 진행·반영할 변경·확인 시각과, 이 메뉴만 가져오기·메뉴 Claude 문구 단추.
     private func workbench(_ fileKey: String) -> some View {
-        let items = screens.reduce(into: (built: 0, total: 0)) { sum, screen in
+        let items = allScreens.reduce(into: (built: 0, total: 0)) { sum, screen in
             sum.built += sync.history.built(screen, in: fileKey).count
             sum.total += screen.items.count
         }
-        let pending = screens.reduce(0) { $0 + sync.pendingEvents(for: $1, in: fileKey).count }
+        let pending = allScreens.reduce(0) { $0 + sync.pendingEvents(for: $1, in: fileKey).count }
         let checked: Date? = menuPath.map { sync.menuChecked(fileKey, $0) } ?? {
             let last = sync.lastChecked(fileKey)
             return last == .distantPast ? nil : last
         }()
-        let stats = [screens.isEmpty ? nil : "화면 \(screens.count)",
+        let stats = [allScreens.isEmpty ? nil : "화면 \(allScreens.count)",
                      items.total > 0 ? "구현 \(items.built)/\(items.total)" : nil,
                      pending > 0 ? "반영할 변경 \(pending)" : nil,
                      checked.map { DesignFormat.stamp($0) + " 확인" } ?? "아직 가져오지 않음"].compactMap { $0 }
@@ -1530,19 +1545,27 @@ private struct DesignTimeline: View {
     private func actionButtons(_ fileKey: String, pending: Int, unbuilt: Bool, compact: Bool) -> some View {
         HStack(spacing: 6) {
             if sync.source(fileKey) != nil { fetchButton(fileKey, compact: compact) }
+            Button {
+                DesignCompareModel.shared.open(fileKey: fileKey, path: menuPath)
+                page.scope = .compare
+            } label: { Image(systemName: "calendar.badge.clock").frame(width: 14) }
+            .buttonStyle(NotionButtonStyle())
+            .tip("기간 비교: 이 " + (menuPath == nil ? "프로젝트" : "메뉴") + "에서 며칠 동안 바뀐 화면을 모아 보고 Claude 문구로 넘깁니다")
             if pending > 0, let path = menuPath {
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(sync.claudePrompt(menu: path, in: fileKey), forType: .string)
-                    page.flash("이 메뉴의 반영할 변경 \(pending)건을 Claude 문구로 복사했습니다")
+                    let prompt = sync.claudePrompt(menu: path, in: fileKey)
+                    NSPasteboard.general.setString(prompt, forType: .string)
+                    page.flash(DesignFormat.copied(prompt))
                 } label: { Label(compact ? "변경 \(pending)건 문구" : "변경 \(pending)건 Claude 문구", systemImage: "sparkles") }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .tip("이 메뉴 화면들의 반영하지 않은 변경을 화면별로 묶어 복사합니다. 반영 체크한 항목은 빼고, 전체 명세 대신 화면마다 피그마 링크를 넣어 짧게 만듭니다")
             } else if unbuilt, let path = menuPath {
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(sync.claudeBuildPrompt(menu: path, in: fileKey), forType: .string)
-                    page.flash("이 메뉴를 마크업해 달라는 Claude 문구를 복사했습니다")
+                    let prompt = sync.claudeBuildPrompt(menu: path, in: fileKey)
+                    NSPasteboard.general.setString(prompt, forType: .string)
+                    page.flash(DesignFormat.copied(prompt))
                 } label: { Label(compact ? "마크업 문구" : "메뉴 마크업 Claude 문구", systemImage: "sparkles") }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .tip("이 메뉴 화면마다 피그마 링크·참고·남은 기능 명세를 묶어 복사합니다. 목업 문구와 배치는 Claude가 피그마 MCP로 읽게 해 글을 줄이고, 구현을 마친 화면은 뺍니다")
@@ -1574,7 +1597,8 @@ private struct DesignTimeline: View {
 
     private var tabPicker: some View {
         Picker("", selection: $page.menuTab) {
-            Text("화면 \(screens.count)").tag(DesignHistoryPage.MenuTab.screens)
+            Text(screens.count == allScreens.count ? "화면 \(screens.count)" : "화면 \(screens.count)/\(allScreens.count)")
+                .tag(DesignHistoryPage.MenuTab.screens)
             Text(events.isEmpty ? "변경" : "변경 \(events.count)").tag(DesignHistoryPage.MenuTab.changes)
         }
         .pickerStyle(.segmented)
@@ -1766,8 +1790,8 @@ struct DesignEventRow: View {
                             Text(project).font(WL.meta).foregroundStyle(WL.text.opacity(0.75)).lineLimit(1).fixedSize()
                         }
                         Text(DesignFormat.subtitle(event))
-                            .font(WL.meta).foregroundStyle(WL.muted).lineLimit(1).truncationMode(.middle)
-                            .tip(DesignFormat.subtitle(event))
+                            .font(WL.meta).foregroundStyle(WL.muted).lineLimit(1).truncationMode(.tail)
+                            .tip([event.screenID, DesignFormat.path(event.menuPath)].filter { !$0.isEmpty }.joined(separator: "\n"))
                     }
                     HStack(spacing: 6) {
                         DesignPhaseBadge(phase: event.phase)
@@ -1946,7 +1970,7 @@ private struct DesignEventDetail: View {
             HStack(spacing: 8) {
                 DesignPhaseBadge(phase: event.phase)
                 if !event.screenID.isEmpty {
-                    Text(event.screenID).font(WL.number).foregroundStyle(WL.muted).textSelection(.enabled)
+                    CopyableID(text: event.screenID) { page.flash("‘\($0)’를 복사했습니다") }
                 }
                 if let url = DesignFormat.link(event) {
                     Button { NSWorkspace.shared.open(url) } label: {
@@ -2004,7 +2028,15 @@ private struct DesignEventDetail: View {
 
     private func actions(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            actionRow(compact: compact)
+            // 칸이 좁으면 단추 이름을 줄이고, 그래도 넘치면 상태 메뉴를 다음 줄로 내린다 (칸 밖으로 밀려 잘리지 않게)
+            ViewThatFits(in: .horizontal) {
+                actionRow(compact: compact, status: true)
+                actionRow(compact: true, status: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    actionRow(compact: true, status: false)
+                    statusMenu
+                }
+            }
             if progress.total > 0 && !applied && stored { progressBar }
         }
     }
@@ -2028,7 +2060,7 @@ private struct DesignEventDetail: View {
         }
     }
 
-    private func actionRow(compact: Bool) -> some View {
+    private func actionRow(compact: Bool, status: Bool) -> some View {
         HStack(spacing: 8) {
             if stored {
                 Button(action: toggleApplied) {
@@ -2040,8 +2072,9 @@ private struct DesignEventDetail: View {
             if event.kind != .changelog && event.kind != .removed {
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(sync.claudePrompt(for: event), forType: .string)
-                    page.flash("Claude에 붙일 변경 문구를 복사했습니다")
+                    let prompt = sync.claudePrompt(for: event)
+                    NSPasteboard.general.setString(prompt, forType: .string)
+                    page.flash(DesignFormat.copied(prompt))
                 } label: { Label(compact ? "Claude 문구" : "Claude 문구 복사", systemImage: "sparkles") }
                 .buttonStyle(NotionButtonStyle())
                 .tip("이 변경을 마크업에 반영해 달라는 글을 복사합니다. 명세는 전·후 원문, 목업 문구는 화면 위치까지 넣고 체크한 항목은 뺍니다. Claude Code에 그대로 붙여 넣으세요")
@@ -2073,19 +2106,24 @@ private struct DesignEventDetail: View {
                 }
             }
             Spacer(minLength: 0)
-            if event.kind != .changelog, let state = screenState {
-                Menu {
-                    Button(state == .done ? "✓ 완료" : "완료") { setStatus(true) }
-                    Button(state == .working ? "✓ 작업 중" : "작업 중") { setStatus(false) }
-                    Divider()
-                    Button("자동 (섹션 표시대로)") { setStatus(nil) }
-                } label: {
-                    Text("상태: " + (state == .done ? "완료" : state == .working ? "작업 중" : "모름")).font(WL.meta)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .tip("이 화면의 변경을 알릴지 정하는 상태. 섹션 표시가 틀렸으면 직접 정합니다")
+            if status { statusMenu }
+        }
+    }
+
+    /// 이 화면을 완료로 볼지 정하는 메뉴.
+    @ViewBuilder private var statusMenu: some View {
+        if event.kind != .changelog, let state = screenState {
+            Menu {
+                Button(state == .done ? "✓ 완료" : "완료") { setStatus(true) }
+                Button(state == .working ? "✓ 작업 중" : "작업 중") { setStatus(false) }
+                Divider()
+                Button("자동 (섹션 표시대로)") { setStatus(nil) }
+            } label: {
+                Text("상태: " + (state == .done ? "완료" : state == .working ? "작업 중" : "모름")).font(WL.meta)
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .tip("이 화면의 변경을 알릴지 정하는 상태. 섹션 표시가 틀렸으면 직접 정합니다")
         }
     }
 
@@ -2097,23 +2135,10 @@ private struct DesignEventDetail: View {
             if event.beforeVersion != nil || event.afterVersion != nil {
                 let marks = tree.map(DesignChangeTree.items)?.filter { $0.change.place?.hasBox == true } ?? []
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 10) {
-                        SectionLabel("화면 비교")
-                        Spacer()
-                        if !marks.isEmpty {
-                            Toggle("바뀐 자리 표시", isOn: $page.showsMarks)
-                                .toggleStyle(.checkbox).font(WL.meta).foregroundStyle(WL.muted)
-                                .lineLimit(1).fixedSize()
-                                .tip("목업 변경의 자리와 번호를 이미지 위에 그립니다. 번호는 변경 목록과 같습니다")
-                        }
-                        Picker("", selection: $page.compareMode) {
-                            Text("둘 다").tag(0)
-                            Text("이전").tag(1)
-                            Text("이후").tag(2)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 168)
+                    // 좁으면 제목 아래로 조절 단추를 내린다
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { SectionLabel("화면 비교"); comparisonControls(marks: marks) }
+                        VStack(alignment: .leading, spacing: 6) { SectionLabel("화면 비교"); HStack(spacing: 10) { comparisonControls(marks: marks) } }
                     }
                     let shown = page.showsMarks ? marks : []
                     switch page.compareMode {
@@ -2134,6 +2159,25 @@ private struct DesignEventDetail: View {
                     .font(WL.caption).foregroundStyle(WL.muted)
             }
         }
+    }
+
+    /// 바뀐 자리 표시와 둘 다·이전·이후.
+    @ViewBuilder private func comparisonControls(marks: [DesignChangeTree.Item]) -> some View {
+        Spacer(minLength: 0)
+        if !marks.isEmpty {
+            Toggle("바뀐 자리 표시", isOn: $page.showsMarks)
+                .toggleStyle(.checkbox).font(WL.meta).foregroundStyle(WL.muted)
+                .lineLimit(1).fixedSize()
+                .tip("목업 변경의 자리와 번호를 이미지 위에 그립니다. 번호는 변경 목록과 같습니다")
+        }
+        Picker("", selection: $page.compareMode) {
+            Text("둘 다").tag(0)
+            Text("이전").tag(1)
+            Text("이후").tag(2)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 168)
     }
 
     /// 이미지는 제 비율대로 칸 너비에 맞춘다. 받기 전·실패는 고정 높이 자리로 둔다.
@@ -2381,7 +2425,11 @@ enum DesignFormat {
 
     /// 둘째 줄: 화면 ID와 경로, 이력은 페이지와 적은 날.
     static func subtitle(_ event: DesignEvent) -> String {
-        guard event.kind == .changelog else { return [event.screenID, path(event.menuPath)].filter { !$0.isEmpty }.joined(separator: " · ") }
+        // 경로 가운데가 잘리면 읽기 어려워 마지막 두 마디만 둔다 (전체 경로는 툴팁과 상세에 있다)
+        guard event.kind == .changelog else {
+            let tail = event.menuPath.components(separatedBy: " > ").suffix(2).joined(separator: " › ")
+            return [event.screenID, tail].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
         let date = event.title.split(separator: " ").first { $0.count == 10 && $0.contains("-") }
         return [event.menuPath, date.map(String.init)].compactMap { $0 }.joined(separator: " · ")
     }
@@ -2389,6 +2437,12 @@ enum DesignFormat {
     /// 화면이나 이력 표 프레임으로 바로 가는 주소.
     static func link(_ event: DesignEvent) -> URL? {
         event.frameID.flatMap { FigmaFileURL.link(fileKey: event.fileKey, nodeID: $0) }
+    }
+
+    /// Claude 문구를 복사한 뒤 알림. 화면 수와 글자 수를 보여 문구가 길면 범위를 좁힐지 정하게 한다.
+    static func copied(_ prompt: String) -> String {
+        let screens = prompt.components(separatedBy: "[화면] ").count - 1
+        return "Claude 문구를 복사했습니다 · " + (screens > 1 ? "화면 \(screens)개 · " : "") + "\(prompt.count.formatted())자"
     }
 
     static func stamp(_ date: Date) -> String {
