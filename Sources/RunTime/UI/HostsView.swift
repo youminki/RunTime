@@ -202,7 +202,7 @@ struct HostsView: View {
                 ForEach(page.showAllIssues ? issues : Array(issues.prefix(3))) { issue in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: issue.isNotice ? "info.circle" : issue.fixable ? "wand.and.stars" : "exclamationmark.triangle")
-                            .font(.system(size: 11)).foregroundStyle(issue.isNotice ? WL.muted : WL.waiting)
+                            .font(.system(size: 12)).foregroundStyle(issue.isNotice ? WL.muted : WL.waiting)
                             .frame(width: 14)
                         Text("\(issue.line + 1)번째 줄").font(WL.number).foregroundStyle(WL.muted)
                         Text(issue.message).font(.system(size: 12.5))
@@ -217,13 +217,13 @@ struct HostsView: View {
 
     private var searchField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(WL.faint)
+            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(WL.quiet)
             TextField("이름, 주소, 묶음, 메모로 찾기 (⌘F)", text: $page.search).textFieldStyle(.plain).font(WL.body)
                 .focused($searching)
                 .onExitCommand { page.search = ""; searching = false }
             if !page.search.isEmpty {
                 Button { page.search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain).foregroundStyle(WL.faint)
+                    .buttonStyle(.plain).foregroundStyle(WL.quiet)
             }
         }
         .padding(.horizontal, 10)
@@ -262,12 +262,12 @@ struct HostsView: View {
             }) {
                 HStack(spacing: 8) {
                     Text(section.title ?? "묶음 없음").font(WL.section).foregroundStyle(section.title == nil ? WL.muted : WL.text)
-                    Text("\(section.items.filter(\.enabled).count)/\(section.items.count)").font(WL.number).foregroundStyle(WL.faint)
+                    Text("\(section.items.filter(\.enabled).count)/\(section.items.count)").font(WL.number).foregroundStyle(WL.quiet)
                     // 묶음이 어느 서버를 보는지 한눈에 (환경 전환 뒤 바로 확인하게)
                     let addresses = Array(NSOrderedSet(array: section.items.filter(\.enabled).map(\.ip))) as? [String] ?? []
                     if !addresses.isEmpty {
                         Text(addresses.prefix(2).joined(separator: ", ") + (addresses.count > 2 ? " 외 \(addresses.count - 2)" : ""))
-                            .font(.system(size: 11, design: .monospaced)).foregroundStyle(WL.muted)
+                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(WL.muted)
                             .padding(.horizontal, 6).frame(height: 18)
                             .background(Capsule().fill(WL.hover))
                     }
@@ -375,7 +375,7 @@ private struct HostRow: View {
                 .lineLimit(1).truncationMode(.middle)
                 .layoutPriority(1)
             // 기한은 오른쪽 표시로 보이니 메모에서는 뺀다
-            if let note = HostsFile.note(item.note, until: nil) { Text(note).font(WL.caption).foregroundStyle(WL.faint).lineLimit(1) }
+            if let note = HostsFile.note(item.note, until: nil) { Text(note).font(WL.caption).foregroundStyle(WL.quiet).lineLimit(1) }
             if let expiry = item.expiry {
                 // 꺼 둔 줄은 할 일이 없어 지났어도 날짜만 옅게 보인다
                 let past = item.enabled && expiry < HostsStore.today()
@@ -515,7 +515,7 @@ private struct HostsAddSheet: View {
                         .focused($typing)
                     if form.text.isEmpty {
                         Text("10.0.1.20  api.dev.example.com\n10.0.1.20  admin.dev.example.com web.dev.example.com")
-                            .font(.system(size: 12.5, design: .monospaced)).foregroundStyle(WL.faint)
+                            .font(.system(size: 12.5, design: .monospaced)).foregroundStyle(WL.quiet)
                             .padding(.leading, 5)
                             .allowsHitTesting(false)
                     }
@@ -536,7 +536,7 @@ private struct HostsAddSheet: View {
                     Text("묶음").font(WL.label).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
                     TextField("비우면 묶음 없이", text: $form.group).textFieldStyle(.roundedBorder).frame(width: 220)
                     if !group.isEmpty, !groups.contains(group) {
-                        Text("새 묶음을 파일 끝에 만듭니다").font(WL.caption).foregroundStyle(WL.faint)
+                        Text("새 묶음을 파일 끝에 만듭니다").font(WL.caption).foregroundStyle(WL.quiet)
                     }
                 }
                 if !groups.isEmpty {
@@ -556,7 +556,7 @@ private struct HostsAddSheet: View {
                     DatePicker("", selection: $form.until, in: Date()..., displayedComponents: .date)
                         .labelsHidden().datePickerStyle(.field).fixedSize()
                         .disabled(!form.limited)
-                    Text("지나면 알리고 한 번에 끌 수 있게 합니다").font(WL.caption).foregroundStyle(WL.faint)
+                    Text("지나면 알리고 한 번에 끌 수 있게 합니다").font(WL.caption).foregroundStyle(WL.quiet)
                 }
             }
             HStack {
@@ -586,7 +586,7 @@ private struct HostsAddSheet: View {
                             Text(entry.name).font(.system(size: 12.5, weight: .medium))
                                 .foregroundStyle(entry.status == .exists ? WL.faint : WL.text)
                                 .lineLimit(1).truncationMode(.middle)
-                            if !entry.enabled { Text("꺼 둔 채").font(WL.caption).foregroundStyle(WL.faint) }
+                            if !entry.enabled { Text("꺼 둔 채").font(WL.caption).foregroundStyle(WL.quiet) }
                             Spacer(minLength: 8)
                             status(entry.status)
                         }
@@ -703,7 +703,7 @@ private struct HostsEditSheet: View {
                     ForEach(groups, id: \.self) { Text($0).tag($0) }
                 }
                 .labelsHidden().fixedSize()
-                if form.group != group { Text("옮기면 그 묶음 끝에 넣습니다").font(WL.caption).foregroundStyle(WL.faint) }
+                if form.group != group { Text("옮기면 그 묶음 끝에 넣습니다").font(WL.caption).foregroundStyle(WL.quiet) }
             }
             field("메모", text: $form.note, placeholder: "없음")
             HStack(spacing: 10) {
@@ -800,7 +800,7 @@ private struct HostsPreviewSheet: View {
             HStack(spacing: 14) {
                 Tally(title: "더함", value: added, tint: WL.done)
                 Tally(title: "뺌", value: removed, tint: WL.waiting)
-                Text("저장하기 전 판은 백업에 남습니다").foregroundStyle(WL.faint)
+                Text("저장하기 전 판은 백업에 남습니다").foregroundStyle(WL.quiet)
             }
             .font(.system(size: 12.5))
             ScrollView {
@@ -809,7 +809,7 @@ private struct HostsPreviewSheet: View {
                         switch row {
                         case .change(let change): line(change)
                         case .folded(_, let count):
-                            Text("⋯ 같은 줄 \(count)개").font(WL.caption).foregroundStyle(WL.faint).padding(.vertical, 3).padding(.leading, 26)
+                            Text("⋯ 같은 줄 \(count)개").font(WL.caption).foregroundStyle(WL.quiet).padding(.vertical, 3).padding(.leading, 26)
                         }
                     }
                 }
@@ -862,7 +862,7 @@ private struct HostsPreviewSheet: View {
                 .lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 0)
         }
-        .font(.system(size: 11.5, design: .monospaced))
+        .font(.system(size: 12, design: .monospaced))
         .padding(.horizontal, 6)
         .padding(.vertical, 1.5)
         .background(tint.opacity(0.12))
@@ -908,7 +908,7 @@ private struct HostsBackupSheet: View {
                                 HStack {
                                     Text(backup.date.formatted(date: .abbreviated, time: .standard)).font(WL.body).monospacedDigit()
                                     Spacer()
-                                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.faint)
+                                    Image(systemName: "chevron.right").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(WL.quiet)
                                 }
                                 .padding(.horizontal, 10)
                                 .frame(height: 34)
@@ -973,15 +973,15 @@ private struct HostsSwitchSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         Text(old).font(.system(size: 12.5, design: .monospaced)).frame(width: 130, alignment: .leading)
-                        Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(WL.faint)
+                        Image(systemName: "arrow.right").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(WL.quiet)
                         TextField("새 주소", text: Binding(get: { form.targets[old] ?? "" }, set: { form.targets[old] = $0 }))
                             .textFieldStyle(.roundedBorder).font(.system(size: 12.5, design: .monospaced))
-                        Text("\(section.items.filter { $0.ip == old }.count)개").font(WL.number).foregroundStyle(WL.faint)
+                        Text("\(section.items.filter { $0.ip == old }.count)개").font(WL.number).foregroundStyle(WL.quiet)
                     }
                     let picks = recent.filter { $0 != old }
                     if !picks.isEmpty {
                         HStack(alignment: .top, spacing: 6) {
-                            Text("최근").font(WL.caption).foregroundStyle(WL.faint).frame(width: 130, height: 24, alignment: .trailing)
+                            Text("최근").font(WL.caption).foregroundStyle(WL.quiet).frame(width: 130, height: 24, alignment: .trailing)
                             // 칩이 많아도 주소가 잘리지 않게 넘치면 다음 줄로 꺾는다
                             FlowLayout(spacing: 6) {
                                 ForEach(picks, id: \.self) { ip in

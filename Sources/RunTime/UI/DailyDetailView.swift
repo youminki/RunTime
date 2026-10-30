@@ -112,7 +112,7 @@ struct DailyDetailView: View {
                     .stroke(Palette.green, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .allowsHitTesting(false)
                     Text("평균")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Palette.green)
                         .padding(.horizontal, 4)
                         .background(Capsule().fill(Palette.groupedRow))
@@ -124,7 +124,7 @@ struct DailyDetailView: View {
             HStack(spacing: 8) {
                 ForEach(days, id: \.dayStart) { day in
                     Text(weekday(day.dayStart))
-                        .font(.system(size: 10, weight: isToday(day.dayStart) ? .bold : .regular))
+                        .font(.system(size: 11.5, weight: isToday(day.dayStart) ? .bold : .regular))
                         .foregroundStyle(isToday(day.dayStart) ? .primary : day.total == nil ? .tertiary : .secondary)
                         .frame(maxWidth: .infinity)
                 }
@@ -158,7 +158,7 @@ struct DailyDetailView: View {
                 }
             }
         }
-        .font(.system(size: 10.5))
+        .font(.system(size: 12))
         .foregroundStyle(.secondary)
     }
 

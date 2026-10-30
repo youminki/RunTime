@@ -33,11 +33,11 @@ struct CalendarPageView: View {
                     .padding(.bottom, 16)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // 고른 날 칸은 끌어서 넓히고, 두 번 누르면 기본 300으로 돌아간다
-            ColumnDivider(width: Binding(get: { page.calendarDetailWidth ?? 300 }, set: { page.calendarDetailWidth = $0 }),
-                          range: 240...520, standard: 300, trailing: true, reset: { page.calendarDetailWidth = nil })
+            // 고른 날 칸은 끌어서 넓히고, 두 번 누르면 기본 340으로 돌아간다
+            ColumnDivider(width: Binding(get: { page.calendarDetailWidth ?? 340 }, set: { page.calendarDetailWidth = $0 }),
+                          range: 240...720, standard: 340, trailing: true, reset: { page.calendarDetailWidth = nil })
             detail
-                .frame(width: page.calendarDetailWidth ?? 300)
+                .frame(width: page.calendarDetailWidth ?? 340)
         }
         .background(WL.canvas)
         .foregroundStyle(WL.text)
@@ -192,11 +192,14 @@ struct CalendarPageView: View {
                                 Text(project).font(WL.heading)
                             }
                             PathGroupedRows(entries: entries.filter { $0.project == project }) { entry, path in
-                                HStack(spacing: 8) {
+                                // 제목이 여러 줄이면 상태 표시를 첫 줄에 맞춘다
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     StatusGlyph(status: entry.status)
                                     Text(path == nil ? entry.title : WorkLogFormat.breadcrumb(entry.title).leaf)
-                                        .font(.system(size: 13))
-                                        .lineLimit(1)
+                                        .font(.system(size: 13.5))
+                                        // 오른쪽 칸은 자리가 넉넉해 한 줄로 자르지 않고 세 줄까지 보인다
+                                        .lineLimit(3)
+                                        .fixedSize(horizontal: false, vertical: true)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .tip(entry.title)
                                     StatusText(status: entry.status)

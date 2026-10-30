@@ -24,6 +24,10 @@ struct PopoverView: View {
 
     enum Layout { case popover, usagePage, gamePage, runnersPage }
 
+    /// 앱 창의 화면은 메뉴바 창보다 넓어 작은 글자를 한 단계 키운다.
+    private var labelFont: Font { layout == .popover ? Theme.label : .system(size: 12.5, weight: .medium) }
+    private var captionFont: Font { layout == .popover ? Theme.caption : .system(size: 12.5) }
+
     private var windowed: Bool { layout != .popover }
 
     @StateObject private var sparklineHover = HoverIndex()
@@ -117,11 +121,11 @@ struct PopoverView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // 화면 이름은 창 위 막대에 있어, 여기는 공식 값을 언제 받았는지와 새로고침만 둔다
                 HStack(alignment: .center) {
-                    Text("이 Mac의 Claude Code와 공식 사용률").font(Theme.label).foregroundStyle(Theme.secondary)
+                    Text("이 Mac의 Claude Code와 공식 사용률").font(labelFont).foregroundStyle(Theme.secondary)
                     Spacer()
                     HStack(spacing: 6) {
                         Circle().fill(statusColor).frame(width: 6, height: 6)
-                        Text(statusText).font(Theme.caption).foregroundStyle(Theme.tertiary).lineLimit(1)
+                        Text(statusText).font(captionFont).foregroundStyle(Theme.tertiary).lineLimit(1)
                     }
                     Button { engine.refreshNow(forceOfficial: true) } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(ToolbarButtonStyle())
@@ -188,7 +192,7 @@ struct PopoverView: View {
                         .frame(height: 20)
                         .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.surface))
                         .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Theme.hairline))
-                    Text(action).font(Theme.caption).foregroundStyle(Theme.secondary)
+                    Text(action).font(captionFont).foregroundStyle(Theme.secondary)
                 }
                 .fixedSize()
                 .padding(.trailing, 8)
@@ -273,7 +277,7 @@ struct PopoverView: View {
                     Text("·").foregroundStyle(Theme.tertiary)
                     Text(stateLabel).foregroundStyle(display.isCritical ? Theme.critical : Theme.secondary)
                 }
-                .font(Theme.label)
+                .font(labelFont)
             } else {
             Button { page.showsRunners.toggle() } label: {
                 HStack(spacing: 4) {
@@ -284,7 +288,7 @@ struct PopoverView: View {
                         .font(.system(size: 8.5, weight: .bold))
                         .foregroundStyle(Theme.tertiary)
                 }
-                .font(Theme.label)
+                .font(labelFont)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -315,7 +319,7 @@ struct PopoverView: View {
                 Image(systemName: "hand.tap").font(.system(size: 9.5, weight: .semibold))
                 Text("동작")
             }
-            .font(Theme.label)
+            .font(labelFont)
             .foregroundStyle(Theme.secondary)
             .padding(.horizontal, 8)
             .frame(height: 20)
@@ -513,7 +517,7 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)
-                Text(window).font(Theme.caption).foregroundStyle(Theme.tertiary)
+                Text(window).font(captionFont).foregroundStyle(Theme.tertiary)
                 Spacer(minLength: 2)
                 paceBadge(gauge: gauge, elapsed: elapsed, reachesLimit: reachesLimit)
             }
@@ -615,7 +619,7 @@ struct PopoverView: View {
         let values = engine.snapshot?.sparkline ?? []
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("최근 30분").font(Theme.label).foregroundStyle(Theme.secondary)
+                Text("최근 30분").font(labelFont).foregroundStyle(Theme.secondary)
                 Spacer()
                 if let i = sparklineHover.index, values.indices.contains(i) {
                     let minutesAgo = values.count - 1 - i
@@ -633,8 +637,8 @@ struct PopoverView: View {
                 Spacer()
                 Text("지금")
             }
-            .font(.system(size: 9.5))
-            .foregroundStyle(Theme.tertiary)
+            .font(.system(size: layout == .popover ? 9.5 : 11.5))
+            .foregroundStyle(layout == .popover ? Theme.tertiary : Theme.secondary)
         }
     }
 
@@ -664,7 +668,7 @@ struct PopoverView: View {
                     Circle().fill(statusColor).frame(width: 5, height: 5)
                     Text(statusText).lineLimit(1)
                 }
-                .font(Theme.caption)
+                .font(captionFont)
                 .foregroundStyle(Theme.tertiary)
                 .contentShape(Rectangle())
             }
@@ -739,7 +743,7 @@ struct PopoverView: View {
 
     private func caption(_ text: String, color: Color = Theme.secondary) -> some View {
         Text(text)
-            .font(Theme.caption.monospacedDigit())
+            .font(captionFont.monospacedDigit())
             .foregroundStyle(color)
             .lineLimit(1)
     }

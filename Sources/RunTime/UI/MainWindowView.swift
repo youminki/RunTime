@@ -111,7 +111,7 @@ struct MainWindowView: View {
     var importRunner: () -> Void = {}
     var performTrick: (Trick) -> Void = { _ in }
 
-    static let railWidth: CGFloat = 68
+    static let railWidth: CGFloat = 72
 
     var body: some View {
         HStack(spacing: 0) {
@@ -159,17 +159,17 @@ struct MainWindowView: View {
         return Button { navigator.go(page) } label: {
             VStack(spacing: 3) {
                 Image(systemName: page.icon)
-                    .font(.system(size: 16, weight: on ? .semibold : .regular))
-                    .frame(width: 40, height: 28)
+                    .font(.system(size: 17, weight: on ? .semibold : .regular))
+                    .frame(width: 42, height: 30)
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(on ? Color.accentColor.opacity(0.18) : .clear))
                 Text(page.title)
-                    .font(.system(size: 10, weight: on ? .semibold : .regular))
+                    .font(.system(size: 11.5, weight: on ? .semibold : .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
             .foregroundStyle(on ? Color.accentColor : Color.secondary)
-            .frame(width: Self.railWidth - 8, height: 50)
+            .frame(width: Self.railWidth - 6, height: 56)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
