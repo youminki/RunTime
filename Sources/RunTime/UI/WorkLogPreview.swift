@@ -248,7 +248,7 @@ struct WorkLogPreview: View {
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
             .overlay(alignment: .topLeading) {
                 if reportBody.isEmpty {
-                    Text("어제 끝내지 못한 일과 오늘 적은 일로 만들어집니다. 여기에 바로 써도 됩니다.")
+                    Text("기간 중인 프로젝트, 어제 끝내지 못한 일, 오늘 적은 일로 만들어집니다. 여기에 바로 써도 됩니다.")
                         .font(.system(size: 13)).foregroundStyle(.tertiary)
                         .padding(.horizontal, 16).padding(.top, 32).allowsHitTesting(false)
                 }
@@ -261,6 +261,17 @@ struct WorkLogPreview: View {
                     Button("일지로 다시 만들기") { page.planEdits[page.day] = nil }.buttonStyle(TextLinkButtonStyle())
                 }
             }
+            // 기간을 정한 프로젝트는 줄이 없어도 늘 들어간다. 무엇이 왜 들어갔는지 보이고, 정하는 곳을 알린다
+            let fixed = store.log.projectsInPeriod(on: page.day)
+            let manual = fixed.filter { store.log.projectPeriods[$0] != nil }, auto = fixed.filter { store.log.projectPeriods[$0] == nil }
+            Text(fixed.isEmpty
+                 ? "레드마인 내 일감이 있는 프로젝트는 줄이 없어도 진행 예정에 들어갑니다. 왼쪽 프로젝트를 오른쪽 클릭해 기간을 직접 정할 수도 있습니다."
+                 : ([auto.isEmpty ? nil : auto.joined(separator: ", ") + "는 레드마인 내 일감으로",
+                     manual.isEmpty ? nil : manual.joined(separator: ", ") + "는 직접 정한 기간으로"]
+                    .compactMap { $0 }.joined(separator: ", ") + " 줄이 없어도 들어갑니다."))
+                .font(WL.caption).foregroundStyle(WL.faint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -356,6 +367,7 @@ struct WorkLogPreview: View {
                         Spacer()
                         Button("보낸 것으로 표시") {
                             store.markPosted(chosen.flatMap(\.entryIDs))
+                            forgetChoices(chosen.map(\.issue))
                             page.flash("\(chosen.count)개 일감을 보낸 것으로 표시했습니다")
                         }
                         .tip("고른 일감을 다른 곳에서 이미 올렸을 때")
@@ -482,6 +494,8 @@ struct WorkLogPreview: View {
             parts.append("댓글 빼고 보냄")
         } else if update.needsNote {
             parts.append("댓글 \(update.note.components(separatedBy: "\n").filter { !$0.isEmpty }.count)줄")
+            let shots = page.redmineNoScreens.contains(update.issue) ? 0 : screenPlan(update).count
+            if shots > 0 { parts.append("화면 \(shots)장") }
         }
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
@@ -686,7 +700,7 @@ struct WorkLogPreview: View {
                 } label: { Label(noNote ? "댓글도 보내기" : "댓글 빼기", systemImage: noNote ? "plus.bubble" : "minus.circle") }
                 Button {
                     store.markPosted(update.entryIDs)
-                    page.redmineSkipped.remove(update.issue)
+                    forgetChoices([update.issue])
                     page.flash("#\(update.issue)를 보낸 것으로 표시했습니다")
                 } label: { Label("보낸 것으로 표시", systemImage: "checkmark") }
                     .tip("진척률·칸도 보내지 않고 목록에서 뺍니다")
@@ -709,6 +723,7 @@ struct WorkLogPreview: View {
             }
             Button("보낸 것으로 표시") {
                 store.markPosted(update.entryIDs)
+                forgetChoices([update.issue])
                 page.flash("#\(update.issue)를 보낸 것으로 표시했습니다")
             }
             Divider()
@@ -920,65 +935,209 @@ struct WorkLogPreview: View {
     }
 
     /// 이 일감 줄이 온 MR의 수정 전·후 화면. 보낼 때 레드마인에 첨부하고 댓글 끝에 붙는다.
-    /// 레드마인 댓글과 같은 순서로, 항목 제목 아래 수정 전·후를 나란히 보인다.
+    /// 한 MR이 여러 일감에 걸치면 이 일감 몫만 보이고, 왜 이 일감에 붙는지와 다른 일감으로 간 장수를 함께 보인다.
     @ViewBuilder
     private func screens(_ update: WorkReport.RedmineUpdate) -> some View {
-        let origins = settings.attachScreens && !page.redmineNoNote.contains(update.issue)
-            ? MRScreenStore.origins(store.log.entries.filter { update.entryIDs.contains($0.id) }.map(\.source)) : []
-        let refs = shots.refs(origins)
-        if !origins.isEmpty {
-            let groups = refs.flatMap { ref in
-                (shots.screens[ref] ?? []).enumerated().map { index, screen in
-                    ScreenGroup(id: "\(ref.key)#\(index)", mr: refs.count > 1 && index == 0 ? ref.iid : nil, number: index + 1,
-                                title: screen.title, before: screen.before, after: screen.after)
+        let plan = screenPlan(update)
+        let off = page.redmineNoScreens.contains(update.issue)
+        if page.redmineNoNote.contains(update.issue) {
+            // 화면은 댓글 끝에 붙으므로 댓글을 빼면 함께 빠진다. 칸을 통째로 숨기면 화면이 있었는지 모른다
+            if plan.count > 0 {
+                cardSection {
+                    CardSectionHeader(icon: "photo.on.rectangle.angled", title: "수정 전·후 화면", detail: "\(plan.count)장 빠짐")
+                        .tip("댓글을 빼고 보내면 화면도 붙지 않습니다. 댓글 스위치를 켜면 함께 올라갑니다")
                 }
             }
-            let count = groups.reduce(0) { $0 + ($1.before == nil ? 0 : 1) + ($1.after == nil ? 0 : 1) }
-            let loading = origins.contains { shots.loading.contains($0) }
-            let off = page.redmineNoScreens.contains(update.issue)
-            if loading || !groups.isEmpty {
-                cardSection {
-                    VStack(alignment: .leading, spacing: 10) {
-                        CardSectionHeader(icon: "photo.on.rectangle.angled", title: "수정 전·후 화면",
-                                          detail: loading ? nil : off ? "붙이지 않음" : "\(count)장 첨부") {
-                            if loading {
-                                ProgressView().controlSize(.mini)
-                            } else if !groups.isEmpty {
-                                Toggle("", isOn: Binding(
-                                    get: { !off },
-                                    set: { on in
-                                        if on { page.redmineNoScreens.remove(update.issue) } else { page.redmineNoScreens.insert(update.issue) }
-                                    }
-                                ))
-                                .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                                .tip(off ? "화면을 함께 올리기" : "이번에는 화면 없이 댓글만 보내기")
-                            }
-                        }
-                        if loading {
-                            Text("MR에서 수정 전·후 화면을 찾는 중…").font(WL.caption).foregroundStyle(WL.muted)
-                        } else if !off {
-                            ForEach(groups) { group in
-                                // MR이 여럿이면 어느 MR 화면인지 머리를 단다 (번호는 MR마다 1부터)
-                                if let mr = group.mr {
-                                    Text("MR !\(mr)").font(WL.label).foregroundStyle(WL.muted).padding(.top, 2)
+        } else if plan.loading || !plan.groups.isEmpty || !plan.elsewhere.isEmpty || plan.orphaned > 0 {
+            cardSection {
+                VStack(alignment: .leading, spacing: 10) {
+                    CardSectionHeader(icon: "photo.on.rectangle.angled", title: "수정 전·후 화면",
+                                      detail: plan.loading ? nil : off ? "붙이지 않음" : "\(plan.count)장 첨부") {
+                        if plan.loading {
+                            ProgressView().controlSize(.mini)
+                        } else if !plan.groups.isEmpty {
+                            Toggle("", isOn: Binding(
+                                get: { !off },
+                                set: { on in
+                                    if on { page.redmineNoScreens.remove(update.issue) } else { page.redmineNoScreens.insert(update.issue) }
                                 }
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text("\(group.number). \(group.title.map(MRScreenTitle.short) ?? "화면")")
-                                        .font(WL.caption).foregroundStyle(.secondary).lineLimit(2)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    HStack(spacing: 6) {
-                                        thumb(group.before, kind: .before)
-                                        thumb(group.after, kind: .after)
-                                    }
-                                }
-                            }
-                            Text("댓글 끝 [수정 전·후 화면]에 이 순서로 붙습니다. 누르면 크게 봅니다.")
-                                .font(WL.caption).foregroundStyle(WL.faint)
+                            ))
+                            .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                            .tip(off ? "화면을 함께 올리기" : "이번에는 화면 없이 댓글만 보내기")
                         }
+                    }
+                    if plan.loading {
+                        Text("MR에서 수정 전·후 화면을 찾는 중…").font(WL.caption).foregroundStyle(WL.muted)
+                    } else if plan.groups.isEmpty {
+                        Text("이 일감에 맞는 화면이 없습니다").font(WL.caption).foregroundStyle(WL.muted)
+                    } else if !off {
+                        let expanded = page.expandedScreens.contains(update.issue)
+                        let hidden = expanded ? 0 : max(plan.groups.count - Self.screenPreviewLimit, 0)
+                        ForEach(plan.groups.prefix(plan.groups.count - hidden)) { group in
+                            // MR이 여럿이면 어느 MR 화면인지 머리를 단다 (번호는 MR마다 1부터)
+                            if let mr = group.mr {
+                                Text("MR !\(mr)").font(WL.label).foregroundStyle(WL.muted).padding(.top, 2)
+                            }
+                            screenRow(group, issue: update.issue)
+                        }
+                        if plan.groups.count > Self.screenPreviewLimit {
+                            Button {
+                                if expanded { page.expandedScreens.remove(update.issue) } else { page.expandedScreens.insert(update.issue) }
+                            } label: {
+                                Label(expanded ? "접기" : "화면 \(hidden)개 더 보기", systemImage: expanded ? "chevron.up" : "chevron.down")
+                            }
+                            .buttonStyle(TextLinkButtonStyle(tint: WL.accent))
+                            .labelStyle(.titleAndIcon)
+                            .font(.system(size: 11.5, weight: .medium))
+                        }
+                        if plan.dropped > 0 {
+                            Label("한 댓글에 \(MRScreens.maxImages)장까지 붙어 뒤 화면 \(plan.dropped)장은 빠집니다", systemImage: "exclamationmark.circle")
+                                .font(WL.caption).foregroundStyle(WL.waiting)
+                        }
+                        Text("댓글 끝 [수정 전·후 화면]에 이 순서로 붙습니다. 누르면 크게 봅니다.")
+                            .font(WL.caption).foregroundStyle(WL.faint)
+                    }
+                    if !plan.loading && plan.orphaned > 0 {
+                        Label("일지에 줄이 없는 일감 번호가 적힌 화면 \(plan.orphaned)장은 붙지 않습니다", systemImage: "questionmark.circle")
+                            .font(WL.caption).foregroundStyle(WL.muted)
+                            .tip("그 일감 줄을 일지에 적으면 그 일감 댓글에 붙습니다")
+                    }
+                    if !plan.loading && !plan.elsewhere.isEmpty {
+                        // 받을 일감이 댓글이나 화면을 빼고 보내면 그 화면은 어디에도 붙지 않는다
+                        let parked = plan.elsewhere.filter { page.redmineNoNote.contains($0.issue) || page.redmineNoScreens.contains($0.issue) }
+                        let going = plan.elsewhere.filter { item in !parked.contains { $0.issue == item.issue } }
+                        Label([going.isEmpty ? nil : going.map { "#\($0.issue) \($0.count)장" }.joined(separator: ", ") + "은 그 일감 댓글에 붙습니다",
+                               parked.isEmpty ? nil : parked.map { "#\($0.issue) \($0.count)장" }.joined(separator: ", ") + "은 그 일감이 화면을 빼고 보내 붙지 않습니다"]
+                                .compactMap { $0 }.joined(separator: " · "),
+                              systemImage: "arrow.turn.down.right")
+                            .font(WL.caption).foregroundStyle(WL.muted)
+                            .tip("같은 MR의 다른 일감 화면입니다. 화면 제목·위 줄의 일감 번호, 일감 이름과 겹치는 낱말로 나눕니다")
                     }
                 }
             }
         }
+    }
+
+    /// 화면 항목 하나: 붙일지 고르는 칸, 제목과 주인을 정한 근거, 그 아래 수정 전 → 수정 후.
+    /// 여러 일감이 나눠 받는 MR이면 다른 일감으로 옮길 수 있다.
+    private func screenRow(_ group: ScreenGroup, issue: Int) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .center, spacing: 6) {
+                Toggle(isOn: Binding(
+                    get: { group.included },
+                    set: { page.screenPicks.chosen[group.key] = $0 }
+                )) {
+                    Text((group.number.map { "\($0). " } ?? "") + (group.title.map(MRScreenTitle.short) ?? "화면"))
+                        .font(WL.caption).foregroundStyle(group.included ? .secondary : WL.faint).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .toggleStyle(.checkbox).controlSize(.small)
+                .tip(group.included ? "이 화면은 빼고 보내기" : "이 화면도 붙여 보내기")
+                Spacer(minLength: 4)
+                if group.unsure {
+                    badge("판단 어려움", tip: "검증에서 수정 전·후를 가리지 못한 화면이라 고를 때만 붙습니다", tint: WL.waiting)
+                }
+                if let match = group.match { matchBadge(match, issue: issue) }
+                if !group.targets.isEmpty || group.match == .moved {
+                    Menu {
+                        ForEach(group.targets, id: \.self) { target in
+                            Button("#\(target) \(store.log.issue(target)?.reportTitle ?? "")") { page.screenPicks.moves[group.key] = target }
+                        }
+                        if group.match == .moved {
+                            Divider()
+                            Button("원래 일감으로") { page.screenPicks.moves[group.key] = nil }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right").font(.system(size: 10, weight: .semibold))
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .foregroundStyle(WL.muted)
+                    .tip("다른 일감으로 옮기기")
+                }
+            }
+            HStack(spacing: 4) {
+                thumb(group.before, kind: .before)
+                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(WL.faint)
+                thumb(group.after, kind: .after)
+            }
+            .opacity(group.included ? 1 : 0.4)
+        }
+    }
+
+    /// 한 MR을 여러 일감이 나눠 받을 때만 단다. 대표 일감 몫은 단서가 없었다는 뜻이라 흐리게 둔다.
+    private func matchBadge(_ match: MRScreens.Match, issue: Int) -> some View {
+        switch match {
+        case .moved: badge("옮김", tip: "직접 이 일감으로 옮긴 화면입니다", tint: WL.accent)
+        case .number: badge("#\(issue)", tip: "화면 제목이나 바로 위 줄에 이 일감 번호가 적혀 있습니다", tint: WL.accent)
+        case .title: badge("이름 일치", tip: "화면 제목이 이 일감 이름·작업 줄과 가장 많이 겹칩니다", tint: WL.done)
+        case .primary: badge("대표 일감", tip: "어느 일감 화면인지 단서가 없어 MR 대표 일감에 붙입니다. ⇄로 다른 일감에 옮길 수 있습니다", tint: WL.quiet)
+        }
+    }
+
+    private func badge(_ text: String, tip: String, tint: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9.5, weight: .semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 6)
+            .frame(height: 16)
+            .background(Capsule().fill(tint.opacity(0.12)))
+            .fixedSize()
+            .tip(tip)
+    }
+
+    /// 카드에 처음 보일 화면 항목 수. 화면이 많은 MR은 카드가 길어져 다음 일감을 찾기 어렵다.
+    private static let screenPreviewLimit = 3
+
+    private struct ScreenPlan {
+        var groups: [ScreenGroup] = []
+        /// 붙일 그림 수.
+        var count = 0
+        /// 한도(`MRScreens.maxImages`)를 넘어 붙지 않는 그림 수.
+        var dropped = 0
+        /// 같은 MR에서 다른 일감 몫으로 간 그림 수.
+        var elsewhere: [(issue: Int, count: Int)] = []
+        /// 일지에 줄이 없는 일감 번호가 적혀 어디에도 붙지 않는 그림 수.
+        var orphaned = 0
+        var loading = false
+    }
+
+    private func screenPlan(_ update: WorkReport.RedmineUpdate) -> ScreenPlan {
+        var plan = ScreenPlan()
+        guard settings.attachScreens else { return plan }
+        let origins = MRScreenStore.origins(store.log.entries.filter { update.entryIDs.contains($0.id) }.map(\.source))
+        guard !origins.isEmpty else { return plan }
+        plan.loading = origins.contains { shots.loading.contains($0) }
+        let refs = shots.refs(origins)
+        let splits = store.screenSplits
+        let picks = page.screenPicks
+        var elsewhere: [Int: Int] = [:]
+        var chosen = 0
+        for ref in refs {
+            let all = shots.screens[ref] ?? []
+            let split = splits[ref.key] ?? .single(update.issue)
+            for screen in all where picks.includes(screen) {
+                let owners = MRScreens.owners(screen, split: split, picks: picks).issues
+                if owners.isEmpty { plan.orphaned += screen.images.count }
+                guard !owners.contains(update.issue) else { continue }
+                for other in owners { elsewhere[other, default: 0] += screen.images.count }
+            }
+            // 댓글에 붙는 화면만 번호를 단다 (레드마인 댓글의 번호와 같게)
+            let sent = MRScreenStore.share(all, ref: ref, issue: update.issue, splits: splits, picks: picks)
+            chosen += MRScreens.share(all, issue: update.issue, split: split, picks: picks).flatMap(\.images).count
+            plan.count += sent.flatMap(\.images).count
+            let targets = split.issues.filter { $0 != update.issue }
+            let owned = MRScreens.owned(all, issue: update.issue, split: split, picks: picks)
+            plan.groups += owned.enumerated().map { index, screen in
+                let number = sent.firstIndex { $0.key == screen.key }.map { $0 + 1 }
+                return ScreenGroup(id: "\(ref.key)#\(screen.key)", key: screen.key, mr: refs.count > 1 && index == 0 ? ref.iid : nil,
+                                   number: number, title: screen.title, before: screen.before, after: screen.after,
+                                   included: picks.includes(screen), unsure: screen.unsure, targets: targets,
+                                   match: split.issues.count > 1 ? MRScreens.owners(screen, split: split, picks: picks).match : nil)
+            }
+        }
+        plan.dropped = max(chosen - plan.count, 0)
+        plan.elsewhere = elsewhere.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+        return plan
     }
 
     /// 보낼 일감들의 MR 화면을 받는다. 카드 안의 빈 칸에 달면 처음에 보이는 것이 없어 불리지 않으므로 목록에서 부른다.
@@ -1045,14 +1204,25 @@ struct WorkLogPreview: View {
         }
         let issues = Set(updates.map(\.issue))
         let fresh = WorkReport.redmineUpdates(pendingEntries, log: store.log).filter { issues.contains($0.issue) }
-        sync.send(fresh, edits: page.issueEdits, withoutScreens: page.redmineNoScreens, withoutNotes: page.redmineNoNote) { sent, failures in
-            // 보낸 일감은 직접 고른 칸을 비운다 (다음에 또 보낼 때 묵은 값이 나가지 않게)
-            let left = Set(pendingEntries.compactMap(\.issue))
-            for issue in issues where !left.contains(issue) {
-                page.issueEdits[issue] = nil
-                page.redmineNoNote.remove(issue)
-            }
+        sync.send(fresh, edits: page.issueEdits, withoutScreens: page.redmineNoScreens, withoutNotes: page.redmineNoNote,
+                  screenPicks: page.screenPicks) { sent, failures in
+            // 보낸 일감은 직접 고른 칸을 비운다 (다음에 또 보낼 때 묵은 값이 나가지 않게).
+            // 보는 날 범위가 아니라 보낸 줄로 따진다 (보내는 사이 다른 날로 옮겨도 묵은 값이 남지 않게)
+            let sentIDs = Set(fresh.flatMap(\.entryIDs))
+            let left = Set(store.log.entries.filter { sentIDs.contains($0.id) && $0.needsRedmine }.compactMap(\.issue))
+            forgetChoices(issues.filter { !left.contains($0) })
             page.flash(failures.isEmpty ? "레드마인에 \(sent)건 보냈습니다" : "\(sent)건 보냄 · " + failures.joined(separator: ", "))
+        }
+    }
+
+    /// 보낸 것으로 친 일감의 카드 선택을 비운다. 남겨 두면 다음 날 같은 일감 줄이 댓글 빼기·고른 진척률을 물려받는다.
+    private func forgetChoices(_ issues: [Int]) {
+        for issue in issues {
+            page.redmineNoNote.remove(issue)
+            page.redmineNoScreens.remove(issue)
+            page.hintApplied.remove(issue)
+            page.redmineSkipped.remove(issue)
+            page.issueEdits[issue] = nil
         }
     }
 
@@ -1196,12 +1366,21 @@ private struct RatioBar: View {
 /// 카드에 보일 화면 항목 하나 (제목과 수정 전·후).
 private struct ScreenGroup: Identifiable {
     let id: String
+    /// 고른 것·옮긴 것을 기억하는 화면 키 (`MRScreens.Screen.key`).
+    let key: String
     /// MR이 여럿일 때 그 MR의 첫 항목에만 번호를 둔다.
     let mr: Int?
-    let number: Int
+    /// 댓글에 붙는 순서. 빼기로 한 화면은 없다.
+    let number: Int?
     let title: String?
     let before: String?
     let after: String?
+    let included: Bool
+    let unsure: Bool
+    /// 옮길 수 있는 다른 일감 (같은 MR 줄이 있는 일감).
+    let targets: [Int]
+    /// 한 MR을 여러 일감이 나눠 받을 때 이 화면 주인을 정한 근거.
+    let match: MRScreens.Match?
 }
 
 private enum MRScreenTitle {

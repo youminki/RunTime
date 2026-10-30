@@ -30,7 +30,8 @@ public enum WorkReport {
     /// 진행 예정 사항에 프로젝트마다 적는 한 줄 (사내 관례로 늘 같은 말을 쓴다).
     public static let planLine = "마크업 및 API 연동"
 
-    /// 출근 때 올리는 오늘 할 일. 오늘 적은 일과 앞선 날 끝나지 않은 일이 있는 프로젝트마다 `planLine` 한 줄.
+    /// 출근 때 올리는 오늘 할 일. 프로젝트마다 `planLine` 한 줄.
+    /// 기간을 정한 프로젝트는 그 기간 동안 늘 들어가고, 기간이 없는 프로젝트는 오늘 적은 일이나 앞선 날 끝나지 않은 일이 있을 때 들어간다.
     /// ```
     /// 1. UxHub
     /// - 마크업 및 API 연동
@@ -43,7 +44,11 @@ public enum WorkReport {
         let rows = (log.entries(on: day) + carried).filter {
             $0.status != .ongoing && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty
         }
-        return log.orderedProjects(of: rows).enumerated()
+        let fixed = log.projectsInPeriod(on: day)
+        // 기간이 끝난 프로젝트도 그날 적은 일이 있으면 넣는다 (기간을 늦게 고친 경우)
+        let names = fixed + log.orderedProjects(of: rows).filter { !fixed.contains($0) }
+        let order = log.allProjects.filter(names.contains) + names.filter { !log.allProjects.contains($0) }
+        return order.enumerated()
             .map { "\($0.offset + 1). \($0.element)\n- \(planLine)" }
             .joined(separator: "\n")
     }

@@ -472,6 +472,7 @@ final class WorkLogSync: ObservableObject {
         let host = settings.gitlabHostName
         guard !host.isEmpty else {
             captureError = "GitLab 주소를 설정하세요"
+            lastAdded = 0
             completion?()
             return
         }
@@ -745,7 +746,10 @@ final class WorkLogSync: ObservableObject {
         let missing = ids.filter { store.log.issue($0) == nil && !requestedInfo.contains($0) }
         guard !missing.isEmpty else { return }
         requestedInfo.formUnion(missing)
-        fetchBook(assigned: false, extra: missing)
+        // 망 오류로 못 받았으면 다음에 다시 묻는다 (남겨 두면 그 카드가 앱을 다시 켤 때까지 "받는 중"에 멈춘다)
+        fetchBook(assigned: false, extra: missing) { [weak self] in
+            if self?.issuesError != nil { self?.requestedInfo.subtract(missing) }
+        }
     }
 
     private func fetchBook(assigned: Bool, extra: [Int], completion: (() -> Void)? = nil) {
@@ -1056,7 +1060,7 @@ final class WorkLogSync: ObservableObject {
     /// 일감마다 차례로 지금 값을 다시 읽고 댓글·진척률과 함께 상태·시작일·기한·담당자를 보낸다.
     /// `edits`는 카드에서 직접 고른 칸으로, 일지로 정한 값보다 앞선다.
     func send(_ updates: [WorkReport.RedmineUpdate], edits: [Int: WorkReport.IssueEdit] = [:],
-              withoutScreens: Set<Int> = [], withoutNotes: Set<Int> = [],
+              withoutScreens: Set<Int> = [], withoutNotes: Set<Int> = [], screenPicks: MRScreens.Picks = MRScreens.Picks(),
               done: @escaping (_ sent: Int, _ failures: [String]) -> Void) {
         guard !sending else {
             done(0, ["이미 보내는 중입니다"])
@@ -1086,6 +1090,8 @@ final class WorkLogSync: ObservableObject {
         let known = Dictionary(uniqueKeysWithValues: updates.compactMap { update in store.log.issue(update.issue).map { (update.issue, $0) } })
         // 줄이 MR에서 왔으면 그 MR의 수정 전·후 화면을 함께 붙인다. 이미 붙여 보낸 MR은 다시 붙이지 않는다
         let host = settings.gitlabHostName
+        // 한 MR이 여러 일감에 걸치면 화면을 일감마다 나눠 붙인다. 장부는 메인에서 읽어 둔다
+        let splits = store.screenSplits
         var attach: [Int: (origins: [MRScreenStore.Origin], previous: String)] = [:]
         // 화면은 댓글에 붙으므로 댓글을 빼고 보내는 일감에는 붙이지 않는다
         for update in updates where settings.attachScreens && !withoutScreens.contains(update.issue)
@@ -1102,7 +1108,8 @@ final class WorkLogSync: ObservableObject {
                 let screens = attach[update.issue].flatMap { plan -> ScreenAttachment? in
                     let refs = MRScreenStore.shared.refsForSending(plan.origins, host: host)
                         .filter { !plan.previous.contains("mr\($0.iid)-") }
-                    return refs.isEmpty ? nil : Self.attachScreens(refs, base: base, key: key, host: host, html: html)
+                    return refs.isEmpty ? nil : Self.attachScreens(refs, issue: update.issue, splits: splits, picks: screenPicks,
+                                                                   base: base, key: key, host: host, html: html)
                 }
                 let result = Self.sendOne(update, base: base, key: key, known: known[update.issue], html: html,
                                           screens: screens, noteless: withoutNotes.contains(update.issue), plan: plan)
@@ -1260,8 +1267,16 @@ final class WorkLogSync: ObservableObject {
             }
         }
         let ratio = update.doneRatio == fresh?.doneRatio ? nil : update.doneRatio
+        // 보내기 전 값을 못 읽었으면 장부 값을 앞값으로 둔다. 그것도 없으면 되돌릴 때 진척률을 손대지 못한다
+        let before = fresh.map(snapshot) ?? known.map {
+            RedmineSent.Snapshot(doneRatio: $0.doneRatio, statusID: $0.statusID, statusName: $0.status,
+                                 startDate: $0.startDate, dueDate: $0.dueDate, assignee: $0.assignee)
+        } ?? .init()
+        if fresh == nil, ratio != nil, known == nil {
+            result.failures.append("#\(update.issue) 지금 값을 읽지 못해 되돌리기로 진척률을 돌릴 수 없음")
+        }
         result.record = RedmineSent(issue: update.issue, entryIDs: update.entryIDs, note: note,
-                                    before: fresh.map(snapshot) ?? .init(), after: after(extra, ratio: ratio))
+                                    before: before, after: after(extra, ratio: ratio))
         return result
     }
 
@@ -1307,16 +1322,18 @@ final class WorkLogSync: ObservableObject {
         var failures: [String] = []
     }
 
-    /// MR 화면을 받아 레드마인에 먼저 올리고, 댓글에 붙일 부분과 첨부 토큰을 돌려준다.
+    /// MR 화면 가운데 `issue` 몫을 받아 레드마인에 먼저 올리고, 댓글에 붙일 부분과 첨부 토큰을 돌려준다.
     /// 그림을 못 받거나 못 올려도 댓글은 보낸다 (못 붙인 까닭만 알린다).
-    static func attachScreens(_ refs: [MRScreenStore.Ref], base: URL, key: String, host: String, html: Bool) -> ScreenAttachment {
+    static func attachScreens(_ refs: [MRScreenStore.Ref], issue: Int, splits: [String: MRScreens.Split],
+                              picks: MRScreens.Picks = MRScreens.Picks(), base: URL, key: String, host: String, html: Bool) -> ScreenAttachment {
         var result = ScreenAttachment()
         var sections: [String] = []
         for ref in refs {
-            guard let screens = MRScreenStore.shared.screensForSending(ref, host: host) else {
+            guard let all = MRScreenStore.shared.screensForSending(ref, host: host) else {
                 result.failures.append("MR !\(ref.iid) 화면을 GitLab에서 읽지 못해 그림 없이 보냄")
                 continue
             }
+            let screens = MRScreenStore.share(all, ref: ref, issue: issue, splits: splits, picks: picks)
             var files: [String: String] = [:]
             var missing = 0
             for (index, screen) in screens.enumerated() {
@@ -1398,15 +1415,20 @@ final class WorkLogSync: ObservableObject {
                 return
             }
             let revert = record.revert(current: Self.snapshot(issue))
+            var fieldsKept = false
             if revert.doneRatio != nil || revert.statusID != nil || revert.startDate != nil || revert.dueDate != nil || revert.assigneeID != nil,
                let request = try? RedmineAPI.revertRequest(base: base, key: key, issue: record.issue, doneRatio: revert.doneRatio,
                                                            statusID: revert.statusID, startDate: revert.startDate,
                                                            dueDate: revert.dueDate, assigneeID: revert.assigneeID) {
                 let reverted = Self.perform(request)
-                if !reverted.ok { problems.append("칸을 되돌리지 못했습니다 (\(reverted.message))") }
+                if !reverted.ok {
+                    problems.append("칸을 되돌리지 못했습니다 (\(reverted.message)). 보낸 기록에서 다시 되돌릴 수 있습니다")
+                    fieldsKept = true
+                }
             }
             // 댓글을 지우지 못했으면 줄을 다시 보낼 목록에 돌리지 않는다 (그대로 다시 보내면 댓글이 둘이 된다)
             var keepPosted = false
+            var commentCleared = false
             if !record.note.isEmpty {
                 let journals = (try? RedmineAPI.parseJournals(data)) ?? []
                 if let journal = record.matchJournal(journals) {
@@ -1420,6 +1442,8 @@ final class WorkLogSync: ObservableObject {
                             problems.append("댓글을 지우지 못했습니다 (\(cleared.message)). 지운 뒤 줄을 고치면 다시 보낼 목록에 오릅니다")
                             manual = journal.id
                             keepPosted = true
+                        } else {
+                            commentCleared = true
                         }
                     }
                 } else {
@@ -1433,7 +1457,13 @@ final class WorkLogSync: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.store.markUndone(record, reopenNote: !keepPosted)
+                // 칸을 못 되돌렸으면 기록을 남겨 다시 되돌릴 수 있게 한다 (다시 하면 지운 댓글은 건너뛴다)
+                if !fieldsKept {
+                    self.store.markUndone(record, reopenNote: !keepPosted)
+                } else if commentCleared {
+                    // 댓글은 지웠으니 줄은 다시 보낼 목록에 돌린다 (남기면 작업 댓글이 조용히 사라진다)
+                    self.store.markCommentCleared(record)
+                }
                 self.sending = false
                 self.loadMyIssues()
                 done(problems, manual)

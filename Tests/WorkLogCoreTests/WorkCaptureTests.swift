@@ -186,7 +186,7 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(RedmineAPI.mcpCredentials(in: Data(config.utf8))?.key == "abc")
     }
 
-    @Test func carriedBranchLineStillTurnsDoneAndPostedLineIsNotResent() {
+    @Test func carriedBranchLineStillTurnsDoneAndPostedLineSendsOnlyNewCommits() {
         var log = WorkLog()
         let monday = WorkCapture.Commit(path: "v/p", branch: "feat/a", subject: "feat: 목록", date: at("2026-10-19T01:00:00Z"))
         WorkCapture.apply(mrs: [], commits: [monday], to: &log)
@@ -197,14 +197,69 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
 
         let index = log.entries.firstIndex { $0.day == "2026-10-20" }!
         log.entries[index].issue = 7
-        log.entries[index].postedAt = Date()
+        // 보낸 기록 없이 "보낸 것으로 표시"만 한 줄: 표시한 뒤의 커밋만 새것이다
+        log.entries[index].postedAt = at("2026-10-20T02:00:00Z")
+        log.entries[index].updatedAt = at("2026-10-20T01:30:00Z")
         let later = WorkCapture.Commit(path: "v/p", branch: "feat/a", subject: "feat: 삭제", date: at("2026-10-20T03:00:00Z"))
-        WorkCapture.apply(mrs: [], commits: [tuesday, later], to: &log)
-        #expect(!log.entries[index].needsRedmine)
+        WorkCapture.apply(mrs: [], commits: [tuesday, later], to: &log, now: at("2026-10-20T04:00:00Z"))
+        // 보낸 커밋(상세)은 다시 올리지 않고, 보낸 뒤 한 커밋만 다시 보낼 목록에 오른다
+        #expect(log.entries[index].needsRedmine)
+        #expect(log.entries[index].note == "[작업 내용]\n- 삭제")
+        // 다시 가져와도 표시 전 커밋(상세)을 되살리지 않는다
+        #expect(WorkCapture.apply(mrs: [], commits: [tuesday, later], to: &log, now: at("2026-10-20T04:10:00Z")) == 0)
+        #expect(log.entries[index].note == "[작업 내용]\n- 삭제")
 
         let mr = WorkCapture.MergedMR(path: "v/p", iid: 1, title: "A 연동", description: "", sourceBranch: "feat/a",
                                       mergedAt: at("2026-10-20T05:00:00Z"))
         WorkCapture.apply(mrs: [mr], commits: [], to: &log)
         #expect(log.entries[index].status == .done)
+    }
+
+    /// 보낸 뒤 같은 날 더 한 커밋은 새 커밋만 다시 보낼 목록에 오른다. 다시 가져와도 보낸 커밋은 되살아나지 않는다.
+    @Test func commitsAfterSendingBecomeANewNote() {
+        var log = WorkLog(projects: ["VeloX"])
+        let first = WorkCapture.Commit(path: "velox/portal", branch: "feat/dest", subject: "feat: 목록 연동", date: at("2026-10-20T01:00:00Z"))
+        WorkCapture.apply(mrs: [], commits: [first], to: &log)
+        let id = log.entries[0].id
+        log.entries[0].issue = 4512
+        let sentAt = log.entries[0].updatedAt.addingTimeInterval(60)
+        log.entries[0].postedAt = sentAt
+        log.sent = [RedmineSent(issue: 4512, sentAt: sentAt, entryIDs: [id], note: "<p>[작업 내용]<br />\n- 목록 연동</p>",
+                                before: .init(), after: .init())]
+        let later = WorkCapture.Commit(path: "velox/portal", branch: "feat/dest", subject: "fix: 상세 연동", date: at("2026-10-20T06:00:00Z"))
+        let now = sentAt.addingTimeInterval(60)
+        #expect(WorkCapture.apply(mrs: [], commits: [first, later], to: &log, now: now) == 1)
+        #expect(log.entries[0].note == "[작업 내용]\n- 상세 연동")
+        #expect(log.entries[0].needsRedmine)
+        #expect(WorkCapture.apply(mrs: [], commits: [first, later], to: &log, now: now) == 0)
+    }
+
+    /// 이어 쓴 브랜치 줄은 어제 커밋 목록을 옮기지 않고, 오늘 커밋으로 새로 채운다.
+    @Test func carriedBranchLineTakesTodaysCommits() {
+        var log = WorkLog(projects: ["VeloX"])
+        let yesterday = WorkCapture.Commit(path: "velox/portal", branch: "feat/dest", subject: "feat: 목록 연동", date: at("2026-10-20T01:00:00Z"))
+        WorkCapture.apply(mrs: [], commits: [yesterday], to: &log)
+        let day = log.entries[0].day
+        let next = WorkDay.adding(1, to: day)
+        #expect(log.carryOver(from: day, to: next) == 1)
+        #expect(log.entries[1].note.isEmpty)
+        let today = WorkCapture.Commit(path: "velox/portal", branch: "feat/dest", subject: "fix: 상세 연동", date: at("2026-10-21T01:00:00Z"))
+        WorkCapture.apply(mrs: [], commits: [yesterday, today], to: &log)
+        #expect(log.entries.count == 2)
+        #expect(log.entries[1].note == "[작업 내용]\n- 상세 연동")
+    }
+
+    /// 예전 판이 stash 커밋으로 만든 줄은 다음 가져오기 때 지운다. 보냈거나 일감을 단 줄은 둔다.
+    @Test func dropsStashLinesFromOlderVersions() {
+        var log = WorkLog(projects: ["p"])
+        log.entries = [
+            WorkEntry(day: "2026-10-26", project: "p", title: "index on master: a047254b Merge", status: .inProgress,
+                      note: "x", source: "branch:cdh/admin:refs/stash", autoNote: "x"),
+            WorkEntry(day: "2026-10-26", project: "p", title: "index on dev", status: .inProgress, issue: 3,
+                      note: "x", source: "branch:cdh/admin:refs/stash", autoNote: "x"),
+            WorkEntry(day: "2026-10-26", project: "p", title: "feat", status: .inProgress, note: "x", source: "branch:cdh/admin:feat/a", autoNote: "x"),
+        ]
+        WorkCapture.apply(mrs: [], commits: [], to: &log)
+        #expect(log.entries.map(\.title) == ["index on dev", "feat"])
     }
 }

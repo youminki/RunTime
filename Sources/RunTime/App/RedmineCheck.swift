@@ -81,16 +81,44 @@ enum RedmineCheck {
         print("진척률: \(update.doneRatio.map { "\($0)%" } ?? "그대로"), 상태: \(store.log.issue(issue)?.status ?? "?") → \(fields.status?.name ?? "그대로")")
         let html = settings.redmineHTML
         let host = settings.gitlabHostName
+        let splits = MRScreens.splits(store.log)
         DispatchQueue.global().async {
             let refs = MRScreenStore.shared.refsForSending(origins, host: host)
             print("MR: " + (refs.isEmpty ? "없음 (\(origins))" : refs.map { "\($0.path)!\($0.iid)" }.joined(separator: ", ")))
-            let result = WorkLogSync.attachScreens(refs, base: base, key: key, host: host, html: html)
+            let result = WorkLogSync.attachScreens(refs, issue: issue, splits: splits, base: base, key: key, host: host, html: html)
             DispatchQueue.main.async {
                 print("올린 첨부 \(result.uploads.count)개: " + result.uploads.map(\.filename).joined(separator: ", "))
                 if !result.failures.isEmpty { print("문제: \(result.failures)") }
                 print("보낼 댓글:\n" + (html ? RedmineNote.html(update.note) : update.note) + "\n" + result.section)
                 finish(result.uploads.isEmpty ? "붙일 화면 없음" : "통과", ok: true)
             }
+        }
+    }
+
+    /// `--redmine-check share <일감>`: 그 일감 줄이 온 MR의 화면을 GitLab에서 받아, 같은 MR 줄이 있는 일감마다 어느 화면이 가는지만 찍는다.
+    /// 레드마인에는 아무것도 올리지 않는다.
+    static func share(issue: Int) {
+        let store = WorkLogStore.shared
+        let host = WorkLogSettings.shared.gitlabHostName
+        let origins = MRScreenStore.origins(store.log.entries.filter { $0.issue == issue }.map(\.source))
+        let splits = MRScreens.splits(store.log)
+        DispatchQueue.global().async {
+            let refs = MRScreenStore.shared.refsForSending(origins, host: host)
+            for ref in refs {
+                let split = splits[ref.key] ?? .single(issue)
+                guard let all = MRScreenStore.shared.screensForSending(ref, host: host) else {
+                    print("MR !\(ref.iid): GitLab에서 읽지 못함")
+                    continue
+                }
+                print("MR !\(ref.iid): 화면 \(all.count)개, 일감 \(split.issues.map { "#\($0)" }.joined(separator: " ")) (대표 #\(split.primary.map(String.init) ?? "-"))")
+                for (index, screen) in all.enumerated() {
+                    let owners = MRScreens.owners(screen, split: split)
+                    let to = owners.issues.isEmpty ? "붙이지 않음" : owners.issues.map { "#\($0)" }.joined(separator: " ")
+                    print("  \(index + 1). \(screen.title ?? "화면") → \(to) (\(owners.match), 적힌 번호 \(screen.issues))"
+                          + (screen.unsure ? " · 판단 어려움, 골라야 붙음" : ""))
+                }
+            }
+            DispatchQueue.main.async { finish(refs.isEmpty ? "MR 없음 (\(origins))" : "끝", ok: true) }
         }
     }
 

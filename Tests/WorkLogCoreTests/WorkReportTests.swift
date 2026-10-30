@@ -49,6 +49,37 @@ private let sample = """
         #expect(WorkReport.plan(day: "2026-10-28", in: meetings).isEmpty)
     }
 
+    /// 기간을 정한 프로젝트는 줄이 없어도 그 기간 동안 늘 들어가고, 보고서 순서를 따른다.
+    @Test func planKeepsProjectsInPeriod() {
+        var log = WorkLog(projects: ["UxHub", "VeloX", "옛 프로젝트", "숨김"])
+        log.projectPeriods = ["VeloX": ProjectPeriod(start: "2026-10-01", end: "2026-12-31"),
+                              "옛 프로젝트": ProjectPeriod(end: "2026-09-30"),
+                              "숨김": ProjectPeriod(start: "2026-10-01")]
+        log.hiddenProjects = ["숨김"]
+        log.entries = [WorkEntry(day: "2026-10-28", project: "UxHub", title: "버그수정", status: .done)]
+        #expect(WorkReport.plan(day: "2026-10-28", in: log) == """
+        1. UxHub
+        - 마크업 및 API 연동
+        2. VeloX
+        - 마크업 및 API 연동
+        """)
+        // 줄이 없는 날도 기간 중인 프로젝트는 남는다
+        #expect(WorkReport.plan(day: "2026-10-29", in: log) == "1. VeloX\n- 마크업 및 API 연동")
+        #expect(WorkReport.plan(day: "2027-01-02", in: log).isEmpty)
+        #expect(ProjectPeriod(start: "2026-10-01").contains("2026-10-01"))
+        // 직접 정하지 않은 프로젝트는 레드마인 내 일감(배정·열림)으로 잡는다. 기한이 지나도 열려 있으면 들어간다
+        log.redmineProjects = ["목포 데이터밸류": "UxHub"]
+        log.issues = ["1": IssueInfo(id: 1, subject: "마크업", project: "목포 데이터밸류", dueDate: "2026-11-30", assigned: true, startDate: "2026-11-02"),
+                      "2": IssueInfo(id: 2, subject: "API 연동", project: "목포 데이터밸류", dueDate: "2026-10-20", assigned: true, startDate: "2026-10-05"),
+                      "3": IssueInfo(id: 3, subject: "끝난 일", project: "목포 데이터밸류", dueDate: "2027-03-01", assigned: false, startDate: "2026-01-01")]
+        #expect(log.autoPeriods()["UxHub"] == WorkLog.AutoPeriod(period: ProjectPeriod(start: "2026-10-05", end: "2026-11-30"), issues: 2))
+        #expect(log.projectsInPeriod(on: "2026-10-04") == ["VeloX"])
+        #expect(log.projectsInPeriod(on: "2027-01-02") == ["UxHub"])
+        log.projectPeriods["UxHub"] = ProjectPeriod(end: "2026-10-31")   // 직접 정한 기간이 앞선다
+        #expect(log.projectsInPeriod(on: "2027-01-02").isEmpty)
+        #expect(!ProjectPeriod(end: "2026-09-30").contains("2026-10-01"))
+    }
+
     @Test func keepsDoneAndHundredPercentApart() {
         let log = WorkLog(projects: ["uxhub", "VeloX"], entries: WorkReport.parse(sample, day: "2026-10-20"))
         #expect(WorkReport.daily(log.entries, in: log) == """

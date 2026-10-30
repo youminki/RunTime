@@ -398,10 +398,15 @@ private struct IssueRow: View {
                     IssueFieldEditor(current: info, edit: $page.boardDraft, sync: sync, locked: page.boardConfirming) {
                         let fields = WorkReport.IssueFields.merged(auto: .init(), edit: page.boardDraft, current: info,
                                                                    statuses: sync.statuses)
+                        // 진척률은 IssueFields에 없어 따로 본다. 진척률만 바꿔도 저장할 수 있어야 한다
+                        let ratio = page.boardDraft.doneRatio.flatMap { $0 == info.doneRatio ? nil : $0 }
+                        let changes = (ratio.map { ["진척률 \(info.doneRatio)% → \($0)%"] } ?? [])
+                            + WorkLogFormat.fieldChanges(fields, current: info)
+                        let unchanged = fields.isEmpty && ratio == nil
                         if page.boardConfirming {
                             // 레드마인에 바로 반영되므로 바뀔 칸을 한 번 더 보이고 저장한다
                             VStack(alignment: .trailing, spacing: 8) {
-                                Text("#\(String(info.id))에 " + WorkLogFormat.fieldChanges(fields, current: info).joined(separator: " · ")
+                                Text("#\(String(info.id))에 " + changes.joined(separator: " · ")
                                      + "을(를) 저장할까요?")
                                     .font(.system(size: 12)).foregroundStyle(WL.text)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -411,14 +416,14 @@ private struct IssueRow: View {
                                     // Return 두 번으로 바로 저장되지 않게 확인 단추는 눌러야만 저장한다
                                     Button(sync.sending ? "저장 중…" : "저장") { save() }
                                         .buttonStyle(NotionButtonStyle(kind: .primary))
-                                        .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
+                                        .disabled(sync.sending || unchanged || fields.problem(current: info) != nil)
                                 }
                             }
                         } else {
                             Button("취소") { page.boardEditing = nil }.buttonStyle(NotionButtonStyle())
                             Button("레드마인에 저장…") { page.boardConfirming = true }
                                 .buttonStyle(NotionButtonStyle(kind: .primary))
-                                .disabled(sync.sending || fields.isEmpty || fields.problem(current: info) != nil)
+                                .disabled(sync.sending || unchanged || fields.problem(current: info) != nil)
                                 .keyboardShortcut(.defaultAction)
                         }
                     }

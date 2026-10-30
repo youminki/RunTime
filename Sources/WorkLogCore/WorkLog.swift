@@ -155,6 +155,21 @@ public struct RecurringWork: Codable, Equatable, Identifiable {
     }
 }
 
+/// 프로젝트를 맡은 기간 (`2026-10-01` 꼴, 비우면 그쪽 끝이 없다). 기간 안의 날에는 그날 줄이 없어도 진행 예정에 들어간다.
+public struct ProjectPeriod: Codable, Equatable {
+    public var start: String?
+    public var end: String?
+
+    public init(start: String? = nil, end: String? = nil) {
+        self.start = start
+        self.end = end
+    }
+
+    public func contains(_ day: String) -> Bool {
+        (start.map { day >= $0 } ?? true) && (end.map { day <= $0 } ?? true)
+    }
+}
+
 /// 업무 일지 파일 전체. 프로젝트 순서가 보고서 번호 순서다.
 public struct WorkLog: Codable, Equatable {
     public var projects: [String]
@@ -174,6 +189,8 @@ public struct WorkLog: Codable, Equatable {
     public var hiddenRedmineProjects: Set<String>
     /// 앱이 레드마인에 보낸 기록 (최근 것부터 쌓고 오래된 것은 버린다). 되돌리기에 쓴다.
     public var sent: [RedmineSent]
+    /// 프로젝트 이름 → 맡은 기간.
+    public var projectPeriods: [String: ProjectPeriod]
 
     public init(projects: [String] = [], entries: [WorkEntry] = [], aliases: [String: String] = [:],
                 dismissed: Set<String> = [], recurring: [RecurringWork] = []) {
@@ -187,6 +204,7 @@ public struct WorkLog: Codable, Equatable {
         self.hiddenProjects = []
         self.hiddenRedmineProjects = []
         self.sent = []
+        self.projectPeriods = [:]
     }
 
     public func issue(_ id: Int?) -> IssueInfo? {
@@ -213,6 +231,50 @@ public struct WorkLog: Codable, Equatable {
         hiddenProjects = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenProjects) ?? []
         hiddenRedmineProjects = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenRedmineProjects) ?? []
         sent = try c.decodeIfPresent([RedmineSent].self, forKey: .sent) ?? []
+        projectPeriods = try c.decodeIfPresent([String: ProjectPeriod].self, forKey: .projectPeriods) ?? [:]
+    }
+
+    /// 그날 기간 안에 있는 프로젝트 (숨긴 프로젝트는 뺀다). 보고서 번호 순서.
+    /// 직접 정한 기간이 먼저고, 없으면 레드마인 내 일감으로 잡은 기간을 쓴다.
+    public func projectsInPeriod(on day: String) -> [String] {
+        let auto = autoPeriods()
+        return visibleProjects.filter { name in
+            if let period = projectPeriods[name] { return period.contains(day) }
+            return auto[name]?.isActive(on: day) == true
+        }
+    }
+
+    /// 레드마인 내 일감(나에게 배정돼 열린 일감)으로 잡은 프로젝트 기간.
+    public struct AutoPeriod: Equatable {
+        /// 가장 이른 시작일 ~ 가장 늦은 기한. 시작일이 없는 일감이 있으면 시작은 비운다.
+        public var period: ProjectPeriod
+        public var issues: Int
+
+        /// 열린 일감은 기한이 지나도 아직 하는 일이라 끝은 보지 않는다.
+        public func isActive(on day: String) -> Bool { ProjectPeriod(start: period.start).contains(day) }
+    }
+
+    /// 일지 프로젝트 → 레드마인 내 일감으로 잡은 기간. 보고서 프로젝트로 옮길 수 있는 일감만 센다.
+    public func autoPeriods() -> [String: AutoPeriod] {
+        var byRedmine: [String: [IssueInfo]] = [:]
+        for info in issues.values where info.assigned { byRedmine[info.project, default: []].append(info) }
+        var result: [String: AutoPeriod] = [:]
+        for (_, infos) in byRedmine {
+            guard let first = infos.first else { continue }
+            // 레드마인 프로젝트 하나는 같은 보고서 프로젝트로 가서 한 번만 찾는다
+            let name = reportProject(for: first)
+            let starts = infos.map(\.startDate)
+            let start = starts.contains(where: { $0 == nil }) ? nil : starts.compactMap { $0 }.min()
+            let end = infos.compactMap(\.dueDate).max()
+            var merged = result[name] ?? AutoPeriod(period: ProjectPeriod(start: start, end: end), issues: 0)
+            if merged.issues > 0 {
+                merged.period.start = merged.period.start.flatMap { old in start.map { min(old, $0) } }
+                merged.period.end = [merged.period.end, end].compactMap { $0 }.max()
+            }
+            merged.issues += infos.count
+            result[name] = merged
+        }
+        return result
     }
 
     /// 그날 요일에 맞는 고정 업무를 넣는다. 이미 있거나 그날 지운 것은 건너뛴다.
@@ -327,6 +389,13 @@ public struct WorkLog: Codable, Equatable {
         }
     }
 
+    /// 보고서를 붙여 넣을 때 넣을 줄. 그날 같은 프로젝트·제목 줄이 이미 있으면 뺀다
+    /// (같은 보고서를 두 번 넣으면 줄이 겹치고 레드마인 댓글도 다시 보낼 목록에 오른다).
+    public func newEntries(_ entries: [WorkEntry]) -> [WorkEntry] {
+        var seen = Set(self.entries.map { $0.day + "\u{1F}" + $0.project + "\u{1F}" + Self.titleKey($0.title) })
+        return entries.filter { seen.insert($0.day + "\u{1F}" + $0.project + "\u{1F}" + Self.titleKey($0.title)).inserted }
+    }
+
     /// 같은 제목인지 볼 때 쓰는 꼴 (대소문자·빈칸 무시).
     static func titleKey(_ title: String) -> String { title.lowercased().filter { !$0.isWhitespace } }
 
@@ -337,7 +406,12 @@ public struct WorkLog: Codable, Equatable {
         entries += carried.map {
             // 이미 보낸 댓글을 옮기면 같은 댓글이 다시 보낼 목록에 오른다. 보내지 않은 댓글만 옮긴다
             let posted = $0.postedAt != nil
-            // 출처도 옮겨야 그 브랜치를 다시 가져오거나 머지됐을 때 이 줄을 찾는다
+            // 출처도 옮겨야 그 브랜치를 다시 가져오거나 머지됐을 때 이 줄을 찾는다.
+            // 가져온 줄의 댓글은 그날 커밋 목록이라 비우고, 빈 자동 댓글로 두어 오늘 커밋이 새로 채운다
+            if $0.source != nil {
+                return WorkEntry(day: target, project: $0.project, title: $0.title, status: $0.status,
+                                 issue: $0.issue, note: "", updatedAt: now, source: $0.source, autoNote: "")
+            }
             return WorkEntry(day: target, project: $0.project, title: $0.title, status: $0.status,
                              issue: $0.issue, note: posted ? "" : $0.note, updatedAt: now, source: $0.source,
                              autoNote: posted ? nil : $0.autoNote)
@@ -356,6 +430,13 @@ public struct WorkLog: Codable, Equatable {
         merged.entries = disk.entries.filter { !deleted.contains($0.id) }.map { changed[$0.id] ?? $0 }
         let onDisk = Set(disk.entries.map(\.id))
         merged.entries += mine.entries.filter { changed[$0.id] != nil && !onDisk.contains($0.id) && baseByID[$0.id] == nil }
+        // 창에서 줄 순서만 바꾼 것은 값이 같아 위에서 잡히지 않는다. 순서가 바뀌었으면 내 순서를 따르고 파일에만 있는 줄은 뒤에 둔다
+        let shared = Set(base.entries.map(\.id)).intersection(mineIDs)
+        if mine.entries.map(\.id).filter(shared.contains) != base.entries.map(\.id).filter(shared.contains) {
+            let rank = Dictionary(mine.entries.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+            merged.entries = merged.entries.filter { rank[$0.id] != nil }.sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
+                + merged.entries.filter { rank[$0.id] == nil }
+        }
         merged.dismissed.formUnion(mine.dismissed)
         if mine.recurring != base.recurring { merged.recurring = mine.recurring }
         // 장부는 나중에 받은 것이 맞다. 이 창에서 받은 것을 파일 것 위에 얹는다
@@ -363,6 +444,10 @@ public struct WorkLog: Codable, Equatable {
         // 지운 이름도 되살아나지 않게 바뀌었으면 통째로 내 것을 쓴다
         if mine.redmineProjects != base.redmineProjects { merged.redmineProjects = mine.redmineProjects }
         if mine.hiddenProjects != base.hiddenProjects { merged.hiddenProjects = mine.hiddenProjects }
+        // 기간은 프로젝트마다 이 창에서 고친 것만 얹는다 (다른 창이 고친 프로젝트 기간을 지우지 않게)
+        for name in Set(mine.projectPeriods.keys).union(base.projectPeriods.keys) where mine.projectPeriods[name] != base.projectPeriods[name] {
+            merged.projectPeriods[name] = mine.projectPeriods[name]
+        }
         if mine.hiddenRedmineProjects != base.hiddenRedmineProjects { merged.hiddenRedmineProjects = mine.hiddenRedmineProjects }
         // 보낸 기록은 번호로 합치고, 이 창에서 고친 것(되돌림)을 얹는다
         if mine.sent != base.sent {

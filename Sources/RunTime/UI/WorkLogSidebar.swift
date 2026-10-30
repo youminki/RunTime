@@ -232,6 +232,17 @@ struct WorkLogSidebar: View {
                 ProjectSwatch(name: name)
                 Text(name).font(.system(size: 13, weight: selected ? .semibold : .regular)).foregroundStyle(WL.text).lineLimit(1)
                 Spacer(minLength: 4)
+                if let period = store.log.projectPeriods[name] {
+                    // 기간이 끝난 프로젝트는 흐리게 둔다 (진행 예정에서 빠졌다는 뜻)
+                    Image(systemName: "calendar")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(period.contains(WorkDay.today()) ? WL.accent : WL.faint)
+                } else if let auto = store.autoPeriods[name] {
+                    // 레드마인 일감으로 잡은 기간은 직접 정한 것과 구별해 회색으로 둔다
+                    Image(systemName: "calendar")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(auto.isActive(on: WorkDay.today()) ? WL.muted : WL.faint)
+                }
                 if count > 0 { Text("\(count)").font(WL.number).foregroundStyle(.secondary) }
             }
             .padding(.horizontal, 8)
@@ -242,7 +253,17 @@ struct WorkLogSidebar: View {
         }
         .buttonStyle(.plain)
         .onHover { hover.update("p:" + name, $0) }
-        .tip("이 달 \(count)줄 · 누르면 프로젝트 기록 · 끌어서 순서 바꾸기")
+        .tip("이 달 \(count)줄" + periodTip(name)
+             + " · 누르면 프로젝트 기록 · 끌어서 순서 바꾸기")
+        .popover(isPresented: Binding(
+            get: { page.periodEditing == name },
+            set: { if !$0 { page.periodEditing = nil } }
+        ), arrowEdge: .trailing) {
+            ProjectPeriodEditor(name: name, period: store.log.projectPeriods[name], auto: store.autoPeriods[name]) { period in
+                store.setPeriod(name, period)
+                page.periodEditing = nil
+            }
+        }
         // 끌어다 놓아 순서를 바꾸면 보고서 번호 순서도 같이 바뀐다
         .reorderable(name, dragging: $page.draggingProject) { from, to in store.moveProject(from, to: to) }
         .opacity(page.draggingProject == name ? 0.4 : 1)
@@ -258,6 +279,7 @@ struct WorkLogSidebar: View {
                 page.renameText = name
                 page.renaming = name
             }
+            Button(store.log.projectPeriods[name] == nil ? "기간 직접 정하기…" : "기간 고치기…") { page.periodEditing = name }
             Button("보고서에서 위로") { store.moveProject(name, by: -1) }
             Button("보고서에서 아래로") { store.moveProject(name, by: 1) }
             Divider()
@@ -270,6 +292,17 @@ struct WorkLogSidebar: View {
                 }
             }
         }
+    }
+
+    private func periodTip(_ name: String) -> String {
+        if let period = store.log.projectPeriods[name] { return " · 기간 " + Self.periodText(period) + " (직접 정함)" }
+        guard let auto = store.autoPeriods[name] else { return "" }
+        return " · 레드마인 일감 \(auto.issues)개 기준 " + Self.periodText(auto.period)
+    }
+
+    /// `10.1 ~ 12.31`, 끝이 없으면 `10.1 ~`.
+    static func periodText(_ period: ProjectPeriod) -> String {
+        (period.start.map(WorkReport.shortDate) ?? "") + " ~ " + (period.end.map(WorkReport.shortDate) ?? "")
     }
 
     /// 숨긴 프로젝트는 접힌 묶음 하나로 모은다. 펼쳐서 눈 단추로 다시 보인다.
@@ -375,5 +408,94 @@ final class HoveredKey: ObservableObject {
 
     func update(_ key: String, _ inside: Bool) {
         if inside { self.key = key } else if self.key == key { self.key = nil }
+    }
+}
+
+/// 기간 창에서 고치는 값. 이 저장소는 `@State` 대신 ObservableObject를 쓴다 (WorkLogPage 참고).
+private final class PeriodDraft: ObservableObject {
+    @Published var hasStart: Bool
+    @Published var hasEnd: Bool
+    @Published var start: Date
+    @Published var end: Date
+
+    init(_ period: ProjectPeriod?) {
+        // 새로 정할 때는 오늘부터, 끝은 비워 둔다 (끝나는 날을 모르는 프로젝트가 많다)
+        hasStart = period?.start != nil || period?.end == nil
+        hasEnd = period?.end != nil
+        start = period?.start.flatMap(WorkDay.date) ?? Date()
+        end = period?.end.flatMap(WorkDay.date) ?? Date().addingTimeInterval(90 * 86_400)
+    }
+
+    var reversed: Bool { hasStart && hasEnd && WorkDay.key(end) < WorkDay.key(start) }
+    /// 시작·끝을 다 비우면 날마다 진행 예정에 들어가 기간이 아니다.
+    var invalid: Bool { reversed || (!hasStart && !hasEnd) }
+    var period: ProjectPeriod { ProjectPeriod(start: hasStart ? WorkDay.key(start) : nil, end: hasEnd ? WorkDay.key(end) : nil) }
+}
+
+/// 프로젝트 기간 정하기. 기간 안의 날에는 그날 줄이 없어도 진행 예정에 `마크업 및 API 연동`으로 들어간다.
+struct ProjectPeriodEditor: View {
+    let name: String
+    let existing: Bool
+    let auto: WorkLog.AutoPeriod?
+    let save: (ProjectPeriod?) -> Void
+    @StateObject private var draft: PeriodDraft
+
+    init(name: String, period: ProjectPeriod?, auto: WorkLog.AutoPeriod? = nil, save: @escaping (ProjectPeriod?) -> Void) {
+        self.name = name
+        self.save = save
+        self.auto = auto
+        existing = period != nil
+        // 처음 정할 때는 레드마인 일감 기간에서 시작한다
+        _draft = StateObject(wrappedValue: PeriodDraft(period ?? auto?.period))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(name) 기간").font(WL.heading)
+                Text("기간 안의 날에는 줄이 없어도 진행 예정에 ‘\(WorkReport.planLine)’으로 들어갑니다.")
+                    .font(WL.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Label(autoText, systemImage: auto == nil ? "calendar.badge.exclamationmark" : "checkmark.circle")
+                .font(WL.caption).foregroundStyle(existing ? WL.faint : WL.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            row("시작", empty: "처음부터", on: $draft.hasStart, date: $draft.start)
+            row("끝", empty: "끝 없음", on: $draft.hasEnd, date: $draft.end)
+            if draft.invalid {
+                Text(draft.reversed ? "끝나는 날이 시작보다 앞섭니다" : "시작이나 끝 가운데 하나는 정하세요")
+                    .font(WL.caption).foregroundStyle(WL.waiting)
+            }
+            HStack(spacing: 8) {
+                if existing {
+                    Button(auto == nil ? "기간 지우기" : "레드마인 기준으로") { save(nil) }
+                        .buttonStyle(TextLinkButtonStyle(tint: auto == nil ? WL.waiting : WL.accent))
+                        .tip(auto == nil ? "기간을 지우면 그날 적은 일이 있을 때만 진행 예정에 들어갑니다" : "직접 정한 기간을 지우고 레드마인 내 일감으로 정합니다")
+                }
+                Spacer()
+                Button("저장") { save(draft.period) }
+                    .buttonStyle(NotionButtonStyle(kind: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(draft.invalid)
+            }
+        }
+        .padding(16)
+        .frame(width: 300)
+    }
+
+    private var autoText: String {
+        guard let auto else { return existing ? "이 프로젝트에 열린 레드마인 내 일감이 없습니다" : "레드마인 내 일감이 없어 직접 정해야 합니다" }
+        let span = (auto.period.start.map(WorkReport.shortDate) ?? "처음") + " ~ " + (auto.period.end.map(WorkReport.shortDate) ?? "기한 없음")
+        return "레드마인 내 일감 \(auto.issues)개 기준 \(span)" + (existing ? " · 지금은 직접 정한 기간을 씁니다" : "")
+    }
+
+    private func row(_ label: String, empty: String, on: Binding<Bool>, date: Binding<Date>) -> some View {
+        HStack(spacing: 8) {
+            Toggle(label, isOn: on).toggleStyle(.checkbox).frame(width: 60, alignment: .leading)
+            if on.wrappedValue {
+                DatePicker("", selection: date, displayedComponents: .date).labelsHidden().datePickerStyle(.field)
+            } else {
+                Text(empty).font(WL.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }

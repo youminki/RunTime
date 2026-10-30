@@ -227,7 +227,15 @@ struct WorkLogView: View {
         }
         if settings.redmineReady { sync.loadMyIssues() }
         if settings.captureEnabled {
-            sync.capture { page.flash(sync.lastAdded > 0 ? "\(sync.lastAdded)줄을 가져왔습니다" : "새로 가져온 줄이 없습니다") }
+            sync.capture {
+                // 실패를 "새로 가져온 줄이 없습니다"로 보이면 VPN이 끊긴 것을 모른다
+                let added = sync.lastAdded > 0 ? "\(sync.lastAdded)줄을 가져왔습니다" : nil
+                if let error = sync.captureError {
+                    page.flash(added.map { "\($0) · \(error)" } ?? "가져오지 못했습니다: \(error)")
+                } else {
+                    page.flash(added ?? "새로 가져온 줄이 없습니다")
+                }
+            }
         } else {
             page.flash("레드마인 내 일감을 다시 받습니다")
         }
@@ -755,6 +763,7 @@ struct WorkLogImportSheet: View {
 
     var body: some View {
         let parsed = WorkReport.parse(page.importText, day: page.day)
+        let fresh = store.log.newEntries(parsed)
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("보고서 붙여넣기").font(WL.title)
@@ -768,9 +777,11 @@ struct WorkLogImportSheet: View {
                 .background(RoundedRectangle(cornerRadius: 6).fill(WL.callout))
                 .frame(height: 240)
             HStack(spacing: 8) {
-                Text(parsed.isEmpty ? "읽은 줄 없음" : "프로젝트 \(Set(parsed.map(\.project)).count)개 · \(parsed.count)줄")
+                Text(parsed.isEmpty ? "읽은 줄 없음"
+                     : "프로젝트 \(Set(fresh.map(\.project)).count)개 · \(fresh.count)줄"
+                        + (parsed.count > fresh.count ? " · 이미 있는 \(parsed.count - fresh.count)줄 건너뜀" : ""))
                     .font(.system(size: 12.5)).monospacedDigit()
-                    .foregroundStyle(parsed.isEmpty ? WL.muted : WL.done)
+                    .foregroundStyle(fresh.isEmpty ? WL.muted : WL.done)
                 Spacer()
                 Button("클립보드에서") { page.importText = NSPasteboard.general.string(forType: .string) ?? "" }
                     .buttonStyle(NotionButtonStyle())
@@ -783,7 +794,7 @@ struct WorkLogImportSheet: View {
                     page.flash("\(count)줄을 넣었습니다")
                 }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
-                .disabled(parsed.isEmpty)
+                .disabled(fresh.isEmpty)
             }
         }
         .padding(24)

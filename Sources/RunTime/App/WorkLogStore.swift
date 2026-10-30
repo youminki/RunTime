@@ -7,7 +7,32 @@ import WorkLogCore
 final class WorkLogStore: ObservableObject {
     static let shared = WorkLogStore()
 
-    @Published private(set) var log = WorkLog()
+    @Published private(set) var log = WorkLog() {
+        didSet {
+            if oldValue.entries != log.entries || oldValue.issues != log.issues || oldValue.redmineProjects != log.redmineProjects {
+                splitsCache = nil
+                autoPeriodsCache = nil
+            }
+        }
+    }
+    private var splitsCache: [String: MRScreens.Split]?
+    private var autoPeriodsCache: [String: WorkLog.AutoPeriod]?
+
+    /// 레드마인 내 일감으로 잡은 프로젝트 기간. 사이드바 줄마다 장부를 다시 훑지 않게 둔다. 메인 스레드.
+    var autoPeriods: [String: WorkLog.AutoPeriod] {
+        if let autoPeriodsCache { return autoPeriodsCache }
+        let made = log.autoPeriods()
+        autoPeriodsCache = made
+        return made
+    }
+
+    /// MR마다 화면을 나눠 받을 일감. 카드를 그릴 때마다 일지 전체 MR 설명을 다시 쪼개지 않게 줄·장부가 바뀔 때만 다시 만든다. 메인 스레드.
+    var screenSplits: [String: MRScreens.Split] {
+        if let splitsCache { return splitsCache }
+        let made = MRScreens.splits(log)
+        splitsCache = made
+        return made
+    }
     /// 파일을 읽지 못했을 때의 이유. 이때는 덮어쓰지 않는다.
     @Published private(set) var loadError: String?
     @Published private(set) var saveError: String?
@@ -216,9 +241,15 @@ final class WorkLogStore: ObservableObject {
             // 고정 업무가 옛 이름을 다시 만들지 않게
             for index in log.recurring.indices where log.recurring[index].project == old { log.recurring[index].project = name }
             if log.hiddenProjects.remove(old) != nil { log.hiddenProjects.insert(name) }
+            if let period = log.projectPeriods.removeValue(forKey: old) { log.projectPeriods[name] = period }
             // 레드마인 일감을 옛 이름 아래에 적어 옛 프로젝트를 되살리지 않게
             for (redmine, report) in log.redmineProjects where report == old { log.redmineProjects[redmine] = name }
         }
+    }
+
+    /// 프로젝트 기간을 정하거나(nil이면) 지운다.
+    func setPeriod(_ name: String, _ period: ProjectPeriod?) {
+        change { log in log.projectPeriods[name] = period }
     }
 
     /// 프로젝트를 목록에서 숨기거나 다시 보인다. 기록은 그대로 둔다.
@@ -263,7 +294,7 @@ final class WorkLogStore: ObservableObject {
     }
 
     func importReport(_ text: String, day: String) -> Int {
-        let entries = WorkReport.parse(text, day: day)
+        let entries = log.newEntries(WorkReport.parse(text, day: day))
         guard !entries.isEmpty else { return 0 }
         change { log in
             for entry in entries { log.register(project: entry.project) }
@@ -389,6 +420,16 @@ final class WorkLogStore: ObservableObject {
                 if !record.note.isEmpty && reopenNote { log.entries[index].postedAt = nil }
                 if !record.timeEntryIDs.isEmpty { log.entries[index].timeLogged = false }
             }
+        }
+    }
+
+    /// 되돌리기에서 댓글만 지우고 칸은 못 되돌렸을 때. 기록은 남겨 칸을 다시 되돌리게 하고,
+    /// 댓글을 비워 다시 되돌릴 때 지운 댓글을 또 찾지 않게 한다. 줄은 다시 보낼 목록에 돌린다.
+    func markCommentCleared(_ record: RedmineSent) {
+        let ids = Set(record.entryIDs)
+        change { log in
+            if let index = log.sent.firstIndex(where: { $0.id == record.id }) { log.sent[index].note = "" }
+            for index in log.entries.indices where ids.contains(log.entries[index].id) { log.entries[index].postedAt = nil }
         }
     }
 

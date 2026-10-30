@@ -34,13 +34,13 @@ final class MRScreenStore: ObservableObject {
     private let queue = DispatchQueue(label: "dev.runtime.worklog.screens", qos: .utility)
     private let lock = NSLock()
 
-    /// 일지 줄의 출처들에서 MR·브랜치를 모은다. 한 MR이 여러 일감에 걸치면 일감마다 `#번호`가 붙은 줄이 따로 생기는데,
-    /// 화면은 어느 일감 것인지 모르니 MR 대표 줄(번호가 붙지 않은 줄)의 일감에만 붙인다.
+    /// 일지 줄의 출처들에서 MR·브랜치를 모은다. 한 MR이 여러 일감에 걸치면 일감마다 `#번호`가 붙은 줄이 따로 생기고,
+    /// 그 MR 화면은 `MRScreens.share`로 일감마다 나눠 붙인다.
     static func origins(_ sources: [String?]) -> [Origin] {
         var seen = Set<Origin>()
         return sources.compactMap { $0 }.compactMap { source -> Origin? in
             if source.hasPrefix("mr:") {
-                guard !source.contains("#"), let ref = WorkCapture.mrRef(source) else { return nil }
+                guard let ref = WorkCapture.mrRef(source) else { return nil }
                 return .mr(Ref(path: ref.path, iid: ref.iid))
             }
             // branch:<프로젝트 경로>:<브랜치> (브랜치 이름에는 :가 들어갈 수 없다)
@@ -68,6 +68,12 @@ final class MRScreenStore: ObservableObject {
     /// 보내는 큐에서 부른다. `refs`와 같지만 아직 모르는 브랜치는 지금 찾는다.
     func refsForSending(_ origins: [Origin], host: String) -> [Ref] {
         Self.unique(origins.compactMap { refForSending($0, host: host) })
+    }
+
+    /// 이 일감이 받을 MR 화면. 일지에 그 MR 줄이 없으면(머지 전 브랜치) 이 일감 혼자 받는다.
+    static func share(_ screens: [MRScreens.Screen], ref: Ref, issue: Int, splits: [String: MRScreens.Split],
+                      picks: MRScreens.Picks) -> [MRScreens.Screen] {
+        MRScreens.limited(MRScreens.share(screens, issue: issue, split: splits[ref.key] ?? .single(issue), picks: picks))
     }
 
     private static func unique(_ refs: [Ref]) -> [Ref] {

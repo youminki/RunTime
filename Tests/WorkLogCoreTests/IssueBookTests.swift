@@ -104,4 +104,18 @@ private let tree: [Int: RedmineAPI.Issue] = [
         mine.redmineProjects = [:]
         #expect(WorkLog.merge(mine: mine, base: base, disk: base).redmineProjects.isEmpty)
     }
+
+    @Test func mergeKeepsReorderAndSkipsDuplicateImport() {
+        let a = WorkEntry(day: "2026-10-30", project: "p", title: "가"), b = WorkEntry(day: "2026-10-30", project: "p", title: "나")
+        let base = WorkLog(projects: ["p"], entries: [a, b])
+        var mine = base
+        mine.entries = [b, a]
+        var disk = base
+        let added = WorkEntry(day: "2026-10-30", project: "p", title: "다")
+        disk.entries.append(added)
+        #expect(WorkLog.merge(mine: mine, base: base, disk: disk).entries.map(\.title) == ["나", "가", "다"])
+        // 같은 날 같은 제목은 다시 넣지 않는다 (빈칸·대소문자 무시)
+        let parsed = [WorkEntry(day: "2026-10-30", project: "p", title: "가 "), WorkEntry(day: "2026-10-30", project: "p", title: "라")]
+        #expect(base.newEntries(parsed).map(\.title) == ["라"])
+    }
 }

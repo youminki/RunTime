@@ -61,6 +61,10 @@ final class WorkLogPage: ObservableObject {
     @Published var redmineSkipped: Set<Int> = []
     /// MR 수정 전·후 화면을 붙이지 않고 보낼 일감.
     @Published var redmineNoScreens: Set<Int> = []
+    /// 수정 전·후 화면을 모두 펼쳐 본 일감 (화면이 많으면 앞 몇 개만 보인다).
+    @Published var expandedScreens: Set<Int> = []
+    /// 미리보기에서 고른 화면과 다른 일감으로 옮긴 화면. 보낼 때 그대로 따른다.
+    @Published var screenPicks = MRScreens.Picks()
     /// 댓글은 빼고 진척률·칸만 보낼 일감. 같은 댓글이 이미 있으면 저절로 들어간다.
     @Published var redmineNoNote: Set<Int> = []
     /// 진척률 고르기 창을 띄운 일감.
@@ -93,6 +97,8 @@ final class WorkLogPage: ObservableObject {
     @Published var showsHidden = false
     @Published var newProject = ""
     @Published var renaming: String?
+    /// 기간을 정하는 창을 띄운 프로젝트.
+    @Published var periodEditing: String?
     @Published var renameText = ""
     @Published var importing = false
     @Published var importText = ""

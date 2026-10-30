@@ -351,9 +351,31 @@ public enum WorkCapture {
             guard !subjects.isEmpty else { continue }
             if let index = log.entries.firstIndex(where: { $0.source == source && $0.day == day }) {
                 var entry = log.entries[index]
-                // 고친 댓글이나 이미 레드마인에 보낸 줄에는 덧붙이지 않는다 (보낸 내용을 또 올리지 않게)
-                guard let auto = entry.autoNote, entry.note == auto, entry.postedAt == nil else { continue }
-                let existing = auto.components(separatedBy: "\n").filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }
+                let items = { (text: String) in text.components(separatedBy: "\n").filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) } }
+                // 보낸 뒤 같은 날 더 한 커밋은 새 커밋만 댓글로 다시 올린다. 보낸 기록이 있으면 보낸 댓글 글로 가리고,
+                // "보낸 것으로 표시"만 해 기록이 없으면 표시한 뒤의 커밋만 새것으로 본다
+                if let postedAt = entry.postedAt {
+                    let records = log.sent.filter { $0.entryIDs.contains(entry.id) && $0.undoneAt == nil }
+                    let sent = Set(records.flatMap { items(RedmineNote.plain($0.note)) })
+                    var fresh: [String] = []
+                    for commit in group where records.isEmpty ? commit.date > postedAt : true {
+                        let subject = cleanTitle(commit.subject)
+                        if !subject.isEmpty, !sent.contains(subject), !fresh.contains(subject) { fresh.append(subject) }
+                    }
+                    // 보낸 뒤 고친 댓글은 덮지 않는다
+                    guard !fresh.isEmpty, items(entry.autoNote ?? "") != fresh,
+                          entry.updatedAt <= postedAt || entry.note == entry.autoNote else { continue }
+                    let note = commitNote(fresh)
+                    entry.note = note
+                    entry.autoNote = note
+                    entry.updatedAt = now
+                    log.entries[index] = entry
+                    changed += 1
+                    continue
+                }
+                // 고친 댓글에는 덧붙이지 않는다
+                guard let auto = entry.autoNote, entry.note == auto else { continue }
+                let existing = items(auto)
                 let added = subjects.filter { !existing.contains($0) }
                 guard !added.isEmpty else { continue }
                 let note = commitNote(existing + added)
@@ -373,8 +395,24 @@ public enum WorkCapture {
             }
             changed += 1
         }
+        // 지운 줄은 "N줄을 가져왔습니다"에 세지 않는다
+        _ = dropNonBranchLines(&log)
         tidyMRNotes(&log, now: now)
         return changed
+    }
+
+    /// 예전 판이 `refs/stash` 같은 브랜치 아닌 ref의 커밋(`index on master: …`)으로 만든 진행중 줄을 지운다.
+    /// 보내지 않았고 일감도 고치지도 않은 줄만 지운다.
+    static func dropNonBranchLines(_ log: inout WorkLog) -> Int {
+        let before = log.entries.count
+        log.entries.removeAll { entry in
+            guard let source = entry.source, source.hasPrefix("branch:"), entry.postedAt == nil, entry.issue == nil,
+                  entry.note == entry.autoNote else { return false }
+            let rest = source.dropFirst("branch:".count)
+            guard let colon = rest.firstIndex(of: ":") else { return false }
+            return rest[rest.index(after: colon)...].hasPrefix("refs/")
+        }
+        return before - log.entries.count
     }
 
     /// 머지 뒤에 고친 MR 설명(나중에 단 `[일감]` 등)을 다시 읽는다.

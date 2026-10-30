@@ -74,6 +74,7 @@ public enum WorkLogCommand {
                                       레드마인에 올린 것으로 표시 (redmine과 같은 범위)
       capture                         GitLab MR과 로컬 커밋을 지금 가져오기
       issues                          나에게 배정된 레드마인 일감과 보고서 이름
+      plan [날짜]                      그날 진행 예정 사항과 프로젝트마다 들어간 까닭 (직접 정한 기간, 레드마인 일감)
       teams-test [report] [me]        팀즈 웹훅으로 시험 카드(report면 오늘 일일보고, me면 나에게) 보내기
       path                            일지 파일 위치
     """
@@ -121,11 +122,14 @@ public enum WorkLogCommand {
 
         case "import":
             guard let day = dayArg(rest.first) else { return fail("날짜는 yyyy-MM-dd로 적습니다") }
-            let entries = WorkReport.parse(stdin(), day: day, now: now)
-            guard !entries.isEmpty else { return fail("읽은 줄이 없습니다. `1. 프로젝트` 아래 `- 내용 (완료)` 꼴인지 보세요") }
+            let parsed = WorkReport.parse(stdin(), day: day, now: now)
+            guard !parsed.isEmpty else { return fail("읽은 줄이 없습니다. `1. 프로젝트` 아래 `- 내용 (완료)` 꼴인지 보세요") }
+            let entries = log.newEntries(parsed)
             for entry in entries { log.register(project: entry.project) }
             log.entries += entries
-            return Result(output: "\(day)에 \(entries.count)줄 넣음", changed: true, failed: false)
+            let skipped = parsed.count - entries.count
+            return Result(output: "\(day)에 \(entries.count)줄 넣음" + (skipped > 0 ? " (이미 있는 \(skipped)줄 건너뜀)" : ""),
+                          changed: !entries.isEmpty, failed: false)
 
         case "posted":
             // redmine에서 보여 준 범위의 줄만 표시해, 아직 안 올린 다른 날 줄이 빠지지 않게 한다
@@ -151,6 +155,19 @@ public enum WorkLogCommand {
                 }
             }
             return Result(output: "\(count)줄을 올림으로 표시", changed: count > 0, failed: false)
+
+        case "plan":
+            guard let day = dayArg(rest.first) else { return fail("날짜는 yyyy-MM-dd로 적습니다") }
+            let auto = log.autoPeriods()
+            let reasons = log.visibleProjects.compactMap { name -> String? in
+                func text(_ period: ProjectPeriod) -> String { (period.start ?? "") + " ~ " + (period.end ?? "") }
+                if let period = log.projectPeriods[name] { return "\(name): 직접 정함 \(text(period))" + (period.contains(day) ? "" : " (기간 밖)") }
+                guard let found = auto[name] else { return nil }
+                return "\(name): 레드마인 일감 \(found.issues)개 \(text(found.period))" + (found.isActive(on: day) ? "" : " (시작 전)")
+            }
+            let plan = WorkReport.plan(day: day, in: log)
+            return Result(output: (plan.isEmpty ? "\(day) 진행 예정 없음" : plan) + (reasons.isEmpty ? "" : "\n\n" + reasons.joined(separator: "\n")),
+                          changed: false, failed: false)
 
         case "path":
             return Result(output: WorkLogFile.defaultURL.path, changed: false, failed: false)

@@ -294,6 +294,9 @@ enum UIShots {
             // 업무 일지는 RUNTIME_WORKLOG로 예시 파일을 가리키고 찍는다 (내 일지가 그림에 남지 않게)
             ("worklog-day", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
             ("worklog-day-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
+            ("worklog-period-editor", .aqua, nil, AnyView(
+                ProjectPeriodEditor(name: "VeloX", period: ProjectPeriod(start: "2026-10-01", end: "2026-12-31")) { _ in }
+                    .background(WL.canvas))),
             ("worklog-plan-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: {
                 let page = workLogPage(.day)
                 page.dayReport = .plan
@@ -307,6 +310,8 @@ enum UIShots {
             ("worklog-redmine", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
             // 카드 아래 MR 화면 첨부 미리보기까지 보이게 길게 찍는다
             ("worklog-redmine-tall", .darkAqua, 1400, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
+            // 레드마인 카드의 수정 전·후 화면 목록까지 한 장에 담는다 (GitLab에서 화면을 받을 수 있을 때)
+            ("worklog-redmine-screens", .aqua, 2600, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
             ("worklog-redmine-partial", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: {
                 // 일감 하나를 골라 내지 않았을 때 보내기 단추와 카드가 고른 것만 가리키는지 본다
                 let page = workLogPage(.day, preview: .redmine)
