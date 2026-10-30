@@ -178,6 +178,7 @@ python3 -I scripts/update-aliases.py  # Petdex 캐릭터의 한국어 이름을 
 | `--account-check [switch <이메일> \| simulate-limit \| refresh]` | 기억한 Claude 계정마다 저장본, 토큰 주인, 공식 사용률을 찍음. `refresh`는 쓰지 않는 계정 토큰이 곧 만료되면 먼저 새로 받아 저장함. `switch`는 그 계정으로 바꾸고, `simulate-limit`은 지금 계정이 한도에 막힌 것처럼 넣어 자동 전환을 확인 (설치한 앱 바이너리로 실행) |
 | `--design-check <피그마 주소>` | 설정에 저장한 피그마 토큰으로 화면설계서 하나(주소에 `node-id`가 있으면 그 화면만)를 앱 코드 그대로 받아 보고, 읽은 화면·명세·이력 개수와 요청 수, 비교 이미지 하나를 받아 본 결과만 찍음 (기록은 저장하지 않음) |
 | `--design-compare <파일 키> <기준 날짜> <비교 날짜> [화면 경로 \| screen:화면 ID]` | 날짜 비교를 앱 코드 그대로 두 번 돌려 버전, 변경 종류별 개수, 걸린 시간만 찍음 (두 번째는 저장해 둔 버전을 써서 바로 끝나야 함). 날짜는 `2026-10-25` 꼴 |
+| `--update-check <커밋> <클론 경로> [owner/repo]` | 그 커밋으로 만든 빌드라 치고 GitHub와 견줘, 받을지(낡은 빌드·개발 빌드·판정 미룸) 판정만 찍음 (설치하지 않음) |
 | `--report-preview` | 업데이트 문제를 만든 사람에게 보낼 때의 본문을 보내지 않고 찍음 |
 | `--diagnose` | 이 Mac의 빌드, macOS, 화면 구성, 업데이트 상태, 최근 문제 기록(`~/Library/Logs/RunTime/events.log`)을 찍음 |
 | `--ui-shots <폴더>` | 팝오버, 앱 창 화면, 업무 일지를 실제 데이터로 찍어 PNG로 저장 (`RUNTIME_SHOTS=main-,worklog-day`처럼 이름 앞부분으로 고를 수 있음) |

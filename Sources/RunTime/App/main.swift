@@ -275,6 +275,13 @@ if CommandLine.arguments.contains("--report-preview") {
     }
     exit(0)
 }
+// 업데이트 판정: 그 커밋으로 만든 빌드라 치고 GitHub와 견줘 받을지만 찍는다 (설치하지 않음)
+if let index = CommandLine.arguments.firstIndex(of: "--update-check") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    _ = NSApplication.shared
+    UpdaterCheck.run(args)
+    RunLoop.main.run()
+}
 if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
    CommandLine.arguments.dropFirst(index + 1).first == "dupes" {
     MainActor.assumeIsolated { RedmineCheck.dupes() }

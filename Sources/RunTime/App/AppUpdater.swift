@@ -257,11 +257,10 @@ final class AppUpdater: ObservableObject {
     private func finishCheck(_ comparison: Comparison?, status: Int, failed: Bool) {
         // 확인하는 사이 업데이트를 눌렀으면 설치 상태를 덮지 않는다
         guard state == .checking else { return }
-        // 404는 아직 푸시하지 않은 커밋으로 만든 빌드다. GitHub보다 앞서 있으니 받을 것이 없다
-        if status == 404 {
-            state = .upToDate
-            target = nil
-            installFailed = false
+        // 404는 GitHub에 없는 커밋으로 만든 빌드, diverged는 기본 브랜치에 없는 커밋이 든 빌드다.
+        // 클론에 그 커밋이 남아 있으면 개발 빌드라 그대로 두고, 사라졌으면(amend·rebase로 바뀜) 낡은 빌드라 최신을 받는다
+        if status == 404 || (status == 200 && comparison?.status == "diverged") {
+            resolveUnknownBuild(comparison)
             return
         }
         guard let comparison, status == 200 else {
@@ -278,13 +277,69 @@ final class AppUpdater: ObservableObject {
             installFailed = false
             return
         }
-        let latest = comparison.commits.last?.commit.message.components(separatedBy: "\n").first ?? ""
-        incoming = comparison.commits.suffix(5).reversed().map { Self.title(of: $0.commit.message) }
-        incomingLines = comparison.commits.map { $0.commit.message.components(separatedBy: "\n").first ?? "" }
-        let newTarget = comparison.commits.last?.sha
+        adopt(comparison.commits.map { ($0.sha, $0.commit.message) }, count: comparison.aheadBy)
+    }
+
+    /// GitHub와 바로 견줄 수 없는 빌드를 클론으로 가린다. git은 메인 스레드 밖에서 돌린다.
+    private func resolveUnknownBuild(_ comparison: Comparison?) {
+        guard let build, let repo = build.repo else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let origin = Self.origin(of: build)
+            DispatchQueue.main.async {
+                guard self.state == .checking else { return }
+                if origin != .stale {
+                    if case .unknown(let reason) = origin {
+                        let note = "판정 미룸: \(build.commit.prefix(7))이 GitHub \(build.branch)에 없는데 \(reason). 다음 확인 때 다시 봅니다"
+                        if note != self.lastNote { ProblemReporter.send(.unknown, note) }
+                        self.recordOnce(note)
+                    } else {
+                        self.recordOnce("개발 빌드라 받지 않음: \(build.commit.prefix(7))이 GitHub \(build.branch)에 없고 클론에는 있습니다")
+                    }
+                    self.state = .upToDate
+                    self.target = nil
+                    self.installFailed = false
+                    return
+                }
+                self.recordOnce("낡은 빌드: \(build.commit.prefix(7))이 GitHub에도 클론에도 없어 \(build.branch) 최신을 받습니다")
+                if let comparison, !comparison.commits.isEmpty {
+                    self.adopt(comparison.commits.map { ($0.sha, $0.commit.message) }, count: comparison.aheadBy)
+                } else {
+                    self.fetchHead(repo: repo, branch: build.branch)
+                }
+            }
+        }
+    }
+
+    /// 기본 브랜치 끝 커밋 하나를 받을 대상으로 둔다 (견줄 기준 커밋이 GitHub에 없을 때).
+    private func fetchHead(repo: String, branch: String) {
+        guard let url = URL(string: "https://api.github.com/repos/\(repo)/commits/\(branch)") else { state = .upToDate; return }
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("RunTime", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            let commit = data.flatMap { try? JSONDecoder().decode(Comparison.Commit.self, from: $0) }
+            let ok = (response as? HTTPURLResponse)?.statusCode == 200
+            DispatchQueue.main.async {
+                guard self.state == .checking else { return }
+                guard ok, let commit else {
+                    self.state = .failed("최신 커밋을 받지 못했습니다.")
+                    return
+                }
+                self.adopt([(commit.sha, commit.commit.message)], count: 1)
+            }
+        }.resume()
+    }
+
+    /// 받을 커밋들(오래된 것이 앞)을 대상으로 두고, 자동 업데이트면 적용한다.
+    private func adopt(_ commits: [(sha: String, message: String)], count: Int) {
+        let firstLine = { (message: String) in message.components(separatedBy: "\n").first ?? "" }
+        let latest = commits.last.map { firstLine($0.message) } ?? ""
+        incoming = commits.suffix(5).reversed().map { Self.title(of: $0.message) }
+        incomingLines = commits.map { firstLine($0.message) }
+        let newTarget = commits.last?.sha
         let isNew = newTarget != target
         target = newTarget
-        state = .available(count: comparison.aheadBy, latest: latest)
+        state = .available(count: count, latest: latest)
         if isNew {
             blocked = nil
             installFailed = false
@@ -293,6 +348,14 @@ final class AppUpdater: ObservableObject {
         if autoUpdate, newTarget != UserDefaults.standard.string(forKey: Key.failedTarget) {
             applyAutoUpdateIfIdle()
         }
+    }
+
+    /// 같은 까닭을 30분마다 쌓지 않게, 지난번과 다를 때만 남긴다. 다른 Mac에서 업데이트가 멈춘 까닭을 events.log로 본다.
+    private var lastNote: String?
+    private func recordOnce(_ note: String) {
+        guard note != lastNote else { return }
+        lastNote = note
+        Diagnostics.record("업데이트", note)
     }
 
     /// 러너 말풍선 글. 누르면 `update()`.
@@ -316,8 +379,12 @@ final class AppUpdater: ObservableObject {
     }
 
     private func applyAutoUpdateIfIdle() {
-        guard autoUpdate, case .available = state, !isInUse(),
+        guard autoUpdate, case .available = state,
               target != UserDefaults.standard.string(forKey: Key.failedTarget) else { return }
+        if isInUse() {
+            recordOnce("쓰는 중이라 미룸: 창이나 팝오버를 닫으면 \((target ?? "").prefix(7))을 받습니다")
+            return
+        }
         // 미룬 업데이트는 창을 닫을 때마다 git을 돌리지 않게 10분에 한 번만 다시 본다
         if let blockedAt, Date().timeIntervalSince(blockedAt) < 10 * 60 { return }
         update(automatic: true)
@@ -364,8 +431,9 @@ final class AppUpdater: ObservableObject {
         }
     }
 
-    private func fail(_ reason: String, target: String?, automatic: Bool) {
+    private func fail(_ reason: String, target: String?, automatic: Bool, kind: ProblemReporter.Kind = .failed) {
         Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "실패: \(reason)")
+        ProblemReporter.send(kind, reason)
         state = .failed(reason)
         installFailed = true
         stopProgress()
@@ -418,6 +486,30 @@ final class AppUpdater: ObservableObject {
         return nil
     }
 
+    enum BuildOrigin: Equatable {
+        /// 클론에 그 커밋이 있고 지금 HEAD가 이어받았다. 아직 올리지 않은 작업이라 받지 않는다
+        case development
+        /// 클론에서도 사라졌거나(amend·rebase) HEAD가 그 커밋을 이어받지 않았다. 기본 브랜치 최신을 받는다
+        case stale
+        /// git을 돌리지 못해 가르지 못했다. 개발 빌드를 덮지 않게 받지 않는다
+        case unknown(String)
+    }
+
+    /// GitHub와 견줄 수 없는 빌드가 어디서 왔는지. 업데이트 전용 폴더에서 만든 빌드는 늘 GitHub 것이라 낡은 빌드다.
+    static func origin(of build: Build) -> BuildOrigin {
+        guard build.sourcePath != worktreePath else { return .stale }
+        guard FileManager.default.fileExists(atPath: build.sourcePath + "/.git") else { return .unknown("클론 폴더가 없습니다") }
+        guard let (exists, _) = gitRun(["cat-file", "-e", build.commit + "^{commit}"], in: build.sourcePath, timeout: 15) else {
+            return .unknown("git이 응답하지 않았습니다")
+        }
+        guard exists == 0 else { return .stale }
+        switch gitRun(["merge-base", "--is-ancestor", build.commit, "HEAD"], in: build.sourcePath, timeout: 15)?.0 {
+        case 0: return .development
+        case 1: return .stale
+        default: return .unknown("클론에서 커밋 관계를 확인하지 못했습니다")
+        }
+    }
+
     /// 마지막 업데이트 기록에서 까닭이 적힌 줄 (`✗ …`, `error: …`, `fatal: …`).
     static func failureReason(inLog text: String) -> String? {
         let attempt = text.components(separatedBy: "\n== ").last ?? text
@@ -427,19 +519,59 @@ final class AppUpdater: ObservableObject {
             .map { String($0.prefix(140)) }
     }
 
-    private static func git(_ arguments: [String], in path: String) -> String? {
+    private static func git(_ arguments: [String], in path: String, timeout: TimeInterval = 60) -> String? {
+        guard let (status, output) = gitRun(arguments, in: path, timeout: timeout), status == 0 else { return nil }
+        return output
+    }
+
+    /// 망이 끊기거나 키 암호를 묻느라 멈추면 업데이트가 영영 '설치 중'에 묶여 다시 확인하지 못해서, 시간을 넘기면 끊는다.
+    /// 끝난 상태와 출력. 시작하지 못했거나 시간을 넘겨 끊었으면 nil.
+    private static func gitRun(_ arguments: [String], in path: String, timeout: TimeInterval) -> (Int32, String)? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", path] + arguments
+        process.environment = gitEnvironment
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return nil }
+        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        watchdog.cancel()
+        guard process.terminationReason == .exit else { return nil }
+        return (process.terminationStatus, String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
+
+    /// 프로세스와 그 아래 프로세스 전부에 SIGTERM을 보낸다. 아래부터 끊어 부모가 다시 띄우지 못하게 한다.
+    private static func terminateTree(_ pid: pid_t) {
+        let list = Process()
+        list.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        list.arguments = ["-P", String(pid)]
+        let pipe = Pipe()
+        list.standardOutput = pipe
+        list.standardError = FileHandle.nullDevice
+        if (try? list.run()) != nil {
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            list.waitUntilExit()
+            for child in output.split(separator: "\n").compactMap({ pid_t($0) }) { terminateTree(child) }
+        }
+        kill(pid, SIGTERM)
+    }
+
+    /// 자격 증명·키 암호를 묻느라 멈추지 않게 한다 (묻지 않고 바로 실패해 다음 확인 때 다시 한다). 망이 멈추는 것은 시간 제한이 끊는다.
+    private static var gitEnvironment: [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        // 키 암호를 묻는 창을 띄우지 않고 바로 실패한다. 저장소에 정해 둔 SSH 설정(core.sshCommand)은 그대로 쓴다
+        environment["SSH_ASKPASS_REQUIRE"] = "never"
+        return environment
+    }
+
+    /// 설치가 이보다 오래 끝나지 않으면 멈춘 것으로 본다. 보통 1~2분, 처음 빌드도 10분 안쪽이다.
+    private static let installTimeout: TimeInterval = 25 * 60
 
     /// 앱과 떨어진 셸로 받고 빌드한다. 출력은 로그 파일로 보내 앱이 꺼져도 끊기지 않게 한다.
     /// 개발 클론이 작업 중일 때 빌드하는 곳. 개발 클론과 같은 저장소를 쓰는 worktree다.
@@ -470,10 +602,7 @@ final class AppUpdater: ObservableObject {
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         // 사용자 셸 설정(~/.zshenv)이 섞이지 않게 -f, 자격 증명을 묻느라 멈추지 않게 GIT_TERMINAL_PROMPT=0
         process.arguments = ["-f", "-c", script]
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
-        environment["GIT_TERMINAL_PROMPT"] = "0"
-        process.environment = environment
+        process.environment = Self.gitEnvironment
         UserDefaults.standard.set(target ?? build.commit, forKey: Key.installing)
         UserDefaults.standard.set(automatic, forKey: Key.silent)
         UserDefaults.standard.set(Array(incomingLines.suffix(30)), forKey: Key.installingNotes)
@@ -483,6 +612,7 @@ final class AppUpdater: ObservableObject {
         startProgress()
         Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "설치 시작: \(build.commit.prefix(7)) → \((target ?? "").prefix(7))")
         // install.sh가 성공하면 이 앱은 꺼지고 새 빌드가 뜬다. 여기로 돌아왔다면 실패한 것이다
+        var timedOut = false
         process.terminationHandler = { finished in
             DispatchQueue.main.async {
                 if finished.terminationStatus == 0 {
@@ -493,6 +623,9 @@ final class AppUpdater: ObservableObject {
                     self.state = .idle
                     UserDefaults.standard.removeObject(forKey: Key.startedAt)
                     self.check()
+                } else if timedOut {
+                    self.fail("업데이트가 \(Int(Self.installTimeout / 60))분 넘게 끝나지 않아 멈췄습니다. 로그: \(Self.logURL.path)",
+                              target: target, automatic: automatic, kind: .timeout)
                 } else {
                     let log = (try? String(contentsOf: Self.logURL, encoding: .utf8)) ?? ""
                     let reason = Self.failureReason(inLog: log).map { "업데이트에 실패했습니다: \($0)" }
@@ -503,6 +636,13 @@ final class AppUpdater: ObservableObject {
         }
         do {
             try process.run()
+            // 빌드가 멈추면 '설치 중'에 묶여 다시 확인하지 못하니, 오래 걸리면 끊고 실패로 남긴다 (말풍선으로 다시 할 수 있다)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.installTimeout) {
+                guard process.isRunning, self.state == .updating else { return }
+                timedOut = true
+                // 셸만 끊으면 git·swift build가 남아 돌다가 뒤늦게 앱을 바꿔 버린다. 아래 프로세스부터 끊는다
+                Self.terminateTree(process.processIdentifier)
+            }
         } catch {
             fail("업데이트를 시작하지 못했습니다.", target: target, automatic: automatic)
         }
@@ -597,5 +737,26 @@ final class AppUpdater: ObservableObject {
         let best = max(fraction, progress?.fraction ?? 0)
         progress = Progress(fraction: best, step: step,
                             remaining: Self.remaining(fraction: best, elapsed: elapsed, typical: typical > 0 ? typical : 100))
+    }
+}
+
+/// `--update-check <커밋> <클론 경로> [저장소]`: 그 커밋으로 만든 빌드라 치고 GitHub와 견줘, 받을지 판정만 찍는다. 설치하지 않는다.
+enum UpdaterCheck {
+    static func run(_ args: [String]) {
+        guard args.count >= 2 else { print("쓰기: --update-check <커밋> <클론 경로> [owner/repo]"); exit(2) }
+        let build = AppUpdater.Build(commit: args[0], subject: "", sourcePath: args[1], repo: args.count > 2 ? args[2] : "youminki/RunTime",
+                                     branch: "main", dirty: false)
+        let updater = AppUpdater(build: build)
+        updater.autoUpdate = false
+        updater.check()
+        func wait(_ left: Int) {
+            if updater.state == .checking && left > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { wait(left - 1) }
+                return
+            }
+            print("판정: \(updater.state) · 받을 커밋 \(updater.target.map { String($0.prefix(7)) } ?? "없음")")
+            exit(0)
+        }
+        wait(80)
     }
 }
