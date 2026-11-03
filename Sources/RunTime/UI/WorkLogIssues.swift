@@ -136,6 +136,7 @@ struct IssueBoard: View {
         case .working: return info.doneRatio > 0 || logged.contains(info.id)
         case .due: return (info.dueDate ?? "9999") <= WorkDay.adding(3, to: WorkDay.today())
         case .logged: return logged.contains(info.id)
+        case .stabilization: return info.isStabilization
         }
     }
 

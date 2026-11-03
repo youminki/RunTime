@@ -467,3 +467,213 @@ private let sample = """
         #expect(WorkReport.isQA(WorkEntry(day: "d", project: "p", title: "QA: 정렬 오류"), in: log))
     }
 }
+
+/// 보고서는 늘 "레드마인에 보낸 뒤의 모습"을 적는다. 보내지 않은 일감은 보낼 값, 보낸 일감은 보낸 값, 빼 둔 일감은 일지 상태.
+@Suite struct RedmineReportTests {
+    private let day = "2026-11-03"
+    private let edited = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func log(_ entries: [WorkEntry]) -> WorkLog {
+        var log = WorkLog(projects: ["VeloX"], entries: entries)
+        log.issues = [
+            "1": IssueInfo(id: 1, subject: "API 연동", project: "p", tracker: "작업", path: ["데이터 탐색", "SQL 편집기"]),
+            "2": IssueInfo(id: 2, subject: "[수정] 정렬 오류", project: "p", tracker: "작업", isQA: true),
+            "3": IssueInfo(id: 3, subject: "약관 탭 이름 오류", project: "p", tracker: "안정화", status: "할일", assigned: true),
+            "4": IssueInfo(id: 4, subject: "로고 포맷 검사", project: "p", tracker: "안정화", status: "테스트", doneRatio: 100, assigned: true),
+        ]
+        log.redmineProjects = ["p": "VeloX"]
+        return log
+    }
+
+    private func row(_ issue: Int?, _ status: WorkStatus, _ title: String = "작업") -> WorkEntry {
+        var entry = WorkEntry(day: day, project: "VeloX", title: title, status: status, issue: issue, updatedAt: edited)
+        entry.source = "mr:g/a!\(issue ?? 0)"
+        return entry
+    }
+
+    @Test func writesRedmineRatiosAndCountsStabilization() {
+        let entries = [row(1, .inProgress), row(2, .done), row(3, .done), row(4, .inProgress)]
+        let log = log(entries)
+        // 진척률을 모르면 일지 상태 그대로
+        #expect(WorkReport.daily(entries, in: log, byIssue: true) == """
+        1. VeloX
+        - QA 수정사항 1건 반영 (완료)
+        - 안정화 이슈 2건 처리 (50%)
+        - 데이터 탐색 > SQL 편집기 API 연동 (진행중)
+        """)
+        // 레드마인 진척률이 있으면 그 값으로: 기능 일감 60%, 안정화 둘 다 끝
+        #expect(WorkReport.daily(entries, in: log, byIssue: true, ratios: [1: 60, 4: 100]) == """
+        1. VeloX
+        - QA 수정사항 1건 반영 (완료)
+        - 안정화 이슈 2건 처리 (완료)
+        - 데이터 탐색 > SQL 편집기 API 연동 (60%)
+        """)
+        #expect(WorkReport.daily(entries, in: log, byIssue: true, ratios: [1: 100]).contains("SQL 편집기 API 연동 (100%)"))
+        #expect(WorkReport.status(0, over: .done) == .inProgress)
+        #expect(WorkReport.status(80, over: .ongoing) == .ongoing)
+        #expect(WorkReport.status(nil, over: .percent(30)) == .percent(30))
+    }
+
+    @Test func picksPendingThenSentThenNothing() {
+        let entries = [row(1, .percent(40)), row(2, .done), row(3, .done)]
+        var log = log(entries)
+        let sentAfter = RedmineSent(issue: 2, sentAt: edited.addingTimeInterval(60), entryIDs: [], note: "",
+                                    before: .init(doneRatio: 0), after: .init(doneRatio: 90))
+        let sentBefore = RedmineSent(issue: 3, sentAt: edited.addingTimeInterval(-60), entryIDs: [], note: "",
+                                     before: .init(doneRatio: 0), after: .init(doneRatio: 30))
+        var undone = RedmineSent(issue: 1, sentAt: edited.addingTimeInterval(60), entryIDs: [], note: "",
+                                 before: .init(doneRatio: 0), after: .init(doneRatio: 10))
+        undone.undoneAt = edited.addingTimeInterval(120)
+        log.sent = [sentAfter, sentBefore, undone]
+        // 1: 보낼 값, 2: 고친 뒤 보낸 값, 3: 보낸 뒤 고쳐 보낸 값이 없음, 1의 되돌린 기록은 쓰지 않는다
+        #expect(WorkReport.reportRatios(entries, in: log, pending: [1: 70]) == [1: 70, 2: 90])
+        #expect(WorkReport.reportRatios(entries, in: log, pending: [:]) == [2: 90])
+        // 빼 둔 일감은 보낼 값을 쓰지 않는다. 이미 보낸 값(2의 90%)은 레드마인에 남아 있어 그 값을 쓴다
+        #expect(WorkReport.reportRatios(entries, in: log, pending: [1: 70, 2: 50], skipped: [1, 2]) == [2: 90])
+        // 어느 줄을 실었는지 적힌 기록은 그 줄로만 맞춘다
+        let other = RedmineSent(issue: 3, sentAt: edited.addingTimeInterval(60), entryIDs: [UUID()], note: "",
+                                before: .init(doneRatio: 0), after: .init(doneRatio: 50))
+        let mine = RedmineSent(issue: 3, sentAt: edited.addingTimeInterval(30), entryIDs: [entries[2].id], note: "",
+                               before: .init(doneRatio: 0), after: .init(doneRatio: 20))
+        log.sent = [other, mine]
+        #expect(WorkReport.reportRatios(entries, in: log, pending: [:]) == [3: 20])
+    }
+
+    /// 주간 보고에서 월요일 줄만 다시 보낼 목록에 올라도, 수요일에 이미 보낸 값이 레드마인의 값이다.
+    @Test func laterSentBeatsOlderPending() {
+        var monday = WorkEntry(day: "2026-11-02", project: "VeloX", title: "작업", status: .percent(50), issue: 1, updatedAt: edited)
+        monday.postedAt = edited.addingTimeInterval(-100)   // 보낸 뒤 고쳐 다시 보낼 목록
+        var wednesday = WorkEntry(day: "2026-11-04", project: "VeloX", title: "작업", status: .done, issue: 1,
+                                  updatedAt: edited.addingTimeInterval(-50))
+        wednesday.postedAt = edited.addingTimeInterval(-40)
+        var log = log([monday, wednesday])
+        log.sent = [RedmineSent(issue: 1, sentAt: edited.addingTimeInterval(-40), entryIDs: [wednesday.id], note: "",
+                                before: .init(doneRatio: 50), after: .init(doneRatio: 100))]
+        #expect(WorkReport.reportRatios([monday, wednesday], in: log, pending: [1: 50]) == [1: 100])
+        // 가장 늦은 날 줄이 다시 보낼 목록이면 보낼 값이 앞선다
+        wednesday.updatedAt = edited.addingTimeInterval(10)
+        #expect(WorkReport.reportRatios([monday, wednesday], in: log, pending: [1: 80]) == [1: 80])
+    }
+
+    @Test func closedStatusesEndStabilization() {
+        var log = log([])
+        log.issues["3"]?.statusID = 7
+        #expect(WorkReport.stabilizationProjects(in: log) == ["VeloX"])
+        #expect(WorkReport.stabilizationProjects(in: log, closed: [7]).isEmpty)
+        #expect(!IssueInfo(id: 1, subject: "s", project: "p", status: "반려", doneRatio: 30).isOpen())
+        // 상태 목록이 있으면 이름보다 앞선다: 이 레드마인의 `해결`이 닫힘이 아니면 남은 일이다
+        #expect(IssueInfo(id: 2, subject: "s", project: "p", status: "해결", doneRatio: 30, statusID: 4).isOpen(closed: [5]))
+        #expect(!IssueInfo(id: 2, subject: "s", project: "p", status: "해결", doneRatio: 30, statusID: 4).isOpen())
+    }
+
+    @Test func tellsWhichRatiosCameFromPending() {
+        let entries = [row(1, .percent(40)), row(2, .done)]
+        var log = log(entries)
+        log.sent = [RedmineSent(issue: 2, sentAt: edited.addingTimeInterval(60), entryIDs: [], note: "",
+                                before: .init(doneRatio: 0), after: .init(doneRatio: 100))]
+        let result = WorkReport.ratioSources(entries, in: log, pending: [1: 40, 2: 100], skipped: [2])
+        #expect(result.ratios == [1: 40, 2: 100])
+        #expect(result.fromPending == [1])
+    }
+
+    @Test func pendingRatiosFollowJournalStatus() {
+        let entries = [row(1, .percent(40)), row(2, .done), row(3, .inProgress), row(nil, .done)]
+        #expect(WorkReport.pendingRatios(entries, log: log(entries)) == [1: 40, 2: 100])
+    }
+
+    @Test func listsWhatIsNotInRedmineYet() {
+        var posted = row(2, .done)
+        posted.postedAt = edited.addingTimeInterval(10)
+        let entries = [row(1, .done), posted, row(3, .done), row(nil, .done, "배포 설정"), row(nil, .ongoing, "주간 회의")]
+        let result = WorkReport.unreflected(entries, skipped: [3])
+        #expect(result == WorkReport.Unreflected(unsent: [1], skipped: [3], unlinked: 1))
+        #expect(!result.isEmpty)
+        #expect(WorkReport.unreflected([posted]).isEmpty)
+    }
+
+    @Test func planNamesQAAndStabilization() {
+        var log = log([WorkEntry(day: "2026-11-02", project: "VeloX", title: "정렬 오류", issue: 2)])
+        log.projects = ["VeloX", "UxHub"]
+        log.projectPeriods = ["UxHub": ProjectPeriod(start: "2026-11-01")]
+        #expect(WorkReport.stabilizationProjects(in: log) == ["VeloX"])
+        #expect(WorkReport.plan(day: day, in: log) == """
+        1. VeloX
+        - QA 수정사항 반영
+        - 안정화 이슈 처리
+        2. UxHub
+        - 마크업 및 API 연동
+        """)
+        // 남은 안정화가 없으면 줄도 없다
+        log.issues["3"]?.doneRatio = 100
+        #expect(WorkReport.stabilizationProjects(in: log).isEmpty)
+        #expect(IssueInfo(id: 9, subject: "s", project: "p", status: "완료").isOpen() == false)
+    }
+}
+
+@Suite struct StabilizationIssueTests {
+    @Test func groupsAndOpenness() {
+        let stable = IssueInfo(id: 1, subject: "약관 탭 이름", project: "p", tracker: "안정화", status: "할일")
+        #expect(stable.isStabilization && stable.isOpen())
+        #expect(stable.group == "안정화")
+        #expect(IssueInfo(id: 2, subject: "s", project: "p", tracker: " 안정화 ").isStabilization)
+        #expect(!IssueInfo(id: 3, subject: "s", project: "p", tracker: "작업").isStabilization)
+        #expect(IssueInfo(id: 4, subject: "s", project: "p").group == "기타")
+        #expect(!IssueInfo(id: 5, subject: "s", project: "p", tracker: "안정화", status: "테스트", doneRatio: 100).isOpen())
+        #expect(!IssueInfo(id: 6, subject: "s", project: "p", status: "종료", doneRatio: 40).isOpen())
+    }
+}
+
+/// Claude가 다듬은 글은 프로젝트 줄·메뉴 경로·QA·안정화 줄을 그대로 둘 때만 쓴다.
+@Suite struct PolishShapeTests {
+    private let original = """
+    1. VeloX
+    - 데이터 탐색 > SQL 편집기 API 연동 (100%)
+    - API 게이트웨이 주소 적용 (완료)
+    - 게이트웨이 환경변수 적용 (완료)
+    2. UxHub
+    - QA 수정사항 2건 반영 (완료)
+    - 안정화 이슈 3건 처리 (완료)
+    """
+
+    @Test func acceptsShorterSameShape() {
+        // 줄 끝 공백과 빈 줄은 견주지 않는다
+        #expect(WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "(완료)\n2.", with: "(완료)  \n\n2.")))
+        #expect(WorkReport.keepsShape(original: original, polished: """
+        1. VeloX
+        - 데이터 탐색 > SQL 편집기 API 연동 (100%)
+        - 배포 환경 설정 변경 (완료)
+        2. UxHub
+        - QA 수정사항 2건 반영 (완료)
+        - 안정화 이슈 3건 처리 (완료)
+        """))
+    }
+
+    @Test func rejectsChangedFixedLinesOrExtraText() {
+        // 없는 상태를 만듦 (완료·100%만 있던 프로젝트에 진행중)
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "게이트웨이 환경변수 적용 (완료)", with: "게이트웨이 환경변수 적용 (진행중)")))
+        // 줄이 늘어남 (없는 일을 더함)
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "2. UxHub", with: "- 회의 (완료)\n2. UxHub")))
+        // 고정 줄을 다른 프로젝트로 옮김
+        #expect(!WorkReport.keepsShape(original: original, polished: """
+        1. VeloX
+        - 데이터 탐색 > SQL 편집기 API 연동 (100%)
+        - QA 수정사항 2건 반영 (완료)
+        2. UxHub
+        - 안정화 이슈 3건 처리 (완료)
+        """))
+        // 원래 없던 메뉴·QA 줄을 지음
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "- 게이트웨이 환경변수 적용 (완료)", with: "- 새 메뉴 > 화면 연동 (완료)")))
+        // 상태 괄호가 없는 줄
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "게이트웨이 환경변수 적용 (완료)", with: "게이트웨이 환경변수 적용")))
+        // 메뉴 경로를 바꿈
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "SQL 편집기 API", with: "편집기 API")))
+        // 건수·상태를 바꿈
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "2건", with: "3건")))
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "(100%)", with: "(완료)")))
+        // 프로젝트 순서·이름을 바꿈
+        #expect(!WorkReport.keepsShape(original: original, polished: original.replacingOccurrences(of: "2. UxHub", with: "2. uxhub")))
+        // 설명을 덧붙임
+        #expect(!WorkReport.keepsShape(original: original, polished: "다듬은 보고서입니다.\n" + original))
+        #expect(!WorkReport.keepsShape(original: original, polished: ""))
+    }
+}

@@ -12,6 +12,11 @@ final class WorkLogPage: ObservableObject {
     @Published var dayReport: DayReport = WorkLogPage.defaultReport(for: WorkDay.today())
     /// 날짜별로 고쳐 쓴 진행 예정 사항과, 고칠 때 일지에서 만든 글. 일지가 바뀌면 알아채려고 함께 둔다.
     @Published var planEdits: [String: (text: String, base: String)] = [:]
+    /// 날짜별로 Claude로 다듬은 진행 사항: 지금 글, 다듬을 때 일지에서 만든 글, Claude가 돌려준 글.
+    /// 고쳐 쓰지 않은 채 일지가 바뀌면 낡은 초안이라 버린다 (`polished`와 같은지로 가린다).
+    @Published var progressEdits: [String: (text: String, base: String, polished: String)] = [:]
+    /// Claude로 다듬는 중인 날.
+    @Published var polishingDay: String?
     /// 고른 날. 바꾸면 왼쪽 달력도 그 달로 간다.
     @Published var day = WorkDay.today() {
         didSet {
@@ -126,7 +131,7 @@ final class WorkLogPage: ObservableObject {
     @Published var redmineRenameText = ""
 
     enum IssueFilter: String, CaseIterable {
-        case all = "전체", working = "진행 중", due = "기한 임박", logged = "오늘 적은"
+        case all = "전체", working = "진행 중", due = "기한 임박", logged = "오늘 적은", stabilization = "안정화"
     }
     /// 설정 창에서 고른 칸.
     @Published var settingsSection = SettingsSection.gitlab

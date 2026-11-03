@@ -34,7 +34,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
         let log = WorkLogStore.shared.log
         let today = WorkDay.today()
         let report = args.dropFirst().first == "report"
-            ? WorkReport.daily(log.entries(on: today), in: log, doneFirst: true, byIssue: true, compact: WorkLogSettings.shared.reportCompact)
+            ? WorkReport.daily(log.entries(on: today), in: log, doneFirst: true, byIssue: true, compact: WorkLogSettings.shared.reportCompact,
+                               ratios: WorkReport.reportRatios(log.entries(on: today), in: log,
+                                                               pending: WorkReport.pendingRatios(log.entries(on: today), log: log)))
             : "[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 연결됐습니다 (완료)"
         let title = args.dropFirst().first == "report" ? "일일보고 · \(WorkReport.shortDate(today))" : "RunTime 연결 시험"
         // 셋째 값이 me면 나와의 채팅으로
@@ -54,6 +56,25 @@ if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
         TeamsWeb.shared.prepare { ready in
             print(ready ? "팀즈 웹 로그인됨" : "팀즈 웹: \(TeamsWeb.shared.state)", String(format: "(%.1f초)", Date().timeIntervalSince(started)))
             exit(ready ? 0 : 1)
+        }
+        RunLoop.main.run()
+    }
+    // 그날 진행 사항을 앱과 같은 규칙으로 만들고 Claude Code로 다듬어 찍는다 (올리지 않음)
+    if args.first == "polish" {
+        let log = WorkLogStore.shared.log
+        let day = args.dropFirst().first ?? WorkDay.today()
+        guard WorkDay.isValid(day) else { print("날짜는 yyyy-MM-dd로 적습니다"); exit(1) }
+        let entries = log.entries(on: day)
+        let ratios = WorkReport.reportRatios(entries, in: log, pending: WorkReport.pendingRatios(entries, log: log))
+        let report = WorkReport.daily(entries, in: log, doneFirst: true, byIssue: true, compact: true, ratios: ratios)
+        guard !report.isEmpty else { print("\(day) 기록 없음"); exit(1) }
+        let started = Date()
+        ReportPolisher.polish(report) { result in
+            switch result {
+            case .success(let text): print(text, String(format: "\n(%.1f초)", Date().timeIntervalSince(started)))
+            case .failure(let error): print(error.localizedDescription)
+            }
+            exit((try? result.get()) == nil ? 1 : 0)
         }
         RunLoop.main.run()
     }

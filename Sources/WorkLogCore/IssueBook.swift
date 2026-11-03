@@ -49,6 +49,19 @@ public struct IssueInfo: Codable, Equatable, Identifiable {
         self.fetchedAt = fetchedAt
     }
 
+    /// 안정화 트래커 일감. 보고서에 `안정화 이슈 N건 처리` 한 줄로 모은다.
+    public var isStabilization: Bool { tracker.trimmingCharacters(in: .whitespaces) == "안정화" }
+
+    /// 아직 할 일이 남았는지. 레드마인 진척률이 100이 아니고 닫힌 상태가 아니면 남은 일이다.
+    /// `closed`는 레드마인 상태 목록에서 닫힘으로 표시된 상태 ID다. 레드마인마다 `해결`을 닫힘으로 두기도 하고
+    /// 아니기도 해서 목록이 있으면 그것만 따르고, 받지 못했을 때만 흔한 닫힘 이름으로 가린다.
+    public func isOpen(closed: Set<Int> = []) -> Bool {
+        guard doneRatio < 100 else { return false }
+        if !closed.isEmpty, let statusID { return !closed.contains(statusID) }
+        let name = status.trimmingCharacters(in: .whitespaces).lowercased()
+        return !["완료", "종료", "해결", "반려", "거절", "취소", "closed", "done", "resolved", "rejected"].contains(name)
+    }
+
     /// 보고서 한 줄 이름. 잎 일감이 `API 연동`·`마크업`처럼 짧은 일 이름이면 화면 이름 뒤에 붙인다.
     /// `[FN-HUBADM-02]` 같은 기능 번호와 `[수정]` 머리는 보고서에 군더더기라 뗀다.
     public var reportTitle: String {
@@ -60,7 +73,8 @@ public struct IssueInfo: Codable, Equatable, Identifiable {
     }
 
     /// 화면 묶음 이름 (내 일감에서 묶어 보일 때).
-    public var group: String { path.isEmpty ? "기타" : path.joined(separator: " > ") }
+    /// 안정화 일감은 상위 일감 없이 바로 달려 `기타`에 섞이므로 따로 묶는다.
+    public var group: String { isStabilization ? "안정화" : path.isEmpty ? "기타" : path.joined(separator: " > ") }
 
     /// `[수정][데이터셋관리] 이력 저장 기간…` → `이력 저장 기간…` (QA 건 이름은 대괄호 머리가 군더더기다)
     public static func cleanSubject(_ subject: String) -> String {

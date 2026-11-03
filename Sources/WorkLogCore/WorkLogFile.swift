@@ -74,6 +74,7 @@ public enum WorkLogCommand {
       posted <일감번호>... [날짜|week [날짜]]
                                       레드마인에 올린 것으로 표시 (redmine과 같은 범위)
       capture                         GitLab MR과 로컬 커밋을 지금 가져오기
+      polish [날짜]                    그날 진행 사항을 Claude Code로 사내 보고 꼴로 다듬어 찍기 (올리지 않음)
       issues                          나에게 배정된 레드마인 일감과 보고서 이름
       plan [날짜]                      그날 진행 예정 사항과 프로젝트마다 들어간 까닭 (직접 정한 기간, 레드마인 일감)
       teams-test [report] [me]        팀즈 웹훅으로 시험 카드(report면 오늘 일일보고, me면 나에게) 보내기
@@ -96,13 +97,17 @@ public enum WorkLogCommand {
         switch command {
         case "day":
             guard let day = dayArg(rest.first) else { return fail("날짜는 yyyy-MM-dd로 적습니다") }
-            let text = WorkReport.daily(log.entries(on: day), in: log, doneFirst: true, byIssue: byIssue, compact: compact)
+            let entries = log.entries(on: day)
+            let ratios = WorkReport.reportRatios(entries, in: log, pending: WorkReport.pendingRatios(entries, log: log))
+            let text = WorkReport.daily(entries, in: log, doneFirst: true, byIssue: byIssue, compact: compact, ratios: ratios)
             return Result(output: text.isEmpty ? "\(day) 기록 없음" : text, changed: false, failed: false)
 
         case "week":
             guard let day = dayArg(rest.first) else { return fail("날짜는 yyyy-MM-dd로 적습니다") }
             let week = WorkDay.week(of: day)
-            let text = WorkReport.weekly(log.entries(in: week), in: log, week: week, doneFirst: true, byIssue: byIssue, compact: compact)
+            let entries = log.entries(in: week)
+            let ratios = WorkReport.reportRatios(entries, in: log, pending: WorkReport.pendingRatios(entries, log: log))
+            let text = WorkReport.weekly(entries, in: log, week: week, doneFirst: true, byIssue: byIssue, compact: compact, ratios: ratios)
             return Result(output: text.isEmpty ? "\(week.lowerBound) 주 기록 없음" : text, changed: false, failed: false)
 
         case "redmine":

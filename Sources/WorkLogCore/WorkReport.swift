@@ -14,19 +14,20 @@ public enum WorkReport {
     /// `byIssue`면 레드마인 일감 이름으로 적고 QA 건은 `QA 수정사항 N건 반영` 한 줄로 모은다.
     /// `grouped`면 같은 메뉴 경로(`데이터 수집 > 공유 파일 관리 > …`) 줄을 경로 한 줄 아래로 묶는다 (`grouping` 참고).
     /// `compact`면 사내 보고처럼 짧게 줄인다 (`compacted` 참고). 이때는 `grouped`를 쓰지 않는다.
+    /// `ratios`는 일감별 레드마인 진척률 (`reportRatios`). `byIssue`일 때만 쓴다.
     public static func daily(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool = false, byIssue: Bool = false,
-                             grouped: Bool = false, compact: Bool = false) -> String {
-        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact)
+                             grouped: Bool = false, compact: Bool = false, ratios: [Int: Int] = [:]) -> String {
+        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact, ratios: ratios)
         return numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped && !compact)
     }
 
     /// 되돌리기는 날짜와 순서가 살아 있는 원래 줄에서 먼저 지운다. 같은 제목을 한 줄로 합친(`merged`) 뒤에는
     /// 같은 날 되돌렸다 다시 적용한 일을 가를 수 없다.
     private static func shaped(_ entries: [WorkEntry], in log: WorkLog, byIssue: Bool, compact: Bool,
-                               merge: Bool = false) -> [WorkEntry] {
+                               merge: Bool = false, ratios: [Int: Int] = [:]) -> [WorkEntry] {
         var rows = compact ? withoutReverts(entries) : entries
         if merge { rows = merged(rows) }
-        rows = byIssue ? issueLines(rows, in: log) : rows
+        rows = byIssue ? issueLines(rows, in: log, ratios: ratios) : rows
         return compact ? shortened(rows) : rows
     }
 
@@ -42,6 +43,8 @@ public enum WorkReport {
     public static let planLine = "마크업 및 API 연동"
     /// 앞선 날 QA를 고친 프로젝트는 이어서 QA를 고치므로 이렇게 적는다.
     public static let qaPlanLine = "QA 수정사항 반영"
+    /// 나에게 배정돼 아직 남은 안정화 일감이 있는 프로젝트.
+    public static let stabilizationPlanLine = "안정화 이슈 처리"
 
     /// 출근 때 올리는 오늘 할 일. 프로젝트마다 `planLine` 한 줄.
     /// 기간을 정한 프로젝트는 그 기간 동안 늘 들어가고, 기간이 없는 프로젝트는 오늘 적은 일이나 앞선 날 끝나지 않은 일이 있을 때 들어간다.
@@ -51,21 +54,34 @@ public enum WorkReport {
     /// 2. VeloX
     /// - 마크업 및 API 연동
     /// ```
-    /// 상시(회의 등)만 있는 프로젝트는 뺀다. 앞선 날 QA를 고친 프로젝트는 `qaPlanLine`을 적는다.
-    public static func plan(day: String, in log: WorkLog) -> String {
+    /// 상시(회의 등)만 있는 프로젝트는 뺀다. 앞선 날 QA를 고친 프로젝트는 `qaPlanLine`을, 남은 안정화 일감이 있으면
+    /// `stabilizationPlanLine`을 적고, 둘 다 없을 때만 `planLine`을 적는다 (사람이 쓰는 예정 사항도 그렇게 쓴다).
+    /// `closed`는 레드마인에서 닫힘으로 표시된 상태 ID (`IssueInfo.isOpen`).
+    public static func plan(day: String, in log: WorkLog, closed: Set<Int> = []) -> String {
         let carried = log.previousDay(before: day).map { log.carryCandidates(from: $0, to: day) } ?? []
         let rows = (log.entries(on: day) + carried).filter {
             $0.status != .ongoing && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty
         }
         let fixed = log.projectsInPeriod(on: day)
+        let stabilizing = stabilizationProjects(in: log, closed: closed)
         // 기간이 끝난 프로젝트도 그날 적은 일이 있으면 넣는다 (기간을 늦게 고친 경우)
-        let names = fixed + log.orderedProjects(of: rows).filter { !fixed.contains($0) }
+        var names = fixed + log.orderedProjects(of: rows).filter { !fixed.contains($0) }
+        names += stabilizing.filter { !names.contains($0) && !log.hiddenProjects.contains($0) }.sorted()
         let order = log.allProjects.filter(names.contains) + names.filter { !log.allProjects.contains($0) }
         let before = log.previousDay(before: day).map { log.entries(on: $0) } ?? []
         let qaProjects = Set(before.filter { isQA($0, in: log) }.map(\.project))
-        return order.enumerated()
-            .map { "\($0.offset + 1). \($0.element)\n- \(qaProjects.contains($0.element) ? qaPlanLine : planLine)" }
-            .joined(separator: "\n")
+        return order.enumerated().map { index, project in
+            var lines = [qaProjects.contains(project) ? qaPlanLine : nil, stabilizing.contains(project) ? stabilizationPlanLine : nil]
+                .compactMap { $0 }
+            if lines.isEmpty { lines = [planLine] }
+            return (["\(index + 1). \(project)"] + lines.map { "- \($0)" }).joined(separator: "\n")
+        }
+        .joined(separator: "\n")
+    }
+
+    /// 나에게 배정돼 아직 남은 안정화 일감이 있는 보고서 프로젝트.
+    public static func stabilizationProjects(in log: WorkLog, closed: Set<Int> = []) -> Set<String> {
+        Set(log.issues.values.filter { $0.assigned && $0.isStabilization && $0.isOpen(closed: closed) }.map { log.reportProject(for: $0) })
     }
 
     /// QA 일감 줄이거나, 직접 `QA 수정사항 …`처럼 적은 줄.
@@ -76,14 +92,16 @@ public enum WorkReport {
             .range(of: #"^\[?QA(\]|\s|:|$|수정|이슈)"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    /// 레드마인 일감 기준 보고 줄. 같은 일감은 한 줄(가장 많이 한 상태), QA 건은 프로젝트마다 한 줄로 앞에 둔다.
+    /// 레드마인 일감 기준 보고 줄. 같은 일감은 한 줄(가장 많이 한 상태), QA·안정화 건은 프로젝트마다 한 줄로 앞에 둔다.
     /// 장부에 없는 일감과 일감 없는 줄(회의 등)은 그대로 둔다.
-    public static func issueLines(_ entries: [WorkEntry], in log: WorkLog) -> [WorkEntry] {
+    /// `ratios`(일감 → 진척률)가 있으면 그 일감의 상태를 레드마인 진척률로 적는다 (`reportRatios` 참고).
+    public static func issueLines(_ entries: [WorkEntry], in log: WorkLog, ratios: [Int: Int] = [:]) -> [WorkEntry] {
         var result: [WorkEntry] = []
         for project in log.orderedProjects(of: entries) {
             // 막 지운 빈 줄은 일감 이름으로 바뀌어 보고서에 나오지 않게 먼저 뺀다
             let rows = entries.filter { $0.project == project && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }
             var qa: [Int: WorkStatus] = [:]
+            var stabilization: [Int: WorkStatus] = [:]
             var issueIndex: [Int: Int] = [:]
             var lines: [WorkEntry] = []
             for entry in rows {
@@ -95,6 +113,10 @@ public enum WorkReport {
                     qa[issue] = best(qa[issue], entry.status)
                     continue
                 }
+                if info.isStabilization {
+                    stabilization[issue] = best(stabilization[issue], entry.status)
+                    continue
+                }
                 if let index = issueIndex[issue] {
                     lines[index].status = best(lines[index].status, entry.status)
                     continue
@@ -104,24 +126,163 @@ public enum WorkReport {
                 issueIndex[issue] = lines.count
                 lines.append(line)
             }
-            // 화면 기능 일감은 끝나면 (100%)로 적는다 (보고 관례: 기능 연동은 %, QA·기획 반영은 완료)
-            for (issue, index) in issueIndex where lines[index].status == .done {
-                if let info = log.issue(issue), IssueInfo.isWorkName(IssueInfo.cleanSubject(info.subject)) {
+            for (issue, index) in issueIndex {
+                if let ratio = ratios[issue] { lines[index].status = status(ratio, over: lines[index].status) }
+                // 화면 기능 일감은 끝나면 (100%)로 적는다 (보고 관례: 기능 연동은 %, QA·기획 반영은 완료)
+                if lines[index].status == .done, let info = log.issue(issue), IssueInfo.isWorkName(IssueInfo.cleanSubject(info.subject)) {
                     lines[index].status = .percent(100)
                 }
             }
-            if !qa.isEmpty, let first = rows.first {
-                let finished = qa.values.filter(\.isFinished).count
-                // 끝난 비율을 10% 단위로 반올림하되, 다 끝나지 않았으면 100%로 올리지 않는다
-                let ratio = min(90, Int((Double(finished) / Double(qa.count) * 10).rounded()) * 10)
-                let status: WorkStatus = finished == qa.count ? .done : finished == 0 ? .inProgress : .percent(max(10, ratio))
-                let line = WorkEntry(day: first.day, project: project, title: "QA 수정사항 \(qa.count)건 반영", status: status,
-                                     updatedAt: first.updatedAt)
-                lines.insert(line, at: 0)
+            if let first = rows.first {
+                var head: [WorkEntry] = []
+                for (title, group) in [("QA 수정사항 %d건 반영", qa), ("안정화 이슈 %d건 처리", stabilization)] where !group.isEmpty {
+                    let statuses = group.map { status(ratios[$0.key], over: $0.value) }
+                    head.append(WorkEntry(day: first.day, project: project, title: String(format: title, group.count),
+                                          status: countStatus(statuses), updatedAt: first.updatedAt))
+                }
+                lines.insert(contentsOf: head, at: 0)
             }
             result += lines
         }
         return result
+    }
+
+    /// 레드마인 진척률을 보고서 상태로. 100은 완료, 0은 진행 중으로 적는다. 진척률이 없거나 상시 줄이면 일지 상태 그대로.
+    static func status(_ ratio: Int?, over status: WorkStatus) -> WorkStatus {
+        guard let ratio, status != .ongoing else { return status }
+        return ratio >= 100 ? .done : ratio <= 0 ? .inProgress : .percent(ratio)
+    }
+
+    /// 여러 건을 한 줄로 셀 때의 상태. 끝난 비율을 10% 단위로 반올림하되, 다 끝나지 않았으면 100%로 올리지 않는다.
+    static func countStatus(_ statuses: [WorkStatus]) -> WorkStatus {
+        let finished = statuses.filter(\.isFinished).count
+        let ratio = min(90, Int((Double(finished) / Double(statuses.count) * 10).rounded()) * 10)
+        return finished == statuses.count ? .done : finished == 0 ? .inProgress : .percent(max(10, ratio))
+    }
+
+    /// 보고서에 적을 일감별 레드마인 진척률. 보고서는 늘 "레드마인에 보낸 뒤의 모습"을 적는다.
+    /// - 아직 보내지 않았으면(`pending`) 보낼 값. 레드마인 탭에서 직접 고른 진척률도 여기 들어온다
+    /// - 레드마인 탭에서 빼 둔 일감(`skipped`)은 보낼 값을 쓰지 않는다. 이미 보낸 값이 있으면 그것이 레드마인의 값이다
+    /// - 보냈으면 마지막으로 보낸 값. 되돌린 건은 빼고, 가장 늦은 날 줄을 보낸 뒤 고쳤으면 보낼 값이 앞선다
+    /// 보낸 기록이 어느 줄을 실었는지 적혀 있지 않은 옛 기록은 일감 번호와 보낸 때로 맞춘다.
+    public static func reportRatios(_ entries: [WorkEntry], in log: WorkLog, pending: [Int: Int],
+                                    skipped: Set<Int> = []) -> [Int: Int] {
+        ratioSources(entries, in: log, pending: pending, skipped: skipped).ratios
+    }
+
+    /// `reportRatios`와 같고, 보낼 값을 쓴 일감도 함께 돌려준다 (보고서 아래 안내에 센다).
+    public static func ratioSources(_ entries: [WorkEntry], in log: WorkLog, pending: [Int: Int],
+                                    skipped: Set<Int> = []) -> (ratios: [Int: Int], fromPending: Set<Int>) {
+        var ratios: [Int: Int] = [:]
+        var fromPending: Set<Int> = []
+        for issue in Set(entries.compactMap(\.issue)) {
+            let rows = entries.filter { $0.issue == issue }
+            // 보낼 값은 그 일감의 가장 늦은 날 줄이 아직 보내지 않은 줄일 때만 앞선다. 주간 보고에서 월요일 줄을 고쳐
+            // 다시 보낼 목록에 올라도, 수요일에 이미 100%로 보냈으면 레드마인은 100%다
+            let lastDay = rows.map(\.day).max()
+            let latestWaiting = rows.contains { $0.day == lastDay && $0.needsRedmine }
+            let waiting = skipped.contains(issue) ? nil : pending[issue]
+            if latestWaiting, let ratio = waiting {
+                ratios[issue] = ratio
+                fromPending.insert(issue)
+                continue
+            }
+            let ids = Set(rows.map(\.id))
+            let sent = log.sent
+                .filter { $0.issue == issue && $0.undoneAt == nil && $0.after.doneRatio != nil }
+                .filter { record in
+                    // 어느 줄을 실었는지 적힌 기록은 그 줄로, 옛 기록은 보낸 뒤에 고치지 않은 줄이 있으면 맞춘다
+                    record.entryIDs.isEmpty ? rows.contains { $0.updatedAt <= record.sentAt } : !ids.isDisjoint(with: record.entryIDs)
+                }
+                .max { $0.sentAt < $1.sentAt }
+            if let ratio = sent?.after.doneRatio {
+                ratios[issue] = ratio
+            } else if let ratio = waiting {
+                ratios[issue] = ratio
+                fromPending.insert(issue)
+            }
+        }
+        return (ratios, fromPending)
+    }
+
+    /// 레드마인에 아직 반영되지 않은 것. 보고서 아래에 알려, 올리기 전에 레드마인부터 보낼 수 있게 한다.
+    /// `unsent`는 보낼 일감(빼 둔 것 제외), `skipped`는 레드마인 탭에서 빼 둔 일감, `unlinked`는 일감 없는 줄 수 (상시 제외).
+    public struct Unreflected: Equatable {
+        public var unsent: [Int]
+        public var skipped: [Int]
+        public var unlinked: Int
+        public var isEmpty: Bool { unsent.isEmpty && skipped.isEmpty && unlinked == 0 }
+    }
+
+    public static func unreflected(_ entries: [WorkEntry], skipped: Set<Int> = []) -> Unreflected {
+        let live = entries.filter { !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }
+        let waiting = Set(live.filter(\.needsRedmine).compactMap(\.issue))
+        return Unreflected(unsent: waiting.subtracting(skipped).sorted(), skipped: waiting.intersection(skipped).sorted(),
+                           unlinked: live.filter { $0.issue == nil && $0.status != .ongoing }.count)
+    }
+
+    /// CLI·자동 보내기처럼 레드마인 탭을 거치지 않을 때의 보낼 값: 일지 줄 상태로 정한 진척률.
+    public static func pendingRatios(_ entries: [WorkEntry], log: WorkLog) -> [Int: Int] {
+        var ratios: [Int: Int] = [:]
+        for update in redmineUpdates(entries.filter(\.needsRedmine), log: log) where update.needsNote {
+            if let ratio = update.doneRatio { ratios[update.issue] = ratio }
+        }
+        return ratios
+    }
+
+    /// 둘 가운데 더 나아간 상태. 상시는 상시끼리만 남는다.
+    private static func best(_ a: WorkStatus?, _ b: WorkStatus) -> WorkStatus {
+        guard let a else { return b }
+        func value(_ s: WorkStatus) -> Int {
+            switch s {
+            case .done: return 101
+            case .percent(let v): return v
+            case .inProgress: return 1
+            case .ongoing: return 0
+            }
+        }
+        if a == .done || b == .done { return .done }
+        return value(a) >= value(b) ? a : b
+    }
+
+    /// 다듬은 글이 보고서 꼴인지. 프로젝트마다 견준다.
+    /// - 프로젝트 줄이 같은 이름·순서로 있고, 나머지는 `- 항목 (상태)` 줄뿐이다
+    /// - 줄 수는 늘지 않고, 상태는 그 프로젝트 원래 줄에 있던 상태 가운데 하나다 (없는 상태·일을 만들지 않았다)
+    /// - 메뉴 경로·QA·안정화 줄은 그 프로젝트 안에 글자 그대로 한 번씩 있다
+    public static func keepsShape(original: String, polished: String) -> Bool {
+        func blocks(_ text: String) -> [(project: String, lines: [String])]? {
+            var result: [(project: String, lines: [String])] = []
+            for raw in text.components(separatedBy: .newlines) {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                if line.isEmpty { continue }
+                if line.range(of: #"^\d+\. "#, options: .regularExpression) != nil {
+                    result.append((line, []))
+                } else if line.hasPrefix("- "), !result.isEmpty {
+                    result[result.count - 1].lines.append(line)
+                } else {
+                    return nil
+                }
+            }
+            return result
+        }
+        func status(_ line: String) -> String? {
+            line.range(of: #"\(([^()]+)\)$"#, options: .regularExpression).map { String(line[$0]) }
+        }
+        func fixed(_ line: String) -> Bool {
+            line.contains(" > ") || line.hasPrefix("- QA 수정사항 ") || line.hasPrefix("- 안정화 이슈 ")
+        }
+        guard let before = blocks(original), let after = blocks(polished), !after.isEmpty,
+              before.map(\.project) == after.map(\.project) else { return false }
+        for (old, new) in zip(before, after) {
+            let statuses = Set(old.lines.compactMap(status))
+            // 고정 줄은 양쪽에서 같은 줄이 같은 개수만큼 있어야 한다 (지우지도, 새로 짓지도 않았다)
+            let oldFixed = old.lines.filter(fixed), newFixed = new.lines.filter(fixed)
+            guard !new.lines.isEmpty, new.lines.count <= old.lines.count,
+                  new.lines.allSatisfy({ status($0).map(statuses.contains) ?? false }),
+                  Dictionary(oldFixed.map { ($0, 1) }, uniquingKeysWith: +) == Dictionary(newFixed.map { ($0, 1) }, uniquingKeysWith: +)
+            else { return false }
+        }
+        return true
     }
 
     // MARK: 간결하게
@@ -297,20 +458,6 @@ public enum WorkReport {
         return rows.filter { row in !(isSideBranch(row) && finished.contains { similar($0, words(row.title)) }) }
     }
 
-    /// 둘 가운데 더 나아간 상태. 상시는 상시끼리만 남는다.
-    private static func best(_ a: WorkStatus?, _ b: WorkStatus) -> WorkStatus {
-        guard let a else { return b }
-        func value(_ s: WorkStatus) -> Int {
-            switch s {
-            case .done: return 101
-            case .percent(let v): return v
-            case .inProgress: return 1
-            case .ongoing: return 0
-            }
-        }
-        if a == .done || b == .done { return .done }
-        return value(a) >= value(b) ? a : b
-    }
 
     /// 상시 → 완료 → 진행 중(많이 한 것 먼저). 같은 무리 안에서는 원래 순서.
     public static func ordered(_ entries: [WorkEntry]) -> [WorkEntry] {
@@ -333,11 +480,11 @@ public enum WorkReport {
     /// `nextWeekPlan`이면 끝나지 않은 일을 `[차주 계획]`으로 한 번 더 적는다.
     public static func weekly(_ entries: [WorkEntry], in log: WorkLog, week: ClosedRange<String>,
                               doneFirst: Bool = false, nextWeekPlan: Bool = false, byIssue: Bool = false,
-                              grouped: Bool = false, compact: Bool = false) -> String {
-        let body = period(entries, in: log, doneFirst: doneFirst, byIssue: byIssue, grouped: grouped, compact: compact,
+                              grouped: Bool = false, compact: Bool = false, ratios: [Int: Int] = [:]) -> String {
+        let body = period(entries, in: log, doneFirst: doneFirst, byIssue: byIssue, grouped: grouped, compact: compact, ratios: ratios,
                           header: "[주간 진행 사항] \(shortDate(week.lowerBound)) ~ \(shortDate(week.upperBound))")
         guard nextWeekPlan, !body.isEmpty else { return body }
-        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact, merge: true)
+        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact, merge: true, ratios: ratios)
         let open = lines.filter { !$0.status.isFinished && $0.status != .ongoing }
         guard !open.isEmpty else { return body }
         return body + "\n\n[차주 계획]\n" + numbered(open, in: log, grouped: grouped && !compact)
@@ -345,16 +492,16 @@ public enum WorkReport {
 
     /// 한 달치를 주간 보고와 같은 규칙으로 모은다. 머리는 `[월간 진행 사항] 2026년 10월`.
     public static func monthly(_ entries: [WorkEntry], in log: WorkLog, month: ClosedRange<String>, byIssue: Bool = false,
-                               grouped: Bool = false, compact: Bool = false) -> String {
+                               grouped: Bool = false, compact: Bool = false, ratios: [Int: Int] = [:]) -> String {
         let parts = month.lowerBound.split(separator: "-")
         let title = parts.count == 3 ? "\(parts[0])년 \(Int(parts[1]) ?? 0)월" : month.lowerBound
-        return period(entries, in: log, doneFirst: false, byIssue: byIssue, grouped: grouped, compact: compact,
+        return period(entries, in: log, doneFirst: false, byIssue: byIssue, grouped: grouped, compact: compact, ratios: ratios,
                       header: "[월간 진행 사항] \(title)")
     }
 
     private static func period(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool, byIssue: Bool, grouped: Bool,
-                               compact: Bool, header: String) -> String {
-        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact, merge: true)
+                               compact: Bool, ratios: [Int: Int] = [:], header: String) -> String {
+        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact, merge: true, ratios: ratios)
         let body = numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped && !compact)
         return body.isEmpty ? "" : header + "\n" + body
     }

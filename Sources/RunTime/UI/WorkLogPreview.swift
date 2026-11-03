@@ -49,10 +49,12 @@ struct WorkLogPreview: View {
             Button("올리기") { postTeams(to: .chat) }
             Button("취소", role: .cancel) {}
         } message: {
-            Text(settings.teamsDirect(.chat)
+            Text((progressDraft?.stale == true && !isPlan && (page.mode == .day || page.mode == .issues)
+                  ? "다듬은 뒤 일지·레드마인 값이 바뀐 초안입니다. 올리기 전에 상태를 확인하세요.\n\n" : "")
+                 + (settings.teamsDirect(.chat)
                  || (settings.teamsAutoSend && settings.teamsAutoPaste && AXIsProcessTrusted() && TeamsOpener.teamsPWA() != nil)
                  ? "\(postTitle)을 팀 채팅에 바로 올립니다. 올린 글은 팀즈에서 지워야 합니다."
-                 : "팀즈에서 보고 채팅을 열고 \(postTitle)을 붙여 넣습니다. 확인하고 Enter를 누르면 올라갑니다.")
+                 : "팀즈에서 보고 채팅을 열고 \(postTitle)을 붙여 넣습니다. 확인하고 Enter를 누르면 올라갑니다."))
         }
     }
 
@@ -100,20 +102,54 @@ struct WorkLogPreview: View {
 
     /// 일지에서 만든 진행 예정 사항 (고쳐 쓰기 전).
     private var generatedPlan: String {
-        WorkReport.plan(day: page.day, in: store.log)
+        WorkReport.plan(day: page.day, in: store.log, closed: Set(sync.statuses.filter(\.isClosed).map(\.id)))
     }
 
     /// 하루 보고서 머리줄 `[10/27 진행 사항]`. 팀즈에는 늘 이 줄을 제목으로 올린다.
     private var dayHeader: String { WorkReport.dayHeader(page.day, plan: isPlan) }
 
+    /// 보고서 상태 괄호에 쓸 일감별 레드마인 진척률. 아직 보내지 않은 일감은 레드마인 탭이 보낼 값(직접 고른 진척률,
+    /// 진행중 기본 진척률 포함)이고, 탭에서 빼 둔 일감은 레드마인에 가지 않아 일지 상태로 둔다.
+    private var reportRatios: [Int: Int] {
+        guard settings.reportByIssue else { return [:] }
+        return WorkReport.reportRatios(scopeEntries, in: store.log, pending: pendingRatios, skipped: page.redmineSkipped)
+    }
+
+    /// 레드마인 탭이 보낼 진척률 (직접 고른 값, 진행중 기본 진척률 포함).
+    private var pendingRatios: [Int: Int] {
+        var pending: [Int: Int] = [:]
+        for update in edited(WorkReport.redmineUpdates(pendingEntries, log: store.log)) where update.needsNote {
+            if let ratio = update.doneRatio { pending[update.issue] = ratio }
+        }
+        return pending
+    }
+
+    /// 일지에서 만든 진행 사항 (다듬거나 고쳐 쓰기 전).
+    private var generatedProgress: String {
+        WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: settings.reportByIssue,
+                         grouped: settings.reportGrouped, compact: settings.reportCompact, ratios: reportRatios)
+    }
+
+    /// Claude에 넘길 진행 사항. 묶어 쓴 `  · ` 줄은 보고서 꼴 검사에 걸려 늘 펴서 넘긴다.
+    private var polishSource: String {
+        WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: settings.reportByIssue,
+                         grouped: false, compact: settings.reportCompact, ratios: reportRatios)
+    }
+
+    /// 쓸 수 있는 다듬은 초안과 낡았는지. 고쳐 쓰지 않은 초안이 낡았으면 버리고 일지에서 만든 글을 쓴다.
+    private var progressDraft: (text: String, stale: Bool)? {
+        guard let edit = page.progressEdits[page.day] else { return nil }
+        let stale = edit.base != polishSource
+        if stale && edit.text == edit.polished { return nil }
+        return (edit.text, stale)
+    }
+
     /// 머리줄을 뺀 보고서 몸통.
     private var reportBody: String {
-        let grouped = settings.reportGrouped
         switch page.mode {
         case .day, .issues:
             if isPlan { return page.planEdits[page.day]?.text ?? generatedPlan }
-            return WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: settings.reportByIssue,
-                                    grouped: grouped, compact: settings.reportCompact)
+            return progressDraft?.text ?? generatedProgress
         default:
             // 주간·월간은 첫 줄이 머리줄이다
             let lines = reportText.components(separatedBy: "\n")
@@ -140,13 +176,14 @@ struct WorkLogPreview: View {
         case .week:
             return WorkReport.weekly(scopeEntries, in: store.log, week: WorkDay.week(of: page.day),
                                      doneFirst: true, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue,
-                                     grouped: grouped, compact: settings.reportCompact)
+                                     grouped: grouped, compact: settings.reportCompact, ratios: reportRatios)
         case .month:
             return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: settings.reportByIssue,
-                                      grouped: grouped, compact: settings.reportCompact)
+                                      grouped: grouped, compact: settings.reportCompact, ratios: reportRatios)
         case .project:
             return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: true,
-                                    byIssue: settings.reportByIssue, grouped: grouped, compact: settings.reportCompact)
+                                    byIssue: settings.reportByIssue, grouped: grouped, compact: settings.reportCompact,
+                                    ratios: reportRatios)
         }
     }
 
@@ -173,10 +210,18 @@ struct WorkLogPreview: View {
             }
             if isPlan {
                 planEditor
+            } else if (page.mode == .day || page.mode == .issues), let draft = progressDraft {
+                progressEditor(draft)
             } else {
                 ReportText(text: text.isEmpty ? "적은 일이 여기 보고서 꼴로 만들어집니다." : text, placeholder: text.isEmpty)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            }
+            if !isPlan {
+                if page.mode == .day || page.mode == .issues, progressDraft == nil, !text.isEmpty {
+                    polishBar
+                }
+                unreflectedNote
             }
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("레드마인 일감 이름으로, QA는 건수로 모아 쓰기", isOn: $settings.reportByIssue)
@@ -226,6 +271,84 @@ struct WorkLogPreview: View {
                     Button("보고 채팅 연결") { page.settingsSection = .teams; page.showsSettings = true }
                         .buttonStyle(TextLinkButtonStyle())
                         .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    /// Claude로 다듬은 진행 사항. 초안이라 바로 고쳐 쓸 수 있고, 일지로 다시 만들 수 있다.
+    private func progressEditor(_ draft: (text: String, stale: Bool)) -> some View {
+        // 다듬은 뒤 일지나 레드마인 값이 바뀌었으면 알린다 (고쳐 쓴 초안이라 버리지 않았다)
+        let stale = draft.stale
+        return VStack(alignment: .trailing, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(dayHeader).font(.system(size: 13.5)).foregroundStyle(WL.text)
+                    .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
+                    .textSelection(.enabled)
+                ReportText(text: draft.text, placeholder: false) { text in
+                    guard let edit = page.progressEdits[page.day] else { return }
+                    page.progressEdits[page.day] = (text, edit.base, edit.polished)
+                }
+                .frame(minHeight: 140)
+            }
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            HStack(spacing: 10) {
+                Text(stale ? "다듬은 뒤 일지·레드마인 값이 바뀌었습니다. 다시 만들어 다듬으세요" : "다듬은 진행 사항 · 올리기 전에 확인하고 바로 고쳐 쓸 수 있습니다")
+                    .font(WL.caption).foregroundStyle(stale ? WL.waiting : .secondary)
+                Spacer()
+                Button("일지로 다시 만들기") { page.progressEdits[page.day] = nil }.buttonStyle(TextLinkButtonStyle())
+            }
+        }
+    }
+
+    /// 진행 사항을 Claude Code로 사내 보고 꼴로 다듬는다. 메뉴 경로·건수·상태는 그대로 두게 한다.
+    private var polishBar: some View {
+        let busy = page.polishingDay == page.day
+        return HStack(spacing: 8) {
+            Button {
+                let day = page.day, source = polishSource
+                page.polishingDay = day
+                ReportPolisher.polish(source) { result in
+                    page.polishingDay = nil
+                    switch result {
+                    case .success(let text): page.progressEdits[day] = (text, source, text)
+                    case .failure(let error): page.flash(error.localizedDescription)
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if busy { ProgressView().controlSize(.small) }
+                    Label(busy ? "다듬는 중…" : "Claude로 다듬기", systemImage: "wand.and.stars")
+                }
+            }
+            .buttonStyle(TextLinkButtonStyle())
+            .disabled(page.polishingDay != nil)
+            .tip("내 Claude Code로 같은 주제의 줄을 묶고 짧은 명사형으로 고칩니다. 메뉴 경로·QA·안정화 줄과 상태는 그대로 두고, 결과는 올리기 전에 고쳐 쓸 수 있습니다 (10초 안팎)")
+            Spacer()
+        }
+    }
+
+    /// 레드마인에 아직 반영되지 않은 것을 알린다. 보고서는 보낸 뒤의 모습으로 적으니, 올리기 전에 레드마인부터 보낼 수 있게 한다.
+    @ViewBuilder private var unreflectedNote: some View {
+        let gap = WorkReport.unreflected(scopeEntries, skipped: page.redmineSkipped)
+        let chosen = WorkReport.ratioSources(scopeEntries, in: store.log, pending: pendingRatios, skipped: page.redmineSkipped).fromPending
+        let withRatio = gap.unsent.filter(chosen.contains).count
+        let lines = [
+            settings.redmineReady && !gap.unsent.isEmpty
+                ? "레드마인에 아직 보내지 않은 일감 \(gap.unsent.count)건이 있습니다"
+                  + (withRatio > 0 ? " (\(withRatio)건은 보낼 진척률로 적음)" : "") : nil,
+            settings.redmineReady && !gap.skipped.isEmpty ? "레드마인 탭에서 뺀 일감 \(gap.skipped.count)건은 보낸 값이나 일지 상태로 적었습니다" : nil,
+            gap.unlinked > 0 ? "일감 없는 줄 \(gap.unlinked)개는 일지 상태로 적었습니다" : nil,
+        ].compactMap { $0 }
+        if settings.reportByIssue, !lines.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "info.circle").font(WL.caption).foregroundStyle(WL.quiet)
+                Text(lines.joined(separator: "\n")).font(WL.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if settings.redmineReady && !gap.unsent.isEmpty {
+                    Button("레드마인 탭") { page.preview = .redmine }.buttonStyle(TextLinkButtonStyle())
                 }
             }
         }
