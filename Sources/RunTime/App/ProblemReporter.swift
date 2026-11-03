@@ -1,7 +1,7 @@
 import DesignSyncCore
 import Foundation
 
-/// 업데이트가 실패하거나 멈추거나 화면에서 일이 실패하거나 앱이 죽으면 만든 사람에게 알린다. 순위 서버의 `/v1/reports`로 보내고, 서버가 메일로 넘긴다.
+/// 업데이트가 실패하거나 멈추거나 화면에서 일이 실패하거나 앱이 죽거나 멈추면 만든 사람에게 알린다. 순위 서버의 `/v1/reports`로 보내고, 서버가 메일로 넘긴다.
 /// 무작위 설치 ID, 앱 버전, macOS 버전, 까닭, 사용자 폴더·이름을 가린 기록 끝부분만 보낸다. 설정 > 일반 > 문제 기록에서 끈다.
 /// 같은 까닭은 서버가 하루 한 번만 메일로 보낸다. 메인 스레드에서만 쓴다.
 enum ProblemReporter {
@@ -11,6 +11,7 @@ enum ProblemReporter {
         case unknown = "update-unknown"
         case screen = "screen-error"
         case crash = "app-crash"
+        case hang = "app-hang"
     }
 
     static let key = "reportProblems", installKey = "reportInstallID"

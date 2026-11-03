@@ -6,6 +6,10 @@ import ReportCore
 /// `fatalError`와 ObjC 예외의 까닭은 충돌 보고서에 없고 stderr에만 찍혀서, 켤 때마다 stderr를 기록 폴더의 파일로 돌려 둔다.
 enum CrashReports {
     static let seenKey = "crashReportSeen"
+    /// 보낸 충돌 보고서의 사건 ID와 보낸 때. 파일이 다시 저장돼 수정 시각이 바뀌어도 두 번 보내지 않는다.
+    static let sentKey = "crashReportsSent"
+    /// 서버가 모양이 틀렸다고 거절한 날. 그날은 그 종류를 다시 보내지 않는다. 뒤에 종류 이름이 붙는다.
+    static let rejectedKey = "reportRejectedDay."
     static let reportsDirectory = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Logs/DiagnosticReports")
     /// `<pid>-<켠 시각>.log`. 충돌 보고서의 pid와 시각으로 그 실행의 출력을 찾는다.
@@ -54,6 +58,7 @@ enum CrashReports {
     /// 보고서가 수백 KB라 맞는 것 하나를 찾을 때까지만 읽는다.
     static func newestUnseen() -> (url: URL, date: Date, report: CrashReport, others: Int)? {
         let seen = UserDefaults.standard.object(forKey: seenKey) as? Date ?? Date(timeIntervalSinceNow: -keepDays)
+        let sent = UserDefaults.standard.dictionary(forKey: sentKey) as? [String: Date] ?? [:]
         let files = (try? FileManager.default.contentsOfDirectory(at: reportsDirectory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         let candidates = files
             .filter { $0.lastPathComponent.hasPrefix("RunTime-") && $0.pathExtension == "ips" }
@@ -63,7 +68,8 @@ enum CrashReports {
         for (index, (url, date)) in candidates.enumerated() {
             // swift run(.build 아래 실행 파일)으로 켠 것이 죽은 것은 빼고 .app으로 켠 것만
             guard let text = try? String(contentsOf: url, encoding: .utf8), let report = CrashReport(ips: text),
-                  report.appName == "RunTime", report.procPath.hasSuffix(".app/Contents/MacOS/RunTime") else { continue }
+                  report.appName == "RunTime", report.procPath.hasSuffix(".app/Contents/MacOS/RunTime"),
+                  report.incident.isEmpty || sent[report.incident] == nil else { continue }
             return (url, date, report, candidates.count - index - 1)
         }
         return nil
@@ -99,17 +105,33 @@ enum CrashReports {
         return (report.summary(fatal: fatal), detail, report.appVersion, commit, (["[죽기 전 기록]"] + events).joined(separator: "\n"))
     }
 
+    private static func markSent(_ incident: String, date: Date) {
+        UserDefaults.standard.set(date, forKey: seenKey)
+        guard !incident.isEmpty else { return }
+        var sent = (UserDefaults.standard.dictionary(forKey: sentKey) as? [String: Date] ?? [:])
+            .filter { $0.value > Date(timeIntervalSinceNow: -2 * keepDays) }
+        sent[incident] = Date()
+        UserDefaults.standard.set(sent, forKey: sentKey)
+    }
+
+    private static var today: String { CrashReport.day(Date()) }
+    static func rejectedToday(_ kind: ProblemReporter.Kind) -> Bool {
+        UserDefaults.standard.string(forKey: rejectedKey + kind.rawValue) == today
+    }
+    static func markRejected(_ kind: ProblemReporter.Kind) { UserDefaults.standard.set(today, forKey: rejectedKey + kind.rawValue) }
+
     /// 켜자마자 다시 죽는 경우도 알리게 잠깐만 기다린 뒤, 가장 최근 충돌 하나만 보낸다. 서버가 1분에 두 건까지만 받아서다.
     /// 서버가 받았을 때만 본 것으로 적어, 망이 없거나 서버가 아직 이 종류를 모를 때 죽은 것은 다음에 켤 때 다시 보낸다.
     static func sendNew(after delay: TimeInterval = 5) {
-        guard isInstalled, ProblemReporter.isOn else { return }
+        guard isInstalled, ProblemReporter.isOn, !rejectedToday(.crash) else { return }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) {
             guard let newest = newestUnseen() else { return }
             let body = draft(newest.report, others: newest.others)
             DispatchQueue.main.async {
                 Diagnostics.record("문제 보고", "지난 실행이 죽음: \(body.message)")
                 ProblemReporter.send(.crash, body.message, detail: body.detail, app: body.app, commit: body.commit, log: body.log) { status in
-                    if status == 200 { UserDefaults.standard.set(newest.date, forKey: seenKey) }
+                    if status == 200 { markSent(newest.report.incident, date: newest.date) }
+                    if status == 400 { markRejected(.crash) }
                 }
             }
         }

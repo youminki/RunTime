@@ -91,3 +91,8 @@ test("crash report keeps the call stack and names the crashed build", () => {
   assert.match(text, new RegExp(`git checkout ${sha}`));
   assert.match(text, /\[죽기 전 기록\]/);
 });
+
+test("hang report is mailed as its own kind", () => {
+  const report = cleanReport({ install, kind: "app-hang", message: "DesignSync.load()", app: "1.4.13", commit: sha });
+  assert.equal(mailFor(report).subject, "[RunTime] 앱 멈춤 · DesignSync.load() (1.4.13)");
+});

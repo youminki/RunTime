@@ -3,14 +3,21 @@ import Foundation
 /// macOS가 앱이 죽을 때 `~/Library/Logs/DiagnosticReports`에 남기는 `.ips` 충돌 보고서.
 /// 첫 줄은 머리 JSON, 나머지는 본문 JSON이다. 충돌(bug_type 309)만 읽는다.
 public struct CrashReport: Equatable {
-    public struct Frame: Equatable {
+    public struct Frame: Equatable, Codable {
         public var image: String
         public var symbol: String?
         public var location: Int?
         public var offset: Int
         /// 이 앱 실행 파일의 줄인지. 고칠 자리는 여기서 찾는다.
         public var inApp: Bool
+
+        public init(image: String, symbol: String?, location: Int?, offset: Int, inApp: Bool) {
+            (self.image, self.symbol, self.location, self.offset, self.inApp) = (image, symbol, location, offset, inApp)
+        }
     }
+
+    /// 같은 충돌 보고서를 두 번 보내지 않게 거르는 macOS의 사건 ID.
+    public var incident: String
 
     public var appName: String
     public var appVersion: String
@@ -56,6 +63,7 @@ public struct CrashReport: Equatable {
         let exception = body["exception"] as? [String: Any] ?? [:]
         let termination = body["termination"] as? [String: Any] ?? [:]
 
+        incident = header["incident_id"] as? String ?? body["incident"] as? String ?? ""
         appName = header["app_name"] as? String ?? executable
         appVersion = header["app_version"] as? String ?? ""
         buildVersion = header["build_version"] as? String ?? ""
@@ -93,8 +101,12 @@ public struct CrashReport: Equatable {
     public func summary(fatal: [String]) -> String {
         let reason = fatal.last.map { Self.withoutLocation($0).replacingOccurrences(of: "0x[0-9a-fA-F]+", with: "0x…", options: .regularExpression) }
             ?? ([exceptionType, signal.isEmpty ? "" : "(\(signal))"].filter { !$0.isEmpty }.joined(separator: " "))
-        let place = frames.first { $0.inApp }.map { $0.symbol ?? "\($0.image) +0x\(String($0.offset, radix: 16))" }
-        return [reason.isEmpty ? "앱이 죽음" : reason, place].compactMap { $0 }.joined(separator: " · ")
+        return [reason.isEmpty ? "앱이 죽음" : reason, Self.place(frames)].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// 호출 순서에서 처음 나오는 이 앱 줄. 기호가 없으면 실행 파일 안 위치.
+    static func place(_ frames: [Frame]) -> String? {
+        frames.first { $0.inApp }.map { $0.symbol ?? "\($0.image) +0x\(String($0.offset, radix: 16))" }
     }
 
     /// `RunTime/AppDelegate.swift:12: Fatal error: 까닭`에서 위치를 뗀 `Fatal error: 까닭`.
@@ -112,18 +124,22 @@ public struct CrashReport: Equatable {
         head += fatal.map { "출력: \($0)" }
         head += notes.map { "시스템: \($0)" }
         let title = thrown ? "예외를 던진 자리" : "죽은 스레드" + (queue.isEmpty ? "" : " (\(queue))")
-        let shown = Self.relevant(frames)
-        var lines = shown.map { index, frame in
+        return Self.stack(head: head, title: title, frames: frames, base: appBase, uuid: appUUID, arch: arch, limit: limit)
+    }
+
+    /// 머리줄, 호출 순서, 코드 줄 찾는 명령을 `limit`자 안에 맞춘다. 길면 호출 순서 아래부터 덜고, 그래도 길면 명령을 뺀다.
+    static func stack(head: [String], title: String, frames: [Frame], base: Int?, uuid: String, arch: String, limit: Int) -> String {
+        var lines = relevant(frames).map { index, frame in
             let name = frame.symbol.map { "\($0)" + (frame.location.map { " + \($0)" } ?? "") } ?? "+0x\(String(frame.offset, radix: 16))"
             return "\(index) \(frame.inApp ? "▶ " : "")\(frame.image) \(name)"
         }
         var tail: [String] = []
-        let addresses = frames.filter(\.inApp).prefix(8).compactMap { frame in appBase.map { "0x" + String($0 + frame.offset, radix: 16) } }
-        if let base = appBase, !addresses.isEmpty {
+        let addresses = frames.filter(\.inApp).prefix(8).compactMap { frame in base.map { "0x" + String($0 + frame.offset, radix: 16) } }
+        if let base, !addresses.isEmpty {
             // -g는 기계어를 바꾸지 않아 주소가 같고, 붙여야 atos가 파일·줄까지 찾는다
             tail = ["", "코드 줄 찾기 (그 커밋에서 swift build -c release -Xswiftc -g --scratch-path .build/symbols):",
                     "atos -o .build/symbols/release/RunTime -arch \(arch) -l 0x\(String(base, radix: 16)) \(addresses.joined(separator: " "))"]
-            if !appUUID.isEmpty { tail.append("실행 파일 UUID: \(appUUID)") }
+            if !uuid.isEmpty { tail.append("실행 파일 UUID: \(uuid)") }
         }
         func joined() -> String { (head + ["", title] + lines + tail).joined(separator: "\n") }
         while joined().count > limit, lines.count > 1 { lines.removeLast() }
@@ -157,6 +173,14 @@ public struct CrashReport: Equatable {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSS Z"
         return formatter.date(from: text)
+    }
+
+    /// `2026-11-03`. 하루 한 번만 하는 일의 날짜 열쇠.
+    public static func day(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     /// 죽기 전까지의 진단 기록. 다시 켠 뒤 쌓인 줄은 그 충돌과 상관없어 뺀다.

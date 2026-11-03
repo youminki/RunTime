@@ -1,9 +1,9 @@
-// 앱이 보내는 문제 보고. 업데이트가 실패하거나 화면에서 일이 실패하거나 앱이 죽었을 때 그 Mac에서 무슨 일이 있었는지 만든 사람에게 메일로 알린다.
+// 앱이 보내는 문제 보고. 업데이트가 실패하거나 화면에서 일이 실패하거나 앱이 죽거나 멈췄을 때 그 Mac에서 무슨 일이 있었는지 만든 사람에게 메일로 알린다.
 // 앱은 무작위 설치 ID, 앱 버전, macOS 버전, 까닭, 사용자 폴더를 가린 기록 끝부분만 보낸다.
 import { isPlayerID } from "./rules.js";
 
 export const MAX_REPORT_BODY = 16 * 1024;
-export const REPORT_KINDS = new Set(["update-failed", "update-timeout", "update-unknown", "screen-error", "app-crash"]);
+export const REPORT_KINDS = new Set(["update-failed", "update-timeout", "update-unknown", "screen-error", "app-crash", "app-hang"]);
 /// 코드 위치로 GitHub 링크를 만든다. 앱이 보낸 값이라 모양이 맞을 때만 쓴다.
 const REPO = "https://github.com/youminki/RunTime";
 /// 한 설치에서 하루에 메일로 보낼 보고 수. 같은 까닭은 하루 한 번만 센다.
@@ -62,6 +62,7 @@ const KIND_NAMES = {
   "update-unknown": "업데이트 판정 못 함",
   "screen-error": "화면 오류",
   "app-crash": "앱 충돌",
+  "app-hang": "앱 멈춤",
 };
 
 /// 코드 위치를 그 빌드의 커밋에 고정한 GitHub 링크. 커밋이 40자 해시이고 위치가 Sources 아래 파일일 때만.

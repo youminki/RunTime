@@ -269,7 +269,17 @@ if let index = CommandLine.arguments.firstIndex(of: "--design-compare") {
     RunLoop.main.run()
 }
 // 문제 보고 미리 보기: 만든 사람에게 보낼 때의 본문을 보내지 않고 찍는다. `--report-preview screen`은 화면 오류 본문,
-// `--report-preview crash [충돌 보고서.ips]`는 그 충돌(없으면 아직 알리지 않은 가장 최근 충돌)의 본문
+// `--report-preview crash [충돌 보고서.ips]`는 그 충돌(없으면 아직 알리지 않은 가장 최근 충돌)의 본문,
+// `--report-preview hang`은 메인 스레드를 1.5초 붙잡고 뜬 호출 순서로 만든 멈춤 본문
+if let index = CommandLine.arguments.firstIndex(of: "--report-preview"),
+   CommandLine.arguments.dropFirst(index + 1).first == "hang" {
+    guard let hang = HangWatch.preview() else { print("호출 순서를 뜨지 못했습니다"); exit(1) }
+    let body = ProblemReporter.payload(.hang, hang.summary, detail: hang.detail(), app: hang.app, commit: hang.commit, log: "")
+    if let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]) {
+        print(String(decoding: data, as: UTF8.self))
+    }
+    exit(0)
+}
 if let index = CommandLine.arguments.firstIndex(of: "--report-preview"),
    CommandLine.arguments.dropFirst(index + 1).first == "crash" {
     let report = CommandLine.arguments.dropFirst(index + 2).first.map { path in

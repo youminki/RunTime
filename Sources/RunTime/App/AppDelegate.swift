@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 디자인 기록은 뒤에서 저장해서, 확인 표시 직후 끄면 마지막 저장이 빠지지 않게 기다린다.
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { DesignSync.shared.flush() }
+        HangWatch.appWillTerminate()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -94,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         AppUpdater.shared.start()
         CrashReports.sendNew()
+        HangWatch.start()
         // 자동 업데이트는 다른 앱을 쓰는 동안 일어나므로, 다시 연 창이 그 앱의 초점을 빼앗지 않게 뒤에 둔다
         reopening = true
         for name in AppUpdater.shared.takeWindowsToReopen() {

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ReportCore
 
@@ -136,5 +137,56 @@ private let swiftFrames = #"""
         #expect(CrashReport.events(log, before: "2026-11-03 20:26:43.9373 +0900")
                 == ["2026-11-03 20:20:00 [업데이트] 확인", "2026-11-03 20:26:43 [디자인] 받기 시작"])
         #expect(CrashReport.events(log, before: "") == [])
+    }
+}
+
+@Suite struct HangReportTests {
+    private let frames = [
+        CrashReport.Frame(image: "libsystem_kernel.dylib", symbol: "mach_msg2_trap", location: 8, offset: 100, inApp: false),
+        CrashReport.Frame(image: "RunTime", symbol: "DesignSync.load()", location: 40, offset: 0x2000, inApp: true),
+    ]
+
+    @Test func summaryIsTheStuckPlace() {
+        let report = HangReport(seconds: 6.2, ended: true, frames: frames, base: 0x1_0000_0000, uuid: "u", arch: "arm64",
+                                app: "1.4.13", commit: "c", at: "2026-11-03 21:00:00")
+        #expect(report.summary == "DesignSync.load()")
+        #expect(HangReport(seconds: 6, ended: true, frames: [], base: nil, uuid: "", arch: "arm64", app: "", commit: "", at: "").summary
+                == "메인 스레드가 응답하지 않음")
+        let detail = report.detail()
+        #expect(detail.contains("메인 스레드가 6.2초 넘게 응답하지 않다가 돌아옴"))
+        #expect(detail.contains("1 ▶ RunTime DesignSync.load() + 40"))
+        #expect(detail.contains("-l 0x100000000 0x100002000"))
+    }
+
+    @Test func unfinishedHangSaysTheAppQuit() {
+        var report = HangReport(seconds: 5, ended: false, frames: frames, base: nil, uuid: "", arch: "arm64", app: "", commit: "", at: "")
+        #expect(report.detail().contains("5.0초 넘게 응답하지 않은 채 앱이 꺼짐"))
+        report.ended = true
+        #expect(!report.detail().contains("꺼짐"))
+    }
+
+    @Test func survivesSaving() throws {
+        let report = HangReport(seconds: 7, ended: false, frames: frames, base: 42, uuid: "u", arch: "arm64", app: "a", commit: "c", at: "t")
+        let data = try JSONEncoder().encode(report)
+        #expect(try JSONDecoder().decode(HangReport.self, from: data) == report)
+    }
+
+    @Test func watcherSamplesOnceAndReportsWhenMainAnswers() {
+        #expect(HangReport.step(waited: 1, answered: nil, sampled: false, threshold: 5) == .wait)
+        #expect(HangReport.step(waited: 5, answered: nil, sampled: false, threshold: 5) == .sample)
+        #expect(HangReport.step(waited: 9, answered: nil, sampled: true, threshold: 5) == .wait)
+        #expect(HangReport.step(waited: 9, answered: 8.5, sampled: true, threshold: 5) == .report(seconds: 8.5))
+        #expect(HangReport.step(waited: 1, answered: 0.01, sampled: false, threshold: 5) == .ping)
+        // 다 떠 두기 전에 답이 오면 알리지 않는다
+        #expect(HangReport.step(waited: 6, answered: 5.5, sampled: false, threshold: 5) == .ping)
+    }
+}
+
+@Suite struct CrashIncidentTests {
+    @Test func readsIncidentAndDay() throws {
+        let text = #"{"app_name":"RunTime","bug_type":"309","incident_id":"C9C240BC-F6B4-4BDD-B187-922DC94AC981"}"# + "\n" + #"{"procPath":"/Applications/RunTime.app/Contents/MacOS/RunTime"}"#
+        let report = try #require(CrashReport(ips: text))
+        #expect(report.incident == "C9C240BC-F6B4-4BDD-B187-922DC94AC981")
+        #expect(CrashReport.day(Date(timeIntervalSince1970: 1_793_704_800)).count == 10)
     }
 }
