@@ -34,7 +34,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
         let log = WorkLogStore.shared.log
         let today = WorkDay.today()
         let report = args.dropFirst().first == "report"
-            ? WorkReport.daily(log.entries(on: today), in: log, doneFirst: true, byIssue: true)
+            ? WorkReport.daily(log.entries(on: today), in: log, doneFirst: true, byIssue: true, compact: WorkLogSettings.shared.reportCompact)
             : "[시험] RunTime 업무 일지\n1. 연결 확인\n- 이 카드가 보이면 팀즈 채팅과 연결됐습니다 (완료)"
         let title = args.dropFirst().first == "report" ? "일일보고 · \(WorkReport.shortDate(today))" : "RunTime 연결 시험"
         // 셋째 값이 me면 나와의 채팅으로

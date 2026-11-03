@@ -113,7 +113,7 @@ struct WorkLogPreview: View {
         case .day, .issues:
             if isPlan { return page.planEdits[page.day]?.text ?? generatedPlan }
             return WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: settings.reportByIssue,
-                                    grouped: grouped)
+                                    grouped: grouped, compact: settings.reportCompact)
         default:
             // 주간·월간은 첫 줄이 머리줄이다
             let lines = reportText.components(separatedBy: "\n")
@@ -140,13 +140,13 @@ struct WorkLogPreview: View {
         case .week:
             return WorkReport.weekly(scopeEntries, in: store.log, week: WorkDay.week(of: page.day),
                                      doneFirst: true, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue,
-                                     grouped: grouped)
+                                     grouped: grouped, compact: settings.reportCompact)
         case .month:
             return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: settings.reportByIssue,
-                                      grouped: grouped)
+                                      grouped: grouped, compact: settings.reportCompact)
         case .project:
             return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: true,
-                                    byIssue: settings.reportByIssue, grouped: grouped)
+                                    byIssue: settings.reportByIssue, grouped: grouped, compact: settings.reportCompact)
         }
     }
 
@@ -181,8 +181,13 @@ struct WorkLogPreview: View {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("레드마인 일감 이름으로, QA는 건수로 모아 쓰기", isOn: $settings.reportByIssue)
                     .tip("일감 줄은 `데이터 수집 > 공유 파일 관리 API 연동 (100%)`처럼, QA 건은 `QA 수정사항 N건 반영`으로 적습니다")
-                Toggle("같은 메뉴는 묶어 쓰기", isOn: $settings.reportGrouped)
-                    .tip("`데이터 수집 > 수집 관리`처럼 앞 경로가 같은 줄이 둘 이상이면 경로를 한 번만 적고 그 아래 `· 끝 이름 (상태)`로 늘어놓습니다")
+                Toggle("간결하게 쓰기", isOn: $settings.reportCompact)
+                    .tip("`데이터 탐색 > SQL 편집기 API 연동 (100%)`처럼 메뉴 끝 이름을 줄여 한 줄로 모으고, 같은 일을 나눈 커밋은 한 줄로 모으고, 되돌린 일과 끝난 일과 겹치는 진행 중 브랜치는 뺍니다")
+                // 간결하게 쓰면 메뉴를 한 줄로 모아 묶어 쓸 것이 없다
+                if !settings.reportCompact {
+                    Toggle("같은 메뉴는 묶어 쓰기", isOn: $settings.reportGrouped)
+                        .tip("`데이터 수집 > 수집 관리`처럼 앞 경로가 같은 줄이 둘 이상이면 경로를 한 번만 적고 그 아래 `· 끝 이름 (상태)`로 늘어놓습니다")
+                }
                 if page.mode == .week {
                     Toggle("끝나지 않은 일을 [차주 계획]으로", isOn: $settings.weeklyPlan)
                 }

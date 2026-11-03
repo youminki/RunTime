@@ -13,10 +13,21 @@ public enum WorkReport {
     /// `doneFirst`면 프로젝트마다 상시 → 완료 → 진행 중 순서로 놓는다 (회의·보고를 먼저 적는 관례).
     /// `byIssue`면 레드마인 일감 이름으로 적고 QA 건은 `QA 수정사항 N건 반영` 한 줄로 모은다.
     /// `grouped`면 같은 메뉴 경로(`데이터 수집 > 공유 파일 관리 > …`) 줄을 경로 한 줄 아래로 묶는다 (`grouping` 참고).
+    /// `compact`면 사내 보고처럼 짧게 줄인다 (`compacted` 참고). 이때는 `grouped`를 쓰지 않는다.
     public static func daily(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool = false, byIssue: Bool = false,
-                             grouped: Bool = false) -> String {
-        let lines = byIssue ? issueLines(entries, in: log) : entries
-        return numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped)
+                             grouped: Bool = false, compact: Bool = false) -> String {
+        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact)
+        return numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped && !compact)
+    }
+
+    /// 되돌리기는 날짜와 순서가 살아 있는 원래 줄에서 먼저 지운다. 같은 제목을 한 줄로 합친(`merged`) 뒤에는
+    /// 같은 날 되돌렸다 다시 적용한 일을 가를 수 없다.
+    private static func shaped(_ entries: [WorkEntry], in log: WorkLog, byIssue: Bool, compact: Bool,
+                               merge: Bool = false) -> [WorkEntry] {
+        var rows = compact ? withoutReverts(entries) : entries
+        if merge { rows = merged(rows) }
+        rows = byIssue ? issueLines(rows, in: log) : rows
+        return compact ? shortened(rows) : rows
     }
 
     /// 일일보고 머리줄. 오늘이면 `[10/27 금일 진행 사항]`, 출근 때 올리는 계획은 `[10/27 금일 진행 예정 사항]`.
@@ -29,6 +40,8 @@ public enum WorkReport {
 
     /// 진행 예정 사항에 프로젝트마다 적는 한 줄 (사내 관례로 늘 같은 말을 쓴다).
     public static let planLine = "마크업 및 API 연동"
+    /// 앞선 날 QA를 고친 프로젝트는 이어서 QA를 고치므로 이렇게 적는다.
+    public static let qaPlanLine = "QA 수정사항 반영"
 
     /// 출근 때 올리는 오늘 할 일. 프로젝트마다 `planLine` 한 줄.
     /// 기간을 정한 프로젝트는 그 기간 동안 늘 들어가고, 기간이 없는 프로젝트는 오늘 적은 일이나 앞선 날 끝나지 않은 일이 있을 때 들어간다.
@@ -38,7 +51,7 @@ public enum WorkReport {
     /// 2. VeloX
     /// - 마크업 및 API 연동
     /// ```
-    /// 상시(회의 등)만 있는 프로젝트는 뺀다.
+    /// 상시(회의 등)만 있는 프로젝트는 뺀다. 앞선 날 QA를 고친 프로젝트는 `qaPlanLine`을 적는다.
     public static func plan(day: String, in log: WorkLog) -> String {
         let carried = log.previousDay(before: day).map { log.carryCandidates(from: $0, to: day) } ?? []
         let rows = (log.entries(on: day) + carried).filter {
@@ -48,9 +61,19 @@ public enum WorkReport {
         // 기간이 끝난 프로젝트도 그날 적은 일이 있으면 넣는다 (기간을 늦게 고친 경우)
         let names = fixed + log.orderedProjects(of: rows).filter { !fixed.contains($0) }
         let order = log.allProjects.filter(names.contains) + names.filter { !log.allProjects.contains($0) }
+        let before = log.previousDay(before: day).map { log.entries(on: $0) } ?? []
+        let qaProjects = Set(before.filter { isQA($0, in: log) }.map(\.project))
         return order.enumerated()
-            .map { "\($0.offset + 1). \($0.element)\n- \(planLine)" }
+            .map { "\($0.offset + 1). \($0.element)\n- \(qaProjects.contains($0.element) ? qaPlanLine : planLine)" }
             .joined(separator: "\n")
+    }
+
+    /// QA 일감 줄이거나, 직접 `QA 수정사항 …`처럼 적은 줄.
+    static func isQA(_ entry: WorkEntry, in log: WorkLog) -> Bool {
+        if let issue = entry.issue, let info = log.issue(issue) { return info.isQA }
+        // `QAT 환경`처럼 QA로 시작하는 다른 말은 빼고 `QA 수정사항`·`QA수정`·`[QA]`만
+        return entry.title.trimmingCharacters(in: .whitespaces)
+            .range(of: #"^\[?QA(\]|\s|:|$|수정|이슈)"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     /// 레드마인 일감 기준 보고 줄. 같은 일감은 한 줄(가장 많이 한 상태), QA 건은 프로젝트마다 한 줄로 앞에 둔다.
@@ -101,6 +124,179 @@ public enum WorkReport {
         return result
     }
 
+    // MARK: 간결하게
+
+    /// 사내 일일보고처럼 짧게 줄인다. 프로젝트마다 차례로
+    /// 1. MR·커밋에서 가져온 `X 되돌리기`와 그것이 되돌린 `X`를 뺀다 (한 일이 남지 않은 시행착오다)
+    /// 2. `데이터 탐색 > SQL 편집기 > 끝 이름 API 연동`을 `데이터 탐색 > SQL 편집기 API 연동` 한 줄로 모은다
+    /// 3. 일감 없이 MR·커밋에서 가져온 줄 가운데 주제 낱말이 셋 이상, 양쪽 절반 이상 겹치는 줄은 가장 짧은 줄 하나로 모은다
+    /// 4. 진행 중인 브랜치 줄은 같은 프로젝트의 끝난 줄과 같은 일이면 뺀다
+    /// 1·3·4번은 직접 적은 줄을 건드리지 않는다. 2번은 메뉴 이름만 줄이므로 직접 적은 줄에도 쓴다.
+    /// 어느 규칙도 다른 일을 한 줄을 지우지 않게, 겹친다고 볼 때만 줄인다.
+    public static func compacted(_ entries: [WorkEntry]) -> [WorkEntry] {
+        shortened(withoutReverts(entries))
+    }
+
+    /// 2~4번 규칙.
+    private static func shortened(_ entries: [WorkEntry]) -> [WorkEntry] {
+        var projects: [String] = []
+        for entry in entries where !projects.contains(entry.project) { projects.append(entry.project) }
+        return projects.flatMap { project in
+            withoutSideBranches(similarMerged(menuMerged(entries.filter { $0.project == project })))
+        }
+    }
+
+    /// 1번 규칙. 프로젝트마다 날짜 순서로 견주고, 남은 줄은 원래 순서를 지킨다.
+    private static func withoutReverts(_ entries: [WorkEntry]) -> [WorkEntry] {
+        var kept: Set<UUID> = []
+        for project in Set(entries.map(\.project)) {
+            let rows = entries.filter { $0.project == project }
+            let byDay = rows.enumerated().sorted { ($0.element.day, $0.offset) < ($1.element.day, $1.offset) }.map(\.element)
+            kept.formUnion(withoutReverted(byDay).map(\.id))
+        }
+        return entries.filter { kept.contains($0.id) }
+    }
+
+    /// `X 되돌리기`·`X 되돌림`·`X 원복`·`Revert "X"`의 X.
+    static func revertedTitle(_ title: String) -> String? {
+        let text = title.trimmingCharacters(in: .whitespaces)
+        if text.lowercased().hasPrefix("revert ") {
+            return String(text.dropFirst("revert ".count)).trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
+        }
+        for word in ["되돌리기", "되돌림", "원복"] where text.hasSuffix(" " + word) {
+            return String(text.dropLast(word.count + 1)).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    /// 되돌린 대상을 찾았을 때만 줄인다. 대상이 되돌린 뒤 날짜에 있으면(다시 적용) 되돌리기 줄만 뺀다.
+    /// 대상이 없으면(보고 범위 밖의 날 것) 되돌린 일 자체가 한 일이라 둔다. 직접 적은 줄은 되돌리기도 대상도 되지 않는다.
+    private static func withoutReverted(_ rows: [WorkEntry]) -> [WorkEntry] {
+        var kept = rows
+        for revert in rows {
+            let auto = { (row: WorkEntry) in row.issue == nil && row.source != nil }
+            guard kept.contains(where: { $0.id == revert.id }), auto(revert), let target = revertedTitle(revert.title),
+                  let index = kept.lastIndex(where: { $0.id != revert.id && auto($0) && normalized($0.title) == normalized(target) })
+            else { continue }
+            if kept[index].day <= revert.day { kept.remove(at: index) }
+            kept.removeAll { $0.id == revert.id }
+        }
+        return kept
+    }
+
+    /// 화면 기능 일감 이름 끝에 붙는 일 종류. 긴 것부터 맞춰 본다.
+    private static let workKinds = ["API 연동", "화면 개발", "기능 개발", "퍼블리싱", "마크업", "연동", "개발", "설계", "디자인"]
+
+    /// `A > B > 끝 이름 API 연동` → `A > B API 연동`. 경로가 셋보다 짧거나 끝에 일 종류가 없으면 nil.
+    static func menuTitle(_ title: String) -> String? {
+        let parts = title.components(separatedBy: " > ").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count >= 3, let last = parts.last,
+              let kind = workKinds.first(where: { last == $0 || last.hasSuffix(" " + $0) }) else { return nil }
+        return parts.prefix(2).joined(separator: " > ") + " " + kind
+    }
+
+    private static func menuMerged(_ rows: [WorkEntry]) -> [WorkEntry] {
+        var result: [WorkEntry] = []
+        var index: [String: Int] = [:]
+        for row in rows {
+            // 상시 줄은 묶으면 그 묶음이 상시가 되어 맨 위로 가므로 그대로 둔다
+            guard row.status != .ongoing, let title = menuTitle(row.title) else {
+                result.append(row)
+                continue
+            }
+            if let at = index[normalized(title)] {
+                result[at].status = least(result[at].status, row.status)
+                continue
+            }
+            var line = row
+            line.title = title
+            index[normalized(title)] = result.count
+            result.append(line)
+        }
+        return result
+    }
+
+    /// 묶은 줄의 상태는 가장 덜 된 것. 하나라도 진행 중이면 그 묶음은 아직 끝나지 않았다.
+    private static func least(_ a: WorkStatus, _ b: WorkStatus) -> WorkStatus {
+        func value(_ s: WorkStatus) -> Int {
+            switch s {
+            case .done: return 101
+            case .percent(let v): return v
+            case .inProgress: return 1
+            case .ongoing: return 0
+            }
+        }
+        return value(b) < value(a) ? b : a
+    }
+
+    /// 비슷한지 견줄 때 빼는 말. 어떻게 했는지(적용·수정), 일 종류(API 연동·마크업), 흔한 화면 말(목록·상세)은
+    /// 주제를 가르지 못해 `로그인 API 연동`과 `회원가입 API 연동`을 같은 일로 보게 만든다.
+    private static let commonWords: Set<String> = [
+        "적용", "수정", "추가", "변경", "처리", "반영", "정리", "교체", "개선", "제거", "구현", "작성", "삭제", "생성", "조회",
+        "api", "연동", "마크업", "퍼블리싱", "개발", "설계", "디자인", "화면", "목록", "상세", "버그", "오류", "결함", "배포", "테스트",
+        "및", "과", "와", "의", "을", "를", "것", "기능", "작업", "fix", "feat", "chore", "refactor",
+    ]
+
+    /// 주제 낱말. 메뉴 경로(`A > B >`)는 같은 화면 묶음이면 늘 겹쳐 떼고 끝 이름만 본다.
+    static func words(_ title: String) -> Set<String> {
+        let leaf = title.components(separatedBy: " > ").last ?? title
+        // 점은 남겨 `v1.2`와 `v1.3`이 둘 다 `v1`이 되지 않게 하고, 숫자는 한 자리여도 남겨 `Step 1`과 `Step 2`를 가른다
+        return Set(leaf.lowercased().components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".")).inverted)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+            .filter { ($0.count >= 2 || $0.contains(where: \.isNumber)) && !commonWords.contains($0) })
+    }
+
+    /// 주제 낱말이 셋 이상 겹치고 양쪽 모두 절반 이상이 겹치면 같은 일로 본다. 짧은 쪽만 견주면
+    /// 다른 일까지 적은 긴 제목이 짧은 제목에 묻혀 사라진다. 숫자(버전·번호)가 서로 다르면 다른 일이다.
+    static func similar(_ a: Set<String>, _ b: Set<String>) -> Bool {
+        let numbers = { (set: Set<String>) in set.filter { $0.contains(where: \.isNumber) } }
+        let (na, nb) = (numbers(a), numbers(b))
+        if !na.isEmpty, !nb.isEmpty, na != nb { return false }
+        let shared = a.intersection(b).count
+        return shared >= 3 && Double(shared) >= Double(max(a.count, b.count)) * 0.5
+    }
+
+    private static func similarMerged(_ rows: [WorkEntry]) -> [WorkEntry] {
+        // 자동으로 가져온, 일감 없는, 상시가 아닌 줄만 모은다. 진행 중 브랜치는 4번 규칙에서 따로 본다
+        let mergeable = { (row: WorkEntry) in
+            row.issue == nil && row.source != nil && row.status != .ongoing && !isSideBranch(row)
+        }
+        var clusters: [[WorkEntry]] = []
+        for row in rows where mergeable(row) {
+            let mine = words(row.title)
+            // 무리의 첫 줄하고만 견준다. 아무 줄과 견주면 A~B, B~C로 이어져 상관없는 A와 C가 한 줄이 된다
+            if let at = clusters.firstIndex(where: { $0.first.map { similar(words($0.title), mine) } ?? false }) {
+                clusters[at].append(row)
+            } else {
+                clusters.append([row])
+            }
+        }
+        var result: [WorkEntry] = []
+        for row in rows {
+            guard mergeable(row) else {
+                result.append(row)
+                continue
+            }
+            // 무리의 첫 줄 자리에 가장 짧은 제목과 가장 덜 된 상태로 한 줄만 둔다 (하나라도 남았으면 끝난 일이 아니다)
+            guard let cluster = clusters.first(where: { $0.first?.id == row.id }) else { continue }
+            var line = row
+            line.title = cluster.map(\.title).min { $0.count < $1.count } ?? row.title
+            line.status = cluster.dropFirst().reduce(row.status) { least($0, $1.status) }
+            result.append(line)
+        }
+        return result
+    }
+
+    /// 진행 중 브랜치가 같은 프로젝트의 끝난 줄과 같은 일이면 뺀다. 상관없는 진행 중 작업은 그날 한 일이라 둔다.
+    private static func isSideBranch(_ row: WorkEntry) -> Bool {
+        row.issue == nil && row.source?.hasPrefix("branch:") == true && !row.status.isFinished
+    }
+
+    private static func withoutSideBranches(_ rows: [WorkEntry]) -> [WorkEntry] {
+        let finished = rows.filter { !isSideBranch($0) && $0.status.isFinished }.map { words($0.title) }
+        return rows.filter { row in !(isSideBranch(row) && finished.contains { similar($0, words(row.title)) }) }
+    }
+
     /// 둘 가운데 더 나아간 상태. 상시는 상시끼리만 남는다.
     private static func best(_ a: WorkStatus?, _ b: WorkStatus) -> WorkStatus {
         guard let a else { return b }
@@ -137,28 +333,29 @@ public enum WorkReport {
     /// `nextWeekPlan`이면 끝나지 않은 일을 `[차주 계획]`으로 한 번 더 적는다.
     public static func weekly(_ entries: [WorkEntry], in log: WorkLog, week: ClosedRange<String>,
                               doneFirst: Bool = false, nextWeekPlan: Bool = false, byIssue: Bool = false,
-                              grouped: Bool = false) -> String {
-        let body = period(entries, in: log, doneFirst: doneFirst, byIssue: byIssue, grouped: grouped,
+                              grouped: Bool = false, compact: Bool = false) -> String {
+        let body = period(entries, in: log, doneFirst: doneFirst, byIssue: byIssue, grouped: grouped, compact: compact,
                           header: "[주간 진행 사항] \(shortDate(week.lowerBound)) ~ \(shortDate(week.upperBound))")
         guard nextWeekPlan, !body.isEmpty else { return body }
-        let lines = byIssue ? issueLines(merged(entries), in: log) : merged(entries)
+        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact, merge: true)
         let open = lines.filter { !$0.status.isFinished && $0.status != .ongoing }
         guard !open.isEmpty else { return body }
-        return body + "\n\n[차주 계획]\n" + numbered(open, in: log, grouped: grouped)
+        return body + "\n\n[차주 계획]\n" + numbered(open, in: log, grouped: grouped && !compact)
     }
 
     /// 한 달치를 주간 보고와 같은 규칙으로 모은다. 머리는 `[월간 진행 사항] 2026년 10월`.
     public static func monthly(_ entries: [WorkEntry], in log: WorkLog, month: ClosedRange<String>, byIssue: Bool = false,
-                               grouped: Bool = false) -> String {
+                               grouped: Bool = false, compact: Bool = false) -> String {
         let parts = month.lowerBound.split(separator: "-")
         let title = parts.count == 3 ? "\(parts[0])년 \(Int(parts[1]) ?? 0)월" : month.lowerBound
-        return period(entries, in: log, doneFirst: false, byIssue: byIssue, grouped: grouped, header: "[월간 진행 사항] \(title)")
+        return period(entries, in: log, doneFirst: false, byIssue: byIssue, grouped: grouped, compact: compact,
+                      header: "[월간 진행 사항] \(title)")
     }
 
     private static func period(_ entries: [WorkEntry], in log: WorkLog, doneFirst: Bool, byIssue: Bool, grouped: Bool,
-                               header: String) -> String {
-        let lines = byIssue ? issueLines(merged(entries), in: log) : merged(entries)
-        let body = numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped)
+                               compact: Bool, header: String) -> String {
+        let lines = shaped(entries, in: log, byIssue: byIssue, compact: compact, merge: true)
+        let body = numbered(doneFirst ? ordered(lines) : lines, in: log, grouped: grouped && !compact)
         return body.isEmpty ? "" : header + "\n" + body
     }
 

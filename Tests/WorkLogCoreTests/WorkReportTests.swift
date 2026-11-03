@@ -38,9 +38,10 @@ private let sample = """
         #expect(WorkReport.dayHeader("2026-10-27", today: "2026-10-27") == "[10/27 금일 진행 사항]")
         #expect(WorkReport.dayHeader("2026-10-27", plan: true, today: "2026-10-27") == "[10/27 금일 진행 예정 사항]")
         #expect(WorkReport.dayHeader("2026-10-24", today: "2026-10-27") == "[10/24 진행 사항]")
+        // UxHub는 앞선 날 QA를 고쳐서 이어서 QA를 적는다
         #expect(WorkReport.plan(day: "2026-10-27", in: log) == """
         1. UxHub
-        - 마크업 및 API 연동
+        - QA 수정사항 반영
         2. VeloX
         - 마크업 및 API 연동
         """)
@@ -318,5 +319,151 @@ private let sample = """
         #expect(log.search("#4512").count == 1)
         #expect(log.search("툴팁").map(\.project) == ["cdh"])
         #expect(log.search("").isEmpty)
+    }
+}
+
+@Suite struct CompactReportTests {
+    private func row(_ project: String, _ title: String, _ status: WorkStatus = .done, issue: Int? = nil, source: String? = nil) -> WorkEntry {
+        WorkEntry(day: "2026-11-03", project: project, title: title, status: status, issue: issue, source: source)
+    }
+
+    /// MR·일감에서 가져온 하루가 사람이 쓰는 길이로 줄어든다.
+    @Test func shortensADayLikeAPersonWould() {
+        let entries = [
+            row("VeloX", "데이터 탐색 > SQL 편집기 > 쿼리 실행 API 연동", .percent(100), issue: 1, source: "mr:g/web!1#1"),
+            row("VeloX", "데이터 탐색 > SQL 편집기 > 결과 다운로드 API 연동", .percent(100), issue: 2, source: "mr:g/web!1#2"),
+            row("VeloX", "데이터 탐색 > BI 대시보드 > 대시보드 목록 API 연동", .percent(100), issue: 3, source: "mr:g/web!1#3"),
+            row("VeloX", "데이터 탐색 > BI 대시보드 > 대시보드 공유 API 연동", .percent(60), issue: 4, source: "mr:g/web!1#4"),
+            row("VeloX", "편집기 라이브러리 교체", .inProgress, source: "branch:g/web:feature/editor"),
+            row("UxHub", "API 게이트웨이 주소 컨테이너 환경변수 적용 (목포)", source: "mr:g/admin!1"),
+            row("UxHub", "사용자포털 API 게이트웨이 · MQTT 주소 컨테이너 환경변수 적용 (목포)", source: "mr:g/user!1"),
+            row("UxHub", "API 게이트웨이 주소 컨테이너 환경변수 적용", source: "mr:g/admin!2"),
+            row("UxHub", "API 게이트웨이 주소 컨테이너 환경변수 적용 되돌리기", source: "mr:g/admin!3"),
+            row("UxHub", "목포 API 게이트웨이 주소 적용", source: "mr:g/admin!4"),
+            row("UxHub", "대시보드 > 대시보드 관리 > 대시보드 목록 마크업", .percent(100), issue: 5, source: "mr:g/admin!5#5"),
+            row("UxHub", "대시보드 > 대시보드 관리 > 대시보드 생성/수정 마크업", .percent(100), issue: 6, source: "mr:g/admin!5#6"),
+            row("UxHub", "주간 회의", .ongoing),
+        ]
+        let log = WorkLog(projects: ["UxHub", "VeloX"], entries: entries)
+        #expect(WorkReport.daily(entries, in: log, doneFirst: true, compact: true) == """
+        1. UxHub
+        - 주간 회의 (상시)
+        - 목포 API 게이트웨이 주소 적용 (완료)
+        - 대시보드 > 대시보드 관리 마크업 (100%)
+        2. VeloX
+        - 데이터 탐색 > SQL 편집기 API 연동 (100%)
+        - 데이터 탐색 > BI 대시보드 API 연동 (60%)
+        - 편집기 라이브러리 교체 (진행중)
+        """)
+        // 끄면 예전처럼 다 적는다
+        #expect(WorkReport.daily(entries, in: log).components(separatedBy: "\n").count == entries.count + 2)
+    }
+
+    @Test func undoesRevertsOnlyForTheirTarget() {
+        #expect(WorkReport.revertedTitle("주소 적용 되돌리기") == "주소 적용")
+        #expect(WorkReport.revertedTitle("Revert \"주소 적용\"") == "주소 적용")
+        #expect(WorkReport.revertedTitle("설정 원복") == "설정")
+        #expect(WorkReport.revertedTitle("되돌리기 버튼 추가") == nil)
+        let entries = [row("A", "로그인 개선", source: "mr:g/a!1"), row("A", "주소 적용", source: "mr:g/a!2"),
+                       row("A", "주소 적용 되돌리기", source: "mr:g/a!3")]
+        #expect(WorkReport.compacted(entries).map(\.title) == ["로그인 개선"])
+    }
+
+    @Test func menuTitleNeedsAPathAndAKindOfWork() {
+        #expect(WorkReport.menuTitle("데이터 탐색 > SQL 편집기 > 쿼리 실행 API 연동") == "데이터 탐색 > SQL 편집기 API 연동")
+        #expect(WorkReport.menuTitle("A > B > C > 목록 마크업") == "A > B 마크업")
+        #expect(WorkReport.menuTitle("A > B > 목록") == nil)            // 일 종류가 없다
+        #expect(WorkReport.menuTitle("데이터 탐색 > 쿼리 목록 API 연동") == nil)   // 이미 짧다
+        #expect(WorkReport.menuTitle("A > B > 재연동") == nil)          // 낱말 끝이 아니다
+    }
+
+    /// 직접 적은 줄은 비슷해도 모으지 않고, 주제 낱말이 셋 넘게 겹칠 때만 같은 일로 본다.
+    @Test func keepsHandWrittenAndDifferentWork() {
+        let entries = [
+            row("A", "로그인 화면 수정"), row("A", "로그인 화면 수정 마무리"),
+            row("A", "로그인 API 연동", .inProgress, source: "mr:g/a!1"), row("A", "회원가입 API 연동", source: "mr:g/a!2"),
+            row("A", "대시보드 차트 버그", source: "mr:g/a!3"), row("A", "대시보드 차트 색상", source: "mr:g/a!4"),
+            row("A", "v1.2 배포 설정 서버 주소", source: "mr:g/a!5"), row("A", "v1.3 배포 설정 서버 주소", source: "mr:g/a!6"),
+        ]
+        #expect(WorkReport.compacted(entries) == entries)
+    }
+
+    /// 같은 일을 여러 MR로 나눴으면 가장 짧은 제목 하나로, 하나라도 덜 끝났으면 그 상태로 적는다.
+    @Test func mergesTheSameWorkSplitAcrossMRs() {
+        let entries = [
+            row("A", "API 게이트웨이 주소 컨테이너 환경변수 적용 (목포)", source: "mr:g/a!1"),
+            row("A", "로그인 화면 수정", source: "mr:g/a!2"),
+            row("A", "목포 API 게이트웨이 주소 적용", .percent(80), source: "mr:g/a!3"),
+            row("A", "사용자포털 목포 API 게이트웨이 주소 적용과 MQTT 수신 방식 주석 처리", source: "mr:g/a!4"),
+        ]
+        let result = WorkReport.compacted(entries)
+        // MQTT 수신 방식처럼 다른 일까지 적은 긴 줄은 짧은 줄에 묻히지 않게 따로 둔다
+        #expect(result.map(\.title) == ["목포 API 게이트웨이 주소 적용", "로그인 화면 수정",
+                                        "사용자포털 목포 API 게이트웨이 주소 적용과 MQTT 수신 방식 주석 처리"])
+        #expect(result[0].status == .percent(80))
+        #expect(result[0].id == entries[0].id)
+        #expect(!WorkReport.similar(WorkReport.words("Step 1 검색 필터 정렬"), WorkReport.words("Step 2 검색 필터 정렬")))
+    }
+
+    /// 진행 중 브랜치는 끝난 줄과 같은 일일 때만 뺀다. 회의만 있는 날이나 상관없는 작업이면 그날 한 일이라 남긴다.
+    @Test func keepsBranchesThatAreOtherWork() {
+        let branch = row("A", "편집기 라이브러리 CodeMirror 교체", .inProgress, source: "branch:g/a:feature/x")
+        #expect(WorkReport.compacted([branch]).count == 1)
+        #expect(WorkReport.compacted([row("A", "주간 회의", .ongoing), branch]).count == 2)
+        #expect(WorkReport.compacted([row("A", "로그인 화면 수정", source: "mr:g/a!1"), branch]).count == 2)
+        let same = row("A", "편집기 라이브러리 CodeMirror 교체 마무리", source: "mr:g/a!2")
+        #expect(WorkReport.compacted([same, branch]).map(\.title) == [same.title])
+    }
+
+    /// 되돌린 대상이 없거나 직접 적은 원복이면 그 자체가 한 일이라 남긴다. 되돌린 뒤 다시 적용했으면 다시 적용한 줄을 남긴다.
+    @Test func keepsRevertsThatAreWork() {
+        let alone = [row("A", "주소 적용 되돌리기", source: "mr:g/a!1")]
+        #expect(WorkReport.compacted(alone).count == 1)
+        let typed = [row("A", "DB 설정"), row("A", "DB 설정 원복")]
+        #expect(WorkReport.compacted(typed).count == 2)
+        // 직접 적은 줄은 MR 되돌리기의 대상도 되지 않는다
+        let mixed = [row("A", "주소 적용"), row("A", "주소 적용 되돌리기", source: "mr:g/a!9")]
+        #expect(WorkReport.compacted(mixed).count == 2)
+        let applied = WorkEntry(day: "2026-11-05", project: "A", title: "주소 적용", source: "mr:g/a!3")
+        let reverted = WorkEntry(day: "2026-11-04", project: "A", title: "주소 적용 되돌리기", source: "mr:g/a!2")
+        #expect(WorkReport.compacted([reverted, applied]).map(\.title) == ["주소 적용"])
+        let log = WorkLog(projects: ["A"], entries: [WorkEntry(day: "2026-11-03", project: "A", title: "주소 적용", source: "mr:g/a!1"),
+                                                      reverted, applied])
+        #expect(WorkReport.weekly(log.entries, in: log, week: "2026-11-02"..."2026-11-08", compact: true)
+                == "[주간 진행 사항] 11.2 ~ 11.8\n1. A\n- 주소 적용 (완료)")
+        // 같은 날 적용 → 되돌리기 → 다시 적용도 주간 보고에 남는다
+        let sameDay = WorkLog(projects: ["A"], entries: [
+            WorkEntry(day: "2026-11-04", project: "A", title: "주소 적용", source: "mr:g/a!1"),
+            WorkEntry(day: "2026-11-04", project: "A", title: "주소 적용 되돌리기", source: "mr:g/a!2"),
+            WorkEntry(day: "2026-11-04", project: "A", title: "주소 적용", source: "mr:g/a!3"),
+        ])
+        #expect(WorkReport.weekly(sameDay.entries, in: sameDay, week: "2026-11-02"..."2026-11-08", compact: true)
+                == "[주간 진행 사항] 11.2 ~ 11.8\n1. A\n- 주소 적용 (완료)")
+        #expect(WorkReport.daily(sameDay.entries, in: sameDay, compact: true) == "1. A\n- 주소 적용 (완료)")
+    }
+
+    @Test func meetingsAreNotMergedIntoMenus() {
+        let entries = [row("A", "기획 > 회의 > 주간 회의 개발", .ongoing),
+                       row("A", "기획 > 회의 > 회의록 화면 개발", .percent(50), issue: 1)]
+        #expect(WorkReport.compacted(entries).map(\.status) == [.ongoing, .percent(50)])
+    }
+
+    @Test func planSaysQAAfterAQADay() {
+        var log = WorkLog(projects: ["UxHub", "VeloX"])
+        log.projectPeriods = ["UxHub": ProjectPeriod(start: "2026-11-01"), "VeloX": ProjectPeriod(start: "2026-11-01")]
+        log.issues = ["7": IssueInfo(id: 7, subject: "검색 결과 오류", project: "p", isQA: true)]
+        log.entries = [WorkEntry(day: "2026-11-02", project: "UxHub", title: "검색 결과 오류", issue: 7),
+                       WorkEntry(day: "2026-11-02", project: "VeloX", title: "목록 API 연동", status: .percent(50))]
+        #expect(WorkReport.plan(day: "2026-11-03", in: log) == """
+        1. UxHub
+        - QA 수정사항 반영
+        2. VeloX
+        - 마크업 및 API 연동
+        """)
+        #expect(WorkReport.isQA(WorkEntry(day: "d", project: "p", title: "QA 수정사항 2건 반영"), in: log))
+        #expect(WorkReport.isQA(WorkEntry(day: "d", project: "p", title: "[QA] 목록 오류"), in: log))
+        #expect(WorkReport.isQA(WorkEntry(day: "d", project: "p", title: "qa수정"), in: log))
+        #expect(!WorkReport.isQA(WorkEntry(day: "d", project: "p", title: "QAT 환경 구성"), in: log))
+        #expect(WorkReport.isQA(WorkEntry(day: "d", project: "p", title: "QA: 정렬 오류"), in: log))
     }
 }

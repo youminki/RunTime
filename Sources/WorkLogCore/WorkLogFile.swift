@@ -64,8 +64,9 @@ public enum WorkLogCommand {
 
     public static let usage = """
     RunTime --worklog <명령>
-      day [날짜] [--raw]              그날 일일보고 (날짜는 yyyy-MM-dd, 없으면 오늘). --raw면 일감 이름으로 바꾸지 않음
-      week [날짜] [--raw]             그 주 주간 보고
+      day [날짜] [--raw] [--full]     그날 일일보고 (날짜는 yyyy-MM-dd, 없으면 오늘). --raw면 일감 이름으로 바꾸지 않음,
+                                      --full이면 메뉴·비슷한 커밋을 한 줄로 줄이지 않고 다 적음
+      week [날짜] [--raw] [--full]    그 주 주간 보고
       redmine [날짜|week [날짜]]       레드마인에 아직 올리지 않은 진척률과 댓글
       add <프로젝트> <내용> [상태] [#일감] [--day 날짜] [--note 댓글]
                                       상태: 완료, 상시, 60% (없으면 완료)
@@ -82,9 +83,10 @@ public enum WorkLogCommand {
     public static func run(_ args: [String], log: inout WorkLog, today: String = WorkDay.today(), now: Date = Date(),
                            stdin: () -> String = { "" }) -> Result {
         guard let command = args.first else { return Result(output: usage, changed: false, failed: false) }
-        // 보고서는 앱처럼 레드마인 일감 이름으로 쓰고 QA는 건수로 모은다. --raw면 적은 그대로
+        // 보고서는 앱처럼 레드마인 일감 이름으로 쓰고 QA는 건수로 모으고 간결하게 줄인다. --raw면 적은 그대로, --full이면 줄이지 않음
         let byIssue = !args.contains("--raw")
-        let rest = Array(args.dropFirst()).filter { $0 != "--raw" }
+        let compact = !args.contains("--full")
+        let rest = Array(args.dropFirst()).filter { $0 != "--raw" && $0 != "--full" }
         func dayArg(_ value: String?) -> String? {
             guard let value else { return today }
             return WorkDay.isValid(value) ? value : nil
@@ -94,13 +96,13 @@ public enum WorkLogCommand {
         switch command {
         case "day":
             guard let day = dayArg(rest.first) else { return fail("날짜는 yyyy-MM-dd로 적습니다") }
-            let text = WorkReport.daily(log.entries(on: day), in: log, doneFirst: true, byIssue: byIssue)
+            let text = WorkReport.daily(log.entries(on: day), in: log, doneFirst: true, byIssue: byIssue, compact: compact)
             return Result(output: text.isEmpty ? "\(day) 기록 없음" : text, changed: false, failed: false)
 
         case "week":
             guard let day = dayArg(rest.first) else { return fail("날짜는 yyyy-MM-dd로 적습니다") }
             let week = WorkDay.week(of: day)
-            let text = WorkReport.weekly(log.entries(in: week), in: log, week: week, doneFirst: true, byIssue: byIssue)
+            let text = WorkReport.weekly(log.entries(in: week), in: log, week: week, doneFirst: true, byIssue: byIssue, compact: compact)
             return Result(output: text.isEmpty ? "\(week.lowerBound) 주 기록 없음" : text, changed: false, failed: false)
 
         case "redmine":
