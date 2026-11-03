@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS reports (
   os TEXT,
   commit_sha TEXT,
   log TEXT,
+  screen TEXT,
+  source TEXT,
+  detail TEXT,
   mail_key TEXT NOT NULL,
   mailed INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL

@@ -822,8 +822,8 @@ final class WorkLogSync: ObservableObject {
         }
     }
 
-    /// 백그라운드 큐에서 응답을 기다린다.
-    private static func fetch(_ request: URLRequest) throws -> Data {
+    /// 백그라운드 큐에서 응답을 기다린다. 부른 자리는 실패를 알릴 때 코드 위치로 쓴다.
+    private static func fetch(_ request: URLRequest, file: String = #filePath, line: Int = #line, function: String = #function) throws -> Data {
         let semaphore = DispatchSemaphore(value: 0)
         var output: Result<Data, Error> = .failure(SyncError("응답 없음"))
         var timed = request
@@ -831,8 +831,10 @@ final class WorkLogSync: ObservableObject {
         URLSession.shared.dataTask(with: timed) { data, response, error in
             if let error {
                 output = .failure(error)
+                report(request, status: nil, error: error, data: nil, file: file, line: line, function: function)
             } else if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 output = .failure(SyncError(statusText(response)))
+                report(request, status: http.statusCode, error: nil, data: data, file: file, line: line, function: function)
             } else {
                 output = .success(data ?? Data())
             }
@@ -1022,7 +1024,9 @@ final class WorkLogSync: ObservableObject {
                     Diagnostics.record("팀즈", "\(target.name) 웹: \(message)")
                     done("\(target.name): \(message)", false)
                 case .failed(let message):
-                    Diagnostics.record("팀즈", "\(target.name) 웹: \(message)")
+                    // 팀즈 웹 화면이 바뀌면 자동 입력이 깨진다. 로그인이 풀린 것만 사용자 쪽 일이다
+                    if web.state == .needsLogin { Diagnostics.record("팀즈", "\(target.name) 웹: \(message)") }
+                    else { ProblemReporter.screen("팀즈 보내기", "팀즈 웹: \(message)", detail: "받는 곳: \(target.name) · 웹 상태: \(web.state)") }
                     guard web.state == .needsLogin else { return done("\(target.name) 보내지 못했습니다: \(message)", true) }
                     self.openWithApp(report, title: title, target: target, link: link) { text, failed in
                         done("팀즈 웹 로그인이 풀려 팀즈 앱으로 엽니다. " + text, failed)
@@ -1043,7 +1047,8 @@ final class WorkLogSync: ObservableObject {
             // 보고서 내용은 남기지 않고 어디서 멈췄는지만 (다른 Mac에서 안 될 때 원인을 보려고)
             switch result {
             case .copied(let reason?), .pasted(let reason?): Diagnostics.record("팀즈", "\(target.name): \(reason)")
-            case .failed(let message): Diagnostics.record("팀즈", "\(target.name): \(message)")
+            case .failed(let message):
+                ProblemReporter.screen("팀즈 보내기", message, detail: "받는 곳: \(target.name) · 자동 붙여넣기 \(self?.settings.teamsAutoPaste == true) · 자동 보내기 \(self?.settings.teamsAutoSend == true)")
             default: break
             }
             switch result {
@@ -1362,7 +1367,8 @@ final class WorkLogSync: ObservableObject {
     }
 
     /// 뒤 큐에서 한 요청을 끝까지 기다린다. 422처럼 상태 번호로 갈라야 해서 fetch와 따로 둔다.
-    private static func perform(_ request: URLRequest) -> (ok: Bool, status: Int?, message: String, data: Data?) {
+    private static func perform(_ request: URLRequest, file: String = #filePath, line: Int = #line,
+                                function: String = #function) -> (ok: Bool, status: Int?, message: String, data: Data?) {
         let semaphore = DispatchSemaphore(value: 0)
         var output: (ok: Bool, status: Int?, message: String, data: Data?) = (false, nil, "응답 없음", nil)
         var timed = request
@@ -1371,10 +1377,39 @@ final class WorkLogSync: ObservableObject {
             let status = (response as? HTTPURLResponse)?.statusCode
             let ok = error == nil && status.map { (200..<300).contains($0) } == true
             output = (ok, status, error?.localizedDescription ?? statusText(response), data)
+            if !ok { report(request, status: status, error: error, data: data, file: file, line: line, function: function) }
             semaphore.signal()
         }.resume()
         semaphore.wait()
         return output
+    }
+
+    /// 실패한 레드마인 요청을 기록에 남기고, 만든 사람이 고칠 실패면 알린다.
+    /// 키가 틀림(401)·권한 없음(403)·없는 일감(404)·댓글 수정 API 없음(405)과 망 끊김은 사용자 쪽 일이라 기록만 한다.
+    /// 일지 내용이 담기는 notes는 보내지 않고 칸 이름과 값만 보낸다. 주소의 물음표 뒤도 뺀다.
+    private static func report(_ request: URLRequest, status: Int?, error: Error?, data: Data?,
+                               file: String, line: Int, function: String) {
+        let method = request.httpMethod ?? "GET", path = request.url?.path ?? "-"
+        let body = data.map { String(decoding: $0.prefix(500), as: UTF8.self) } ?? ""
+        Diagnostics.record("레드마인 요청", "\(method) \(path) → \(status.map(String.init) ?? "응답 없음") \(body.prefix(200))")
+        if let error, !ProblemReporter.shouldReport(error) { return }
+        if let status, [401, 403, 404, 405].contains(status) { return }
+        var fields = "-"
+        if let sent = request.httpBody, var object = (try? JSONSerialization.jsonObject(with: sent)) as? [String: Any] {
+            if var issue = object["issue"] as? [String: Any] {
+                if issue["notes"] != nil { issue["notes"] = "(일지 내용 \((issue["notes"] as? String)?.count ?? 0)자)" }
+                object["issue"] = issue
+            }
+            fields = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])).map { String(decoding: $0.prefix(600), as: UTF8.self) } ?? "-"
+        } else if let sent = request.httpBody {
+            fields = "(\(request.value(forHTTPHeaderField: "Content-Type") ?? "본문") \(sent.count)바이트)"
+        }
+        let detail = ["요청: \(method) \(path)", "보낸 칸: \(fields)",
+                      "응답: \(status.map { "HTTP \($0)" } ?? "응답 없음") \(error.map { "\($0)" } ?? body)"].joined(separator: "\n")
+        // 레드마인이 준 까닭(`{"errors":[…]}`)을 제목에 넣어, 까닭이 다르면 메일도 따로 오게 한다
+        let reasons = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["errors"] as? [String]
+        let summary = "레드마인 \(method) 실패 (\(status.map { "HTTP \($0)" } ?? "응답 없음"))" + (reasons.map { ": " + $0.joined(separator: ", ") } ?? "")
+        ProblemReporter.screen("업무 일지", summary, detail: detail, file: file, line: line, function: function)
     }
 
     private func apply(_ result: SendResult, update: WorkReport.RedmineUpdate, startedAt: Date) {

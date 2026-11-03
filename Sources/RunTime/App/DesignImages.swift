@@ -93,6 +93,9 @@ final class DesignImages: ObservableObject {
         } catch {
             let reason = (error as? FigmaAPI.Failure)?.message ?? "이미지를 받지 못했습니다: \(error.localizedDescription)"
             for key in keys.values { states[key] = .missing(reason) }
+            if ProblemReporter.shouldReport(error) {
+                ProblemReporter.screen("디자인 이미지", reason, detail: "파일: \(fileKey) · 버전: \(version)\n노드: \(nodeIDs.prefix(10).joined(separator: ", "))\n오류: \(error)")
+            }
             return
         }
         // 피그마가 준 주소는 잠깐만 쓸 수 있는 저장소 주소라 토큰 없이 바로, 한꺼번에 받는다

@@ -267,9 +267,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--design-compare") {
     MainActor.assumeIsolated { DesignCheck.compare(args) }
     RunLoop.main.run()
 }
-// 문제 보고 미리 보기: 업데이트 문제를 만든 사람에게 보낼 때의 본문을 보내지 않고 찍는다
-if CommandLine.arguments.contains("--report-preview") {
-    let body = ProblemReporter.payload(.failed, "업데이트에 실패했습니다: 미리 보기")
+// 문제 보고 미리 보기: 만든 사람에게 보낼 때의 본문을 보내지 않고 찍는다. `--report-preview screen`은 화면 오류 본문
+if let index = CommandLine.arguments.firstIndex(of: "--report-preview") {
+    let body = CommandLine.arguments.dropFirst(index + 1).first == "screen"
+        ? ProblemReporter.payload(.screen, "레드마인 PUT 실패 (HTTP 422)", screen: "업무 일지",
+                                  source: ProblemReporter.source(#filePath, #line, "preview()"), detail: "요청: PUT /issues/1.json")
+        : ProblemReporter.payload(.failed, "업데이트에 실패했습니다: 미리 보기")
     if let data = try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys]) {
         print(String(decoding: data, as: UTF8.self))
     }

@@ -135,6 +135,9 @@ actor FigmaClient {
                 try await Task.sleep(nanoseconds: UInt64(transient * 3) * 1_000_000_000)
                 continue
             }
+            // 문제 보고가 이 줄을 함께 보내 어느 요청이 무엇을 받았는지 보인다. 주소의 물음표 뒤는 빼고 남긴다
+            Diagnostics.record("피그마 요청", "\(request.httpMethod ?? "GET") \(request.url?.path ?? "-") → \(http?.statusCode ?? 0) "
+                               + String(decoding: data.prefix(200), as: UTF8.self))
             throw failure
         }
         throw FigmaAPI.Failure.rateLimited(retryAfter: nil)
@@ -184,6 +187,7 @@ final class DesignSync: ObservableObject {
         } catch {
             history = DesignHistory()
             loadError = "디자인 기록 파일을 읽지 못해 새 기록을 저장하지 않습니다: \(error.localizedDescription)"
+            ProblemReporter.screen("디자인", loadError ?? "", detail: "오류: \(error)")
         }
         markUnmarkedOnce()
     }
@@ -550,8 +554,10 @@ final class DesignSync: ObservableObject {
                 }
             } catch let failure as FigmaAPI.Failure {
                 errors[job.fileKey] = failure.message
+                report(failure, fileKey: job.fileKey, step: "메뉴 받기 \(job.paths.joined(separator: ", "))")
             } catch {
                 errors[job.fileKey] = error.localizedDescription
+                report(error, fileKey: job.fileKey, step: "메뉴 받기 \(job.paths.joined(separator: ", "))")
             }
             persist()
             syncing = false
@@ -644,10 +650,14 @@ final class DesignSync: ObservableObject {
                             history.files[source.fileKey]?.lastModified = nil
                         } else if let first = blank.first {
                             errors[source.fileKey] = "‘\(first.name)’에서 화면설계서 틀(화면 ID·Description)을 찾지 못했습니다. 화면설계서의 화면 프레임 링크인지 확인하세요"
+                            // 틀을 읽는 규칙이 이 파일의 꼴을 모르는 것일 수 있어 만든 사람이 노드를 열어 보게 알린다
+                            ProblemReporter.screen("디자인", "화면설계서 틀을 찾지 못함",
+                                                   detail: context(source.fileKey, step: "가져오기") + "\n노드: \(first.nodeID) ‘\(first.name)’ (틀 없음 \(blank.count)개)")
                         }
                     }
                 } catch let failure as FigmaAPI.Failure {
                     errors[source.fileKey] = failure.message
+                    report(failure, fileKey: source.fileKey, step: "가져오기")
                     if case .rateLimited = failure {
                         // 한도가 풀리면 다시 받게 그때로 미뤄 두고, 남은 프로젝트는 한도를 더 두드리지 않게 건너뛴다
                         let until = await FigmaClient.shared.blockedUntil ?? Date().addingTimeInterval(60)
@@ -657,6 +667,7 @@ final class DesignSync: ObservableObject {
                     if case .server = failure { retry(source.fileKey, at: Date().addingTimeInterval(300)) }
                 } catch {
                     errors[source.fileKey] = error.localizedDescription
+                    report(error, fileKey: source.fileKey, step: "가져오기")
                     // 깬 직후처럼 망이 잠깐 끊긴 것이면 주기를 통째로 기다리지 않고 5분 뒤 다시 받는다
                     retry(source.fileKey, at: Date().addingTimeInterval(300))
                 }
@@ -776,6 +787,22 @@ final class DesignSync: ObservableObject {
         settings.sources[index].statusOverrides[key] = done
     }
 
+    private func report(_ error: Error, fileKey: String, step: String,
+                        file: String = #filePath, line: Int = #line, function: String = #function) {
+        guard ProblemReporter.shouldReport(error) else { return }
+        let message = (error as? FigmaAPI.Failure)?.message ?? error.localizedDescription
+        ProblemReporter.screen("디자인", message, detail: context(fileKey, step: step) + "\n오류: \(error)",
+                               file: file, line: line, function: function)
+    }
+
+    /// 메일에서 어느 파일의 무엇을 받다 멈췄는지 보이게.
+    func context(_ fileKey: String, step: String) -> String {
+        let known = history.files[fileKey]
+        return ["단계: \(step)", "파일: \(fileKey) ‘\(source(fileKey)?.name ?? "-")’",
+                "기록한 버전: \(known?.version ?? "-") · 지켜보는 메뉴: \(source(fileKey)?.menus.joined(separator: ", ") ?? "-")"]
+            .joined(separator: "\n")
+    }
+
     private func persist() {
         guard loadError == nil else { return }
         let snapshot = history
@@ -784,6 +811,7 @@ final class DesignSync: ObservableObject {
                 try DesignHistoryFile.save(snapshot)
             } catch {
                 Task { @MainActor in DesignSync.shared.errors["*"] = "디자인 기록을 저장하지 못했습니다: \(error.localizedDescription)" }
+                ProblemReporter.screen("디자인", "디자인 기록을 저장하지 못함", detail: "오류: \(error)")
             }
         }
     }

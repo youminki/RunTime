@@ -264,6 +264,9 @@ final class AccountSwitcher: ObservableObject {
             DispatchQueue.main.async {
                 self.switching = false
                 self.lastError = error
+                if let error, !error.contains("네트워크") {
+                    ProblemReporter.screen("계정 전환", error, detail: "계정 \(self.accounts.count)개 · 자동 전환: \(automatic ? "예" : "아니오")")
+                }
                 if error == nil, let account = self.accounts.first(where: { $0.id == id }) {
                     self.lastSwitchAt = Date()
                     self.onSwitched(account, automatic)

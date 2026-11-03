@@ -126,6 +126,15 @@ final class DesignCompareModel: ObservableObject {
         .sorted { $0.windowEnd > $1.windowEnd }
     }
 
+    private func report(_ error: Error, fileKey: String, from: Date, to: Date,
+                        file: String = #filePath, line: Int = #line, function: String = #function) {
+        guard ProblemReporter.shouldReport(error) else { return }
+        let detail = sync.context(fileKey, step: "날짜 비교 \(DesignCompareModel.day(from)) → \(DesignCompareModel.day(to))")
+            + "\n화면 경로: \(path ?? "-") · 화면: \(screen.map { "\($0)" } ?? "-")\n오류: \(error)"
+        ProblemReporter.screen("디자인 비교", (error as? FigmaAPI.Failure)?.message ?? error.localizedDescription,
+                               detail: detail, file: file, line: line, function: function)
+    }
+
     func run() {
         guard !running, let fileKey, !fileKey.isEmpty else { return }
         guard let token = sync.settings.token else { error = "피그마 토큰을 넣으세요"; return }
@@ -223,8 +232,10 @@ final class DesignCompareModel: ObservableObject {
                 } else {
                     error = failure.message
                 }
+                report(failure, fileKey: fileKey, from: from, to: to)
             } catch {
                 self.error = error.localizedDescription
+                report(error, fileKey: fileKey, from: from, to: to)
             }
         }
     }

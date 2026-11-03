@@ -67,6 +67,8 @@ final class WorkLogStore: ObservableObject {
             tidyMRNotes()
         } catch {
             loadError = "\(url.lastPathComponent)을 읽지 못했습니다. 파일을 고치거나 옮기면 다시 읽습니다."
+            // 어느 칸에서 막혔는지가 오류에 담긴다 (앱이 쓴 꼴을 앱이 못 읽으면 고칠 일이다)
+            ProblemReporter.screen("업무 일지", "일지 파일을 읽지 못함", detail: "파일: \(url.path)\n오류: \(error)")
         }
         lastWritten = modificationDate()
     }
@@ -102,6 +104,7 @@ final class WorkLogStore: ObservableObject {
             lastWritten = modificationDate()
         } catch {
             saveError = "일지를 저장하지 못했습니다: \(error.localizedDescription)"
+            ProblemReporter.screen("업무 일지", "일지를 저장하지 못함", detail: "파일: \(url.path)\n오류: \(error)")
             // 못 쓴 내용을 기준으로 삼으면 그사이 바깥에서 고친 파일을 다시 읽을 때 그 내용이 조용히 사라진다.
             // 기준은 그대로 두고 잠시 뒤 다시 저장해, 지켜보는 쪽이 다시 읽지 않고 합치게 한다
             let retry = DispatchWorkItem { [weak self] in self?.saveNow() }

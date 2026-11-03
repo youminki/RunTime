@@ -87,6 +87,7 @@ final class HostsStore: ObservableObject {
             // 같은 수정 시각으로 되돌아와도(mv로 되돌림, 권한만 바꿨다 풂) 다음 감시 때 다시 읽게 한다
             modified = nil
             problem = "\(Self.url.path)를 읽지 못했습니다: \(error.localizedDescription)"
+            ProblemReporter.screen("호스트", "호스트 파일을 읽지 못함", detail: "파일: \(Self.url.path)\n오류: \(error)")
         }
     }
 
@@ -118,7 +119,12 @@ final class HostsStore: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.saving = false
-                if let failure { Diagnostics.record("호스트", failure) }
+                // 암호 창을 닫았거나 그사이 파일이 바뀐 것은 사용자 쪽 일이라 기록만 한다
+                if let failure, failure.hasPrefix("저장하지 못했습니다") || failure.contains("실행하지 못했습니다") || failure.contains("쓰지 못했습니다") {
+                    ProblemReporter.screen("호스트", failure, detail: "파일: \(target.path) · 관리자 권한으로 씀: \(system ? "예" : "아니오")")
+                } else if let failure {
+                    Diagnostics.record("호스트", failure)
+                }
                 // 다시 읽기 전에 그동안 화면에서 더 고쳤는지 본다 (다시 읽으면 고치지 않은 판은 새 판으로 바뀐다)
                 let editedMeanwhile = self.draft.text != editing
                 self.modified = nil

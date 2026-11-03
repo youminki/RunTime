@@ -503,8 +503,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard let window, !reportedShort, let screen = anchorWindow.screen,
                   window.frame.minY < screen.visibleFrame.minY - 0.5 else { return }
             reportedShort = true
-            Diagnostics.record("사용량 창", "화면 아래로 \(Int(screen.visibleFrame.minY - window.frame.minY))pt 모자람 · 창 높이 \(Int(window.frame.height))pt"
-                               + " · 화면 \(screen.localizedName) 쓸 수 있는 높이 \(Int(screen.visibleFrame.height))pt")
+            // 아래가 잘린 채 보이는 것이라 만든 사람에게 알린다. 화면 구성을 모두 적어야 같은 배치로 다시 만들 수 있다
+            let rect = { (r: NSRect) in "(\(Int(r.minX)),\(Int(r.minY))) \(Int(r.width))x\(Int(r.height))" }
+            let screens = NSScreen.screens.map { "\($0.localizedName): 전체 \(rect($0.frame)) · 쓸 수 있는 곳 \(rect($0.visibleFrame))"
+                + ($0 == screen ? " · 메뉴바 단추가 있는 화면" : "") }
+            ProblemReporter.screen("사용량 창", "화면 아래로 \(Int(screen.visibleFrame.minY - window.frame.minY))pt 잘림",
+                                   detail: (["창: \(rect(window.frame))", "메뉴바 단추 아래 끝 y: \(Int(top))",
+                                             "창이 놓인 화면: \(window.screen?.localizedName ?? "-")"] + screens).joined(separator: "\n"))
         }
         let pin = { fix(); checkFit(); DispatchQueue.main.async(execute: fix) }
         pin()
