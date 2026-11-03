@@ -259,6 +259,10 @@ final class AppUpdater: ObservableObject {
         guard state == .checking else { return }
         // 404는 GitHub에 없는 커밋으로 만든 빌드, diverged는 기본 브랜치에 없는 커밋이 든 빌드다.
         // 클론에 그 커밋이 남아 있으면 개발 빌드라 그대로 두고, 사라졌으면(amend·rebase로 바뀜) 낡은 빌드라 최신을 받는다
+        if !failed, status == 404 || (status == 200 && comparison != nil) {
+            UserDefaults.standard.removeObject(forKey: Self.checkFailingKey)
+            UserDefaults.standard.removeObject(forKey: Self.checkFailingKey + ".sent")
+        }
         if status == 404 || (status == 200 && comparison?.status == "diverged") {
             resolveUnknownBuild(comparison)
             return
@@ -268,6 +272,7 @@ final class AppUpdater: ObservableObject {
             // 30분마다 같은 까닭으로 쌓이지 않게 바뀔 때만 남긴다
             if state != .failed(reason) { Diagnostics.record("업데이트", "확인 실패: \(reason)") }
             state = .failed(reason)
+            reportStuckCheck(reason)
             return
         }
         // ahead: 기본 브랜치가 이 빌드보다 앞섬. diverged·behind는 이 빌드에 기본 브랜치에 없는 커밋이 있는 개발 빌드다
@@ -278,6 +283,23 @@ final class AppUpdater: ObservableObject {
             return
         }
         adopt(comparison.commits.map { ($0.sha, $0.commit.message) }, count: comparison.aheadBy)
+    }
+
+    static let checkFailingKey = "updateCheckFailingSince"
+
+    /// 확인이 하루 넘게 내리 실패하면 그 Mac은 업데이트를 못 받는 채라 알린다.
+    /// 한 번의 실패는 GitHub 한도(403)나 잠깐의 망 끊김이라 알리지 않는다. 이어지는 동안 한 번만 보낸다.
+    private func reportStuckCheck(_ reason: String) {
+        let defaults = UserDefaults.standard
+        guard let since = defaults.object(forKey: Self.checkFailingKey) as? Date else {
+            defaults.set(Date(), forKey: Self.checkFailingKey)
+            return
+        }
+        guard Date().timeIntervalSince(since) > 86_400, !defaults.bool(forKey: Self.checkFailingKey + ".sent") else { return }
+        defaults.set(true, forKey: Self.checkFailingKey + ".sent")
+        let stamp = ISO8601DateFormatter().string(from: since)
+        ProblemReporter.screen("업데이트 확인", "하루 넘게 업데이트를 확인하지 못함: \(reason)",
+                               detail: "처음 실패: \(stamp)\n빌드: \(build.map { "\($0.commit.prefix(7)) (\($0.branch))" } ?? "-")")
     }
 
     /// GitHub와 바로 견줄 수 없는 빌드를 클론으로 가린다. git은 메인 스레드 밖에서 돌린다.

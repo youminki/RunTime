@@ -496,7 +496,13 @@ final class WorkLogSync: ObservableObject {
                 // MR을 못 받은 채 커밋만 넣으면 이미 머지된 브랜치가 진행중으로 남아, MR을 받을 때만 커밋도 넣는다
                 commits = Self.localCommits(folder: folder, host: host, since: since, mrs: mrs, errors: &errors)
             } catch {
-                errors.append("GitLab: \(Self.gitLabHint(error.localizedDescription, host: host))")
+                let raw = error.localizedDescription, hint = Self.gitLabHint(raw, host: host)
+                errors.append("GitLab: \(hint)")
+                // 로그인·망·권한으로 가르지 못한 것은 앱이 glab 출력이나 응답 꼴을 모르는 것이라 알린다
+                if hint == raw, !raw.hasPrefix("glab이 없습니다"), !raw.hasPrefix("응답이 느려") {
+                    ProblemReporter.screen("업무 일지 가져오기", "GitLab MR을 받지 못함",
+                                           detail: "GitLab: \(host) · 받는 기간 시작: \(ISO8601DateFormatter().string(from: since))\n오류: \(error)")
+                }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
