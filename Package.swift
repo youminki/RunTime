@@ -11,9 +11,10 @@ let package = Package(
         .target(name: "WorkLogCore"),
         .target(name: "DesignSyncCore"),
         .target(name: "HostsCore"),
+        .target(name: "ReportCore"),
         .executableTarget(
             name: "RunTime",
-            dependencies: ["UsageCore", "GameCore", "SearchCore", "WorkLogCore", "DesignSyncCore", "HostsCore"],
+            dependencies: ["UsageCore", "GameCore", "SearchCore", "WorkLogCore", "DesignSyncCore", "HostsCore", "ReportCore"],
             resources: [.copy("Assets")]
         ),
         .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"]),
@@ -22,5 +23,6 @@ let package = Package(
         .testTarget(name: "WorkLogCoreTests", dependencies: ["WorkLogCore"]),
         .testTarget(name: "DesignSyncCoreTests", dependencies: ["DesignSyncCore"]),
         .testTarget(name: "HostsCoreTests", dependencies: ["HostsCore"]),
+        .testTarget(name: "ReportCoreTests", dependencies: ["ReportCore"]),
     ]
 )

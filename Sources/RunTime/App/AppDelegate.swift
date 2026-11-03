@@ -93,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return mainWindow?.isVisible == true ? ["main:" + navigator.page.rawValue] : []
         }
         AppUpdater.shared.start()
+        CrashReports.sendNew()
         // 자동 업데이트는 다른 앱을 쓰는 동안 일어나므로, 다시 연 창이 그 앱의 초점을 빼앗지 않게 뒤에 둔다
         reopening = true
         for name in AppUpdater.shared.takeWindowsToReopen() {

@@ -275,6 +275,9 @@ enum TeamsOpener {
                 .appendingPathComponent((Bundle(url: browser)?.executableURL?.lastPathComponent) ?? "Google Chrome")
             // 앱 창(PWA)을 그 링크로 연다. 이미 떠 있으면 그 창에서 채팅만 바뀐다
             process.arguments = ["--app-id=\(pwa.id)", "--app-launch-url-for-shortcuts-menu-item=\(link)"]
+            // 브라우저가 이 앱보다 오래 살며 출력을 쏟아서, 앱의 출력 기록 파일을 물려받지 않게 한다
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
             if (try? process.run()) != nil { return pwa.bundle }
         }
         if let app = TeamsLink.appURL(link), let handler = NSWorkspace.shared.urlForApplication(toOpen: app) {

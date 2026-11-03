@@ -1,7 +1,7 @@
 import DesignSyncCore
 import Foundation
 
-/// 업데이트가 실패하거나 멈추거나 화면에서 일이 실패하면 만든 사람에게 알린다. 순위 서버의 `/v1/reports`로 보내고, 서버가 메일로 넘긴다.
+/// 업데이트가 실패하거나 멈추거나 화면에서 일이 실패하거나 앱이 죽으면 만든 사람에게 알린다. 순위 서버의 `/v1/reports`로 보내고, 서버가 메일로 넘긴다.
 /// 무작위 설치 ID, 앱 버전, macOS 버전, 까닭, 사용자 폴더·이름을 가린 기록 끝부분만 보낸다. 설정 > 일반 > 문제 기록에서 끈다.
 /// 같은 까닭은 서버가 하루 한 번만 메일로 보낸다. 메인 스레드에서만 쓴다.
 enum ProblemReporter {
@@ -10,6 +10,7 @@ enum ProblemReporter {
         case timeout = "update-timeout"
         case unknown = "update-unknown"
         case screen = "screen-error"
+        case crash = "app-crash"
     }
 
     static let key = "reportProblems", installKey = "reportInstallID"
@@ -36,16 +37,18 @@ enum ProblemReporter {
 
     /// 서버로 보내는 본문 그대로. `--report-preview`가 찍어 무엇이 나가는지 보게 한다.
     /// 커밋은 40자 해시로 보내 메일에서 그 빌드의 소스 줄로 바로 간다.
-    static func payload(_ kind: Kind, _ message: String, screen: String = "", source: String = "", detail: String = "") -> [String: String] {
+    /// 충돌은 죽은 빌드가 지금 빌드와 다를 수 있어 `app`·`commit`·`log`를 따로 받는다.
+    static func payload(_ kind: Kind, _ message: String, screen: String = "", source: String = "", detail: String = "",
+                        app: String? = nil, commit: String? = nil, log: String? = nil) -> [String: String] {
         let info = Bundle.main.infoDictionary ?? [:]
         return [
             "install": installID,
             "kind": kind.rawValue,
             "message": redact(message),
-            "app": info["CFBundleShortVersionString"] as? String ?? "",
-            "commit": info["RunTimeCommitSHA"] as? String ?? info["RunTimeCommit"] as? String ?? "",
+            "app": app ?? info["CFBundleShortVersionString"] as? String ?? "",
+            "commit": commit ?? info["RunTimeCommitSHA"] as? String ?? info["RunTimeCommit"] as? String ?? "",
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
-            "log": redact(kind == .screen ? recentEvents() : recentLog()),
+            "log": newest(redact(log ?? (kind == .screen ? recentEvents() : recentLog())), limit: 3900),
             "screen": screen,
             "source": source,
             "detail": redact(detail),
@@ -87,11 +90,13 @@ enum ProblemReporter {
         return "\(path):\(line)" + (name.isEmpty ? "" : " \(name)")
     }
 
-    static func send(_ kind: Kind, _ message: String, screen: String = "", source: String = "", detail: String = "") {
+    /// `done`은 메인 스레드에서 HTTP 상태(연결 실패면 0)로 부른다. 보내지 않기로 했으면 부르지 않는다.
+    static func send(_ kind: Kind, _ message: String, screen: String = "", source: String = "", detail: String = "",
+                     app: String? = nil, commit: String? = nil, log: String? = nil, done: ((Int) -> Void)? = nil) {
         // swift run처럼 install.sh를 거치지 않은 실행과 화면 점검은 보내지 않는다
         guard isOn, Bundle.main.infoDictionary?["RunTimeCommitSHA"] != nil, !CommandLine.arguments.contains("--ui-shots"),
               let base = Leaderboard.shared.baseURL, let url = URL(string: "v1/reports", relativeTo: base) else { return }
-        let body = payload(kind, message, screen: screen, source: source, detail: detail)
+        let body = payload(kind, message, screen: screen, source: source, detail: detail, app: app, commit: commit, log: log)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -100,6 +105,7 @@ enum ProblemReporter {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             DispatchQueue.main.async {
                 Diagnostics.record("문제 보고", status == 200 ? "만든 사람에게 보냄: \(kind.rawValue)" : "보내지 못함 (\(error.map { _ in "연결 실패" } ?? "HTTP \(status)"))")
+                done?(status)
             }
         }.resume()
     }
@@ -127,6 +133,13 @@ enum ProblemReporter {
             }
             .suffix(40)
         return (["[최근 기록]"] + events + ["", "[업데이트 로그 끝]"] + update).joined(separator: "\n")
+    }
+
+    /// 서버는 기록을 앞에서부터 4000자로 자른다. 까닭은 끝 쪽에 있어, 첫 줄(머리)을 두고 그 뒤 오래된 줄부터 덜어 맞춘다.
+    static func newest(_ text: String, limit: Int) -> String {
+        var lines = text.components(separatedBy: "\n")
+        while lines.joined(separator: "\n").count > limit, lines.count > 2 { lines.remove(at: 1) }
+        return String(lines.joined(separator: "\n").prefix(limit))
     }
 
     /// 주소에 박힌 계정·토큰과 흔한 토큰 꼴. git 오류 줄에 `https://이름:토큰@github.com/...`이 그대로 찍힌다.

@@ -77,3 +77,17 @@ test("same reason on different screens is mailed apart", async () => {
   const b = cleanReport({ install, kind: "screen-error", screen: "디자인", message: "HTTP 500" });
   assert.notEqual(await mailKey(a, now), await mailKey(b, now));
 });
+
+test("crash report keeps the call stack and names the crashed build", () => {
+  const report = cleanReport({
+    install, kind: "app-crash", message: "EXC_BAD_ACCESS (SIGSEGV) · AppDelegate.layoutSprite()", app: "1.4.10", commit: sha,
+    detail: "죽은 스레드 (com.apple.main-thread)\n3 ▶ RunTime AppDelegate.layoutSprite() + 120",
+    log: "[죽기 전 기록]\n2026-11-03 20:26:43 [디자인] 받기 시작",
+  });
+  assert.equal(report.kind, "app-crash");
+  const { subject, text } = mailFor(report);
+  assert.equal(subject, "[RunTime] 앱 충돌 · EXC_BAD_ACCESS (SIGSEGV) · AppDelegate.layoutSprite() (1.4.10)");
+  assert.match(text, /상황\n죽은 스레드 \(com.apple.main-thread\)\n3 ▶ RunTime AppDelegate.layoutSprite\(\) \+ 120/);
+  assert.match(text, new RegExp(`git checkout ${sha}`));
+  assert.match(text, /\[죽기 전 기록\]/);
+});
