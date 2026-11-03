@@ -149,7 +149,7 @@ struct CalendarPageView: View {
         // 날짜 줄(약 26pt)을 뺀 높이에 한 줄 16pt씩 들어간다. 넘치면 마지막 줄을 "N개 더"로 쓴다
         let capacity = max(0, Int((height - 30) / 16))
         let shown = entries.count > capacity ? max(0, capacity - 1) : entries.count
-        return VStack(alignment: .leading, spacing: 2) {
+        return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 4) {
                 if let holiday {
                     Text(holiday).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Palette.red).lineLimit(1)
@@ -165,16 +165,17 @@ struct CalendarPageView: View {
             ForEach(entries.prefix(shown)) { entry in
                 HStack(spacing: 5) {
                     Circle().fill(WL.projectColor(entry.project)).frame(width: 6, height: 6)
+                    // 줄 높이 15에 12pt: 12.5pt는 한글 아래가 다음 줄에 닿는다
                     Text(WorkLogFormat.breadcrumb(entry.title).leaf)
-                        .font(.system(size: 12.5))
+                        .font(.system(size: 12))
                         .foregroundStyle(entry.status.isFinished ? WL.text : WL.accent)
                         .lineLimit(1)
                 }
-                .frame(height: 14)
+                .frame(height: 15)
             }
             if entries.count > shown {
                 Text("+\(entries.count - shown)개 더").font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.muted)
-                    .frame(height: 14)
+                    .frame(height: 15)
             }
             Spacer(minLength: 0)
         }

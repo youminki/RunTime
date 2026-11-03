@@ -54,8 +54,10 @@ struct IssueBoard: View {
     private func header(_ all: [IssueInfo]) -> some View {
         let today = WorkDay.today()
         let soon = WorkDay.adding(3, to: today)
-        let overdue = all.filter { ($0.dueDate ?? "9999") < today }.count
-        let dueSoon = all.filter { ($0.dueDate ?? "9999") >= today && ($0.dueDate ?? "9999") <= soon }.count
+        // 진척률 100%이거나 닫힌 일감은 기한이 지나도 남은 일이 아니라 세지 않는다
+        let open = all.filter { $0.isOpen(closed: sync.closedStatusIDs) }
+        let overdue = open.filter { ($0.dueDate ?? "9999") < today }.count
+        let dueSoon = open.filter { ($0.dueDate ?? "9999") >= today && ($0.dueDate ?? "9999") <= soon }.count
         let statuses = Dictionary(grouping: all, by: \.status).map { ($0.key, $0.value.count) }.sorted { $0.1 > $1.1 }
         return PageHeading("내 일감") {
             Tally(title: "열린 일감", value: all.count)
@@ -134,7 +136,7 @@ struct IssueBoard: View {
         switch filter {
         case .all: return true
         case .working: return info.doneRatio > 0 || logged.contains(info.id)
-        case .due: return (info.dueDate ?? "9999") <= WorkDay.adding(3, to: WorkDay.today())
+        case .due: return (info.dueDate ?? "9999") <= WorkDay.adding(3, to: WorkDay.today()) && info.isOpen(closed: sync.closedStatusIDs)
         case .logged: return logged.contains(info.id)
         case .stabilization: return info.isStabilization
         }
@@ -368,7 +370,9 @@ private struct IssueRow: View {
     private var period: some View {
         let today = WorkDay.today()
         if let due = info.dueDate {
-            let color: Color = due < today ? Palette.red : due <= WorkDay.adding(3, to: today) ? WL.waiting : WL.faint
+            // 끝난 일감은 기한이 지났어도 알릴 것이 없어 옅게 둔다
+            let color: Color = !info.isOpen(closed: sync.closedStatusIDs) ? WL.faint
+                : due < today ? Palette.red : due <= WorkDay.adding(3, to: today) ? WL.waiting : WL.faint
             HStack(spacing: 0) {
                 if let start = info.startDate, !narrow { Text(WorkReport.shortDate(start) + " ~ ") }
                 Text(WorkLogFormat.shortDay(due)).foregroundStyle(color)

@@ -303,8 +303,13 @@ private let sample = """
         #expect(WorkDay.month(of: "2026-10-20") == "2026-10-01"..."2026-10-31")
         let days = WorkDay.calendarDays(of: "2026-10-20")
         #expect(days.first == "2026-09-28")   // 10월 1일(목)이 든 주의 월요일
-        #expect(days.last == "2026-11-01")
-        #expect(days.count % 7 == 0)
+        #expect(days.last == "2026-11-08")    // 5주인 달도 6주로 채운다
+        #expect(days.count == 42)
+        // 6주인 달, 2월(4주에 맞는 2027-02)도 42일
+        #expect(WorkDay.calendarDays(of: "2026-11-03").count == 42)
+        #expect(WorkDay.calendarDays(of: "2026-11-03").last == "2026-12-06")
+        #expect(WorkDay.calendarDays(of: "2027-02-10").first == "2027-02-01")
+        #expect(WorkDay.calendarDays(of: "2027-02-10").count == 42)
         let log = WorkLog(entries: [WorkEntry(day: "2026-10-02", project: "A", title: "a")])
         #expect(WorkReport.monthly(log.entries, in: log, month: WorkDay.month(of: "2026-10-20")) == "[월간 진행 사항] 2026년 10월\n1. A\n- a (완료)")
     }

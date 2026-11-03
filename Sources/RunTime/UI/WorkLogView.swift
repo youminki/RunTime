@@ -267,9 +267,13 @@ struct WorkLogView: View {
             if entries.isEmpty {
                 Text("기록 없음")
             } else {
-                Tally(title: "완료", value: entries.filter(\.status.isFinished).count, tint: WL.done)
-                Tally(title: "진행", value: entries.filter { !$0.status.isFinished && $0.status != .ongoing }.count, tint: WL.accent)
-                Tally(title: "상시", value: entries.filter { $0.status == .ongoing }.count, tint: WL.quiet)
+                // 없는 상태는 0을 늘어놓지 않고 뺀다
+                let done = entries.filter(\.status.isFinished).count
+                let open = entries.filter { !$0.status.isFinished && $0.status != .ongoing }.count
+                let ongoing = entries.filter { $0.status == .ongoing }.count
+                if done > 0 { Tally(title: "완료", value: done, tint: WL.done) }
+                if open > 0 { Tally(title: "진행", value: open, tint: WL.accent) }
+                if ongoing > 0 { Tally(title: "상시", value: ongoing, tint: WL.quiet) }
             }
         } accessory: {
             if pending > 0 {
@@ -490,8 +494,10 @@ struct WorkLogView: View {
         let merged = WorkReport.merged(entries)
         PageHeading(page.mode == .week ? WorkLogFormat.weekTitle(page.day) : WorkLogFormat.monthTitle(page.day)) {
             Tally(title: "한 일", value: merged.count)
-            Tally(title: "완료", value: merged.filter(\.status.isFinished).count, tint: WL.done)
-            Tally(title: "진행", value: merged.filter { !$0.status.isFinished && $0.status != .ongoing }.count, tint: WL.accent)
+            let done = merged.filter(\.status.isFinished).count
+            if done > 0 { Tally(title: "완료", value: done, tint: WL.done) }
+            let open = merged.filter { !$0.status.isFinished && $0.status != .ongoing }.count
+            if open > 0 { Tally(title: "진행", value: open, tint: WL.accent) }
             Text("\(Set(entries.map(\.day)).count)일 기록").monospacedDigit()
         } accessory: {
             let pending = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count

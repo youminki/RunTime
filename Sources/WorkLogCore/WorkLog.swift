@@ -527,14 +527,12 @@ public enum WorkDay {
         return start...self.key(interval.end.addingTimeInterval(-1))
     }
 
-    /// 달력에 그릴 날들. 그 달 1일이 든 주의 월요일부터 말일이 든 주의 일요일까지 (4~6주).
+    /// 달력에 그릴 날들. 그 달 1일이 든 주의 월요일부터 늘 6주(42일).
+    /// 달마다 4~6주로 바뀌면 칸 높이와 달력 아래 목록 자리가 달을 넘길 때마다 달라져, macOS 달력처럼 6주로 고정한다.
     public static func calendarDays(of key: String) -> [String] {
-        let month = month(of: key)
-        let first = week(of: month.lowerBound).lowerBound
-        let last = week(of: month.upperBound).upperBound
+        var day = week(of: month(of: key).lowerBound).lowerBound
         var days: [String] = []
-        var day = first
-        while day <= last && days.count < 42 {
+        while days.count < 42 {
             days.append(day)
             day = adding(1, to: day)
         }

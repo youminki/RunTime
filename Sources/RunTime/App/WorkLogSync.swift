@@ -37,10 +37,6 @@ final class WorkLogSettings: ObservableObject {
     @Published var doneFirst: Bool { didSet { defaults.set(doneFirst, forKey: "workLog.doneFirst") } }
     @Published var weeklyPlan: Bool { didSet { defaults.set(weeklyPlan, forKey: "workLog.weeklyPlan") } }
     @Published var dailyHeader: Bool { didSet { defaults.set(dailyHeader, forKey: "workLogReportHeader") } }
-    /// 보고서를 레드마인 일감 이름으로 쓰고 QA 건은 `QA 수정사항 N건 반영`으로 모은다.
-    @Published var reportByIssue: Bool { didSet { defaults.set(reportByIssue, forKey: "workLog.reportByIssue") } }
-    /// 같은 메뉴 경로 줄을 경로 한 줄 아래로 묶어 쓴다.
-    @Published var reportGrouped: Bool { didSet { defaults.set(reportGrouped, forKey: "workLog.reportGrouped") } }
     /// 사내 보고처럼 짧게: 메뉴 경로·비슷한 커밋을 한 줄로, 되돌린 일과 곁가지 브랜치는 뺀다. 켜면 묶어 쓰기보다 앞선다.
     @Published var reportCompact: Bool { didSet { defaults.set(reportCompact, forKey: "workLog.reportCompact") } }
     /// ⌃⌥L로 어디서든 한 줄 적기.
@@ -80,8 +76,6 @@ final class WorkLogSettings: ObservableObject {
         doneFirst = defaults.object(forKey: "workLog.doneFirst") as? Bool ?? true
         weeklyPlan = defaults.object(forKey: "workLog.weeklyPlan") as? Bool ?? false
         dailyHeader = defaults.object(forKey: "workLogReportHeader") as? Bool ?? false
-        reportByIssue = defaults.object(forKey: "workLog.reportByIssue") as? Bool ?? true
-        reportGrouped = defaults.object(forKey: "workLog.reportGrouped") as? Bool ?? true
         reportCompact = defaults.object(forKey: "workLog.reportCompact") as? Bool ?? true
         quickAddEnabled = defaults.object(forKey: "workLog.quickAdd") as? Bool ?? true
         syncIssueFields = defaults.object(forKey: "workLog.syncIssueFields") as? Bool ?? true
@@ -414,6 +408,9 @@ final class WorkLogSync: ObservableObject {
         guard let data = UserDefaults.standard.data(forKey: "workLog.statuses") else { return [] }
         return (try? JSONDecoder().decode([RedmineAPI.Status].self, from: data)) ?? []
     }()
+
+    /// 레드마인에서 닫힘으로 표시된 상태 ID (`IssueInfo.isOpen`).
+    var closedStatusIDs: Set<Int> { Set(statuses.filter(\.isClosed).map(\.id)) }
     @Published private(set) var postingTeams = false
 
     private let settings = WorkLogSettings.shared

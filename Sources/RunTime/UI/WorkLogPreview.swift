@@ -102,7 +102,7 @@ struct WorkLogPreview: View {
 
     /// 일지에서 만든 진행 예정 사항 (고쳐 쓰기 전).
     private var generatedPlan: String {
-        WorkReport.plan(day: page.day, in: store.log, closed: Set(sync.statuses.filter(\.isClosed).map(\.id)))
+        WorkReport.plan(day: page.day, in: store.log, closed: sync.closedStatusIDs)
     }
 
     /// 하루 보고서 머리줄 `[10/27 진행 사항]`. 팀즈에는 늘 이 줄을 제목으로 올린다.
@@ -111,7 +111,6 @@ struct WorkLogPreview: View {
     /// 보고서 상태 괄호에 쓸 일감별 레드마인 진척률. 아직 보내지 않은 일감은 레드마인 탭이 보낼 값(직접 고른 진척률,
     /// 진행중 기본 진척률 포함)이고, 탭에서 빼 둔 일감은 레드마인에 가지 않아 일지 상태로 둔다.
     private var reportRatios: [Int: Int] {
-        guard settings.reportByIssue else { return [:] }
         return WorkReport.reportRatios(scopeEntries, in: store.log, pending: pendingRatios, skipped: page.redmineSkipped)
     }
 
@@ -126,13 +125,13 @@ struct WorkLogPreview: View {
 
     /// 일지에서 만든 진행 사항 (다듬거나 고쳐 쓰기 전).
     private var generatedProgress: String {
-        WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: settings.reportByIssue,
-                         grouped: settings.reportGrouped, compact: settings.reportCompact, ratios: reportRatios)
+        WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: true,
+                         compact: settings.reportCompact, ratios: reportRatios)
     }
 
     /// Claude에 넘길 진행 사항. 묶어 쓴 `  · ` 줄은 보고서 꼴 검사에 걸려 늘 펴서 넘긴다.
     private var polishSource: String {
-        WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: settings.reportByIssue,
+        WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: true,
                          grouped: false, compact: settings.reportCompact, ratios: reportRatios)
     }
 
@@ -167,7 +166,6 @@ struct WorkLogPreview: View {
     }
 
     private var reportText: String {
-        let grouped = settings.reportGrouped
         switch page.mode {
         case .day, .issues:
             let body = reportBody
@@ -175,14 +173,14 @@ struct WorkLogPreview: View {
             return body.isEmpty ? body : dayHeader + "\n" + body
         case .week:
             return WorkReport.weekly(scopeEntries, in: store.log, week: WorkDay.week(of: page.day),
-                                     doneFirst: true, nextWeekPlan: settings.weeklyPlan, byIssue: settings.reportByIssue,
-                                     grouped: grouped, compact: settings.reportCompact, ratios: reportRatios)
+                                     doneFirst: true, nextWeekPlan: settings.weeklyPlan, byIssue: true,
+                                     compact: settings.reportCompact, ratios: reportRatios)
         case .month:
-            return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: settings.reportByIssue,
-                                      grouped: grouped, compact: settings.reportCompact, ratios: reportRatios)
+            return WorkReport.monthly(scopeEntries, in: store.log, month: WorkDay.month(of: page.day), byIssue: true,
+                                      compact: settings.reportCompact, ratios: reportRatios)
         case .project:
             return WorkReport.daily(WorkReport.merged(scopeEntries), in: store.log, doneFirst: true,
-                                    byIssue: settings.reportByIssue, grouped: grouped, compact: settings.reportCompact,
+                                    byIssue: true, compact: settings.reportCompact,
                                     ratios: reportRatios)
         }
     }
@@ -191,12 +189,8 @@ struct WorkLogPreview: View {
 
     private var report: some View {
         let text = reportText
+        // 보고서 이름은 바로 위 탭에 있고 머리줄은 글 첫 줄에 있어, 여기서는 범위만 적는다
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(reportTitle).font(WL.heading)
-                Spacer()
-                Text(rangeText).font(WL.caption).foregroundStyle(.secondary).monospacedDigit()
-            }
             if page.mode == .day || page.mode == .issues {
                 // 출근 때는 진행 예정, 퇴근 때는 진행 사항을 올린다
                 HStack(spacing: 8) {
@@ -205,8 +199,12 @@ struct WorkLogPreview: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    Text(dayHeader).font(WL.caption).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
+                    .fixedSize()
+                    Spacer(minLength: 0)
+                    Text(rangeText).font(WL.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                 }
+            } else if !rangeText.isEmpty {
+                Text(rangeText).font(WL.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             if isPlan {
                 planEditor
@@ -224,15 +222,9 @@ struct WorkLogPreview: View {
                 unreflectedNote
             }
             VStack(alignment: .leading, spacing: 6) {
-                Toggle("레드마인 일감 이름으로, QA는 건수로 모아 쓰기", isOn: $settings.reportByIssue)
-                    .tip("일감 줄은 `데이터 수집 > 공유 파일 관리 API 연동 (100%)`처럼, QA 건은 `QA 수정사항 N건 반영`으로 적습니다")
+                // 일감 이름·QA·안정화 건수와 레드마인 진척률로 쓰는 것은 늘 켜 둔다 (끄면 보고서와 레드마인이 어긋난다)
                 Toggle("간결하게 쓰기", isOn: $settings.reportCompact)
                     .tip("`데이터 탐색 > SQL 편집기 API 연동 (100%)`처럼 메뉴 끝 이름을 줄여 한 줄로 모으고, 같은 일을 나눈 커밋은 한 줄로 모으고, 되돌린 일과 끝난 일과 겹치는 진행 중 브랜치는 뺍니다")
-                // 간결하게 쓰면 메뉴를 한 줄로 모아 묶어 쓸 것이 없다
-                if !settings.reportCompact {
-                    Toggle("같은 메뉴는 묶어 쓰기", isOn: $settings.reportGrouped)
-                        .tip("`데이터 수집 > 수집 관리`처럼 앞 경로가 같은 줄이 둘 이상이면 경로를 한 번만 적고 그 아래 `· 끝 이름 (상태)`로 늘어놓습니다")
-                }
                 if page.mode == .week {
                     Toggle("끝나지 않은 일을 [차주 계획]으로", isOn: $settings.weeklyPlan)
                 }
@@ -329,28 +321,21 @@ struct WorkLogPreview: View {
         }
     }
 
-    /// 레드마인에 아직 반영되지 않은 것을 알린다. 보고서는 보낸 뒤의 모습으로 적으니, 올리기 전에 레드마인부터 보낼 수 있게 한다.
+    /// 보고서 상태를 어디서 가져왔는지 한 줄로 알린다. 안 보낸 건수와 보내기 단추는 가운데 머리의 "레드마인 N건 보내기"와
+    /// 탭 이름이 이미 보여 여기서는 되풀이하지 않는다.
     @ViewBuilder private var unreflectedNote: some View {
         let gap = WorkReport.unreflected(scopeEntries, skipped: page.redmineSkipped)
         let chosen = WorkReport.ratioSources(scopeEntries, in: store.log, pending: pendingRatios, skipped: page.redmineSkipped).fromPending
         let withRatio = gap.unsent.filter(chosen.contains).count
-        let lines = [
-            settings.redmineReady && !gap.unsent.isEmpty
-                ? "레드마인에 안 보낸 일감 \(gap.unsent.count)건"
-                  + (withRatio == 0 ? "" : withRatio == gap.unsent.count ? " · 보낼 진척률로 적음" : " · \(withRatio)건은 보낼 진척률로 적음") : nil,
-            settings.redmineReady && !gap.skipped.isEmpty ? "레드마인 탭에서 뺀 일감 \(gap.skipped.count)건 · 보낸 값이나 일지 상태로 적음" : nil,
-            gap.unlinked > 0 ? "일감 없는 줄 \(gap.unlinked)개 · 일지 상태로 적음" : nil,
+        let parts = [
+            settings.redmineReady && withRatio > 0 ? "안 보낸 \(withRatio)건은 보낼 진척률로" : nil,
+            settings.redmineReady && !gap.skipped.isEmpty ? "뺀 \(gap.skipped.count)건은 보낸 값이나 일지 상태로" : nil,
+            gap.unlinked > 0 ? "일감 없는 \(gap.unlinked)줄은 일지 상태로" : nil,
         ].compactMap { $0 }
-        if settings.reportByIssue, !lines.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "info.circle").font(WL.caption).foregroundStyle(WL.quiet)
-                Text(lines.joined(separator: "\n")).font(WL.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                if settings.redmineReady && !gap.unsent.isEmpty {
-                    Button("레드마인 탭") { page.preview = .redmine }.buttonStyle(TextLinkButtonStyle())
-                }
-            }
+        if !parts.isEmpty {
+            Label(parts.joined(separator: ", ") + " 적음", systemImage: "info.circle")
+                .font(WL.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
