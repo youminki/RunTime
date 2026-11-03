@@ -62,8 +62,9 @@ enum ReportPolisher {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: claude)
-        // 도구·MCP·설정 파일(훅)을 끄고 이 지시만으로 한 번 답하게 한다
-        process.arguments = ["-p", "--model", "sonnet", "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+        // 도구·MCP·설정 파일(훅)을 끄고 이 지시만으로 한 번 답하게 한다. 줄을 묶고 줄이는 일이라 가벼운 모델로 충분하고
+        // (같은 보고서로 견줘 결과가 같았다) 사용량은 sonnet의 15분의 1쯤이다
+        process.arguments = ["-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--setting-sources", "",
                              "--no-session-persistence", "--output-format", "text", "--system-prompt", instructions]
         process.currentDirectoryURL = folder
         var environment = ProcessInfo.processInfo.environment

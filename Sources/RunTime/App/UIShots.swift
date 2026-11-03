@@ -308,6 +308,14 @@ enum UIShots {
                 page.dayReport = .progress
                 return page
             }()))),
+            // Claude로 다듬은 뒤 고쳐 쓴 초안 (다듬을 때와 일지가 달라 낡았다는 안내까지)
+            ("worklog-progress-draft", .aqua, 640, AnyView(WorkLogView(store: .shared, page: {
+                let page = workLogPage(.day)
+                page.dayReport = .progress
+                let draft = "1. UxHub\n- 배포 환경 설정 변경 (완료)\n- 대시보드 > 대시보드 관리 마크업 (100%)"
+                page.progressEdits[page.day] = (draft, "", draft + " ")
+                return page
+            }()))),
             ("worklog-redmine", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
             // 카드 아래 MR 화면 첨부 미리보기까지 보이게 길게 찍는다
             ("worklog-redmine-tall", .darkAqua, 1400, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, preview: .redmine)))),
@@ -346,6 +354,11 @@ enum UIShots {
                 // 좁은 창에서 일감 찾기 칸의 글이 잘리지 않는지 본다
                 let page = workLogPage(.issues)
                 page.issueQuery = "목록 화면"
+                return page
+            }()))),
+            ("worklog-issues-stabilization", .aqua, 760, AnyView(WorkLogView(store: .shared, page: {
+                let page = workLogPage(.issues)
+                page.issueFilter = .stabilization
                 return page
             }()))),
             ("worklog-issues-dark", .darkAqua, 760, AnyView(WorkLogView(store: .shared, page: workLogPage(.issues)))),

@@ -294,7 +294,7 @@ struct WorkLogPreview: View {
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
             HStack(spacing: 10) {
-                Text(stale ? "다듬은 뒤 일지·레드마인 값이 바뀌었습니다. 다시 만들어 다듬으세요" : "다듬은 진행 사항 · 올리기 전에 확인하고 바로 고쳐 쓸 수 있습니다")
+                Text(stale ? "다듬은 뒤 일지가 바뀌었습니다" : "다듬은 초안 · 올리기 전에 확인하세요")
                     .font(WL.caption).foregroundStyle(stale ? WL.waiting : .secondary)
                 Spacer()
                 Button("일지로 다시 만들기") { page.progressEdits[page.day] = nil }.buttonStyle(TextLinkButtonStyle())
@@ -324,7 +324,7 @@ struct WorkLogPreview: View {
             }
             .buttonStyle(TextLinkButtonStyle())
             .disabled(page.polishingDay != nil)
-            .tip("내 Claude Code로 같은 주제의 줄을 묶고 짧은 명사형으로 고칩니다. 메뉴 경로·QA·안정화 줄과 상태는 그대로 두고, 결과는 올리기 전에 고쳐 쓸 수 있습니다 (10초 안팎)")
+            .tip("내 Claude Code로 같은 주제의 줄을 묶고 짧은 명사형으로 고칩니다. 메뉴 경로·QA·안정화 줄과 상태는 그대로 두고, 결과는 올리기 전에 고쳐 쓸 수 있습니다. 내 Claude 사용량을 조금(haiku로 한 번에 2~3천 토큰) 씁니다")
             Spacer()
         }
     }
@@ -336,10 +336,10 @@ struct WorkLogPreview: View {
         let withRatio = gap.unsent.filter(chosen.contains).count
         let lines = [
             settings.redmineReady && !gap.unsent.isEmpty
-                ? "레드마인에 아직 보내지 않은 일감 \(gap.unsent.count)건이 있습니다"
-                  + (withRatio > 0 ? " (\(withRatio)건은 보낼 진척률로 적음)" : "") : nil,
-            settings.redmineReady && !gap.skipped.isEmpty ? "레드마인 탭에서 뺀 일감 \(gap.skipped.count)건은 보낸 값이나 일지 상태로 적었습니다" : nil,
-            gap.unlinked > 0 ? "일감 없는 줄 \(gap.unlinked)개는 일지 상태로 적었습니다" : nil,
+                ? "레드마인에 안 보낸 일감 \(gap.unsent.count)건"
+                  + (withRatio == 0 ? "" : withRatio == gap.unsent.count ? " · 보낼 진척률로 적음" : " · \(withRatio)건은 보낼 진척률로 적음") : nil,
+            settings.redmineReady && !gap.skipped.isEmpty ? "레드마인 탭에서 뺀 일감 \(gap.skipped.count)건 · 보낸 값이나 일지 상태로 적음" : nil,
+            gap.unlinked > 0 ? "일감 없는 줄 \(gap.unlinked)개 · 일지 상태로 적음" : nil,
         ].compactMap { $0 }
         if settings.reportByIssue, !lines.isEmpty {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
