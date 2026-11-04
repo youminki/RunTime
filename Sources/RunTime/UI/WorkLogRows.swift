@@ -66,7 +66,7 @@ struct EntryRow: View {
             .frame(maxWidth: .infinity)
             .tip(editing ? "" : entry.title)
             IssueSlot(issue: entry.issue, posted: entry.issue == nil ? nil : !entry.needsRedmine, reserve: reservesIssue,
-                      showsSource: true, source: entry.source)
+                      showsSource: true, source: entry.source, sourceShown: hover.on)
             StatusText(status: entry.status)
             Button { page.editing = entry.id } label: {
                 // 댓글이 있는 줄이 많아 늘 진하면 줄마다 눈에 걸려, 올렸을 때만 진하게 한다

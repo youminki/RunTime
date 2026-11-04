@@ -36,7 +36,7 @@ enum WL {
     static let accent = dynamic(light: 0x2383E2, dark: 0x529CCA)
     static let done = dynamic(light: 0x448361, dark: 0x4DAB9A)
     static let waiting = dynamic(light: 0xD9730D, dark: 0xFFA344)
-    static let quiet = dynamic(light: 0x9B9A97, dark: 0x8C8C8C)
+    static let quiet = dynamic(light: 0x9B9A97, dark: 0x9C9C9C)
     static let hover = dynamic(light: 0x37352F, dark: 0xFFFFFF, alpha: 0.055)
     static let selected = dynamic(light: 0x2383E2, dark: 0x529CCA, alpha: 0.14)
 
@@ -198,11 +198,13 @@ struct IssueSlot: View {
     /// 하루 보기 줄처럼 출처 표시를 둘 줄인지와 그 출처. 출처는 따로 칸을 두면 좁은 창에서 내용이 그만큼 꺾여 번호 앞에 작게 붙인다.
     var showsSource = false
     var source: String? = nil
+    /// 줄마다 반복되면 눈에 걸려 올렸을 때만 보인다.
+    var sourceShown = true
 
     var body: some View {
         HStack(spacing: 5) {
             // 출처 자리는 늘 같은 너비로 두어 출처 아이콘이 번호 자리로 밀리지 않게 한다
-            if showsSource { Group { if let source { SourceMark(source: source) } }.frame(width: 12) }
+            if showsSource { Group { if let source { SourceMark(source: source) } }.frame(width: 12).opacity(sourceShown ? 1 : 0) }
             if issue != nil || reserve {
                 Group { if let issue { IssueLabel(issue: issue, posted: posted) } else { Color.clear } }
                     .frame(width: 72, height: 16, alignment: .trailing)

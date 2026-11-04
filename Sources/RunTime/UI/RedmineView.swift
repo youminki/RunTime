@@ -799,6 +799,10 @@ struct RedmineIssueSheet: View {
                     Button { store.selected = parent.id } label: { Text(verbatim: "상위 #\(parent.id)").font(WL.meta) }
                         .buttonStyle(TextLinkButtonStyle())
                 }
+                Spacer(minLength: 8)
+                if state.subjectDrafts[issue.id] == nil {
+                    Button("제목 고치기") { state.subjectDrafts[issue.id] = issue.subject }.buttonStyle(TextLinkButtonStyle())
+                }
             }
             if let path = WorkLogStore.shared.log.issue(issue.id)?.path, !path.isEmpty {
                 Text(path.joined(separator: " › ")).font(WL.meta).foregroundStyle(WL.quiet)
@@ -813,15 +817,8 @@ struct RedmineIssueSheet: View {
                     Button("취소") { state.subjectDrafts[issue.id] = nil }.buttonStyle(NotionButtonStyle())
                 }
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(issue.subject).font(.system(size: 22, weight: .semibold)).textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button {
-                        state.subjectDrafts[issue.id] = issue.subject
-                    } label: { Image(systemName: "pencil") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .tip("제목 고치기")
-                }
+                Text(issue.subject).font(.system(size: 22, weight: .semibold)).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text([issue.author.map { "\($0.name)이(가) 등록" }, issue.createdOn.flatMap(Redmine.date).map { WorkLogFormat.when($0) },
                   issue.updated.map { "마지막 수정 " + WorkLogFormat.when($0) }]
