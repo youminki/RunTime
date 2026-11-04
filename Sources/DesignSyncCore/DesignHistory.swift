@@ -231,6 +231,8 @@ public struct DesignCapture: Sendable {
     public var missing: [String] = []
     /// 처음 가져오는 링크의 후보. 이 후보에서 나온 화면은 새 화면으로 남기지 않고 기준만 세운다.
     public var fresh: Set<String> = []
+    /// 지켜보는 범위를 넓힌 뒤 처음 받았다. 화면과 이력 모두 변경으로 남기지 않고 기준만 세운다.
+    public var baselineOnly = false
     /// 메뉴 하나만 받았다. 다른 메뉴는 이 버전으로 보지 않았으니 파일의 버전·확인 시각은 그대로 두어 다음 프로젝트 가져오기가 건너뛰지 않게 한다.
     public var partial = false
 
@@ -410,7 +412,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
             let watchedPages = Set(file.screens.values.filter { capture.watches($0.menuPath) }.map(\.pageID))
             let allPaths = Set(file.screens.values.map(\.menuPath))
             // 페이지 이름은 `(10/19 수정)`처럼 자주 바뀌어서 내용이 같으면 같은 줄로 본다
-            for entry in entries where known[entry.key]?.text != entry.text {
+            for entry in entries where !capture.baselineOnly && known[entry.key]?.text != entry.text {
                 // 메뉴를 골랐으면 그 화면을 적은 줄, 화면 ID가 없으면 그 화면이 있는 페이지의 줄만
                 let ids = entry.screenIDs
                 let named = entry.menus(in: allPaths)

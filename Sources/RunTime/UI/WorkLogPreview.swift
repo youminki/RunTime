@@ -385,10 +385,11 @@ struct WorkLogPreview: View {
     private static let lastPostKey = "workLog.teamsLastPost"
 
     private func postTeams(to target: TeamsTarget) {
-        let body = reportBody, direct = sync.teamsSendsDirectly(target)
+        let body = reportBody
         sync.postTeams(body, title: postTitle, to: target) { message, failed in
             page.flash(message, seconds: failed ? 8 : 1.8)
-            if direct, !failed { UserDefaults.standard.set(body, forKey: Self.lastPostKey) }
+            // 붙여 넣기만 한 길은 사람이 Enter를 눌러야 나가서 올린 것으로 치지 않는다
+            if target == .chat, !failed, message.hasSuffix("보냈습니다") { UserDefaults.standard.set(body, forKey: Self.lastPostKey) }
             // 팀즈가 앞으로 나오거나 다른 화면으로 옮기면 창 안 안내는 보이지 않는다
             if failed { Notifier.shared.send(title: "팀즈에 올리지 못했습니다", body: message, opens: .workLog) }
         }

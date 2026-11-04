@@ -271,6 +271,8 @@ public final class RunnerGame {
     public private(set) var best: Int
     /// 판이 시작할 때의 최고 점수. 신기록인지 가른다.
     public private(set) var bestAtStart: Int
+    /// 코스를 미리 아는 고스트 판은 최고 점수에 넣지 않는다.
+    public var countsTowardBest = true
     public private(set) var crashedInto: Int?
     /// 이번 판에 쓰는 능력. 판 사이에만 바꾼다.
     public private(set) var abilities: Abilities
@@ -597,7 +599,7 @@ public final class RunnerGame {
         overClock = 0
         crashTime = elapsed
         updateScore()
-        best = max(best, score)
+        if countsTowardBest { best = max(best, score) }
         events.append(.crashed)
     }
 

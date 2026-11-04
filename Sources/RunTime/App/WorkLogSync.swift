@@ -120,7 +120,7 @@ final class WorkLogSettings: ObservableObject {
         guard let link = teamsLink(target) else { return "아직 없음" }
         // 한 번 보낸 채팅은 이름을 기억해 두어 어디로 가는지 보이게 한다
         let name = defaults.string(forKey: "workLog.teamsTitle.\(target.rawValue)").flatMap(TeamsOpener.chatName)
-        return "\(name ?? TeamsLink.kind(link)) · " + (TeamsWeb.shared.everReady ? "팀즈 창 없이 보냄" : "팀즈를 열어 붙여 넣음")
+        return "\(name ?? TeamsLink.kind(link)) · " + (TeamsWeb.shared.everReady && TeamsWeb.canSend(link) ? "팀즈 창 없이 보냄" : "팀즈를 열어 붙여 넣음")
     }
 
     /// 채팅 링크나 웹훅 주소를 알아보고 저장한다. 문제가 있으면 그 이유.

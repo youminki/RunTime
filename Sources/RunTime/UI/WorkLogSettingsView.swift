@@ -395,7 +395,7 @@ struct WorkLogSettingsView: View {
     private func teamsDetail(_ target: TeamsTarget) -> String {
         guard settings.hasTeams(target) else { return "팀즈 채팅 ⋯ > ‘링크 복사’ 한 뒤 붙여 넣으세요. 비워 두면 보고서는 나에게 갑니다." }
         var text = settings.teamsSummary(target)
-
+        if settings.teamsNeedsAnyone.contains(target) { text += " · 웹훅이 거절돼 링크로 보냅니다. 주소를 다시 넣으면 다시 씁니다" }
         return text
     }
 

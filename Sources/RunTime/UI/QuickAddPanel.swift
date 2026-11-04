@@ -91,6 +91,8 @@ final class QuickAddModel: ObservableObject {
         added = nil
         problem = nil
         shown += 1
+        // 쓰던 글이 남아 있으면 고른 프로젝트도 그대로 둔다
+        if !text.isEmpty { return }
         let projects = WorkLogStore.shared.log.visibleProjects
         let last = UserDefaults.standard.string(forKey: "workLog.quickProject") ?? ""
         if projects.contains(last) { project = last; return }

@@ -812,6 +812,8 @@ struct RedmineIssueSheet: View {
 
     private func saveSubject(_ issue: Redmine.Issue) {
         let id = issue.id, text = (state.subjectDrafts[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // 저장 중 Enter를 또 치면 먼저 바꿔 둔 값과 같아져 초안이 지워진다
+        guard !store.isBusy(id) else { return }
         guard !text.isEmpty, text != issue.subject else {
             state.subjectDrafts[id] = nil
             return

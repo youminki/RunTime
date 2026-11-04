@@ -881,7 +881,7 @@ private struct DesignSidebar: View {
                                          : "맡은 메뉴를 고르면 그 메뉴의 변경만 모아 보고 알림도 그것만 옵니다.")
                 }
                 if !page.foldedSections.contains("alerts") {
-                    ForEach(items, id: \.path) { item in alertRow(fileKey: item.fileKey, path: item.path) }
+                    ForEach(items.map { (id: $0.fileKey + "/" + $0.path, fileKey: $0.fileKey, path: $0.path) }, id: \.id) { item in alertRow(fileKey: item.fileKey, path: item.path) }
                 }
             }
         }
@@ -1324,7 +1324,7 @@ private struct DesignSidebar: View {
     /// 숨긴 프로젝트와 메뉴는 접힌 묶음 하나로 모은다. 눈 단추로 다시 보인다.
     @ViewBuilder private var hiddenSection: some View {
         let projects = settings.sources.filter(\.isHidden)
-        let menus = settings.sources.filter { !$0.isHidden }.flatMap { source in source.hiddenMenus.map { (source.fileKey, $0) } }
+        let menus = settings.sources.filter { !$0.isHidden }.flatMap { source in source.hiddenMenus.map { (id: source.fileKey + "/" + $0, fileKey: source.fileKey, path: $0) } }
         let count = projects.count + menus.count
         if count > 0 {
             VStack(alignment: .leading, spacing: 1) {
@@ -1347,7 +1347,7 @@ private struct DesignSidebar: View {
                             sync.setProjectHidden(source.fileKey, hidden: false)
                         }
                     }
-                    ForEach(menus, id: \.1) { fileKey, path in
+                    ForEach(menus, id: \.id) { _, fileKey, path in
                         hiddenRow(path.components(separatedBy: " > ").last ?? path, detail: sync.projectName(fileKey) + " · " + DesignFormat.path(path)) {
                             sync.setMenuHidden(path, hidden: false, in: fileKey)
                         }

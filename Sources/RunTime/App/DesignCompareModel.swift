@@ -163,7 +163,7 @@ final class DesignCompareModel: ObservableObject {
                 var recorded: (snapshot: VersionSnapshot, version: FigmaAPI.FileVersion)?
                 var checkedAt: Date?
                 // 링크한 화면만 지켜보면 기록에 나머지 화면이 없어, 전체 버전과 견주면 모두 삭제로 나온다
-                let wholeFile = sync.source(fileKey)?.scope.isEmpty ?? true
+                let wholeFile = (sync.source(fileKey)?.scope.isEmpty ?? true) && !sync.isWidening(fileKey)
                 let todayRecord = calendar.isDateInToday(to) && wholeFile ? sync.history.files[fileKey] : nil
                 let recordSnapshot = await Task.detached(priority: .userInitiated) {
                     todayRecord.flatMap { VersionSnapshot(record: $0, fileKey: fileKey) }

@@ -638,7 +638,11 @@ final class DesignSync: ObservableObject {
                         if !capture.scoped { capture.menus = Set(current) }
                         capture.rules = rules(for: source.fileKey)
                         // 넓힌 뒤 처음 보는 화면은 새로 생긴 것이 아니라 이제 지켜보기 시작한 것이라 기준만 세운다
-                        if widened.remove(source.fileKey) != nil { capture.fresh = Set(capture.screens.map(\.candidateID)) }
+                        // 넓히기 전에 시작해 링크만 받은 결과로는 소진하지 않는다
+                        if !capture.scoped, widened.remove(source.fileKey) != nil {
+                            capture.fresh = Set(capture.screens.map(\.candidateID))
+                            capture.baselineOnly = true
+                        }
                         let events = history.record(capture, at: Date())
                         found += events
                         counts[source.fileKey] = events.count
@@ -917,6 +921,9 @@ final class DesignSync: ObservableObject {
         }
         if updated != settings.sources[index].scope { settings.sources[index].scope = updated }
     }
+
+    /// 범위를 넓혔지만 아직 전체를 받지 못해 기록에 링크한 화면만 있는 파일인지.
+    func isWidening(_ fileKey: String) -> Bool { widened.contains(fileKey) }
 
     /// 가져오기가 끝난 뒤 알릴 글. 받지 못하고 끝나도 건수는 0이라 오류를 먼저 본다.
     func fetchMessage(_ count: Int, name: String? = nil, fileKey: String? = nil) -> String {

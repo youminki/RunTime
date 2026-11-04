@@ -71,11 +71,6 @@ final class UsageEngine: ObservableObject {
     static private(set) var lastActivity: Date?
     static private(set) var lastTurnEnd: Date?
 
-    /// Claude가 지금 일하는 중인지. 1분 안에 기록이 있고, 그 뒤로 차례가 끝나지 않았다.
-    static var isClaudeWorking: Bool {
-        guard let last = lastActivity, Date().timeIntervalSince(last) < 60 else { return false }
-        return lastTurnEnd.map { last > $0 } ?? true
-    }
     private let store = UsageStore()
     private let meter = BurnRateMeter()
     private let provider = OAuthUsageProvider()

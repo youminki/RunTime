@@ -71,11 +71,12 @@ struct HostsView: View {
     var body: some View {
         SlimScrollView {
             // 수천 줄 hosts에서도 보이는 줄만 그리게 지연 목록으로 둔다 (묶음 머리와 줄을 한 단계로 펼쳐 넣는다)
+            ScrollViewReader { proxy in
             LazyVStack(alignment: .leading, spacing: 0) {
                 heading
                 notices
                 if !issues.isEmpty { issueList }
-                searchField
+                searchField.id("hosts-search")
                 if !store.sections.isEmpty { filterBar }
                 if sections.isEmpty {
                     Callout {
@@ -100,6 +101,15 @@ struct HostsView: View {
             .padding(.bottom, store.dirty ? 80 : 32)
             // 넓은 창에서 목록이 왼쪽에 붙고 오른쪽이 비지 않게 가운데 둔다 (사용량 화면과 같다)
             .frame(maxWidth: .infinity)
+            .background {
+                // 내려 둔 목록에서는 찾기 칸이 화면 밖이라 먼저 올린다
+                Button("") {
+                    proxy.scrollTo("hosts-search", anchor: .top)
+                    DispatchQueue.main.async { searching = true }
+                }
+                .keyboardShortcut("f", modifiers: .command).hidden()
+            }
+            }
         }
         .background(WL.canvas)
         .foregroundStyle(WL.text)
@@ -109,7 +119,6 @@ struct HostsView: View {
         }
         .background {
             // 지연 목록 안에 두면 머리가 화면에서 벗어날 때 함께 사라져 단축키가 먹지 않는다
-            Button("") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
             Button("") { page.sheet = .add(group: nil) }.keyboardShortcut("n", modifiers: .command).disabled(!store.canEdit).hidden()
         }
         .sheet(item: $page.sheet) { sheet in

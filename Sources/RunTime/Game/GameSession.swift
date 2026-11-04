@@ -121,6 +121,7 @@ final class GameSession {
         game.press()
         // 부딪힌 직후라 다시 시작되지 않았으면 끝난 고스트 판 화면을 그대로 둔다
         if wasOver, game.phase == .over { (isRace, ghost) = race }
+        game.countsTowardBest = !isRace
         if wasOver, game.phase == .playing { restarted() }
     }
 
@@ -129,6 +130,7 @@ final class GameSession {
         guard let record, let seed = record.seedValue, game.phase != .playing else { return }
         game.prepare(seed: seed)
         guard game.phase == .ready else { return }   // 부딪힌 직전이라 아직 다시 시작할 수 없음
+        game.countsTowardBest = false
         ghost = GhostRunner(tuning: game.tuning, runnerWidth: Self.runnerWidth, runnerHeight: Self.runnerHeight,
                             seed: seed, inputs: record.inputs, abilities: record.abilities ?? RunnerGame.Abilities())
         if live { game.setAbilities(GameDecor.shared.abilities) }
