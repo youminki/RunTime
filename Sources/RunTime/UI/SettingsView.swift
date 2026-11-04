@@ -295,7 +295,7 @@ struct SettingsView: View {
                 }
             }
 
-            GroupedSection("알림", footer: "한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 사용량 창이 닫혀 있고 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
+            GroupedSection("알림", footer: "한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
                 ToggleRow(title: "한도 임박 알림", icon: "bell.badge.fill", tint: Palette.red, isOn: $settings.limitAlertsEnabled)
                 ToggleRow(title: "세션 초기화 알림", icon: "arrow.clockwise", tint: Palette.green,
                           isOn: $settings.newSessionAlertEnabled)

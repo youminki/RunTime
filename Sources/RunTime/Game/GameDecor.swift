@@ -175,7 +175,7 @@ final class GameDecor: ObservableObject {
     var preview: Set<Cosmetic>?
 
     /// 마우스를 올려 써 보는 물건 하나. 그 갈래만 덮어써서, 써 보는 동안 다른 갈래를 바꿔도 그대로 반영된다.
-    var tryingOn: Cosmetic?
+    @Published var tryingOn: Cosmetic?
 
     private init() {
         equipped = Set((defaults.stringArray(forKey: Key.equipped) ?? []).compactMap(Cosmetic.init(rawValue:)))

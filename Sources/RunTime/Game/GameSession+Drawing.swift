@@ -214,9 +214,4 @@ extension GameSession {
         return scale
     }
 
-    /// 패널 폭에 맞게 긴 닉네임은 자른다.
-    static func shortName(_ name: String?) -> String {
-        guard let name else { return "고스트" }
-        return name.count > 6 ? name.prefix(6) + "…" : name
-    }
 }

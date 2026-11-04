@@ -11,9 +11,6 @@ struct GhostRecord: Codable {
     let inputs: [RunnerGame.InputRecord]
     /// 그 판을 달린 러너 (AppSettings.runnerID). 고스트를 이 러너 모습으로 그린다.
     var runner: String?
-    /// 예전 순위 고스트의 닉네임과 등수. 내 고스트는 nil.
-    var name: String?
-    var rank: Int?
     /// 그 판에 쓴 능력. 같은 능력으로 돌려야 같은 판이 나온다.
     var abilities: RunnerGame.Abilities?
 

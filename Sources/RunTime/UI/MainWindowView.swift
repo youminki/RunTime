@@ -225,7 +225,6 @@ struct MainWindowView: View {
             let popover = PopoverView(engine: engine, settings: settings,
                         openSettings: { [navigator] in navigator.go(.settings) },
                         importRunner: importRunner,
-                        openDailyDetail: { [navigator] in navigator.go(.usage) },
                         openWorkLog: { [navigator] in navigator.go(.workLog) },
                         openDesign: { [navigator] in navigator.go(.design) },
                         performTrick: performTrick,

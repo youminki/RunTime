@@ -194,7 +194,9 @@ final class RedmineStore: ObservableObject {
                 collected += result.issues
                 let next = offset + result.issues.count
                 if next < result.total, next < 1000, !result.issues.isEmpty { return page(next) }
-                self.myOpenCounts = Dictionary(grouping: collected, by: \.project.id).mapValues(\.count)
+                // 받는 사이 순서가 바뀌면 같은 일감이 두 쪽에 나온다
+                let unique = Dictionary(collected.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values
+                self.myOpenCounts = Dictionary(grouping: unique, by: \.project.id).mapValues(\.count)
             }
         }
         page(0)

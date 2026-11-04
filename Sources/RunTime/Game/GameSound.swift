@@ -4,8 +4,8 @@ import AppKit
 final class GameSound {
     enum Effect: String, CaseIterable {
         case jump, coin, hit, milestone, record, airjump, shield, nearmiss
-        // 짧은 음악: 신기록·고스트 이김, 게임 오버, 미션 완료, 상점에서 사기
-        case fanfare, gameover, mission, purchase
+        // 짧은 음악: 신기록·고스트 이김, 게임 오버
+        case fanfare, gameover
     }
 
     static let shared = GameSound()
@@ -25,7 +25,7 @@ final class GameSound {
                   let sound = NSSound(contentsOf: url, byReference: false) else { continue }
             sound.volume = switch effect {
             case .jump, .nearmiss: 0.25
-            case .fanfare, .gameover, .mission: 0.3
+            case .fanfare, .gameover: 0.3
             default: 0.35
             }
             sounds[effect] = sound

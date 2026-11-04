@@ -302,6 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             QuickAddPanel.shared.show()
         }
         add("캘린더") { [weak self] in self?.showMain(.calendar) }
+        add("레드마인") { [weak self] in self?.showMain(.redmine) }
         menu.addItem(.separator())
         let unseenDesign = MainActor.assumeIsolated { DesignSync.shared.unseenCount }
         add(unseenDesign > 0 ? "디자인 변경 (\(unseenDesign))" : "디자인 변경") { [weak self] in self?.showMain(.design) }
@@ -467,7 +468,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             rootView: PopoverView(engine: engine, settings: engine.settings,
                                   openSettings: { [weak self] in self?.openSettings() },
                                   importRunner: { [weak self] in self?.importRunner() },
-                                  openDailyDetail: { [weak self] in self?.openDailyDetail() },
                                   openWorkLog: { [weak self] in self?.openWorkLog() },
                                   openDesign: { [weak self] in self?.showMain(.design) },
                                   openAsWindow: { [weak self] in self?.openUsageWindow() },
@@ -598,7 +598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popoverFrameObservers.forEach(NotificationCenter.default.removeObserver)
         popoverFrameObservers = []
         anchorWindow?.orderOut(nil)
-        // 상점에서 써 보던 트랙·날씨가 닫힌 뒤에도 남지 않게
+        // 꾸미기에서 써 보던 트랙·날씨가 닫힌 뒤에도 남지 않게
         GameDecor.shared.tryingOn = nil
         AppUpdater.shared.appClosedWindow()
     }

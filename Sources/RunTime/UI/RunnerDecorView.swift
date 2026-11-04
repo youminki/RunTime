@@ -3,6 +3,8 @@ import GameCore
 
 @MainActor
 private final class DecorPage: ObservableObject {
+    static let shared = DecorPage(tab: .track)
+
     @Published var tab: RunnerDecorView.Tab
 
     init(tab: RunnerDecorView.Tab) { self.tab = tab }
@@ -12,12 +14,13 @@ private final class DecorPage: ObservableObject {
 struct RunnerDecorView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var decor = GameDecor.shared
-    @StateObject private var page: DecorPage
+    /// 러너 탭에 다녀와도 고르던 갈래가 남게 하나를 함께 쓴다.
+    @ObservedObject private var page: DecorPage
     @StateObject private var hover = HoveredRunner()
 
-    init(settings: AppSettings, tab: Tab = .track) {
+    init(settings: AppSettings, tab: Tab? = nil) {
         self.settings = settings
-        _page = StateObject(wrappedValue: DecorPage(tab: tab))
+        page = tab.map(DecorPage.init) ?? .shared
     }
 
     enum Tab: String, CaseIterable {
@@ -195,40 +198,6 @@ struct FluentImage: View {
             Image(decorative: image, scale: 1).resizable().interpolation(.high).frame(width: size, height: size)
         } else {
             Color.clear.frame(width: size, height: size)
-        }
-    }
-}
-
-/// 물건 그림. 트랙은 하늘·풍경·땅 색 띠로, 날씨는 그 기호로, 나머지는 Fluent 그림이나 갈래 아이콘으로 그린다.
-struct ItemGlyph: View {
-    let item: Cosmetic
-    var size: CGFloat = 30
-
-    var body: some View {
-        if let track = Backdrop.track(item) {
-            VStack(spacing: 0) {
-                Color(nsColor: NSColor(hex: 0x8FB4D8))
-                Color(nsColor: track.far)
-                Color(nsColor: track.ground)
-            }
-            .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-        } else if let art = item.art {
-            FluentImage(name: art, size: size)
-        } else if let symbol = item.symbol {
-            Image(systemName: symbol)
-                .font(.system(size: size * 0.55, weight: .semibold))
-                .foregroundStyle(Color(nsColor: item.color))
-                .frame(width: size, height: size)
-        } else {
-            let color = Color(nsColor: item.color)
-            ZStack {
-                Circle().fill(color.opacity(0.16))
-                Image(systemName: RunnerDecorView.Tab.allCases.first { $0.slot == item.slot }?.icon ?? "sparkle")
-                    .font(.system(size: size * 0.42, weight: .semibold))
-                    .foregroundStyle(color)
-            }
-            .frame(width: size, height: size)
         }
     }
 }

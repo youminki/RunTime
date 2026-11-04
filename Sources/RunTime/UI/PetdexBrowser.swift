@@ -9,7 +9,7 @@ struct PetdexBrowser: View {
     @ObservedObject var settings: AppSettings
     var purpose: Purpose = .runner
     var close: () -> Void
-    @ObservedObject private var wallet = GameDecor.shared
+    @ObservedObject private var decor = GameDecor.shared
     @ObservedObject private var store = PetdexStore.shared
     @StateObject private var form = PetdexSearch()
 
@@ -79,7 +79,7 @@ struct PetdexBrowser: View {
     private func tile(_ entry: PetdexStore.Entry) -> some View {
         let installed = store.isInstalled(entry.slug)
         let id = PetdexStore.storageID(entry.slug)
-        let selected = purpose == .companion ? wallet.companionID == id : settings.customRunnerID == id
+        let selected = purpose == .companion ? decor.companionID == id : settings.customRunnerID == id
         return VStack(spacing: 4) {
             ZStack(alignment: .topTrailing) {
                 AsyncImage(url: entry.thumbnailURL) { phase in

@@ -53,12 +53,6 @@ final class AppSettings: ObservableObject {
     /// 지금 러너를 가리키는 이름. 내 고스트에 남겨, 고스트가 그 판을 달린 러너 모습으로 보이게 한다.
     var runnerID: String { customRunnerID ?? runner.rawValue }
 
-    /// 남에게 보내도 되는 러너 이름. 기본 러너와 Petdex 펫만 (내 그림은 이 Mac 밖으로 보내지 않는다).
-    var shareableRunnerID: String? {
-        guard let custom = customRunnerID else { return runner.rawValue }
-        return custom.hasPrefix(PetdexStore.storageID("")) ? custom : nil
-    }
-
     /// 러너 이름으로 모습을 찾는다. 이 Mac에 없는 러너(받지 않은 펫 등)면 nil.
     static func character(forRunnerID id: String?) -> RunnerCharacter? {
         guard let id else { return nil }

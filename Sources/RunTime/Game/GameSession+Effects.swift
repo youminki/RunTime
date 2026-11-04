@@ -68,12 +68,12 @@ extension GameSession {
 
     // MARK: 꾸미기
 
-    /// 발을 디딜 때 먼지. 상점 발먼지를 달면 그 색과 모양으로.
+    /// 발을 디딜 때 먼지. 발먼지를 고르면 그 색과 모양으로.
     func dust(at feet: CGPoint, landing: Bool) {
         spray(GameFX.dust(GameDecor.shared.equipped(.dust), landing: landing), at: feet)
     }
 
-    /// 부딪힌 순간. 기본은 흰 점, 상점 효과를 달면 그 모양으로 터진다.
+    /// 부딪힌 순간. 기본은 흰 점, 효과를 고르면 그 모양으로 터진다.
     func crashBurst(at center: CGPoint) {
         for part in GameFX.crash(GameDecor.shared.equipped(.crash)) {
             // offset의 y는 위로 + (입자 좌표처럼 바닥 위 높이)

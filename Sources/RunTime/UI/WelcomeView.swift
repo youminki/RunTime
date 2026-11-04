@@ -24,7 +24,7 @@ struct WelcomeView: View {
 
             GroupedSection("이렇게 써요") {
                 tip("cursorarrow.click", Palette.blue, "러너 누르기", "세션·주간 사용률과 최근 30분 그래프")
-                tip("cursorarrow.click.2", Palette.indigo, "오른쪽 클릭", "일별 사용량, 설정, 종료")
+                tip("cursorarrow.click.2", Palette.indigo, "오른쪽 클릭", "업무 일지, 러너, 설정, 종료")
                 tip("command", Palette.gray, GlobalHotKey.displayName, "어느 앱에서든 사용량 열기")
                 tip("menubar.rectangle", Palette.orange, "러너는 메뉴바 오른쪽 끝에", "⌘를 누른 채 끌면 자리를 옮길 수 있어요")
             }

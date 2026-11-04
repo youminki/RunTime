@@ -13,11 +13,9 @@ http://creativecommons.org/publicdomain/zero/1.0/
 효과음: Digital Audio (https://kenney.nl/assets/digital-audio), ogg를 m4a로 바꿨다.
   jump.m4a phaseJump2, coin.m4a phaserUp6, hit.m4a lowDown, milestone.m4a twoTone1, record.m4a powerUp12,
   airjump.m4a phaseJump4, shield.m4a zapTwoTone, nearmiss.m4a pepSound1
-  Music Jingles (https://kenney.nl/assets/music-jingles): fanfare.m4a jingles_NES12, gameover.m4a jingles_NES07, mission.m4a jingles_NES03
-  Interface Sounds (https://kenney.nl/assets/interface-sounds): purchase.m4a confirmation_001
 
 글꼴: Galmuri11 Bold v2.40.4 (https://github.com/quiple/galmuri), SIL Open Font License 1.1 (Galmuri-OFL.txt).
   한글·영문·기호만 남기고 줄였다 (pyftsubset).
 
 3D 그림: Microsoft Fluent Emoji (https://github.com/microsoft/fluentui-emoji), MIT License (Assets/Fluent/LICENSE.txt).
-  Assets/Fluent의 3D PNG를 96px로 줄였다. 그림 입자, 퀘스트·상점 아이콘에 쓴다.
+  Assets/Fluent의 3D PNG를 96px로 줄였다. 그림 입자에 쓴다.

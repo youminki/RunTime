@@ -9,7 +9,6 @@ struct PopoverView: View {
     var openSettings: () -> Void = {}
     /// 팝오버를 닫고 그림 파일을 골라 내 러너를 만든다 (팝오버 안에서는 파일 창을 띄울 수 없어서).
     var importRunner: () -> Void = {}
-    var openDailyDetail: () -> Void = {}
     var openWorkLog: () -> Void = {}
     var openDesign: () -> Void = {}
     /// 팝오버를 닫고 같은 화면을 창으로 띄운다. 창 안에서는 비워 두어 단추를 숨긴다.
@@ -154,8 +153,9 @@ struct PopoverView: View {
     /// 게임 조작법. 무대 위 도움말을 읽지 않아도 보이게 키 모양으로 늘어놓고, 좁으면 다음 줄로 넘긴다.
     private var gameKeys: some View {
         FlowLayout(spacing: 8) {
-            ForEach([("스페이스 · ↑", "점프 (길게 누르면 높이)"), ("↓", "숙이기"), ("← →", "이동"),
-                     ("G", "고스트와 겨루기"), ("esc", "나가기")], id: \.0) { key, action in
+            // 고스트는 한 판을 끝내야 생긴다
+            ForEach([("스페이스 · ↑", "점프 (길게 누르면 높이)"), ("↓", "숙이기"), ("← →", "이동")]
+                    + (GameRecords.plays > 0 ? [("G", "고스트와 겨루기")] : []) + [("esc", "나가기")], id: \.0) { key, action in
                 HStack(spacing: 6) {
                     Text(key)
                         .font(.system(size: 11, weight: .semibold).monospacedDigit())
@@ -333,7 +333,7 @@ struct PopoverView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .tip(page.showsRunners ? "사용량으로 돌아가기" : "러너 바꾸기")
+            .tip(page.showsRunners ? "사용량으로 돌아가기" : "러너 바꾸기·꾸미기")
             }
             Spacer(minLength: 8)
             tricksMenu

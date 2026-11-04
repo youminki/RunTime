@@ -43,7 +43,7 @@ extension GameSession {
                                     .foregroundColor(glow ? gold : .white),
                                 position: CGPoint(12, 10), anchor: .topLeading, opacity: hudAlpha))
             // 점수 아래 한 줄: 최고 점수, 먹은 코인, 남은 보호막
-            var line = Text(verbatim: "BEST \(max(game.best, game.score))").foregroundColor(.white.opacity(0.6))
+            var line = Text(verbatim: "BEST \(game.countsTowardBest ? max(game.best, game.score) : game.best)").foregroundColor(.white.opacity(0.6))
             if game.coinsTaken > 0 {
                 line = line + Text("   ") + Text(Image(systemName: "circle.fill")).foregroundColor(gold)
                     + Text(verbatim: " \(game.coinsTaken)").foregroundColor(gold)
@@ -60,9 +60,8 @@ extension GameSession {
                                     .foregroundColor(gold.opacity(Double(min(1, popup.life * 2)))),
                                 position: CGPoint(popup.position.x, (size.height - 15) - popup.position.y - 14)))
         }
-        if game.phase == .playing, let lead = raceLead, let raceTarget {
-            let who = Self.shortName(raceTarget.name)
-            let text = lead > 0 ? "\(who) 추월 +\(lead)" : "\(who)까지 \(1 - lead)"
+        if game.phase == .playing, let lead = raceLead {
+            let text = lead > 0 ? "고스트 추월 +\(lead)" : "고스트까지 \(1 - lead)"
             labels.append(Label(text: Text(text).font(caption).foregroundColor(lead > 0 ? gold : .white.opacity(0.85)),
                                 position: CGPoint(size.width / 2, 14)))
         }
@@ -89,12 +88,9 @@ extension GameSession {
         let cardTop: CGFloat = 36
         let inset = cardLeft + 12
         // 고스트 단축키. 키 글자만 금색으로
-        var races: [(key: String, text: String)] = []
-        if let savedGhost { races.append(("G", "내 고스트 \(savedGhost.score)")) }
-        let raceText = races.prefix(2).enumerated().reduce(Text("")) { line, item in
-            line + Text(item.offset == 0 ? "" : "   ") + Text(item.element.key).foregroundColor(gold)
-                .font(.system(size: 10.5, weight: .heavy).monospaced())
-                + Text(" \(item.element.text)").foregroundColor(.white.opacity(0.7))
+        let raceText = savedGhost.map { ghost in
+            Text("G").foregroundColor(gold).font(.system(size: 10.5, weight: .heavy).monospaced())
+                + Text(" 내 고스트 \(ghost.score)").foregroundColor(.white.opacity(0.7))
         }
         func card(height: CGFloat) {
             panels.append(Panel(rect: CGRect(x: cardLeft, y: cardTop, width: cardWidth, height: height)))
@@ -111,7 +107,7 @@ extension GameSession {
             labels.append(Label(text: Text("↑ 길게 높이  ↓ 숙이기  ←→ 이동").font(.system(size: 9.5, weight: .medium))
                                     .foregroundColor(.white.opacity(0.5)), position: CGPoint(inset, cardTop + 54), anchor: .topLeading))
             var height: CGFloat = 72
-            if !races.isEmpty {
+            if let raceText {
                 labels.append(Label(text: raceText.font(caption), position: CGPoint(inset, cardTop + 72), anchor: .topLeading))
                 height += 18
             }
@@ -123,8 +119,7 @@ extension GameSession {
             }
             let middle = raceLine
             let won = (raceLead ?? 0) > 0
-            let who = raceTarget?.name.map { "\(Self.shortName($0)) 고스트" } ?? "고스트"
-            let title = isRace ? (won ? "\(who)를 이겼다" : "\(who)에게 졌다")
+            let title = isRace ? (won ? "고스트를 이겼다" : "고스트에게 졌다")
                 : game.isNewRecord ? "신기록" : "부딪혔다"
             let highlight = won || (!isRace && game.isNewRecord)
             labels.append(Label(text: Text(title).font(.system(size: 11, weight: .bold))
@@ -139,18 +134,19 @@ extension GameSession {
                                         .foregroundColor(gold),
                                     position: CGPoint(cardLeft + cardWidth - 12, cardTop + 38), anchor: .topTrailing))
             }
-            var y = cardTop + 60
+            // 겨룬 판은 줄이 하나 많아 간격을 좁혀야 고스트 안내까지 무대 안에 든다
+            var y = cardTop + 58
             if let middle {
                 labels.append(Label(text: Text(middle).font(caption).foregroundColor(gold),
                                     position: CGPoint(inset, y), anchor: .topLeading))
-                y += 16
+                y += 15
             }
             labels.append(Label(text: (Text("스페이스").foregroundColor(.white) + Text("로 새 판").foregroundColor(.white.opacity(0.6)))
                                     .font(caption), position: CGPoint(inset, y), anchor: .topLeading))
-            y += 16
-            if !races.isEmpty, y + 18 < size.height - 4 {
+            y += 15
+            if let raceText, y + 18 < size.height - 4 {
                 labels.append(Label(text: raceText.font(caption), position: CGPoint(inset, y), anchor: .topLeading))
-                y += 16
+                y += 15
             }
             card(height: y - cardTop + 6)
         default:

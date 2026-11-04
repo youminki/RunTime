@@ -6,6 +6,7 @@ import UsageCore
 /// 메뉴바와 달리 프레임을 미리 굽지 않고 화면 주사율대로 매번 계산해 그린다 (팝오버가 열려 있을 때만).
 /// 오른쪽 위 '게임'을 누르면 같은 무대에서 장애물 피하기 게임(GameSession)을 한다.
 struct RunnerStage: View {
+    @ObservedObject private var decor = GameDecor.shared
     let display: SpriteDisplay
     let character: RunnerCharacter
     let theme: SpriteTheme
@@ -29,6 +30,8 @@ struct RunnerStage: View {
     static let height: CGFloat = 150
 
     var body: some View {
+        // 동작 줄이기로 그림이 멈춰 있어도 꾸미기를 고르면 바로 보이게 지켜본다
+        let _ = decor.equipped
         // 게임은 사용자가 직접 켠 것이라 동작 줄이기 설정이어도 움직이고, 손맛을 위해 늘 1초 60장으로 그린다.
         // 게임이 아니면 메뉴바 러너와 같은 '움직임' 설정(12·30·60장)을 따라 팝오버를 열어 둔 동안의 CPU를 줄인다
         TimelineView(.animation(minimumInterval: 1.0 / (model.game == nil ? AppSettings.shared.smoothness.fps : 60),
@@ -79,7 +82,7 @@ struct RunnerStage: View {
             model.popoverClosed()
         }
         .tip(model.game == nil ? "러너를 누르면 장난을 쳐요"
-              : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓·오른쪽 클릭 숙이기, ←→ 이동, G·1·2 고스트와 겨루기, esc 나가기")
+              : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓·오른쪽 클릭 숙이기, ←→ 이동, G 고스트와 겨루기, esc 나가기")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(character.name)
         .accessibilityAddTraits(.isButton)
