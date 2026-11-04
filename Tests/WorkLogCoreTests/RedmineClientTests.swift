@@ -84,6 +84,11 @@ private let issueJSON = #"""
                      "&ldquo;인용&rdquo;", "a < b 이고 c > d 이다", "&lt;p&gt;태그 설명"] {
             #expect(RedmineNote.editable(html) == nil, "\(html)")
         }
+        #expect(Redmine.Change(notes: "a\nb", notesRaw: true).fields["notes"] as? String == "a\nb")
+        var plain = Redmine.NewIssue(projectID: 1, trackerID: 1, subject: "s")
+        plain.description = "a\nb"
+        plain.descriptionRaw = true
+        #expect(plain.fields["description"] as? String == "a\nb")
         let raw = Redmine.Change(description: "<ul><li>a</li></ul>", descriptionRaw: true)
         #expect(raw.fields["description"] as? String == "<ul><li>a</li></ul>")
         #expect(Redmine.Change(description: "a").fields["description"] as? String == "<p>a</p>")

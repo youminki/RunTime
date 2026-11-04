@@ -1329,6 +1329,7 @@ struct WorkLogPreview: View {
             let sentIDs = Set(fresh.flatMap(\.entryIDs))
             let left = Set(store.log.entries.filter { sentIDs.contains($0.id) && $0.needsRedmine }.compactMap(\.issue))
             forgetChoices(issues.filter { !left.contains($0) })
+            RedmineStore.shared.refreshAfterSend()
             guard !failures.isEmpty else { return page.flash("레드마인에 \(sent)건 보냈습니다") }
             let message = "\(sent)건 보냄 · " + failures.joined(separator: ", ")
             page.flash(message, seconds: 8)

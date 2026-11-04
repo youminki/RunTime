@@ -29,7 +29,9 @@ struct RedmineView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .onAppear { store.start() }
-                .sheet(item: Binding(get: { store.selected.map(IssueRef.init) }, set: { store.selected = $0?.id })) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in store.refreshIfStale() }
+                // 앞뒤 일감으로 옮길 때 창이 닫혔다 열리지 않게 번호가 아니라 있고 없음으로 띄운다
+                .sheet(isPresented: Binding(get: { store.selected != nil }, set: { if !$0 { store.selected = nil } })) {
                     RedmineIssueSheet(store: store, state: state)
                         .frame(minWidth: 820, idealWidth: 940, minHeight: 600, idealHeight: 760)
                 }
@@ -117,7 +119,6 @@ struct RedmineView: View {
 }
 
 /// 시트에 넘기는 일감 번호 (`sheet(item:)`은 Identifiable을 받는다).
-private struct IssueRef: Identifiable { let id: Int }
 
 /// 화면 안에서만 쓰는 상태 (이 저장소는 `@State` 대신 ObservableObject를 쓴다).
 final class RedmineViewState: ObservableObject {
@@ -141,13 +142,15 @@ final class RedmineViewState: ObservableObject {
 
 private struct RedmineFlash: View {
     @ObservedObject var store: RedmineStore
+    /// 일감 창은 아래에 댓글 칸이 있어 위에 띄운다.
+    var atTop = false
     var body: some View {
         if let message = store.flash {
             Text(message)
                 .font(WL.meta).foregroundStyle(Color.white)
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .background(Capsule().fill(Color.black.opacity(0.78)))
-                .padding(.bottom, 18)
+                .padding(atTop ? .top : .bottom, atTop ? 56 : 18)
                 .onTapGesture { store.flash = nil }
                 .task(id: message) {
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
@@ -188,7 +191,11 @@ private struct RedmineIssueTable: View {
                 VStack(spacing: 0) {
                     if let error = store.error {
                         columnHeader(columns, timeline: timeline)
-                        message(error, icon: "exclamationmark.triangle")
+                        VStack(spacing: 10) {
+                            message(error, icon: "exclamationmark.triangle").frame(height: 110)
+                            Button("다시 받기") { store.refresh() }.buttonStyle(NotionButtonStyle())
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if rows.isEmpty {
                         columnHeader(columns, timeline: timeline)
                         if store.loading {
@@ -244,7 +251,7 @@ private struct RedmineIssueTable: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(store.scope.title).font(WL.title).lineLimit(1)
-                Text("\(count)건").font(WL.number).foregroundStyle(WL.quiet)
+                if !store.loading || count > 0 { Text("\(count)건").font(WL.number).foregroundStyle(WL.quiet) }
                 if store.loading && !store.issues.isEmpty { ProgressView().controlSize(.small) }
                 if case .project(let project) = store.scope { ReportNameMenu(project: project.name) }
                 Spacer()
@@ -278,28 +285,33 @@ private struct RedmineIssueTable: View {
                     .labelsHidden().pickerStyle(.segmented).fixedSize()
                     Rectangle().fill(WL.border).frame(width: 1, height: 16)
                 }
-                ForEach(RedmineStore.Quick.allCases.filter { $0 != .all }, id: \.self) { quick in
-                    let count = store.count(quick)
-                    if count > 0 || store.quick == quick {
-                        Button { store.quick = store.quick == quick ? .all : quick } label: {
-                            HStack(spacing: 4) {
-                                Text(quick.rawValue)
-                                Text("\(count)").monospacedDigit().opacity(0.7)
+                // 칩이 늘어도 머리가 표보다 넓어지지 않게 남는 폭 안에서 옆으로 넘긴다
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(RedmineStore.Quick.allCases.filter { $0 != .all }, id: \.self) { quick in
+                            let count = store.count(quick)
+                            if count > 0 || store.quick == quick {
+                                Button { store.quick = store.quick == quick ? .all : quick } label: {
+                                    HStack(spacing: 4) {
+                                        Text(quick.rawValue)
+                                        Text("\(count)").monospacedDigit().opacity(0.7)
+                                    }
+                                }
+                                .buttonStyle(ChipButtonStyle(selected: store.quick == quick))
+                                .fixedSize()
                             }
                         }
-                        .buttonStyle(ChipButtonStyle(selected: store.quick == quick))
-                        .fixedSize()
                     }
                 }
                 Spacer(minLength: 8)
                 if store.layout == .timeline {
                     legend
                     Button { store.timelineShift -= 4 } label: { Image(systemName: "chevron.left") }
-                        .buttonStyle(GhostIconButtonStyle()).tip("4주 앞으로")
+                        .buttonStyle(GhostIconButtonStyle()).tip("이전 4주")
                     Button("오늘") { store.timelineShift = 0 }
                         .buttonStyle(TextLinkButtonStyle()).disabled(store.timelineShift == 0)
                     Button { store.timelineShift += 4 } label: { Image(systemName: "chevron.right") }
-                        .buttonStyle(GhostIconButtonStyle()).tip("4주 뒤로")
+                        .buttonStyle(GhostIconButtonStyle()).tip("다음 4주")
                 }
                 Picker("", selection: $store.layout) {
                     ForEach(RedmineStore.Layout.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -358,7 +370,7 @@ private struct RedmineIssueTable: View {
                             Button {
                                 store.showsResults = false
                                 // 팝오버가 닫힌 뒤에 시트를 띄워야 빠지지 않는다
-                                DispatchQueue.main.async { store.selected = found.id }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { store.selected = found.id }
                             } label: {
                                 Text(found.title).font(WL.meta).lineLimit(2).multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -449,7 +461,8 @@ private struct TimelineLane: View {
     var body: some View {
         let issue = row.issue, from = store.timelineStart, days = RedmineStore.timelineDays
         let today = (Redmine.dayNumber(WorkDay.today()) ?? from) - from
-        let late = issue.doneRatio < 100 && (Redmine.dayNumber(issue.dueDate) ?? Int.max) < today + from
+        let closed = store.statuses.first { $0.id == issue.status.id }?.isClosed == true
+        let late = !closed && issue.doneRatio < 100 && (Redmine.dayNumber(issue.dueDate) ?? Int.max) < today + from
         let bar = Redmine.bar(start: issue.startDate, due: issue.dueDate, from: from, days: days)
         Canvas { context, size in
             let unit = size.width / CGFloat(days)
@@ -557,7 +570,7 @@ private struct TableRow: View {
                 Text("\(issue.doneRatio)%").font(WL.caption.monospacedDigit()).foregroundStyle(WL.muted)
             }
         case .due:
-            if let due = issue.dueDate { DueText(due: due, finished: issue.doneRatio >= 100) } else {
+            if let due = issue.dueDate { DueText(due: due, finished: issue.doneRatio >= 100 || store.statuses.first { $0.id == issue.status.id }?.isClosed == true) } else {
                 Text("—").font(WL.caption).foregroundStyle(WL.faint)
             }
         case .updated:
@@ -693,7 +706,7 @@ struct RedmineIssueSheet: View {
         }
         .background(WL.canvas)
         .foregroundStyle(WL.text)
-        .overlay(alignment: .bottom) { RedmineFlash(store: store) }
+        .overlay(alignment: .top) { RedmineFlash(store: store, atTop: true) }
     }
 
     private var topBar: some View {
@@ -995,7 +1008,7 @@ struct RedmineIssueSheet: View {
                 }
                 .padding(12)
             }
-            if key == "due", let value, issue.doneRatio < 100, value < today {
+            if key == "due", let value, issue.doneRatio < 100, value < today, store.statuses.first(where: { $0.id == issue.status.id })?.isClosed != true {
                 Text("지남").font(WL.caption).foregroundStyle(Palette.red)
             }
         }
@@ -1338,6 +1351,8 @@ private final class NewIssueDraft: ObservableObject {
     @Published var priorityID: Int?
     @Published var assigneeID: Int?
     @Published var parent = ""
+    /// 취소하면 돌아갈 상위 일감.
+    var returnTo: Int?
     @Published var hasStart = false
     @Published var start = Date()
     @Published var hasDue = false
@@ -1401,9 +1416,18 @@ struct RedmineNewIssueSheet: View {
             HStack {
                 if draft.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("제목을 입력하세요").font(WL.caption).foregroundStyle(WL.quiet)
+                } else if !parentValid {
+                    Text("상위 일감은 번호로 쓰세요").font(WL.caption).foregroundStyle(WL.waiting)
                 }
                 Spacer()
-                Button("취소") { dismiss() }.buttonStyle(NotionButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("취소") {
+                    dismiss()
+                    // 일감 창에서 하위를 만들러 왔으면 그 창으로 돌아간다
+                    if let back = draft.returnTo {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { store.selected = back }
+                    }
+                }
+                .buttonStyle(NotionButtonStyle()).keyboardShortcut(.cancelAction)
                 Button("만들기") { submit() }
                     .buttonStyle(NotionButtonStyle(kind: .primary))
                     .keyboardShortcut(.return, modifiers: .command)
@@ -1418,6 +1442,7 @@ struct RedmineNewIssueSheet: View {
             if let parent = store.creatingUnder {
                 draft.projectID = parent.project.id
                 draft.parent = String(parent.id)
+                draft.returnTo = parent.id
                 store.creatingUnder = nil
             } else if case .project(let project) = store.scope {
                 draft.projectID = project.id
@@ -1457,6 +1482,7 @@ struct RedmineNewIssueSheet: View {
         guard let projectID = draft.projectID, let trackerID = draft.trackerID else { return }
         var issue = Redmine.NewIssue(projectID: projectID, trackerID: trackerID, subject: draft.subject)
         issue.description = draft.description
+        issue.descriptionRaw = !WorkLogSettings.shared.redmineHTML
         issue.priorityID = draft.priorityID
         issue.assignedToID = draft.assigneeID
         issue.parentID = parentID

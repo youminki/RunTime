@@ -280,13 +280,15 @@ public enum Redmine {
         public var notes: String?
         /// 먼저 올려 받은 첨부 토큰.
         public var uploads: [RedmineAPI.Upload] = []
+        /// 평문을 쓰는 레드마인이면 쓴 그대로 넘긴다.
+        public var notesRaw = false
 
         public init(statusID: Int? = nil, doneRatio: Int? = nil, priorityID: Int? = nil, assignedToID: Int? = nil,
                     startDate: String? = nil, dueDate: String? = nil, subject: String? = nil, description: String? = nil,
-                    descriptionRaw: Bool = false, notes: String? = nil, uploads: [RedmineAPI.Upload] = []) {
+                    descriptionRaw: Bool = false, notes: String? = nil, notesRaw: Bool = false, uploads: [RedmineAPI.Upload] = []) {
             (self.statusID, self.doneRatio, self.priorityID, self.assignedToID) = (statusID, doneRatio, priorityID, assignedToID)
             (self.startDate, self.dueDate, self.subject, self.description, self.notes) = (startDate, dueDate, subject, description, notes)
-            (self.descriptionRaw, self.uploads) = (descriptionRaw, uploads)
+            (self.descriptionRaw, self.notesRaw, self.uploads) = (descriptionRaw, notesRaw, uploads)
         }
 
         private var descriptionValue: String? {
@@ -308,7 +310,7 @@ public enum Redmine {
             if !uploads.isEmpty {
                 fields["uploads"] = uploads.map { ["token": $0.token, "filename": $0.filename, "content_type": $0.contentType] }
             }
-            if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["notes"] = RedmineNote.html(notes) }
+            if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["notes"] = notesRaw ? notes : RedmineNote.html(notes) }
             return fields
         }
 
@@ -408,6 +410,9 @@ public enum Redmine {
         public var startDate: String?
         public var dueDate: String?
 
+        /// 평문을 쓰는 레드마인이면 쓴 그대로 넘긴다.
+        public var descriptionRaw = false
+
         public init(projectID: Int, trackerID: Int, subject: String) {
             (self.projectID, self.trackerID, self.subject) = (projectID, trackerID, subject)
         }
@@ -417,7 +422,9 @@ public enum Redmine {
         public var fields: [String: Any] {
             var fields: [String: Any] = ["project_id": projectID, "tracker_id": trackerID,
                                          "subject": subject.trimmingCharacters(in: .whitespacesAndNewlines)]
-            if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["description"] = RedmineNote.html(description) }
+            if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                fields["description"] = descriptionRaw ? description : RedmineNote.html(description)
+            }
             if let priorityID { fields["priority_id"] = priorityID }
             if let assignedToID { fields["assigned_to_id"] = assignedToID }
             if let parentID { fields["parent_issue_id"] = parentID }

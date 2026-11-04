@@ -51,7 +51,12 @@ final class RedmineStore: ObservableObject {
     @Published var quick: Quick = .all
     @Published var sort: Column = .updated
     @Published var ascending = false
-    @Published var layout: Layout = .list { didSet { if treeMode { loadAncestors() } } }
+    @Published var layout: Layout = Layout(rawValue: UserDefaults.standard.string(forKey: "redmine.layout") ?? "") ?? .list {
+        didSet {
+            UserDefaults.standard.set(layout.rawValue, forKey: "redmine.layout")
+            if treeMode { loadAncestors() }
+        }
+    }
     var treeMode: Bool { layout != .list }
     /// 일정 창을 오늘 자리에서 옮긴 주 수.
     @Published var timelineShift = 0
@@ -124,6 +129,7 @@ final class RedmineStore: ObservableObject {
     private var searchToken = 0
     /// 하위로 만들 때의 상위 일감.
     var creatingUnder: Redmine.Issue?
+    private var addingRelation = false
     /// 지우는 중인 관계.
     @Published private(set) var removingRelations: Set<Int> = []
     /// 새 일감 창이 열려 있는지.
@@ -131,6 +137,8 @@ final class RedmineStore: ObservableObject {
 
     private var settings: WorkLogSettings { .shared }
     private var started = false
+    private var loadedFrom = ""
+    private var loadedAt = Date.distantPast
     /// 목록 요청이 겹치면 늦게 온 옛 응답이 새 보기를 덮지 않게 한다.
     private var listToken = 0
 
@@ -145,8 +153,51 @@ final class RedmineStore: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        loadedFrom = credentialKey
         loadMeta()
         load()
+    }
+
+    /// 지금 연결을 가리는 값. 설정이 바뀌었는지 볼 때 쓴다.
+    private var credentialKey: String { settings.effectiveRedmineURL + "|" + (settings.redmineKey ?? "") }
+
+    /// 설정을 떠날 때. 주소나 키가 바뀌었으면 옛 서버의 일감이 새 서버로 고쳐지지 않게 모두 비우고 다시 받는다.
+    func settingsChanged() {
+        guard started, credentialKey != loadedFrom else { return }
+        loadedFrom = credentialKey
+        selected = nil
+        issues = []
+        details = [:]
+        total = 0
+        myOpenCounts = [:]
+        refresh()
+    }
+
+    /// 창으로 돌아올 때. 메뉴바 앱은 며칠 켜 두어 목록이 낡는다.
+    func refreshIfStale() {
+        guard started, !loading, selected == nil, Date().timeIntervalSince(loadedAt) > 300 else { return }
+        refresh()
+    }
+
+    /// 업무 일지에서 보낸 뒤. 표의 진척률과 상태를 맞춘다.
+    func refreshAfterSend() {
+        if started { refresh() }
+    }
+
+    /// 프로젝트마다 내 열린 일감 수. 보는 범위와 상관없이 따로 받는다.
+    func loadMyCounts() {
+        guard let (base, key) = credentials else { return }
+        var collected: [Redmine.Issue] = []
+        func page(_ offset: Int) {
+            fetch(Redmine.issuesRequest(base: base, key: key, filter: Redmine.Filter(assignedToMe: true), offset: offset)) { [weak self] data, status, _ in
+                guard let self, status == 200, let data, let result = try? Redmine.issues(data) else { return }
+                collected += result.issues
+                let next = offset + result.issues.count
+                if next < result.total, next < 1000, !result.issues.isEmpty { return page(next) }
+                self.myOpenCounts = Dictionary(grouping: collected, by: \.project.id).mapValues(\.count)
+            }
+        }
+        page(0)
     }
 
     func refresh() {
@@ -199,6 +250,7 @@ final class RedmineStore: ObservableObject {
 
     private func loadMeta() {
         guard let (base, key) = credentials else { return }
+        loadMyCounts()
         fetch(Redmine.projectsRequest(base: base, key: key)) { [weak self] data, _, _ in
             if let data, let list = try? Redmine.projects(data) { self?.projects = list }
         }
@@ -238,7 +290,9 @@ final class RedmineStore: ObservableObject {
                 guard let self, token == self.listToken else { return }
                 guard status == 200, let data, let result = try? Redmine.issues(data) else {
                     self.loading = false
-                    self.error = Self.message(status: status, error: failure, data: data)
+                    let reason = Self.message(status: status, error: failure, data: data)
+                    // 보이던 목록은 지우지 않고 까닭만 알린다
+                    if self.issues.isEmpty { self.error = reason } else { self.flash = "새로 받지 못했습니다: " + reason }
                     return
                 }
                 // 받는 사이 누가 고쳐 순서가 바뀌면 같은 일감이 다음 쪽에 또 나온다
@@ -253,9 +307,7 @@ final class RedmineStore: ObservableObject {
                 } else {
                     self.loading = false
                     self.total = result.total
-                    if self.scope == .mine, self.statusFilter == .open {
-                        self.myOpenCounts = Dictionary(grouping: collected, by: \.project.id).mapValues(\.count)
-                    }
+                    self.loadedAt = Date()
                     // 보내는 중인 일감은 먼저 바꿔 둔 화면 값을 지킨다 (서버의 옛 값으로 깜빡이지 않게)
                     self.issues = collected.map { fresh in
                         self.saving.contains(fresh.id) ? self.issues.first { $0.id == fresh.id } ?? fresh : fresh
@@ -321,7 +373,9 @@ final class RedmineStore: ObservableObject {
             // 보내는 중에 온 옛 응답은 먼저 바꿔 둔 화면 값을 덮어 깜빡이게 해 버린다. 보낸 뒤 다시 받는다
             guard !self.saving.contains(id) else { return }
             guard status == 200, let data, let issue = try? Redmine.issue(data) else {
-                self.detailErrors[id] = Self.message(status: status, error: failure, data: data)
+                let reason = Self.message(status: status, error: failure, data: data)
+                // 이미 보이는 일감이면 화면을 바꾸지 않고 낡았을 수 있다고만 알린다
+                if self.details[id] != nil { self.flash = "#\(id)을 새로 받지 못했습니다: " + reason } else { self.detailErrors[id] = reason }
                 return
             }
             self.details[id] = issue
@@ -405,6 +459,8 @@ final class RedmineStore: ObservableObject {
                 return
             }
             self.loadDetail(id)
+            // 상태·담당자가 바뀌면 왼쪽 수도 바뀐다
+            if change.statusID != nil || change.assignedToID != nil { self.loadMyCounts() }
             done?(true)
         }
     }
@@ -426,10 +482,12 @@ final class RedmineStore: ObservableObject {
             guard status == 201, let data, let made = try? Redmine.issue(data) else {
                 return done(Self.message(status: status, error: failure, data: data))
             }
-            self.issues.insert(made, at: 0)
-            self.total += 1
+            // 범위·거르기에 맞는지 알 수 없어 끼워 넣지 않고 다시 받는다
+            self.load()
+            self.loadMyCounts()
             done(nil)
-            self.selected = made.id
+            // 새 일감 창이 닫힌 뒤에 연다
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.selected = made.id }
         }
     }
 
@@ -444,7 +502,7 @@ final class RedmineStore: ObservableObject {
         var uploads: [RedmineAPI.Upload] = []
         func next(_ rest: [URL]) {
             guard let file = rest.first else {
-                return update(id, Redmine.Change(notes: text, uploads: uploads), done: finish)
+                return update(id, Redmine.Change(notes: text, notesRaw: !settings.redmineHTML, uploads: uploads), done: finish)
             }
             // macOS 파일 이름은 자모가 풀려 있어 웹에서 글자가 갈라져 보인다
             let name = file.lastPathComponent.precomposedStringWithCanonicalMapping
@@ -490,8 +548,12 @@ final class RedmineStore: ObservableObject {
     }
 
     func addRelation(_ id: Int, to: Int, type: String, done: @escaping (Bool) -> Void) {
-        guard let (base, key) = credentials else { return done(false) }
-        send(try? Redmine.addRelationRequest(base: base, key: key, issue: id, to: to, type: type), id: id, what: "관계를 더하지", done: done)
+        guard let (base, key) = credentials, !addingRelation else { return done(false) }
+        addingRelation = true
+        send(try? Redmine.addRelationRequest(base: base, key: key, issue: id, to: to, type: type), id: id, what: "관계를 더하지") { [weak self] ok in
+            self?.addingRelation = false
+            done(ok)
+        }
     }
 
     func removeRelation(_ relation: Int, issue: Int) {
