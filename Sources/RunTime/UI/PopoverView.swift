@@ -200,7 +200,8 @@ struct PopoverView: View {
                     stage(height: height)
                     stageCaption
                     gameKeys
-                    gameRecord
+                    // 첫 판 전에는 0만 보여 뜻이 없다
+                    if GameRecords.plays > 0 { gameRecord }
                 }
                 .frame(width: height * Self.stageRatio)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

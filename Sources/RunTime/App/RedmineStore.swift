@@ -85,6 +85,8 @@ final class RedmineStore: ObservableObject {
     @Published var search = ""
     @Published private(set) var issues: [Redmine.Issue] = []
     @Published private(set) var total = 0
+    /// 프로젝트마다 내 열린 일감 수. 내 일감을 받을 때마다 맞춘다.
+    @Published private(set) var myOpenCounts: [Int: Int] = [:]
     @Published private(set) var loading = false
     @Published private(set) var error: String?
     @Published var selected: Int? { didSet { if let selected, selected != oldValue { loadDetail(selected) } } }
@@ -249,6 +251,9 @@ final class RedmineStore: ObservableObject {
                 } else {
                     self.loading = false
                     self.total = result.total
+                    if self.scope == .mine, self.statusFilter == .open {
+                        self.myOpenCounts = Dictionary(grouping: collected, by: \.project.id).mapValues(\.count)
+                    }
                     // 보내는 중인 일감은 먼저 바꿔 둔 화면 값을 지킨다 (서버의 옛 값으로 깜빡이지 않게)
                     self.issues = collected.map { fresh in
                         self.saving.contains(fresh.id) ? self.issues.first { $0.id == fresh.id } ?? fresh : fresh

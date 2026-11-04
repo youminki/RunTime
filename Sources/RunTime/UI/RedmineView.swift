@@ -104,6 +104,10 @@ struct RedmineView: View {
                 // 프로젝트 이름은 뒤가 달라 가운데를 줄이면 알아볼 수 없다. 두 줄까지 쓴다
                 Text(scope.title).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
+                if case .project(let project) = scope, let count = store.myOpenCounts[project.id] {
+                    Text("\(count)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
+                        .help("내 열린 일감 \(count)건")
+                }
             }
             .sidebarRow(selected: on)
         }
@@ -128,6 +132,7 @@ final class RedmineViewState: ObservableObject {
     @Published var descriptionDrafts: [Int: String] = [:]
     @Published var relationType = "relates"
     @Published var relationTargets: [Int: String] = [:]
+    @Published var relationOpen: Set<Int> = []
     /// 일감마다 댓글에 붙일 파일.
     @Published var files: [Int: [URL]] = [:]
 
@@ -271,6 +276,7 @@ private struct RedmineIssueTable: View {
                         ForEach(RedmineStore.StatusFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     .labelsHidden().pickerStyle(.segmented).fixedSize()
+                    Rectangle().fill(WL.border).frame(width: 1, height: 16)
                 }
                 ForEach(RedmineStore.Quick.allCases.filter { $0 != .all }, id: \.self) { quick in
                     let count = store.count(quick)
@@ -287,6 +293,7 @@ private struct RedmineIssueTable: View {
                 }
                 Spacer(minLength: 8)
                 if store.layout == .timeline {
+                    legend
                     Button { store.timelineShift -= 4 } label: { Image(systemName: "chevron.left") }
                         .buttonStyle(GhostIconButtonStyle()).tip("4주 앞으로")
                     Button("오늘") { store.timelineShift = 0 }
@@ -304,6 +311,19 @@ private struct RedmineIssueTable: View {
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 12)
+    }
+
+    /// 일정 막대의 색 뜻.
+    private var legend: some View {
+        HStack(spacing: 10) {
+            ForEach([("진행", WL.accent), ("기한 지남", Palette.red)], id: \.0) { name, tint in
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous).fill(tint).frame(width: 12, height: 6)
+                    Text(name).font(WL.caption).foregroundStyle(WL.quiet)
+                }
+            }
+        }
+        .fixedSize()
     }
 
     private var searchField: some View {
@@ -451,7 +471,7 @@ private struct TimelineLane: View {
                 context.fill(Path(CGRect(x: CGFloat(today) * unit, y: 0, width: 1, height: size.height)), with: .color(Palette.red.opacity(0.7)))
             }
         }
-        .help([issue.startDate, issue.dueDate].compactMap { $0 }.joined(separator: " ~ "))
+        .help(([issue.startDate, issue.dueDate].compactMap { $0 }.joined(separator: " ~ ")) + " · 진척 \(issue.doneRatio)%")
     }
 }
 
@@ -502,7 +522,7 @@ private struct TableRow: View {
         case .tracker:
             TrackerTag(name: issue.tracker.name)
         case .status:
-            Text(issue.status.name).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1)
+            StatusLabel(name: issue.status.name, closed: store.statuses.first { $0.id == issue.status.id }?.isClosed == true)
         case .priority:
             Text(issue.priority.name).font(WL.meta)
                 .foregroundStyle(issue.priority.id > 2 ? Palette.red : WL.muted).lineLimit(1)
@@ -580,10 +600,39 @@ private struct ReportNameMenu: View {
 private struct TrackerTag: View {
     let name: String
     var body: some View {
-        let tint: Color = name == "안정화" ? WL.waiting : name == "결함" ? Palette.red : WL.muted
+        let tint: Color = {
+            switch name {
+            case "안정화": return WL.waiting
+            case "결함": return Palette.red
+            case "구현": return WL.accent
+            case "작업": return .teal
+            default: return WL.muted
+            }
+        }()
         Text(name).font(.system(size: 11, weight: .semibold)).foregroundStyle(tint).lineLimit(1)
             .padding(.horizontal, 6).frame(height: 18)
             .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(tint.opacity(0.12)))
+    }
+}
+
+/// 상태 글 앞의 색 점. 레드마인이 상태 색을 주지 않아 이름으로 가른다.
+private struct StatusLabel: View {
+    let name: String
+    let closed: Bool
+
+    private var tint: Color {
+        if name.contains("반려") || name.contains("거절") { return Palette.red }
+        if name.contains("완료") || name.contains("종료") { return WL.done }
+        if name.contains("진행") { return WL.accent }
+        if name.contains("테스트") || name.contains("리뷰") { return .purple }
+        return WL.quiet
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(tint).frame(width: 6, height: 6)
+            Text(name).font(WL.meta).foregroundStyle(closed ? WL.quiet : WL.muted).lineLimit(1)
+        }
     }
 }
 
@@ -669,16 +718,18 @@ struct RedmineIssueSheet: View {
                 if let me = store.me, let watchers = issue.watchers {
                     let watching = watchers.contains { $0.id == me.id }
                     Button { store.setWatching(id, !watching) } label: {
-                        Label(watching ? "지켜보는 중" : "지켜보기", systemImage: watching ? "star.fill" : "star")
+                        Image(systemName: watching ? "star.fill" : "star").foregroundStyle(watching ? WL.waiting : WL.muted)
                     }
-                    .buttonStyle(TextLinkButtonStyle())
+                    .buttonStyle(GhostIconButtonStyle())
+                    .tip(watching ? "지켜보는 중 · 누르면 그만둡니다" : "지켜보기")
                 }
                 Button { addToLog(issue) } label: { Label("오늘 일지에 넣기", systemImage: "text.badge.plus") }
-                    .buttonStyle(TextLinkButtonStyle())
+                    .buttonStyle(NotionButtonStyle(kind: .primary))
                     .tip("오늘 업무 일지에 이 일감 줄을 넣습니다 (이미 있으면 상태만 맞춥니다)")
                 if let base = RedmineAPI.baseURL(WorkLogSettings.shared.effectiveRedmineURL) {
-                    Button { NSWorkspace.shared.open(Redmine.webURL(base: base, issue: id)) } label: { Label("웹에서 열기", systemImage: "safari") }
-                        .buttonStyle(TextLinkButtonStyle())
+                    Button { NSWorkspace.shared.open(Redmine.webURL(base: base, issue: id)) } label: { Image(systemName: "safari") }
+                        .buttonStyle(GhostIconButtonStyle())
+                        .tip("웹에서 열기")
                 }
             }
             Button { dismiss() } label: { Image(systemName: "xmark") }
@@ -691,19 +742,27 @@ struct RedmineIssueSheet: View {
     }
 
     private func content(_ issue: Redmine.Issue) -> some View {
+        VStack(spacing: 0) {
         SlimScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header(issue)
                 fields(issue)
                 description(issue)
                 if let children = issue.children, !children.isEmpty { section("하위 일감 \(children.count)") { childList(children, depth: 0) } }
-                section("관계 일감 \(issue.relations?.count ?? 0)") { relationList(issue.relations ?? [], issue: issue.id) }
+                relations(issue)
                 if let attachments = issue.attachments, !attachments.isEmpty { section("첨부 파일 \(attachments.count)") { attachmentList(attachments) } }
                 history(issue)
-                composer(issue)
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 24)
+            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+        // 긴 일감도 내리지 않고 바로 쓰게 창 아래에 둔다
+        Rectangle().fill(WL.border).frame(height: 1)
+        composer(issue)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 12)
             .frame(maxWidth: 900, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
@@ -969,7 +1028,22 @@ struct RedmineIssueSheet: View {
         })
     }
 
-    private func relationList(_ relations: [Redmine.Relation], issue: Int) -> some View {
+    /// 관계 일감. 없는 일감이 많아 더하는 칸은 눌렀을 때만 편다.
+    private func relations(_ issue: Redmine.Issue) -> some View {
+        let list = issue.relations ?? [], open = state.relationOpen.contains(issue.id)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(list.isEmpty ? "관계 일감" : "관계 일감 \(list.count)").font(WL.section)
+                Button(open ? "접기" : "+ 관계") {
+                    if open { state.relationOpen.remove(issue.id) } else { state.relationOpen.insert(issue.id) }
+                }
+                .buttonStyle(TextLinkButtonStyle())
+            }
+            if !list.isEmpty || open { relationList(list, issue: issue.id, adding: open) }
+        }
+    }
+
+    private func relationList(_ relations: [Redmine.Relation], issue: Int, adding: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(relations) { relation in
                 let (other, label) = relation.describe(from: issue)
@@ -990,7 +1064,7 @@ struct RedmineIssueSheet: View {
                         .tip("관계 지우기")
                 }
             }
-            HStack(spacing: 6) {
+            if adding { HStack(spacing: 6) {
                 Picker("", selection: $state.relationType) {
                     ForEach(Redmine.relationTypes, id: \.value) { Text($0.label).tag($0.value) }
                 }
@@ -1002,7 +1076,7 @@ struct RedmineIssueSheet: View {
                     .buttonStyle(TextLinkButtonStyle())
                     .disabled(Redmine.issueNumber(state.relationTargets[issue] ?? "").map { $0 == issue } ?? true)
             }
-            .padding(.top, 4)
+            .padding(.top, 4) }
         }
     }
 
@@ -1095,10 +1169,16 @@ struct RedmineIssueSheet: View {
 
     private func composer(_ issue: Redmine.Issue) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("댓글 쓰기").font(WL.section)
+            let empty = (state.comments[issue.id] ?? "").isEmpty
             TextEditor(text: Binding(get: { state.comments[issue.id] ?? "" }, set: { state.comments[issue.id] = $0 }))
                 .font(WL.body)
-                .frame(minHeight: 100)
+                // 비어 있으면 이력을 가리지 않게 한 줄로 두고, 쓰기 시작하면 넓힌다
+                .frame(height: empty ? 24 : 96)
+                .overlay(alignment: .topLeading) {
+                    if empty {
+                        Text("댓글 쓰기").font(WL.body).foregroundStyle(WL.quiet).padding(.leading, 5).allowsHitTesting(false)
+                    }
+                }
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
@@ -1201,15 +1281,18 @@ struct TimeEntryForm: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("시간 기록").font(WL.heading)
             DatePicker("날짜", selection: $draft.day, displayedComponents: .date)
-            HStack {
+            HStack(spacing: 6) {
                 Text("시간")
-                TextField("1.5", text: $draft.hours).textFieldStyle(.roundedBorder).frame(width: 70)
+                TextField("1.5", text: $draft.hours).textFieldStyle(.roundedBorder).frame(width: 60)
+                ForEach(["0.5", "1", "2", "4"], id: \.self) { value in
+                    Button(value) { draft.hours = value }.buttonStyle(ChipButtonStyle(selected: draft.hours == value))
+                }
             }
             Picker("활동", selection: $draft.activityID) {
                 Text("기본값").tag(Int?.none)
                 ForEach(store.activities) { Text($0.name).tag(Int?.some($0.id)) }
             }
-            TextField("설명 (선택)", text: $draft.comment).textFieldStyle(.roundedBorder)
+            TextField("메모 (선택)", text: $draft.comment).textFieldStyle(.roundedBorder)
             if let error = draft.error { Text(error).font(WL.caption).foregroundStyle(Palette.red).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Spacer()
@@ -1229,7 +1312,7 @@ struct TimeEntryForm: View {
         }
         .font(WL.meta)
         .padding(14)
-        .frame(width: 280)
+        .frame(width: 320)
     }
 }
 
@@ -1265,6 +1348,11 @@ struct RedmineNewIssueSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("새 일감").font(WL.title).padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 14)
             Rectangle().fill(WL.border).frame(height: 1)
+            VStack(spacing: 6) {
+                TextField("제목", text: $draft.subject).textFieldStyle(.plain).font(.system(size: 17, weight: .semibold))
+                Rectangle().fill(WL.border).frame(height: 1)
+            }
+            .padding(.horizontal, 24).padding(.top, 16)
             Form {
                 Picker("프로젝트", selection: $draft.projectID) {
                     ForEach(store.projects) { Text($0.name).tag(Int?.some($0.id)) }
@@ -1272,12 +1360,9 @@ struct RedmineNewIssueSheet: View {
                 Picker("트래커", selection: $draft.trackerID) {
                     ForEach(trackers) { Text($0.name).tag(Int?.some($0.id)) }
                 }
-                TextField("제목", text: $draft.subject)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("설명")
-                    TextEditor(text: $draft.description)
-                        .font(WL.body).frame(height: 130).padding(4)
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+                    TextEditor(text: $draft.description).font(WL.body).frame(height: 120).padding(4)
                 }
                 Picker("우선순위", selection: $draft.priorityID) {
                     Text("기본값").tag(Int?.none)
@@ -1288,11 +1373,11 @@ struct RedmineNewIssueSheet: View {
                     if let me = store.me { Text("나에게 (\(me.name))").tag(Int?.some(me.id)) }
                     ForEach((draft.projectID.flatMap { store.people[$0] } ?? []).filter { $0.id != store.me?.id }) { Text($0.name).tag(Int?.some($0.id)) }
                 }
-                TextField("상위 일감 번호 (선택)", text: $draft.parent)
-                Toggle("시작일", isOn: $draft.hasStart)
-                if draft.hasStart { DatePicker("", selection: $draft.start, displayedComponents: .date).labelsHidden() }
-                Toggle("완료 기한", isOn: $draft.hasDue)
-                if draft.hasDue { DatePicker("", selection: $draft.due, displayedComponents: .date).labelsHidden() }
+                LabeledContent("상위 일감") {
+                    TextField("", text: $draft.parent, prompt: Text("번호 (선택)")).textFieldStyle(.roundedBorder).frame(width: 120)
+                }
+                dateRow("시작일", on: $draft.hasStart, date: $draft.start)
+                dateRow("완료 기한", on: $draft.hasDue, date: $draft.due)
             }
             .formStyle(.grouped)
             .font(WL.meta)
@@ -1301,6 +1386,9 @@ struct RedmineNewIssueSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
+                if draft.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("제목을 입력하세요").font(WL.caption).foregroundStyle(WL.quiet)
+                }
                 Spacer()
                 Button("취소") { dismiss() }.buttonStyle(NotionButtonStyle()).keyboardShortcut(.cancelAction)
                 Button("만들기") { submit() }
@@ -1322,6 +1410,15 @@ struct RedmineNewIssueSheet: View {
             pickTracker()
             draft.assigneeID = nil
             if let id { store.loadPeople(project: id) }
+        }
+    }
+
+    private func dateRow(_ title: String, on: Binding<Bool>, date: Binding<Date>) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            if on.wrappedValue { DatePicker("", selection: date, displayedComponents: .date).labelsHidden() }
+            Toggle("", isOn: on).toggleStyle(.switch).controlSize(.mini).labelsHidden()
         }
     }
 
