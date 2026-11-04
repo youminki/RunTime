@@ -122,6 +122,8 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var searching = false
     @Published private(set) var resultsTotal = 0
     private var searchToken = 0
+    /// 하위로 만들 때의 상위 일감.
+    var creatingUnder: Redmine.Issue?
     /// 지우는 중인 관계.
     @Published private(set) var removingRelations: Set<Int> = []
     /// 새 일감 창이 열려 있는지.
@@ -405,6 +407,13 @@ final class RedmineStore: ObservableObject {
             self.loadDetail(id)
             done?(true)
         }
+    }
+
+    /// 일감 창을 닫고 그 일감의 하위로 새 일감 창을 연다. 시트 위에 시트를 띄울 수 없어 닫힌 뒤에 연다.
+    func createChild(of issue: Redmine.Issue) {
+        creatingUnder = issue
+        selected = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in self?.creating = true }
     }
 
     /// 새 일감을 만든다. 되면 목록 맨 앞에 넣고 그 일감을 연다. 실패 까닭은 창에 그대로 보이게 돌려준다.

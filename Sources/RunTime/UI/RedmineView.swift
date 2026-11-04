@@ -748,7 +748,7 @@ struct RedmineIssueSheet: View {
                 header(issue)
                 fields(issue)
                 description(issue)
-                if let children = issue.children, !children.isEmpty { section("하위 일감 \(children.count)") { childList(children, depth: 0) } }
+                children(issue)
                 relations(issue)
                 if let attachments = issue.attachments, !attachments.isEmpty { section("첨부 파일 \(attachments.count)") { attachmentList(attachments) } }
                 history(issue)
@@ -1026,6 +1026,17 @@ struct RedmineIssueSheet: View {
                 if let grand = child.children, !grand.isEmpty { childList(grand, depth: depth + 1) }
             }
         })
+    }
+
+    private func children(_ issue: Redmine.Issue) -> some View {
+        let list = issue.children ?? []
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(list.isEmpty ? "하위 일감" : "하위 일감 \(list.count)").font(WL.section)
+                Button("+ 하위 일감") { store.createChild(of: issue) }.buttonStyle(TextLinkButtonStyle())
+            }
+            if !list.isEmpty { childList(list, depth: 0) }
+        }
     }
 
     /// 관계 일감. 없는 일감이 많아 더하는 칸은 눌렀을 때만 편다.
@@ -1402,7 +1413,15 @@ struct RedmineNewIssueSheet: View {
         .frame(width: 560, height: 640)
         .background(WL.canvas)
         .onAppear {
-            if case .project(let project) = store.scope { draft.projectID = project.id } else { draft.projectID = store.projects.first?.id }
+            if let parent = store.creatingUnder {
+                draft.projectID = parent.project.id
+                draft.parent = String(parent.id)
+                store.creatingUnder = nil
+            } else if case .project(let project) = store.scope {
+                draft.projectID = project.id
+            } else {
+                draft.projectID = store.projects.first?.id
+            }
             pickTracker()
             if let id = draft.projectID { store.loadPeople(project: id) }
         }
