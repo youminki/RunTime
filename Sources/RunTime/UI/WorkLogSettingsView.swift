@@ -43,7 +43,6 @@ struct WorkLogSettingsView: View {
         .onAppear {
             // 화면을 열자마자 첫 글 칸(GitLab 주소)이 글자를 통째로 고른 채 잡히지 않게 초점을 푼다
             DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
-            page.keyDraft = ""
             if settings.redmineReady { sync.loadStatuses() }
         }
         .onDisappear { finish() }
@@ -51,7 +50,7 @@ struct WorkLogSettingsView: View {
 
     /// 설정을 떠날 때. 칸에 써 두고 저장을 누르지 않은 키·주소도 맞으면 저장하고, 바뀐 연동으로 다시 받는다.
     private func finish() {
-        // 맞지 않는 값은 저장하지 않고 알린다 (예전 완료 단추처럼 그 칸으로 돌려보낼 수 없어 알림만)
+        // 맞지 않는 값은 저장하지 않는다. 화면이 닫혀 알림이 보이지 않을 수 있어 칸에 남겨 다시 열면 보이게 한다
         if !page.keyDraft.isEmpty {
             if let problem = saveKey(page.keyDraft) { page.flash("레드마인 API 키를 저장하지 못했습니다: \(problem)") }
             else { page.keyDraft = "" }
@@ -240,6 +239,7 @@ struct WorkLogSettingsView: View {
                                 .buttonStyle(NotionButtonStyle())
                         }
                     }
+                }
                 SettingRow("진행중 진척률", "일지 줄이 몇 %인지 정하지 않은 진행중일 때 보낼 진척률입니다. 그대로 두면 진척률은 건드리지 않고 댓글만 보냅니다. 카드마다 진척률 > 고치기로 따로 고를 수 있습니다.") {
                     Picker("", selection: Binding(get: { settings.inProgressRatio ?? -1 },
                                                   set: { settings.inProgressRatio = $0 < 0 ? nil : $0 })) {
@@ -252,7 +252,6 @@ struct WorkLogSettingsView: View {
                 SettingRow("MR 화면 붙이기", "MR 본문이나 AI 검증 댓글에 수정 전·후 그림이 있으면 레드마인에 첨부하고 댓글 끝에 붙입니다. 카드마다 끌 수도 있습니다.") {
                     Toggle("", isOn: $settings.attachScreens).toggleStyle(.switch).labelsHidden()
                 }
-            }
             }
         }
     }
@@ -477,7 +476,8 @@ struct WorkLogSettingsView: View {
         guard !page.recurringProject.isEmpty, !title.isEmpty, !page.recurringDays.isEmpty else { return }
         let parsed = WorkLogFormat.splitStatus(title)
         let split = WorkReport.splitIssue(parsed.title)
-        let status: WorkStatus = title.hasSuffix(")") ? parsed.status : .ongoing
+        // 상태로 읽히지 않은 괄호(`주간 회의 (A팀)`)는 제목이라 상시로 둔다
+        let status: WorkStatus = parsed.title != title ? parsed.status : .ongoing
         store.setRecurring(store.log.recurring + [RecurringWork(project: page.recurringProject, title: split.title,
                                                                 status: status, issue: split.issue, weekdays: page.recurringDays)])
         page.recurringTitle = ""

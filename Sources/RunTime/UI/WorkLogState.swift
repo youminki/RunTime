@@ -120,8 +120,6 @@ final class WorkLogPage: ObservableObject {
     @Published var teamsTestFailed = false
     /// 접어 둔 묶음 (프로젝트 이름, 날짜).
     @Published var collapsed: Set<String> = []
-    @Published var renamingRedmine: String?
-    @Published var redmineRenameText = ""
 
     /// 설정 창에서 고른 칸.
     @Published var settingsSection = SettingsSection.gitlab
@@ -148,6 +146,8 @@ final class WorkLogPage: ObservableObject {
         if let draft = drafts.removeValue(forKey: old) { drafts[name] = draft }
         if collapsed.remove("day:" + old) != nil { collapsed.insert("day:" + name) }
         if project == old { project = name }
+        if calendarProject == old { calendarProject = name }
+        if collapsed.remove("period:" + old) != nil { collapsed.insert("period:" + name) }
     }
 
     /// 프로젝트 보기에서 고른 프로젝트. 없거나 사라졌으면 숨기지 않은 첫 프로젝트.

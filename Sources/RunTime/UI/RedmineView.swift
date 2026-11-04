@@ -212,6 +212,7 @@ private struct RedmineIssueTable: View {
                 Text(store.scope.title).font(WL.title).lineLimit(1)
                 Text("\(count)건").font(WL.number).foregroundStyle(WL.quiet)
                 if store.loading && !store.issues.isEmpty { ProgressView().controlSize(.small) }
+                if case .project(let project) = store.scope { ReportNameMenu(project: project.name) }
                 Spacer()
                 if !store.queries.isEmpty {
                     Menu {
@@ -419,6 +420,25 @@ private struct TableRow: View {
             // 메뉴 경로가 붙으면 끝의 일감 이름이 남게 앞을 자르고, 제목만이면 뒤를 자른다
             .truncationMode(path.isEmpty ? .tail : .head)
             .help(([path.joined(separator: " › ")].filter { !$0.isEmpty } + [issue.subject]).joined(separator: " › "))
+    }
+}
+
+/// 레드마인 프로젝트를 업무 보고서에서 부를 이름. 긴 공식 이름 대신 `UxHub`처럼 짧게 쓴다.
+private struct ReportNameMenu: View {
+    let project: String
+    @ObservedObject var log: WorkLogStore = .shared
+
+    var body: some View {
+        let current = log.log.reportProject(for: IssueInfo(id: 0, subject: "", project: project))
+        Menu {
+            ForEach(log.log.allProjects.filter { !log.log.hiddenProjects.contains($0) }, id: \.self) { name in
+                Button(name) { log.setReportProject(name, for: project) }.disabled(name == current)
+            }
+            Divider()
+            Button("레드마인 이름 그대로") { log.setReportProject("", for: project) }
+        } label: { Text("보고서 이름 \(current)").font(WL.caption) }
+        .menuStyle(.borderlessButton).fixedSize()
+        .tip("일일보고에서 이 프로젝트를 부를 이름입니다. 새 이름은 업무 일지 왼쪽 프로젝트에서 만듭니다")
     }
 }
 

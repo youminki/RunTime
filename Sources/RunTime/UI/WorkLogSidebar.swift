@@ -69,7 +69,11 @@ struct WorkLogSidebar: View {
                 Spacer()
                 Button { page.calendarMonth = WorkDay.addingMonths(-1, to: month) } label: { Image(systemName: "chevron.left") }
                     .tip("지난달")
-                Button { page.search = ""; page.day = WorkDay.today() } label: { Image(systemName: "circle.fill").font(.system(size: 5)) }
+                Button {
+                    page.search = ""
+                    page.day = WorkDay.today()
+                    if page.mode == .project { page.mode = .day }
+                } label: { Image(systemName: "circle.fill").font(.system(size: 5)) }
                     .tip("오늘로 가기")
                 Button { page.calendarMonth = WorkDay.addingMonths(1, to: month) } label: { Image(systemName: "chevron.right") }
                     .tip("다음 달")
@@ -269,6 +273,7 @@ struct WorkLogSidebar: View {
         .opacity(page.draggingProject == name ? 0.4 : 1)
         .contextMenu {
             Button("고른 날에 적기") {
+                page.search = ""
                 page.openProjects.insert(name)
                 page.mode = .day
             }

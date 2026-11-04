@@ -212,6 +212,7 @@ final class HotKeyRecorder: ObservableObject {
 
     func reset() {
         GlobalHotKey.shared.setCombo(.standard)
+        hint = GlobalHotKey.shared.failed ? "다른 앱이 이 조합을 쓰고 있어 등록하지 못했습니다." : nil
         objectWillChange.send()
     }
 

@@ -34,9 +34,7 @@ final class WorkLogSettings: ObservableObject {
     /// 보낸 뒤 쓰던 앱으로 돌아간다 (팀즈를 띄워 둔 채로 두지 않음).
     @Published var teamsReturn: Bool { didSet { defaults.set(teamsReturn, forKey: "workLog.teamsReturn") } }
     /// 보고서 꼴: 상시 → 완료 → 진행 순서, 주간 보고 끝에 차주 계획.
-    @Published var doneFirst: Bool { didSet { defaults.set(doneFirst, forKey: "workLog.doneFirst") } }
     @Published var weeklyPlan: Bool { didSet { defaults.set(weeklyPlan, forKey: "workLog.weeklyPlan") } }
-    @Published var dailyHeader: Bool { didSet { defaults.set(dailyHeader, forKey: "workLogReportHeader") } }
     /// 사내 보고처럼 짧게: 메뉴 경로·비슷한 커밋을 한 줄로, 되돌린 일과 곁가지 브랜치는 뺀다. 켜면 묶어 쓰기보다 앞선다.
     @Published var reportCompact: Bool { didSet { defaults.set(reportCompact, forKey: "workLog.reportCompact") } }
     /// ⌃⌥L로 어디서든 한 줄 적기.
@@ -73,9 +71,7 @@ final class WorkLogSettings: ObservableObject {
         teamsReturn = defaults.object(forKey: "workLog.teamsReturn") as? Bool ?? true
         teamsHint = defaults.string(forKey: "workLog.teamsHost")
         teamsMeHint = defaults.string(forKey: "workLog.teamsMeHost")
-        doneFirst = defaults.object(forKey: "workLog.doneFirst") as? Bool ?? true
         weeklyPlan = defaults.object(forKey: "workLog.weeklyPlan") as? Bool ?? false
-        dailyHeader = defaults.object(forKey: "workLogReportHeader") as? Bool ?? false
         reportCompact = defaults.object(forKey: "workLog.reportCompact") as? Bool ?? true
         quickAddEnabled = defaults.object(forKey: "workLog.quickAdd") as? Bool ?? true
         syncIssueFields = defaults.object(forKey: "workLog.syncIssueFields") as? Bool ?? true
@@ -90,7 +86,6 @@ final class WorkLogSettings: ObservableObject {
     }
 
     static let keyAccount = "redmine-api-key"
-    static let teamsAccount = TeamsTarget.chat.account
 
     /// 웹훅 주소는 아는 사람 누구나 그 채팅에 글을 올릴 수 있어 키체인에 둔다.
     func teamsWebhook(_ target: TeamsTarget) -> URL? {
@@ -1133,54 +1128,6 @@ final class WorkLogSync: ObservableObject {
                 self.sending = false
                 self.loadMyIssues()
                 done(sent, failures)
-            }
-        }
-    }
-
-    /// 내 일감에서 칸만 고친다 (댓글 없이). 보낸 기록에 남아 되돌릴 수 있다.
-    func saveFields(issue: Int, edit: WorkReport.IssueEdit, done: @escaping (_ problem: String?) -> Void) {
-        guard !sending else { return done("보내는 중입니다") }
-        guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
-            return done("레드마인 주소(https)와 API 키를 설정하세요")
-        }
-        sending = true
-        let statuses = statuses
-        let known = store.log.issue(issue)
-        queue.async { [weak self] in
-            var problem: String?
-            var record: RedmineSent?
-            let fresh = (try? Self.fetch(RedmineAPI.issueRequest(base: base, key: key, issue: issue))).flatMap { try? RedmineAPI.parseIssues($0).first }
-            if let fresh {
-                let current = Self.merge(known, fresh)
-                let fields = WorkReport.IssueFields.merged(auto: .init(), edit: edit, current: current, statuses: statuses)
-                if let message = fields.problem(current: current) {
-                    problem = message
-                } else if fields.isEmpty && (edit.doneRatio == nil || edit.doneRatio == fresh.doneRatio) {
-                    problem = "바뀐 칸이 없습니다"
-                } else if let request = try? RedmineAPI.revertRequest(base: base, key: key, issue: issue,
-                                                                      doneRatio: edit.doneRatio == fresh.doneRatio ? nil : edit.doneRatio,
-                                                                      statusID: fields.status?.id, startDate: fields.startDate,
-                                                                      dueDate: fields.dueDate, assigneeID: fields.assignee?.id) {
-                    let response = Self.perform(request)
-                    if response.ok {
-                        record = RedmineSent(issue: issue, entryIDs: [], note: "", before: Self.snapshot(fresh),
-                                             after: Self.after(fields, ratio: edit.doneRatio == fresh.doneRatio ? nil : edit.doneRatio))
-                    } else {
-                        problem = response.message
-                    }
-                }
-            } else {
-                problem = "#\(issue)를 읽지 못했습니다"
-            }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if let record {
-                    self.store.addSent(record)
-                    self.store.setIssueState(issue, ratio: record.after.doneRatio, fields: Self.fields(record.after, statuses: statuses))
-                }
-                self.sending = false
-                self.loadMyIssues()
-                done(problem)
             }
         }
     }

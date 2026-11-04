@@ -370,7 +370,8 @@ struct HostsView: View {
     private func sectionActions(_ section: HostsFile.Section, allOn: Bool) -> some View {
         Button(allOn ? "모두 끄기" : "모두 켜기") { store.draft.setEnabled(section.items, !allOn) }
         Button("이 묶음에 추가…") { page.sheet = .add(group: section.title) }
-        Button("주소 한 번에 바꾸기…") { page.sheet = .switchIP(section) }
+        // 찾는 중이면 `section`은 걸러진 묶음이라 원래 묶음을 넘긴다 (걸러진 이름으로는 지금 판에서 찾지 못한다)
+        Button("주소 한 번에 바꾸기…") { page.sheet = .switchIP(store.sections.first { $0.id == section.id } ?? section) }
         Button("글로 복사 (팀원에게 보내기)") { copy(section) }
     }
 

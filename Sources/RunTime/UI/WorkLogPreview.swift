@@ -129,16 +129,10 @@ struct WorkLogPreview: View {
                          compact: settings.reportCompact, ratios: reportRatios)
     }
 
-    /// Claude에 넘길 진행 사항. 묶어 쓴 `  · ` 줄은 보고서 꼴 검사에 걸려 늘 펴서 넘긴다.
-    private var polishSource: String {
-        WorkReport.daily(scopeEntries, in: store.log, doneFirst: true, byIssue: true,
-                         grouped: false, compact: settings.reportCompact, ratios: reportRatios)
-    }
-
     /// 쓸 수 있는 다듬은 초안과 낡았는지. 고쳐 쓰지 않은 초안이 낡았으면 버리고 일지에서 만든 글을 쓴다.
     private var progressDraft: (text: String, stale: Bool)? {
         guard let edit = page.progressEdits[page.day] else { return nil }
-        let stale = edit.base != polishSource
+        let stale = edit.base != generatedProgress
         if stale && edit.text == edit.polished { return nil }
         return (edit.text, stale)
     }
@@ -299,7 +293,7 @@ struct WorkLogPreview: View {
         let busy = page.polishingDay == page.day
         return HStack(spacing: 8) {
             Button {
-                let day = page.day, source = polishSource
+                let day = page.day, source = generatedProgress
                 page.polishingDay = day
                 ReportPolisher.polish(source) { result in
                     page.polishingDay = nil

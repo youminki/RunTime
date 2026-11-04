@@ -687,22 +687,6 @@ struct WorkLogColumns {
     }
 }
 
-/// 위 막대의 글자 단추 (오늘·이번 주).
-struct TopBarTextStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(WL.muted)
-            .padding(.horizontal, 8)
-            .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 4).fill(configuration.isPressed ? WL.hover : .clear))
-            .opacity(enabled ? 1 : 0.4)
-            .contentShape(Rectangle())
-    }
-}
-
 /// 테두리 없는 글자 단추. 올렸을 때만 옅은 바탕 (노션의 `+ 새로 만들기`처럼).
 struct GhostTextButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {

@@ -233,7 +233,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             case .daily:
                 self.openDailyDetail()
             case .workLog:
-                self.workLogPage.preview = .redmine
+                // 지금 보던 범위가 아니라 오늘을 연다. 보낼 일감이 없으면 일일보고를 복사하라는 알림이다
+                let today = WorkDay.today()
+                let waiting = WorkLogStore.shared.log.entries(on: today).contains(where: \.needsRedmine)
+                self.workLogPage.search = ""
+                self.workLogPage.day = today
+                self.workLogPage.mode = .day
+                self.workLogPage.dayReport = .progress
+                self.workLogPage.preview = waiting ? .redmine : .report
                 self.openWorkLog()
             case .design:
                 self.showMain(.design)
@@ -303,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         add("설정…") { [weak self] in self?.openSettings() }
         add("업데이트 확인") { [weak self] in
             AppUpdater.shared.check()
-            self?.openSettings()
+            self?.openSettings(tab: .general)
         }
         menu.addItem(.separator())
         add("RunTime 종료") { NSApp.terminate(nil) }
