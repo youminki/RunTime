@@ -9,7 +9,6 @@ enum WL {
     // 간격
     static let gutter: CGFloat = 20
     static let gap: CGFloat = 16
-    static let rowHeight: CGFloat = 36
     static let outer: CGFloat = 10
     static let inner: CGFloat = 6
 
@@ -209,61 +208,6 @@ struct IssueSlot: View {
                     .frame(width: 72, height: 16, alignment: .trailing)
             }
         }
-    }
-}
-
-// MARK: - 숫자 묶음
-
-struct Metric: Identifiable {
-    let id: String
-    let value: String
-    let tint: Color?
-
-    init(_ title: String, _ value: Int, tint: Color? = nil) {
-        id = title
-        self.value = String(value)
-        self.tint = tint
-    }
-
-    init(_ title: String, text: String, tint: Color? = nil) {
-        id = title
-        value = text
-        self.tint = tint
-    }
-}
-
-/// 맨 위 숫자 줄. 큰 숫자 아래 작은 이름, 칸 사이는 세로 선.
-struct MetricBar: View {
-    let metrics: [Metric]
-    var action: (title: String, run: () -> Void)?
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
-                if index > 0 { Rectangle().fill(WL.border.opacity(0.55)).frame(width: 1, height: 30) }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(metric.value).font(WL.figure).foregroundStyle(metric.tint ?? .primary)
-                    Text(metric.id).font(WL.caption).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let action {
-                Button(action: action.run) {
-                    HStack(spacing: 4) {
-                        Text(action.title)
-                        Image(systemName: "arrow.right").font(.system(size: 11.5, weight: .semibold))
-                    }
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(WL.waiting)
-                    .fixedSize()
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 14)
-            }
-        }
-        .padding(.vertical, 10)
-        .wlSurface()
     }
 }
 

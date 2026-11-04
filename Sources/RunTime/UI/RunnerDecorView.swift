@@ -188,20 +188,6 @@ struct AbilityIcon: View {
     }
 }
 
-/// Fluent Emoji 그림 하나 (SwiftUI용).
-struct FluentImage: View {
-    let name: String
-    var size: CGFloat = 20
-
-    var body: some View {
-        if let image = GameFX.image(name, folder: "Fluent") {
-            Image(decorative: image, scale: 1).resizable().interpolation(.high).frame(width: size, height: size)
-        } else {
-            Color.clear.frame(width: size, height: size)
-        }
-    }
-}
-
 /// 꾸미기 칸 위의 작은 무대. 게임과 같은 그림 함수로 그 물건이 게임에서 보일 모습을 계속 돌려 보여 준다.
 struct ItemPreview: View {
     enum Kind {
