@@ -159,6 +159,7 @@ final class DesignSync: ObservableObject {
     /// 화면은 마우스만 지나가도 다시 그려져, 기록 전체를 훑는 값은 기록이 바뀔 때만 다시 만든다.
     private var cachedMenus: [DesignHistory.Menu]?
     private var eventIndex: EventIndex?
+    private var pendingSave: DispatchWorkItem?
 
     private struct EventIndex {
         /// 파일과 프레임별 변경. 고친 뒤 프레임이 바뀐 변경은 앞뒤 프레임 양쪽에 든다.
@@ -759,6 +760,11 @@ final class DesignSync: ObservableObject {
 
     /// 앱을 끌 때 남은 저장을 마친다.
     func flush() {
+        if let pendingSave {
+            pendingSave.cancel()
+            self.pendingSave = nil
+            persist()
+        }
         saveQueue.sync {}
     }
 
@@ -1054,7 +1060,18 @@ final class DesignSync: ObservableObject {
     func markSeen(_ ids: [UUID]) {
         let before = history.seen.count
         history.seen.formUnion(ids)
-        if history.seen.count != before { persist() }
+        if history.seen.count != before { persistSoon() }
+    }
+
+    /// 변경을 빠르게 넘기면 건마다 큰 기록 파일을 다시 쓰게 되어 잠깐 모아 저장한다.
+    private func persistSoon() {
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingSave = nil
+            self?.persist()
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
     func markUnseen(_ id: UUID) {

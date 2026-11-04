@@ -411,6 +411,10 @@ final class WorkLogSync: ObservableObject {
     private let settings = WorkLogSettings.shared
     private let store = WorkLogStore.shared
     private let queue = DispatchQueue(label: "dev.runtime.worklog.sync", qos: .utility)
+    /// 보내기·되돌리기는 사용자가 기다리는 일이라 오래 걸리는 가져오기 뒤에 줄 세우지 않는다.
+    private let writeQueue = DispatchQueue(label: "dev.runtime.worklog.write", qos: .userInitiated)
+    /// 겹침 확인은 망이 끊기면 일감마다 30초씩 걸려 따로 돌린다.
+    private let checkQueue = DispatchQueue(label: "dev.runtime.worklog.check", qos: .utility)
     private var timer: Timer?
     private let defaults = UserDefaults.standard
 
@@ -951,7 +955,7 @@ final class WorkLogSync: ObservableObject {
         }
         // 앱이 전에 올린 자기 댓글은 ‘이미 올린 댓글’로 보지 않는다 (이어 쓰는 오늘 댓글이 빠지지 않게)
         let mine = Dictionary(grouping: store.log.sent.filter { $0.undoneAt == nil }, by: \.issue)
-        queue.async { [weak self] in
+        checkQueue.async { [weak self] in
             for update in todo {
                 let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: update.issue))
                 guard response.ok, let data = response.data, let journals = try? RedmineAPI.parseJournals(data) else {
@@ -1140,7 +1144,7 @@ final class WorkLogSync: ObservableObject {
             let origins = MRScreenStore.origins(sources)
             if !origins.isEmpty { attach[update.issue] = (origins, previous) }
         }
-        queue.async { [weak self] in
+        writeQueue.async { [weak self] in
             var sent = 0
             var failures: [String] = []
             for update in updates {
@@ -1435,7 +1439,7 @@ final class WorkLogSync: ObservableObject {
         }
         guard !sending else { done(["보내는 중에는 되돌릴 수 없습니다"], nil); return }
         sending = true
-        queue.async { [weak self] in
+        writeQueue.async { [weak self] in
             var problems: [String] = []
             var manual: Int?
             let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: record.issue))

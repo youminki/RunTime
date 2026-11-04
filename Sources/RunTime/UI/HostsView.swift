@@ -219,7 +219,7 @@ struct HostsView: View {
                         .font(.system(size: 12.5)).foregroundStyle(WL.waiting)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
-                    Button("바뀐 파일 보기") { store.discard() }.buttonStyle(NotionButtonStyle())
+                    Button("고친 것 버리고 다시 읽기") { confirmDiscard("고친 것을 버리고 바뀐 파일을 다시 읽을까요?") }.buttonStyle(NotionButtonStyle())
                         .tip("고친 것을 버리고 지금 파일을 다시 보입니다")
                 }
             }
@@ -394,6 +394,14 @@ struct HostsView: View {
 
     // MARK: 저장 막대
 
+    private func confirmDiscard(_ question: String) {
+        let alert = NSAlert()
+        alert.messageText = question
+        alert.addButton(withTitle: "버리기")
+        alert.addButton(withTitle: "취소")
+        if alert.runModal() == .alertFirstButtonReturn { store.discard() }
+    }
+
     @ViewBuilder
     private var saveBar: some View {
         if store.dirty {
@@ -406,7 +414,7 @@ struct HostsView: View {
                         .font(WL.caption).foregroundStyle(WL.muted)
                 }
                 Spacer()
-                Button("되돌리기") { store.discard() }.buttonStyle(NotionButtonStyle())
+                Button("되돌리기") { confirmDiscard("저장하지 않은 변경 \(count)줄을 버릴까요?") }.buttonStyle(NotionButtonStyle())
                 Button("저장…") { page.sheet = .preview(title: "저장", text: store.draft.text, base: store.saved.text) }
                     .buttonStyle(NotionButtonStyle(kind: .primary))
                     .keyboardShortcut("s", modifiers: .command)
@@ -900,6 +908,7 @@ private struct HostsPreviewSheet: View {
                     .font(WL.caption).foregroundStyle(WL.muted)
                 Spacer()
                 Button("취소") { page.sheet = nil }.buttonStyle(NotionButtonStyle()).keyboardShortcut(.cancelAction)
+                    .disabled(store.saving)
                 Button(store.saving ? "저장하는 중…" : "저장") { save() }
                     .buttonStyle(NotionButtonStyle(kind: .primary))
                     .keyboardShortcut(.defaultAction)
@@ -950,8 +959,15 @@ private struct HostsPreviewSheet: View {
         }
         store.save(text) { failure in
             if let failure {
-                if store.saved.text != base { page.sheet = nil }
-                page.flash(failure)
+                if store.saved.text != base {
+                    page.sheet = nil
+                    return page.flash(failure)
+                }
+                // 뒤 화면 안내는 이 창에 가려 창 위에 알린다
+                let alert = NSAlert()
+                alert.messageText = "저장하지 못했습니다"
+                alert.informativeText = failure
+                alert.runModal()
             } else {
                 page.sheet = nil
                 page.flash(title == "정리" ? "정리해 저장했습니다" : "저장했습니다")

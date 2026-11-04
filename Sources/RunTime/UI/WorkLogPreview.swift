@@ -486,6 +486,13 @@ struct WorkLogPreview: View {
                         .tip("Claude Code에 붙여 넣으면 git을 다시 훑지 않고 고른 일감만 MCP로 올립니다")
                         Spacer()
                         Button("보낸 것으로 표시") {
+                            // 보낸 기록이 남지 않아 되돌릴 곳이 없으니 묻는다
+                            let alert = NSAlert()
+                            alert.messageText = "\(chosen.count)개 일감을 보낸 것으로 표시할까요?"
+                            alert.informativeText = "레드마인에는 아무것도 보내지 않습니다. 다른 곳에서 이미 올렸을 때만 쓰세요."
+                            alert.addButton(withTitle: "표시")
+                            alert.addButton(withTitle: "취소")
+                            guard alert.runModal() == .alertFirstButtonReturn else { return }
                             store.markPosted(chosen.flatMap(\.entryIDs))
                             forgetChoices(chosen.map(\.issue))
                             page.flash("\(chosen.count)개 일감을 보낸 것으로 표시했습니다")
