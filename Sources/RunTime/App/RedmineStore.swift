@@ -240,12 +240,17 @@ final class RedmineStore: ObservableObject {
 
     /// 점검용: 레드마인 대신 폴더의 응답 파일로 답한다 (`issues/101.json` → `issues_101.json`, 없으면 끝 이름).
     /// 고치기(PUT)는 받은 것으로 친다. 사내망 밖에서도 화면과 고치기 흐름을 볼 수 있다.
+    /// 점검용: 가짜 응답으로 답한 쓰기 요청.
+    static var fixtureWrites: [String] = []
+
     private static func serveFixture(_ request: URLRequest, folder: String, done: @escaping (Data?, Int, Error?) -> Void) {
         let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+        if let method = request.httpMethod, method != "GET" { fixtureWrites.append("\(method) \(path)") }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             if request.httpMethod == "PUT" || request.httpMethod == "DELETE" { return done(Data(), 204, nil) }
             if request.httpMethod == "POST" {
-                let sample = path == "issues.json" ? FileManager.default.contents(atPath: (folder as NSString).appendingPathComponent("created.json")) : nil
+                let name = path == "issues.json" ? "created.json" : path
+                let sample = FileManager.default.contents(atPath: (folder as NSString).appendingPathComponent(name))
                 return done(sample ?? Data("{}".utf8), 201, nil)
             }
             let names = [path.replacingOccurrences(of: "/", with: "_"), (path as NSString).lastPathComponent]

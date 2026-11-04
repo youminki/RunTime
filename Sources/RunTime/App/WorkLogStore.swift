@@ -420,7 +420,9 @@ final class WorkLogStore: ObservableObject {
         change { log in
             if let index = log.sent.firstIndex(where: { $0.id == record.id }) { log.sent[index].undoneAt = Date() }
             for index in log.entries.indices where ids.contains(log.entries[index].id) {
-                if reopenNote { log.entries[index].postedAt = nil }
+                // 이 기록 뒤에 다시 보낸 줄은 새 댓글이 남아 있어 되돌리지 않는다
+                let later = (log.entries[index].postedAt ?? .distantPast) > record.sentAt.addingTimeInterval(60)
+                if reopenNote, !later { log.entries[index].postedAt = nil }
                 if !record.timeEntryIDs.isEmpty { log.entries[index].timeLogged = false }
             }
         }

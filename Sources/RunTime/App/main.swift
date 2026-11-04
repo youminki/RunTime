@@ -325,6 +325,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--report-preview") {
     exit(0)
 }
 // 업데이트 판정: 그 커밋으로 만든 빌드라 치고 GitHub와 견줘 받을지만 찍는다 (설치하지 않음)
+// 레드마인 화면의 일을 가짜 응답으로 끝까지 돌려 나가는 요청을 살핀다. 서버에는 보내지 않는다.
+if CommandLine.arguments.contains("--redmine-flow") {
+    MainActor.assumeIsolated { RedmineFlowCheck.run(folder: RedmineFlowCheck.prepare()) }
+    RunLoop.main.run()
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--update-check") {
     let args = Array(CommandLine.arguments.dropFirst(index + 1))
     _ = NSApplication.shared
