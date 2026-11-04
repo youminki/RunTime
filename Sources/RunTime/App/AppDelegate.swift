@@ -292,20 +292,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let line = Self.tooltip(session: engine.sessionGauge, weekly: engine.weeklyGauge)
         menu.addItem(withTitle: line, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
+        // 앱 창의 아이콘 막대와 같은 묶음 순서로 둔다: 사용량, 업무 기록, 개발 도구, 러너
         add(engine.settings.globalHotKeyEnabled && GlobalHotKey.shared.isRegistered
             ? "사용량 보기 (\(GlobalHotKey.displayName))" : "사용량 보기") { [weak self] in self?.togglePopover() }
+        add("새로고침") { [weak self] in self?.engine.refreshNow(forceOfficial: true) }
+        addAccountMenu(to: menu)
+        menu.addItem(.separator())
         add("업무 일지") { [weak self] in self?.openWorkLog() }
-        add("캘린더") { [weak self] in self?.showMain(.calendar) }
-        let unseenDesign = MainActor.assumeIsolated { DesignSync.shared.unseenCount }
-        add(unseenDesign > 0 ? "디자인 변경 (\(unseenDesign))" : "디자인 변경") { [weak self] in self?.showMain(.design) }
         add(WorkLogSettings.shared.quickAddEnabled ? "업무 한 줄 적기 (\(GlobalHotKey.quickCombo.label))" : "업무 한 줄 적기") {
             QuickAddPanel.shared.show()
         }
-        addAccountMenu(to: menu)
+        add("캘린더") { [weak self] in self?.showMain(.calendar) }
+        menu.addItem(.separator())
+        let unseenDesign = MainActor.assumeIsolated { DesignSync.shared.unseenCount }
+        add(unseenDesign > 0 ? "디자인 변경 (\(unseenDesign))" : "디자인 변경") { [weak self] in self?.showMain(.design) }
         addHostsMenu(to: menu)
-        add("일별 사용량") { [weak self] in self?.openDailyDetail() }
-        add("토큰 러너 순위") { [weak self] in self?.openLeaderboard() }
-        add("새로고침") { [weak self] in self?.engine.refreshNow(forceOfficial: true) }
+        menu.addItem(.separator())
+        add("러너와 게임") { [weak self] in self?.showMain(.runners) }
+        add("게임 순위") { [weak self] in self?.openLeaderboard() }
         menu.addItem(.separator())
         add("설정…") { [weak self] in self?.openSettings() }
         add("업데이트 확인") { [weak self] in
@@ -626,7 +630,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func openUsageWindow() { showMain(.usage) }
     private func openDailyDetail() { showMain(.usage) }
     private func openWorkLog() { showMain(.workLog) }
-    private func openLeaderboard() { showMain(.game) }
+    private func openLeaderboard() {
+        RunnerHubRequest.shared.section = .ranking
+        showMain(.runners)
+    }
 
     /// 앱 창을 열고 그 화면으로 간다. 이미 떠 있으면 지금 화면을 뒤로 가기 기록에 남기고 옮긴다.
     private func showMain(_ page: MainPage) {

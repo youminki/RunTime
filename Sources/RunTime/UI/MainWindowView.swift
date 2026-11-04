@@ -3,11 +3,11 @@ import SwiftUI
 
 /// 한 창 안에서 오가는 화면. 메뉴바·팝오버·알림의 단추도 새 창을 띄우지 않고 이 창의 화면을 바꾼다.
 enum MainPage: String, CaseIterable {
-    case usage, game, runners, workLog, calendar, design, hosts, redmine, settings
+    case usage, runners, workLog, calendar, redmine, design, hosts, settings
 
-    /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 순위는 게임).
+    /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 게임·순위는 러너).
     init?(windowName: String) {
-        let legacy: [String: MainPage] = ["daily": .usage, "dailyDetail": .usage, "leaderboard": .game]
+        let legacy: [String: MainPage] = ["daily": .usage, "dailyDetail": .usage, "leaderboard": .runners, "game": .runners]
         guard let page = MainPage(rawValue: windowName) ?? legacy[windowName] else { return nil }
         self = page
     }
@@ -15,7 +15,6 @@ enum MainPage: String, CaseIterable {
     var title: String {
         switch self {
         case .usage: return "사용량"
-        case .game: return "게임"
         case .runners: return "러너"
         case .workLog: return "업무 일지"
         case .calendar: return "캘린더"
@@ -29,7 +28,6 @@ enum MainPage: String, CaseIterable {
     var icon: String {
         switch self {
         case .usage: return "gauge.medium"
-        case .game: return "gamecontroller"
         case .runners: return "hare"
         case .workLog: return "checklist"
         case .calendar: return "calendar"
@@ -43,8 +41,7 @@ enum MainPage: String, CaseIterable {
     var detail: String {
         switch self {
         case .usage: return "세션·주간 사용률, 최근 30분, 날짜별 토큰과 비용"
-        case .game: return "장애물 피하기 게임과 순위"
-        case .runners: return "러너 고르기, 상점, 창고, 퀘스트"
+        case .runners: return "게임과 퀘스트, 러너 고르기, 상점, 창고, 순위"
         case .workLog: return "업무 일지와 일일·주간 보고, 레드마인 보내기"
         case .calendar: return "업무 일지를 한 달 달력으로 크게, 공휴일과 함께"
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
@@ -57,10 +54,13 @@ enum MainPage: String, CaseIterable {
     /// 들른 뒤로 숨겨 두고 다시 쓰는 화면 (MainWindowView.content 참고).
     static let kept: [MainPage] = [.workLog, .calendar, .design, .redmine]
 
-    /// 팝오버와 같은 어두운 색 규칙으로 그리는 화면. 이 화면에서는 창 전체를 어둡게 한다.
-    var isDark: Bool { self == .usage || self == .game || self == .runners }
-    /// 러너 무대가 있는 화면 (게임·러너). 팝오버 무대와 동시에 띄우지 않는다.
-    var hasStage: Bool { self == .game || self == .runners }
+    /// 게임 화면처럼 늘 어둡게 그리는 화면. 이 화면에서는 창 전체를 어둡게 한다. 나머지는 시스템 모습을 따른다.
+    var isDark: Bool { self == .runners }
+    /// 러너 무대가 있는 화면. 팝오버 무대와 동시에 띄우지 않는다.
+    var hasStage: Bool { self == .runners }
+
+    /// 아이콘 막대의 묶음: Claude 사용량, 업무 기록, 개발 도구. 묶음 사이에 줄을 긋는다.
+    static let groups: [[MainPage]] = [[.usage, .runners], [.workLog, .calendar, .redmine], [.design, .hosts]]
 }
 
 /// 창 안의 이동 기록. Finder·시스템 설정처럼 뒤로·앞으로를 쓴다.
@@ -144,7 +144,12 @@ struct MainWindowView: View {
 
     private var rail: some View {
         VStack(spacing: 4) {
-            ForEach(MainPage.allCases.filter { $0 != .settings }, id: \.self) { page in railItem(page) }
+            ForEach(Array(MainPage.groups.enumerated()), id: \.offset) { index, group in
+                if index > 0 {
+                    Rectangle().fill(WL.border).frame(width: 28, height: 1).padding(.vertical, 4)
+                }
+                ForEach(group, id: \.self) { page in railItem(page) }
+            }
             Spacer()
             railItem(.settings)
         }
@@ -216,18 +221,22 @@ struct MainWindowView: View {
     @ViewBuilder
     private func screen(_ page: MainPage) -> some View {
         switch page {
-        case .usage, .game, .runners:
-            PopoverView(engine: engine, settings: settings,
+        case .usage, .runners:
+            let popover = PopoverView(engine: engine, settings: settings,
                         openSettings: { [navigator] in navigator.go(.settings) },
                         importRunner: importRunner,
                         openDailyDetail: { [navigator] in navigator.go(.usage) },
                         openWorkLog: { [navigator] in navigator.go(.workLog) },
                         openDesign: { [navigator] in navigator.go(.design) },
-                        openLeaderboard: { [navigator] in navigator.go(.game) },
+                        openLeaderboard: {},
                         performTrick: performTrick,
-                        layout: page == .usage ? .usagePage : page == .game ? .gamePage : .runnersPage)
-                .id(page)
-                .environment(\.colorScheme, .dark)
+                        layout: page == .usage ? .usagePage : .runnersPage)
+            // 러너 화면만 늘 어둡게, 사용량은 시스템 모습을 그대로 따른다
+            if page.isDark {
+                popover.id(page).environment(\.colorScheme, .dark)
+            } else {
+                popover.id(page)
+            }
         case .workLog:
             WorkLogView(store: .shared, page: workLogPage)
         case .calendar:

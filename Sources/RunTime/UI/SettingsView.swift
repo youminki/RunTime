@@ -138,7 +138,7 @@ struct SettingsView: View {
 
     private var general: some View {
         GroupedList {
-            GroupedSection(footer: "자동 시작을 켜면 Mac에 로그인할 때 러너를 띄웁니다. 단축키를 켜면 어느 앱에서든 \(GlobalHotKey.displayName)로 사용량 창을 엽니다. 단축키를 눌러 다른 조합으로 바꿀 수 있습니다. 기본은 러너만 보이고, 사용률 표시를 켜면 러너 바로 옆에 숫자로 함께 보여 줍니다.") {
+            GroupedSection(footer: "단축키를 켜면 어느 앱에서든 \(GlobalHotKey.displayName)로 사용량 창을 엽니다. 사용률 표시를 켜면 러너 옆에 숫자를 함께 보입니다.") {
                 ToggleRow(title: "로그인 시 자동 시작", icon: "power", tint: Palette.green, isOn: $settings.launchAtLogin)
                     .disabled(!LaunchAtLogin.available)
                 ToggleRow(title: "단축키로 사용량 열기", icon: "command", tint: Palette.gray,
@@ -175,11 +175,11 @@ struct SettingsView: View {
             }
             if !LaunchAtLogin.available { devOnlyNote("자동 시작") }
 
-            GroupedSection("업데이트", footer: "새 버전은 설치한 폴더에서 다시 빌드합니다. 1~2분 동안 러너가 잠깐 사라졌다가 돌아옵니다. 자동으로 업데이트를 켜면 묻지 않고 설치합니다.") {
+            GroupedSection("업데이트", footer: "설치한 폴더에서 다시 빌드합니다. 1~2분 동안 러너가 잠깐 사라졌다가 돌아옵니다. 자동 업데이트를 켜면 묻지 않고 설치합니다.") {
                 UpdateRows(updater: AppUpdater.shared)
             }
 
-            GroupedSection("문제 기록", footer: "업데이트를 미루거나 실패한 일, 사용량 창이 화면 밖으로 넘친 일, 공식 사용량을 받지 못한 일을 이 Mac에 적어 둡니다. 다른 Mac에서 문제가 생기면 그 Mac에서 '진단 복사'를 눌러 붙여 넣으면 빌드·화면 구성·최근 기록을 한 번에 볼 수 있습니다. 키나 일지 내용은 담지 않습니다.\n'만든 사람에게 알리기'를 켜 두면 업데이트가 실패하거나 멈췄을 때, 업무 일지·디자인·호스트·사용량 창 같은 화면에서 일이 실패했을 때, 앱이 죽거나 5초 넘게 멈췄을 때 무작위 설치 ID, 앱·macOS 버전, 화면과 까닭, 실패한 코드 위치, 요청과 응답, 죽거나 멈춘 자리의 호출 순서, 사용자 폴더·이름·토큰을 가린 최근 기록만 순위 서버로 보내 만든 사람에게 메일로 알립니다. 일지 내용은 글자 수만 보냅니다.") {
+            GroupedSection("문제 기록", footer: "실패하거나 멈춘 일을 이 Mac에 적어 둡니다. '만든 사람에게 알리기'를 켜면 설치 ID, 버전, 실패한 자리와 까닭만 보내고 키·토큰·일지 내용은 보내지 않습니다. 다른 Mac의 문제는 그 Mac에서 '진단 복사'로 받습니다.") {
                 DiagnosticsRows(usage: { officialStatusText })
             }
 
@@ -209,7 +209,7 @@ struct SettingsView: View {
         GroupedList {
             runnerHero
 
-            GroupedSection("모습", footer: "'크게'는 머리 위 여백을 줄여 캐릭터를 키웁니다. 움직임은 1초에 바뀌는 그림 수(절약 12, 부드럽게 30, 최고 60)로, 메뉴바와 사용량 창 무대에 함께 쓰입니다. 많을수록 매끄럽지만 CPU를 조금 더 씁니다. '본래 색'을 고르면 메뉴바에서도 캐릭터 고유색으로 그립니다.") {
+            GroupedSection("모습", footer: "'크게'는 머리 위 여백을 줄여 캐릭터를 키웁니다. 움직임은 1초에 그리는 그림 수로, 많을수록 매끄럽지만 CPU를 조금 더 씁니다.") {
                 GroupedRow("메뉴바 크기", icon: "textformat.size", tint: Palette.indigo) {
                     segmented("메뉴바 크기", $settings.runnerSize, RunnerSize.allCases) { $0.displayName }
                 }
@@ -252,7 +252,7 @@ struct SettingsView: View {
     private var usage: some View {
         GroupedList {
             GroupedSection("공식 사용량",
-                           footer: "Anthropic 계정 기준 사용률을 3분마다 받습니다. 끄거나 받지 못하면 사용률은 비워 두고, 속도와 오늘 사용량은 이 Mac의 기록으로 계속 보여 줍니다.") {
+                           footer: "Anthropic 계정 기준 사용률을 3분마다 받습니다. 받지 못하면 사용률은 비워 두고 속도와 오늘 사용량은 이 Mac의 기록으로 보입니다.") {
                 ToggleRow(title: "공식 사용량 연동", icon: "chart.pie.fill", tint: Palette.indigo, isOn: $settings.officialEnabled)
                 GroupedRow("상태", icon: "antenna.radiowaves.left.and.right", tint: officialStatusColor) {
                     HStack(spacing: 8) {
@@ -295,7 +295,7 @@ struct SettingsView: View {
                 }
             }
 
-            GroupedSection("알림", footer: "한도 임박 알림은 세션·주간 사용률이 80%, 95%에 닿을 때 한 번씩, 초기화 알림은 5시간·주간 창이 새로 시작될 때 보냅니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다. Claude 작업 끝 알림은 사용량 창이 닫혀 있고 1분 넘게 걸린 작업만 알립니다. 주간 요약은 한 주가 끝나면 지난 7일의 토큰, 비용, 가장 많이 쓴 날과 프로젝트를 한 번 알립니다.") {
+            GroupedSection("알림", footer: "한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 사용량 창이 닫혀 있고 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
                 ToggleRow(title: "한도 임박 알림", icon: "bell.badge.fill", tint: Palette.red, isOn: $settings.limitAlertsEnabled)
                 ToggleRow(title: "세션 초기화 알림", icon: "arrow.clockwise", tint: Palette.green,
                           isOn: $settings.newSessionAlertEnabled)
@@ -415,15 +415,8 @@ private struct DiagnosticsRows: View {
                 .tip("빌드, macOS, 화면 구성, 업데이트 상태와 최근 기록을 클립보드에 담습니다")
             }
         }
-        .tip(Diagnostics.logURL.path)
-        // 최근 세 건은 바로 보이게 한다
-        ForEach(Array(model.recent.suffix(3).reversed().enumerated()), id: \.offset) { _, line in
-            GroupedRow(line) { EmptyView() }
-                .font(.system(size: 11.5).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .tip(line)
-        }
+        // 기록 본문은 "열기"로 보고, 여기는 마지막 한 건을 마우스를 올렸을 때만 보인다 (설정 화면을 기록으로 채우지 않게)
+        .tip(model.recent.last.map { "마지막 기록: \($0)" } ?? Diagnostics.logURL.path)
     }
 }
 
@@ -612,6 +605,6 @@ private struct AccountSection: View {
     }
 
     private var footer: String {
-        "Claude Code에서 /login으로 다른 계정에 들어가면 여기에 자동으로 추가됩니다. 바꾸기를 누르면 Claude Code의 로그인 정보를 그 계정 것으로 바꾸고, 열려 있는 세션도 곧 그 계정을 씁니다. 자동으로 바꾸기를 켜면 Claude Code가 한도에 막히거나 사용률이 \(Int(AccountSwitcher.autoSwitchLimit))%에 닿을 때 여유가 가장 많은 계정으로 바로 바꾸고, 바꿀 계정이 없으면 언제 풀리는지 알립니다. 쓰지 않는 계정의 사용률은 10분마다 받고, 토큰은 만료되기 전에 새로 받아 두어 오래 쓰지 않은 계정도 다시 로그인하지 않고 바꿀 수 있습니다. 로그인 정보는 이 Mac의 키체인에만 둡니다."
+        "Claude Code에서 /login으로 들어간 계정이 여기에 쌓입니다. 바꾸기를 누르면 열려 있는 세션도 곧 그 계정을 씁니다. 자동으로 바꾸기를 켜면 사용률이 \(Int(AccountSwitcher.autoSwitchLimit))%에 닿을 때 여유가 가장 많은 계정으로 바꿉니다. 로그인 정보는 이 Mac의 키체인에만 둡니다."
     }
 }

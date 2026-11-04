@@ -19,7 +19,7 @@ struct RunnerStage: View {
     var tempo: Double = 1
     /// 사용량 흐름에서 반응할 순간.
     var reactions: AnyPublisher<UsageReactions.Reaction, Never> = Empty().eraseToAnyPublisher()
-    /// 게임 화면처럼 크게 띄울 때의 높이. 장면은 높이 150 기준으로 계산하고 그릴 때만 키운다.
+    /// 앱 창 러너 화면처럼 크게 띄울 때의 높이. 장면은 높이 150 기준으로 계산하고 그릴 때만 키운다.
     var height: CGFloat = RunnerStage.height
 
     @StateObject private var model = StageModel()

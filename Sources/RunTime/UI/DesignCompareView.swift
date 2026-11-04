@@ -236,7 +236,12 @@ struct DesignCompareView: View {
     static func groups(_ events: [DesignEvent]) -> [ScreenGroup] {
         Dictionary(grouping: events) { $0.frameID ?? $0.screenID }
             .map { ScreenGroup(id: $0.key, events: $0.value) }
-            .sorted { $0.latest.detectedAt > $1.latest.detectedAt }
+            .sorted {
+                // 날짜 비교는 한 번에 만들어 시각이 모두 같다. 그때는 메뉴 경로·화면 ID 순으로 두어 열 때마다 순서가 섞이지 않게 한다
+                let (a, b) = ($0.latest, $1.latest)
+                if a.detectedAt != b.detectedAt { return a.detectedAt > b.detectedAt }
+                return (a.menuPath, a.screenID, $0.id) < (b.menuPath, b.screenID, $1.id)
+            }
     }
 
     /// 화면 한 줄: 이름, 화면 ID와 경로, 그 기간에 합친 바뀐 항목 수. 누르면 최근 변경을 연다.

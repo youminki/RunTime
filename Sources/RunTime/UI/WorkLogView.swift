@@ -96,27 +96,25 @@ struct WorkLogView: View {
             ))
             .layoutPriority(1)
             Spacer(minLength: 8)
-            if page.mode == .day {
-                Button { carryOver() } label: { Image(systemName: "arrow.turn.down.right") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .disabled(carryable == 0)
-                    .opacity(carryable == 0 ? 0.4 : 1)
-                    .tip(carryHelp)
-                Button { page.importText = ""; page.importing = true } label: { Image(systemName: "doc.on.clipboard") }
-                    .buttonStyle(GhostIconButtonStyle())
-                    .tip("보고서 붙여넣기: 써 둔 일일보고를 한 번에 넣기")
+            // 그림만으로는 뜻을 알기 어려운 일을 이름 붙은 메뉴 하나로 모은다 (macOS 도구 막대의 더 보기)
+            Menu {
+                if page.mode == .day {
+                    Button(carryable > 0 ? "끝나지 않은 일 이어 쓰기 (\(carryable))" : "끝나지 않은 일 이어 쓰기") { carryOver() }
+                        .disabled(carryable == 0)
+                    Button("보고서 붙여넣기…") { page.importText = ""; page.importing = true }
+                    Divider()
+                }
+                Button("모든 묶음 펼치기") { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(false) } }
+                Button("모든 묶음 접기") { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(true) } }
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
-            // 프로젝트·일감 묶음을 한 번에 펼치거나 접는다
-            Button { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(false) } } label: {
-                Image(systemName: "arrow.up.and.line.horizontal.and.arrow.down")
-            }
-            .buttonStyle(GhostIconButtonStyle())
-            .tip("모든 묶음 펼치기")
-            Button { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(true) } } label: {
-                Image(systemName: "arrow.down.and.line.horizontal.and.arrow.up")
-            }
-            .buttonStyle(GhostIconButtonStyle())
-            .tip("모든 묶음 접기")
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .padding(.horizontal, 4)
+            .tip(page.mode == .day ? carryHelp : "묶음 펼치기·접기")
+            .accessibilityLabel("더 보기")
             refreshButton
                 .layoutPriority(2)
         }

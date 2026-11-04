@@ -94,11 +94,12 @@ struct HostsView: View {
                     .disabled(!store.canEdit)
             }
             .id(store.generation)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: 960, alignment: .leading)
             .padding(.horizontal, 32)
             .padding(.top, 24)
             .padding(.bottom, store.dirty ? 80 : 32)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // 넓은 창에서 목록이 왼쪽에 붙고 오른쪽이 비지 않게 가운데 둔다 (사용량 화면과 같다)
+            .frame(maxWidth: .infinity)
         }
         .background(WL.canvas)
         .foregroundStyle(WL.text)

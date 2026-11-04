@@ -110,6 +110,12 @@ enum UIShots {
             .frame(width: mainSize.width, height: mainSize.height))
     }
 
+    private static func runnersTab(_ section: PopoverPage.Section, engine: UsageEngine) -> AnyView {
+        AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: section, layout: .runnersPage)
+            .environment(\.colorScheme, .dark)
+            .frame(width: mainSize.width - MainWindowView.railWidth - 1, height: mainSize.height))
+    }
+
     /// 앱 창 화면을 찍을 크기. RUNTIME_SHOT_MIN=1이면 최소 크기로 찍어 잘리는 곳을 보고,
     /// RUNTIME_SHOT_SIZE=2400x1300이면 큰 모니터에서 창을 키웠을 때를 본다.
     private static var mainSize: CGSize {
@@ -280,8 +286,20 @@ enum UIShots {
             ("popover-storage", .darkAqua, nil,
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .storage))),
             ("main-usage", .darkAqua, nil, mainPage(.usage, engine: engine)),
-            ("main-game", .darkAqua, nil, mainPage(.game, engine: engine)),
+            // 사용량 화면은 시스템 모습을 따른다
+            ("main-usage-light", .aqua, nil, mainPage(.usage, engine: engine)),
+            ("main-settings-runner", .aqua, nil, {
+                let navigator = MainNavigator()
+                navigator.start(at: .settings)
+                return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.runner))
+                    .frame(width: mainSize.width, height: mainSize.height))
+            }()),
+            ("main-runners-ranking", .darkAqua, nil, runnersTab(.ranking, engine: engine)),
             ("main-runners", .darkAqua, nil, mainPage(.runners, engine: engine)),
+            // 러너 화면의 오른쪽 탭 (아이콘 막대를 뺀 폭으로)
+            ("main-runners-shop", .darkAqua, nil, runnersTab(.shop, engine: engine)),
+            ("main-runners-storage", .darkAqua, nil, runnersTab(.storage, engine: engine)),
             ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),
             ("main-worklog-dark", .darkAqua, nil, mainPage(.workLog, engine: engine)),
             ("main-calendar", .aqua, nil, mainPage(.calendar, engine: engine)),

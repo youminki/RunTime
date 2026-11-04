@@ -19,10 +19,10 @@ struct PopoverView: View {
     var performTrick: (Trick) -> Void = { _ in }
     /// 화면 점검에서 러너·상점·퀘스트 화면을 바로 띄울 때.
     var startSection: PopoverPage.Section?
-    /// 팝오버인지, 앱 창의 어느 화면인지. 창에서는 사용량·게임·러너를 따로 크게 보인다.
+    /// 팝오버인지, 앱 창의 어느 화면인지. 창에서는 사용량과 러너(게임·꾸미기·순위)를 따로 크게 보인다.
     var layout: Layout = .popover
 
-    enum Layout { case popover, usagePage, gamePage, runnersPage }
+    enum Layout { case popover, usagePage, runnersPage }
 
     /// 앱 창의 화면은 메뉴바 창보다 넓어 작은 글자를 한 단계 키운다.
     private var labelFont: Font { layout == .popover ? Theme.label : .system(size: 12.5, weight: .medium) }
@@ -72,7 +72,6 @@ struct PopoverView: View {
             switch layout {
             case .popover: narrowBody
             case .usagePage: usagePage
-            case .gamePage: gamePage
             case .runnersPage: runnersPage
             }
         }
@@ -83,6 +82,13 @@ struct PopoverView: View {
                 page.showsRunners = true
             }
         }
+        // 메뉴바 메뉴의 "순위"처럼 밖에서 러너 화면의 탭을 고를 때
+        .onReceive(RunnerHubRequest.shared.$section.compactMap { $0 }) { section in
+            guard layout == .runnersPage else { return }
+            page.section = section
+            // @Published는 값을 넣기 전에 알려, 여기서 바로 비우면 보낸 쪽의 대입이 뒤에 끝나 요청이 남는다
+            DispatchQueue.main.async { RunnerHubRequest.shared.section = nil }
+        }
     }
 
     private var stage: some View { stage(height: RunnerStage.height) }
@@ -90,7 +96,10 @@ struct PopoverView: View {
     /// 무대. 앱 창에서는 `height`만큼 키우고, 폭은 장면 비율(348×150)대로 둔다.
     private func stage(height: CGFloat) -> some View {
         RunnerStage(display: display, character: settings.character, theme: settings.spriteTheme,
-                    onPet: performTrick, openLeaderboard: openLeaderboard, trickRequest: page.trick,
+                    onPet: performTrick,
+                    // 창의 러너 화면은 순위를 옆 탭에 두어 화면을 옮기지 않는다
+                    openLeaderboard: layout == .runnersPage ? { [page] in page.section = .ranking } : openLeaderboard,
+                    trickRequest: page.trick,
                     claudeFinished: engine.turnEnded.eraseToAnyPublisher(), tempo: engine.tempo,
                     reactions: engine.reacted.eraseToAnyPublisher(), height: height)
             .frame(width: windowed ? height * Self.stageRatio : nil)
@@ -116,14 +125,14 @@ struct PopoverView: View {
     }
 
     /// 창의 사용량 화면: 위에 공식 값 상태, 세션·주간, 30분 그래프와 오늘 수치, 아래에 최근 8일 날짜별 사용량.
-    /// 무대와 게임은 게임 화면으로 떼어 숫자만 차분히 보이게 한다.
+    /// 무대와 게임은 러너 화면으로 떼어 숫자만 차분히 보이게 한다.
     private var usagePage: some View {
         SlimScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // 화면 이름은 창 위 막대에 있어, 여기는 공식 값을 언제 받았는지와 새로고침만 둔다
-                HStack(alignment: .center) {
-                    Text("이 Mac의 Claude Code와 공식 사용률").font(labelFont).foregroundStyle(Theme.secondary)
-                    Spacer()
+                // 화면 이름은 창 위 막대에 있어, 여기는 어느 계정 값인지와 언제 받았는지, 새로고침만 한 줄에 둔다
+                HStack(alignment: .center, spacing: 12) {
+                    accountLine
+                    Spacer(minLength: 8)
                     HStack(spacing: 6) {
                         Circle().fill(statusColor).frame(width: 6, height: 6)
                         Text(statusText).font(captionFont).foregroundStyle(Theme.tertiary).lineLimit(1)
@@ -134,6 +143,7 @@ struct PopoverView: View {
                         .tip("새로고침 (⌘R)")
                         .accessibilityLabel("새로고침")
                 }
+                .frame(minHeight: 28)
                 usageCards
                 Text("최근 8일").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.primary)
                     .padding(.top, 28).padding(.bottom, 10)
@@ -145,34 +155,6 @@ struct PopoverView: View {
             .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// 창의 게임 화면: 왼쪽에 키운 무대와 조작법·내 기록, 오른쪽에 순위.
-    private var gamePage: some View {
-        HStack(alignment: .top, spacing: 28) {
-            GeometryReader { geo in
-                // 장면은 팝오버 무대와 같은 348×150으로 계산하고 비율을 지킨 채 키운다.
-                // 장면 폭이 창마다 달라지면 장애물을 미리 보는 거리가 달라져 순위 점수가 공정하지 않다.
-                // 2배보다 크게 키우면 픽셀 그림·효과 그림이 흐려지고 점수판 글자가 화면을 가려 그만큼에서 멈춘다
-                let height = max(RunnerStage.height,
-                                 min(geo.size.width / Self.stageRatio, geo.size.height - 190,
-                                     RunnerStage.height * Self.maxStageZoom))
-                VStack(alignment: .leading, spacing: 14) {
-                    stage(height: height)
-                    stageCaption
-                    gameKeys
-                    gameRecord
-                }
-                .frame(width: height * Self.stageRatio)
-                // 무대를 다 키워도 남는 높이는 위아래로 나눠 가운데 둔다
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            Rectangle().fill(Theme.hairline).frame(width: 1)
-            LeaderboardView()
-                .frame(width: 320)
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 24)
     }
 
     /// 팝오버 무대의 장면 크기 (팝오버 폭 376에서 안쪽 여백 14씩을 뺀 폭).
@@ -217,19 +199,33 @@ struct PopoverView: View {
         .padding(.top, 4)
     }
 
-    /// 창의 러너 화면: 왼쪽에 무대(산 꾸미기를 바로 써 보게)와 퀘스트, 오른쪽에 러너·상점·창고.
-    /// 무대를 장면 비율 그대로 두어 여기서 게임을 해도 팝오버·게임 화면과 같은 거리에서 장애물이 나온다.
+    /// 창의 러너 화면: 왼쪽에 키운 무대와 조작법·내 기록·퀘스트, 오른쪽에 러너·상점·창고·순위 탭.
+    /// 게임과 꾸미기를 한 화면에 두어, 산 꾸미기를 바로 무대에서 써 보고 그 자리에서 게임과 순위를 본다.
     private var runnersPage: some View {
         HStack(alignment: .top, spacing: 24) {
-            VStack(alignment: .leading, spacing: 0) {
-                stage(height: Self.sideStageWidth / Self.stageRatio)
-                stageCaption.padding(.top, 10).padding(.horizontal, 2)
-                Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 14)
-                ScrollView { QuestView().padding(.horizontal, 2).padding(.bottom, 4) }
+            GeometryReader { geo in
+                // 장면은 팝오버 무대와 같은 348×150으로 계산하고 비율을 지킨 채 키운다.
+                // 장면 폭이 창마다 달라지면 장애물을 미리 보는 거리가 달라져 순위 점수가 공정하지 않다.
+                // 2배보다 크게 키우면 픽셀 그림·효과 그림이 흐려지고 점수판 글자가 화면을 가려 그만큼에서 멈춘다
+                let height = max(RunnerStage.height,
+                                 min(geo.size.width / Self.stageRatio, geo.size.height - 330,
+                                     RunnerStage.height * Self.maxStageZoom))
+                VStack(alignment: .leading, spacing: 14) {
+                    stage(height: height)
+                    stageCaption
+                    gameKeys
+                    gameRecord
+                    // 남는 높이에는 오늘·이번 주 퀘스트를 늘 보이게 둔다
+                    Rectangle().fill(Theme.hairline).frame(height: 1)
+                    SlimScrollView { QuestView().padding(.horizontal, 2).padding(.bottom, 4) }
+                        .frame(maxHeight: .infinity)
+                }
+                .frame(width: height * Self.stageRatio)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .frame(width: Self.sideStageWidth)
+            .frame(minWidth: Self.sideStageWidth)
             runnerPage
-                .frame(maxWidth: .infinity)
+                .frame(width: Self.hubWidth)
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 22)
@@ -238,6 +234,7 @@ struct PopoverView: View {
     }
 
     static let sideStageWidth: CGFloat = 400
+    static let hubWidth: CGFloat = 440
 
     @ViewBuilder
     private var usageContent: some View {
@@ -256,7 +253,7 @@ struct PopoverView: View {
                 Text(account.email).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
                 if let plan { Text(plan).foregroundStyle(Theme.tertiary) }
                 if switcher.switching { ProgressView().controlSize(.mini) }
-                Spacer(minLength: 4)
+                if !windowed { Spacer(minLength: 4) }
                 if !others.isEmpty {
                     Menu {
                         ForEach(others) { other in
@@ -264,9 +261,22 @@ struct PopoverView: View {
                                 .disabled(other.needsLogin == true)
                         }
                     } label: {
-                        Text("계정 바꾸기").foregroundStyle(Theme.tertiary)
+                        if windowed {
+                            HStack(spacing: 3) {
+                                Text("계정 바꾸기")
+                                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+                            }
+                            .foregroundStyle(Theme.secondary)
+                            .padding(.horizontal, 8)
+                            .frame(height: 22)
+                            .background(Capsule().fill(Theme.surface))
+                            .overlay(Capsule().strokeBorder(Theme.hairline))
+                        } else {
+                            Text("계정 바꾸기").foregroundStyle(Theme.tertiary)
+                        }
                     }
-                    .menuStyle(.borderlessButton)
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
                     .menuIndicator(.hidden)
                     .fixedSize()
                     .disabled(switcher.switching)
@@ -274,7 +284,7 @@ struct PopoverView: View {
                 }
             }
             .font(captionFont)
-            .padding(.top, 10)
+            .padding(.top, windowed ? 0 : 10)
             .tip("지금 Claude Code에 로그인한 계정. 사용률은 이 계정 기준입니다")
         }
     }
@@ -293,7 +303,8 @@ struct PopoverView: View {
 
     @ViewBuilder
     private var usageCards: some View {
-        accountLine
+        // 창에서는 화면 맨 위 줄에 따로 둔다
+        if !windowed { accountLine }
         // 세션과 주간을 나란히 두어 두 값을 한눈에 견준다
         Card(padding: 0) {
             HStack(alignment: .top, spacing: 0) {
@@ -399,6 +410,10 @@ struct PopoverView: View {
                 Spacer(minLength: 4)
                 coinBalance
             }
+            if page.section == .ranking {
+                // 순위는 자기 목록을 스스로 넘기고 참여 칸을 바닥에 붙여 둔다
+                LeaderboardView().frame(maxHeight: .infinity)
+            } else {
             SlimScrollView {
                 Group {
                     switch page.section {
@@ -406,6 +421,7 @@ struct PopoverView: View {
                     case .shop: GameShopView(settings: settings)
                     case .storage: StorageView(settings: settings) { page.section = .shop }
                     case .quests: QuestView()
+                    case .ranking: EmptyView()
                     }
                 }
                 .padding(.horizontal, 2)
@@ -414,6 +430,7 @@ struct PopoverView: View {
             // 팝오버는 사용량 화면과 높이를 맞춰 전환할 때 출렁이지 않게 고정하고, 창에서는 남은 높이를 다 쓴다
             .frame(height: windowed ? nil : 304)
             .frame(maxHeight: windowed ? .infinity : nil)
+            }
             // 시스템 단추 대신 상점·창고와 같은 단추로 둔다
             HStack(spacing: 6) {
                 if !windowed {
@@ -465,7 +482,9 @@ struct PopoverView: View {
     /// 러너·상점·창고·퀘스트. 퀘스트에는 오늘 남은 미션 수를 붙인다.
     private var hubTabs: some View {
         HStack(spacing: 2) {
-            ForEach(PopoverPage.Section.allCases.filter { !windowed || $0 != .quests }, id: \.self) { section in
+            // 팝오버는 폭이 좁아 순위를 앱 창으로 넘긴다 (무대의 트로피 단추)
+            // 창에서는 퀘스트를 무대 아래에 늘 보이므로 탭에서 뺀다
+            ForEach(PopoverPage.Section.allCases.filter { windowed ? $0 != .quests : $0 != .ranking }, id: \.self) { section in
                 let on = page.section == section
                 Button { page.section = section } label: {
                     HStack(spacing: 4) {
@@ -725,7 +744,7 @@ struct PopoverView: View {
             Spacer(minLength: 8)
             if let openAsWindow {
                 Button(action: openAsWindow) { Image(systemName: "macwindow") }
-                    .tip("앱 창에서 열기: 사용량·게임·업무 일지·디자인을 한 창에서 오갑니다")
+                    .tip("앱 창에서 열기: 날짜별 사용량, 러너, 업무 일지, 디자인을 한 창에서 오갑니다")
                     .accessibilityLabel("창으로 보기")
             }
             Button(action: openWorkLog) { Image(systemName: "checklist") }
@@ -742,9 +761,6 @@ struct PopoverView: View {
             }
             .tip(design.unseenCount > 0 ? "디자인 변경 · 완료 후 변경 \(design.unseenCount)건" : "디자인 변경")
             .accessibilityLabel(design.unseenCount > 0 ? "디자인 변경, 확인 안 함 \(design.unseenCount)건" : "디자인 변경")
-            Button(action: openDailyDetail) { Image(systemName: "chart.bar") }
-                .tip("일별 사용량")
-                .accessibilityLabel("일별 사용량")
             Button { engine.refreshNow(forceOfficial: true) } label: { Image(systemName: "arrow.clockwise") }
                 .keyboardShortcut("r")
                 .tip("새로고침 (⌘R)")
@@ -805,7 +821,7 @@ final class HoverIndex: ObservableObject {
 /// 팝오버 안 화면과 무대에 보낼 동작. `@State`를 못 쓰는 이유는 HoverFlag 참고.
 final class PopoverPage: ObservableObject {
     enum Section: CaseIterable {
-        case runners, shop, storage, quests
+        case runners, shop, storage, quests, ranking
 
         var title: String {
             switch self {
@@ -813,6 +829,7 @@ final class PopoverPage: ObservableObject {
             case .shop: "상점"
             case .storage: "창고"
             case .quests: "퀘스트"
+            case .ranking: "순위"
             }
         }
     }
@@ -820,4 +837,10 @@ final class PopoverPage: ObservableObject {
     @Published var showsRunners = false
     @Published var section: Section = .runners
     @Published var trick: TrickRequest?
+}
+
+/// 앱 창의 러너 화면에 열어 달라고 보내는 탭 (메뉴바 메뉴의 "순위" 등). 받은 화면이 비운다.
+final class RunnerHubRequest: ObservableObject {
+    static let shared = RunnerHubRequest()
+    @Published var section: PopoverPage.Section?
 }
