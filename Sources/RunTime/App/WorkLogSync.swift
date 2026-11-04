@@ -454,7 +454,12 @@ final class WorkLogSync: ObservableObject {
     private func tick() {
         if settings.captureEnabled, Date().timeIntervalSince(lastCapture ?? .distantPast) >= 600 { capture() }
         // 내 일감은 30분마다 새로 받는다
-        if settings.redmineReady, Date().timeIntervalSince(issuesLoadedAt ?? .distantPast) >= 1800 { loadMyIssues() }
+        // 사내망 밖에서는 실패가 이어진다. 분마다 다시 묻으면 큐를 30초씩 막고 기록이 쌓여 5분에 한 번만 묻는다
+        if settings.redmineReady, Date().timeIntervalSince(issuesLoadedAt ?? .distantPast) >= 1800,
+           Date().timeIntervalSince(issuesTriedAt) >= 300 {
+            issuesTriedAt = Date()
+            loadMyIssues()
+        }
         // 자정을 넘기면 그날 고정 업무를 넣는다 (가져오기를 꺼 두었거나 창을 켜 둔 채여도). 이미 있으면 아무것도 하지 않는다
         store.applyRecurringToday()
         remindIfDue()
@@ -940,6 +945,7 @@ final class WorkLogSync: ObservableObject {
     /// Claude 등으로 이미 올린 것 같은 댓글 (일감 번호 → 그 댓글). 같은 글을 두 번 올리지 않게 카드에 알린다.
     @Published var postedHints: [Int: RedmineAPI.Journal] = [:]
     private var pendingCheck: DispatchWorkItem?
+    private var issuesTriedAt = Date.distantPast
     /// 레드마인에서 찾지 못한 일감 번호.
     @Published private(set) var unknownIssues: Set<Int> = []
     private var checkedNotes: [Int: String] = [:]
