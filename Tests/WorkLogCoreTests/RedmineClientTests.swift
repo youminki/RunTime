@@ -101,6 +101,7 @@ private let issueJSON = #"""
         #expect(Redmine.issueNumber("API") == nil && Redmine.issueNumber("#0") == nil)
         let found = #"{"results":[{"id":1,"title":"작업 #1: 목록","type":"issue","url":"u"},{"id":2,"title":"닫힘","type":"issue-closed","url":"u"},{"id":3,"title":"위키","type":"wiki-page","url":"u"}]}"#
         #expect(try Redmine.found(Data(found.utf8)).map(\.id) == [1, 2])
+        #expect(Redmine.foundTotal(Data(#"{"results":[],"total_count":120}"#.utf8)) == 120)
         let upload = RedmineAPI.Upload(token: "t", filename: "a.png", contentType: "image/png")
         let change = Redmine.Change(notes: "", uploads: [upload])
         #expect(!change.isEmpty && (change.fields["uploads"] as? [[String: String]])?.first?["token"] == "t")
@@ -221,6 +222,12 @@ private let issueJSON = #"""
         let started = Date()
         for _ in 0..<10 { #expect(Redmine.tree(list, context: parents).count == 1200) }
         #expect(Date().timeIntervalSince(started) / 10 < 0.016)
+    }
+
+    /// 빠른 거르기로 목록 안 상위가 빠져도 하위가 맨 위로 올라가지 않는다.
+    @Test func filteredOutParentStaysAsContext() {
+        let rows = Redmine.tree([issue(2, parent: 1)], context: [issue(1), issue(2, parent: 1)])
+        #expect(rows.map(\.id) == [1, 2] && rows.map(\.isContext) == [true, false])
     }
 
     @Test func findsParentsStillToFetch() {

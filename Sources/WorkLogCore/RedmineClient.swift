@@ -384,6 +384,12 @@ public enum Redmine {
         return try decoder.decode(Results.self, from: data).results.filter(\.isIssue)
     }
 
+    /// 찾기 결과의 전체 건수 (한 번에 50건만 받는다).
+    public static func foundTotal(_ data: Data) -> Int {
+        struct Page: Decodable { let totalCount: Int? }
+        return (try? decoder.decode(Page.self, from: data))?.totalCount ?? 0
+    }
+
     /// `#123`이나 `123`처럼 번호만 쓴 찾는 말의 일감 번호.
     public static func issueNumber(_ text: String) -> Int? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)

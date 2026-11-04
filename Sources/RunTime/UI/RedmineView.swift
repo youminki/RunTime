@@ -32,8 +32,6 @@ struct RedmineView: View {
                 .sheet(item: Binding(get: { store.selected.map(IssueRef.init) }, set: { store.selected = $0?.id })) { _ in
                     RedmineIssueSheet(store: store, state: state)
                         .frame(minWidth: 820, idealWidth: 940, minHeight: 600, idealHeight: 760)
-                        // 창 아래 안내는 일감 창에 가려, 저장·첨부 실패를 여기서도 보인다
-                        .overlay(alignment: .bottom) { RedmineFlash(store: store) }
                 }
                 .sheet(isPresented: $store.creating) { RedmineNewIssueSheet(store: store) }
             } else {
@@ -176,7 +174,7 @@ private struct RedmineIssueTable: View {
     var body: some View {
         let rows = store.rows
         VStack(alignment: .leading, spacing: 0) {
-            header(count: rows.filter { !$0.isContext }.count)
+            header(count: store.visibleCount)
             Rectangle().fill(WL.border).frame(height: 1)
             GeometryReader { geo in
                 let timeline = store.layout == .timeline
@@ -231,6 +229,7 @@ private struct RedmineIssueTable: View {
     private var emptyText: String {
         if !store.search.isEmpty { return "‘\(store.search)’에 맞는 일감이 없습니다" }
         if store.quick != .all { return "\(store.quick.rawValue) 일감이 없습니다" }
+        if case .query = store.scope { return "이 질의에 맞는 일감이 없습니다" }
         return "이 범위에 \(store.statusFilter.rawValue)이 없습니다"
     }
 
@@ -328,7 +327,9 @@ private struct RedmineIssueTable: View {
     /// 모든 프로젝트에서 찾은 일감. 누르면 그 일감을 연다.
     private var searchResults: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(store.results.isEmpty ? "찾은 일감이 없습니다" : "찾은 일감 \(store.results.count)건").font(WL.heading).padding(12)
+            Text(store.results.isEmpty ? "찾은 일감이 없습니다"
+                    : store.resultsTotal > store.results.count ? "찾은 일감 \(store.resultsTotal)건 중 앞의 \(store.results.count)건" : "찾은 일감 \(store.results.count)건")
+                .font(WL.heading).padding(12)
             if !store.results.isEmpty {
                 Rectangle().fill(WL.border).frame(height: 1)
                 SlimScrollView {
@@ -336,7 +337,8 @@ private struct RedmineIssueTable: View {
                         ForEach(store.results) { found in
                             Button {
                                 store.showsResults = false
-                                store.selected = found.id
+                                // 팝오버가 닫힌 뒤에 시트를 띄워야 빠지지 않는다
+                                DispatchQueue.main.async { store.selected = found.id }
                             } label: {
                                 Text(found.title).font(WL.meta).lineLimit(2).multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -646,7 +648,7 @@ struct RedmineIssueSheet: View {
     }
 
     private var topBar: some View {
-        let ids = store.rows.map(\.id)
+        let ids = store.navigableIDs
         let index = store.selected.flatMap { ids.firstIndex(of: $0) }
         return HStack(spacing: 8) {
             Button { store.move(-1) } label: { Image(systemName: "chevron.up") }
@@ -663,8 +665,9 @@ struct RedmineIssueSheet: View {
             Spacer()
             if let id = store.selected, let issue = store.details[id] {
                 if store.saving.contains(id) || store.loadingDetail == id { ProgressView().controlSize(.small) }
-                if let me = store.me {
-                    let watching = issue.watchers?.contains { $0.id == me.id } == true
+                // 지켜보는 사람을 볼 권한이 없으면 목록이 없어 지금 상태를 알 수 없다
+                if let me = store.me, let watchers = issue.watchers {
+                    let watching = watchers.contains { $0.id == me.id }
                     Button { store.setWatching(id, !watching) } label: {
                         Label(watching ? "지켜보는 중" : "지켜보기", systemImage: watching ? "star.fill" : "star")
                     }
@@ -983,6 +986,7 @@ struct RedmineIssueSheet: View {
                     .buttonStyle(.plain)
                     Button { store.removeRelation(relation.id, issue: issue) } label: { Image(systemName: "xmark") }
                         .buttonStyle(GhostIconButtonStyle())
+                        .disabled(store.removingRelations.contains(relation.id))
                         .tip("관계 지우기")
                 }
             }
@@ -996,7 +1000,7 @@ struct RedmineIssueSheet: View {
                     .onSubmit { addRelation(issue) }
                 Button("관계 추가") { addRelation(issue) }
                     .buttonStyle(TextLinkButtonStyle())
-                    .disabled(Redmine.issueNumber(state.relationTargets[issue] ?? "") == nil)
+                    .disabled(Redmine.issueNumber(state.relationTargets[issue] ?? "").map { $0 == issue } ?? true)
             }
             .padding(.top, 4)
         }
@@ -1004,8 +1008,7 @@ struct RedmineIssueSheet: View {
 
     private func addRelation(_ issue: Int) {
         guard let target = Redmine.issueNumber(state.relationTargets[issue] ?? ""), target != issue else { return }
-        store.addRelation(issue, to: target, type: state.relationType)
-        state.relationTargets[issue] = nil
+        store.addRelation(issue, to: target, type: state.relationType) { ok in if ok { state.relationTargets[issue] = nil } }
     }
 
     private func attachmentList(_ attachments: [Redmine.Attachment]) -> some View {
@@ -1139,7 +1142,10 @@ struct RedmineIssueSheet: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK { state.files[id, default: []] += panel.urls }
+        if panel.runModal() == .OK {
+            let chosen = state.files[id] ?? []
+            state.files[id] = chosen + panel.urls.filter { !chosen.contains($0) }
+        }
     }
 
     // MARK: 일지·담당자

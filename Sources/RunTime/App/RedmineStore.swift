@@ -60,6 +60,9 @@ final class RedmineStore: ObservableObject {
     var timelineStart: Int { Redmine.monday(of: (Redmine.dayNumber(WorkDay.today()) ?? 0) - 14) + timelineShift * 7 }
     /// 트리에 끼워 넣는 상위 일감 (번호 → 일감). 목록 조건에는 안 맞아도 하위의 자리를 보인다.
     @Published private(set) var ancestors: [Int: Redmine.Issue] = [:]
+    private var unavailableParents: Set<Int> = []
+    private var fetchingAncestors = false
+    private var ancestorsStale = false
     @Published var collapsed: Set<Int> = []
 
     var filter: Redmine.Filter {
@@ -88,6 +91,7 @@ final class RedmineStore: ObservableObject {
     /// 상세까지 받은 일감. 목록에서 고치면 여기도 함께 바뀐다.
     @Published private(set) var details: [Int: Redmine.Issue] = [:]
     @Published private(set) var loadingDetail: Int?
+    private var detailTokens: [Int: Int] = [:]
     /// 상세를 받지 못한 일감과 까닭 (상세 자리에 다시 받기와 함께 보인다).
     @Published private(set) var detailErrors: [Int: String] = [:]
     /// 보내는 중인 일감 (그 일감의 칸을 잠깐 막는다).
@@ -114,6 +118,10 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var results: [Redmine.Found] = []
     @Published var showsResults = false
     @Published private(set) var searching = false
+    @Published private(set) var resultsTotal = 0
+    private var searchToken = 0
+    /// 지우는 중인 관계.
+    @Published private(set) var removingRelations: Set<Int> = []
     /// 새 일감 창이 열려 있는지.
     @Published var creating = false
 
@@ -140,6 +148,9 @@ final class RedmineStore: ObservableObject {
     func refresh() {
         // 구성원 목록은 받지 못해 비어 있을 수 있어 다시 받는다
         people = [:]
+        // 끼워 넣은 상위도 옛 값이 남지 않게 목록을 받은 뒤 새로 받는다
+        ancestors = [:]
+        unavailableParents = []
         loadMeta()
         load()
         if let selected { loadDetail(selected) }
@@ -154,7 +165,8 @@ final class RedmineStore: ObservableObject {
         }
         // 사내망 밖처럼 레드마인에 닿지 않으면 기본 60초를 기다리지 않고 20초 뒤 까닭을 보인다
         var request = request
-        request.timeoutInterval = 20
+        // 첨부는 올리는 데 오래 걸려 끊기지 않게 길게 둔다
+        request.timeoutInterval = (request.httpBody?.count ?? 0) > 1_000_000 ? 300 : 20
         URLSession.shared.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             DispatchQueue.main.async { done(data, status, error) }
@@ -253,13 +265,33 @@ final class RedmineStore: ObservableObject {
     /// 목록 일감의 상위를 맨 위까지 받는다. 내 일감의 상위는 남의 일감이라 목록에 없어, 이것 없이는 트리가 평평하다.
     func loadAncestors() {
         guard let (base, key) = credentials else { return }
+        // 받는 사이 목록이 바뀌면 끝난 뒤 한 번 더 살핀다
+        guard !fetchingAncestors else {
+            ancestorsStale = true
+            return
+        }
+        fetchingAncestors = true
+        func finish() {
+            fetchingAncestors = false
+            if ancestorsStale {
+                ancestorsStale = false
+                loadAncestors()
+            }
+        }
         func step(_ depth: Int) {
-            let known = Set(ancestors.keys)
+            let known = Set(ancestors.keys).union(unavailableParents)
             let missing = Redmine.missingParents(issues + Array(ancestors.values), known: known)
-            guard !missing.isEmpty, depth < 8 else { return }
-            fetch(Redmine.issuesRequest(base: base, key: key, ids: Array(missing.prefix(100)))) { [weak self] data, status, _ in
-                guard let self, status == 200, let data, let list = try? Redmine.issues(data).issues, !list.isEmpty else { return }
+            guard !missing.isEmpty, depth < 20 else { return finish() }
+            let asked = Array(missing.prefix(100))
+            fetch(Redmine.issuesRequest(base: base, key: key, ids: asked)) { [weak self] data, status, _ in
+                guard let self else { return }
+                guard status == 200, let data, let list = try? Redmine.issues(data).issues else {
+                    self.flash = "상위 일감을 받지 못해 트리가 일부만 보입니다"
+                    return finish()
+                }
                 for issue in list { self.ancestors[issue.id] = issue }
+                // 볼 권한이 없는 상위는 목록을 받을 때마다 다시 묻지 않는다
+                self.unavailableParents.formUnion(Set(asked).subtracting(list.map(\.id)))
                 step(depth + 1)
             }
         }
@@ -273,8 +305,11 @@ final class RedmineStore: ObservableObject {
         }
         loadingDetail = id
         detailErrors[id] = nil
+        detailTokens[id, default: 0] += 1
+        let token = detailTokens[id]
         fetch(Redmine.issueRequest(base: base, key: key, id: id)) { [weak self] data, status, failure in
-            guard let self else { return }
+            // 늦게 온 앞선 응답이 저장 뒤 받은 새 값을 덮지 않게 마지막 요청만 쓴다
+            guard let self, self.detailTokens[id] == token else { return }
             if self.loadingDetail == id { self.loadingDetail = nil }
             // 보내는 중에 온 옛 응답은 먼저 바꿔 둔 화면 값을 덮어 깜빡이게 해 버린다. 보낸 뒤 다시 받는다
             guard !self.saving.contains(id) else { return }
@@ -397,7 +432,8 @@ final class RedmineStore: ObservableObject {
             guard let file = rest.first else {
                 return update(id, Redmine.Change(notes: text, uploads: uploads), done: finish)
             }
-            let name = file.lastPathComponent
+            // macOS 파일 이름은 자모가 풀려 있어 웹에서 글자가 갈라져 보인다
+            let name = file.lastPathComponent.precomposedStringWithCanonicalMapping
             // 큰 파일을 읽는 동안 화면이 멈추지 않게 뒤에서 읽는다
             DispatchQueue.global(qos: .userInitiated).async {
                 let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
@@ -425,31 +461,35 @@ final class RedmineStore: ObservableObject {
     }
 
     /// 관계·지켜보기처럼 일감 칸이 아닌 것을 고친다. 되면 일감을 다시 받고, 안 되면 까닭을 알린다.
-    private func send(_ request: URLRequest?, id: Int, what: String) {
+    private func send(_ request: URLRequest?, id: Int, what: String, done: ((Bool) -> Void)? = nil) {
         guard let request else { return }
         fetch(request) { [weak self] data, status, failure in
             guard let self else { return }
             guard (200..<300).contains(status) else {
-                self.flash = "\(what)하지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                self.flash = "\(what) 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                done?(false)
                 return
             }
             self.loadDetail(id)
+            done?(true)
         }
     }
 
-    func addRelation(_ id: Int, to: Int, type: String) {
-        guard let (base, key) = credentials else { return }
-        send(try? Redmine.addRelationRequest(base: base, key: key, issue: id, to: to, type: type), id: id, what: "관계를 더")
+    func addRelation(_ id: Int, to: Int, type: String, done: @escaping (Bool) -> Void) {
+        guard let (base, key) = credentials else { return done(false) }
+        send(try? Redmine.addRelationRequest(base: base, key: key, issue: id, to: to, type: type), id: id, what: "관계를 더하지", done: done)
     }
 
     func removeRelation(_ relation: Int, issue: Int) {
-        guard let (base, key) = credentials else { return }
-        send(try? Redmine.removeRelationRequest(base: base, key: key, relation: relation), id: issue, what: "관계를 지우")
+        guard let (base, key) = credentials, removingRelations.insert(relation).inserted else { return }
+        send(try? Redmine.removeRelationRequest(base: base, key: key, relation: relation), id: issue, what: "관계를 지우지") { [weak self] _ in
+            self?.removingRelations.remove(relation)
+        }
     }
 
     func setWatching(_ id: Int, _ on: Bool) {
         guard let (base, key) = credentials, let me else { return }
-        send(try? Redmine.watchRequest(base: base, key: key, issue: id, user: me.id, on: on), id: id, what: "지켜보기를 바꾸")
+        send(try? Redmine.watchRequest(base: base, key: key, issue: id, user: me.id, on: on), id: id, what: "지켜보기를 바꾸지")
     }
 
     /// 찾는 칸에서 Enter: `#123`이면 그 일감을 바로 열고, 아니면 모든 프로젝트에서 찾는다.
@@ -457,19 +497,24 @@ final class RedmineStore: ObservableObject {
         let text = search.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
         if let number = Redmine.issueNumber(text) {
+            // 남겨 두면 뒤의 목록이 그 번호로 걸러진 채 남는다
+            search = ""
             selected = number
             return
         }
         guard let (base, key) = credentials else { return }
         searching = true
+        searchToken += 1
+        let token = searchToken
         fetch(Redmine.searchRequest(base: base, key: key, query: text)) { [weak self] data, status, failure in
-            guard let self else { return }
+            guard let self, token == self.searchToken else { return }
             self.searching = false
             guard status == 200, let data, let list = try? Redmine.found(data) else {
                 self.flash = "찾지 못했습니다: " + Self.message(status: status, error: failure, data: data)
                 return
             }
             self.results = list
+            self.resultsTotal = Redmine.foundTotal(data)
             self.showsResults = true
         }
     }
@@ -502,6 +547,13 @@ final class RedmineStore: ObservableObject {
             listed.attachments = nil
             issues[index] = listed
         }
+        // 트리에 끼워 넣은 상위 줄도 고친 값으로
+        if ancestors[issue.id] != nil {
+            var listed = issue
+            listed.journals = nil
+            listed.attachments = nil
+            ancestors[issue.id] = listed
+        }
     }
 
     private func merge(_ listed: Redmine.Issue) {
@@ -533,20 +585,30 @@ final class RedmineStore: ObservableObject {
 
     /// 지금 보일 줄: 빠른 거르기 → 찾는 말 → 정렬 → (트리면) 상위·하위로 편다.
     var rows: [Redmine.TreeRow] {
+        let sorted = filtered.sorted { a, b in
+            let order = compare(a, b)
+            return order == .orderedSame ? a.id > b.id : (order == .orderedAscending) == ascending
+        }
+        // 거르기로 빠진 목록 일감도 하위의 자리를 잡도록 끼워 넣는다
+        return treeMode ? Redmine.tree(sorted, context: Array(ancestors.values) + issues, collapsed: collapsed)
+            : sorted.map { Redmine.TreeRow(issue: $0, depth: 0, hasChildren: false) }
+    }
+
+    private var filtered: [Redmine.Issue] {
         let words = search.lowercased().split(separator: " ")
-        let filtered = issues.filter { issue in
+        return issues.filter { issue in
             guard matches(issue, quick) else { return false }
             guard !words.isEmpty else { return true }
             let text = "#\(issue.id) \(issue.subject) \(issue.project.name) \(issue.tracker.name) \(issue.status.name) \(issue.assignedTo?.name ?? "")".lowercased()
             return words.allSatisfy { text.contains($0) }
         }
-        let sorted = filtered.sorted { a, b in
-            let order = compare(a, b)
-            return order == .orderedSame ? a.id > b.id : (order == .orderedAscending) == ascending
-        }
-        return treeMode ? Redmine.tree(sorted, context: Array(ancestors.values), collapsed: collapsed)
-            : sorted.map { Redmine.TreeRow(issue: $0, depth: 0, hasChildren: false) }
     }
+
+    /// 머리에 쓸 건수. 트리를 접거나 상위를 끼워 넣어도 조건에 맞는 일감 수는 그대로다.
+    var visibleCount: Int { filtered.count }
+
+    /// 일감 창에서 앞뒤로 옮겨 다닐 번호. 끼워 넣은 상위는 목록 일감이 아니라서 뺀다.
+    var navigableIDs: [Int] { rows.filter { !$0.isContext }.map(\.id) }
 
     private func compare(_ a: Redmine.Issue, _ b: Redmine.Issue) -> ComparisonResult {
         func order<T: Comparable>(_ x: T, _ y: T) -> ComparisonResult { x == y ? .orderedSame : x < y ? .orderedAscending : .orderedDescending }
@@ -574,7 +636,7 @@ final class RedmineStore: ObservableObject {
 
     /// 상세 창에서 ↑↓로 앞뒤 일감으로 옮긴다.
     func move(_ step: Int) {
-        let ids = rows.map(\.id)
+        let ids = navigableIDs
         guard let current = selected, let index = ids.firstIndex(of: current) else { return }
         let next = index + step
         if ids.indices.contains(next) { selected = ids[next] }
