@@ -42,6 +42,34 @@ enum WorkLogFlowCheck {
         }
     }
 
+    /// 되돌릴 때 나간 PUT 주소.
+    private static var paths: [String] = []
+
+    /// 한 줄을 보낸 뒤 레드마인에 그 댓글이 있는 것처럼 답하고 되돌린다.
+    private static func undo(issue id: Int, clear: Int, then check: ([String], UUID?) -> Void) async {
+        let row = line(id)
+        answer(id: id)
+        _ = await send(id)
+        await Task.yield()
+        guard let record = WorkLogStore.shared.log.sent.last(where: { $0.issue == id }) else { return check(["보낸 기록 없음"], row) }
+        let notes = try? JSONSerialization.data(withJSONObject: [record.note])
+        let quoted = notes.flatMap { String(data: $0, encoding: .utf8) }.map { String($0.dropFirst().dropLast()) } ?? "\"\""
+        let now = ISO8601DateFormatter().string(from: Date())
+        let body = #"{"issue":{"id":\#(id),"subject":"일감","project":{"id":1,"name":"시험"},"tracker":{"id":1,"name":"작업"},"status":{"id":1,"name":"할일"},"priority":{"id":2,"name":"보통"},"done_ratio":60,"journals":[{"id":5,"user":{"id":7,"name":"나"},"notes":\#(quoted),"created_on":"\#(now)"}]}}"#
+        paths = []
+        WorkLogSync.stub = { request in
+            guard request.httpMethod == "PUT" else { return (200, Data(body.utf8)) }
+            let path = request.url?.path ?? ""
+            DispatchQueue.main.async { paths.append(path) }
+            return (path.contains("journals") ? clear : 204, Data())
+        }
+        let problems: [String] = await withCheckedContinuation { continuation in
+            WorkLogSync.shared.undo(record) { problems, _ in continuation.resume(returning: problems) }
+        }
+        await Task.yield()
+        check(problems, row)
+    }
+
     private static func send(_ issue: Int, edits: [Int: WorkReport.IssueEdit] = [:], withoutNotes: Set<Int> = []) async -> (sent: Int, failures: [String]) {
         let store = WorkLogStore.shared
         let updates = WorkReport.redmineUpdates(store.log.entries.filter { $0.issue == issue && $0.needsRedmine }, log: store.log)
@@ -124,5 +152,13 @@ enum WorkLogFlowCheck {
         _ = first
         await Task.yield()
         check("보내는 중에 또 눌러도 한 번만 나간다", puts.count == 1 && second?.isEmpty == false)
+
+        await undo(issue: 8, clear: 204) { problems, row in
+            check("되돌리면 칸과 댓글을 되돌리고 줄이 다시 보낼 목록에 온다",
+                  problems.isEmpty && waiting(row) && paths.contains("/issues/8.json") && paths.contains("/journals/5.json"))
+        }
+        await undo(issue: 9, clear: 500) { problems, row in
+            check("댓글을 못 지우면 줄을 돌리지 않아 두 번 올라가지 않는다", !problems.isEmpty && !waiting(row))
+        }
     }
 }
