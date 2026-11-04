@@ -492,14 +492,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 커지거나 움직일 때마다 윗변이 메뉴바 항목 아래를 넘지 않게 되돌린다.
     private func pinTop(of popover: NSPopover, below anchor: NSView) {
         guard let window = popover.contentViewController?.view.window, let anchorWindow = anchor.window else { return }
-        let top = anchorWindow.convertToScreen(anchor.convert(anchor.bounds, to: nil)).minY
+        let anchorRect = anchorWindow.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        let top = anchorRect.minY
+        // 메뉴바 바로 위에 다른 모니터가 붙어 있으면 anchorWindow.screen이 그 모니터를 돌려줄 때가 있어,
+        // 단추가 실제로 놓인 좌표로 화면을 찾는다
+        let anchorPoint = NSPoint(x: anchorRect.midX, y: anchorRect.midY)
+        let anchorScreen = { NSScreen.screens.first { $0.frame.contains(anchorPoint) } ?? anchorWindow.screen }
         var reported = false
         let fix = { [weak window] in
             guard let window, window.frame.maxY > top + 0.5 else { return }
             // 다른 Mac에서 다시 잘린다고 하면 어느 화면 구성에서 얼마나 넘쳤는지 볼 수 있게 한 번만 남긴다
             if !reported {
                 reported = true
-                let screen = anchorWindow.screen
+                let screen = anchorScreen()
                 Diagnostics.record("사용량 창", "메뉴바 위로 \(Int(window.frame.maxY - top))pt 넘쳐 되돌림 · 창 높이 \(Int(window.frame.height))pt"
                                    + " · 화면 \(screen?.localizedName ?? "?") 쓸 수 있는 높이 \(Int(screen?.visibleFrame.height ?? 0))pt"
                                    + " · 화면 \(NSScreen.screens.count)개")
@@ -510,7 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 메뉴바 아래로 붙여도 화면 아래로 모자라면 아래쪽이 잘린다. 그때도 한 번 남긴다
         var reportedShort = false
         let checkFit = { [weak window] in
-            guard let window, !reportedShort, let screen = anchorWindow.screen,
+            guard let window, !reportedShort, let screen = anchorScreen(),
                   window.frame.minY < screen.visibleFrame.minY - 0.5 else { return }
             reportedShort = true
             // 아래가 잘린 채 보이는 것이라 만든 사람에게 알린다. 화면 구성을 모두 적어야 같은 배치로 다시 만들 수 있다
