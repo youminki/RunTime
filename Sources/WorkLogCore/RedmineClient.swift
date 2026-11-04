@@ -396,39 +396,62 @@ public enum Redmine {
 
 extension Redmine {
     /// 트리 보기의 한 줄. `depth`만큼 들여 쓰고, `hasChildren`이면 접고 펼 수 있다.
+    /// `isContext`는 목록 조건에는 안 맞지만 하위 일감의 자리를 보이려고 넣은 상위 일감이다.
     public struct TreeRow: Equatable, Identifiable {
         public let issue: Issue
         public let depth: Int
         public let hasChildren: Bool
+        public var isContext = false
         public var id: Int { issue.id }
 
-        public init(issue: Issue, depth: Int, hasChildren: Bool) { (self.issue, self.depth, self.hasChildren) = (issue, depth, hasChildren) }
+        public init(issue: Issue, depth: Int, hasChildren: Bool, isContext: Bool = false) {
+            (self.issue, self.depth, self.hasChildren, self.isContext) = (issue, depth, hasChildren, isContext)
+        }
     }
 
-    /// 목록을 상위·하위 일감 순서로 편다. 상위 일감이 목록에 없으면 그 일감이 맨 위가 된다 (레드마인 목록과 같다).
-    /// 형제끼리는 받은 순서(정렬)를 지키고, `collapsed`에 든 일감의 하위는 뺀다.
-    public static func tree(_ issues: [Issue], collapsed: Set<Int> = []) -> [TreeRow] {
-        let ids = Set(issues.map(\.id))
+    /// 목록을 상위·하위 일감 순서로 편다. 내 일감의 상위는 남에게 배정돼 목록에 없는 일이 많아,
+    /// `context`로 받은 상위 일감을 끼워 넣는다 (목록 일감을 품은 것만 남긴다).
+    /// 형제끼리는 목록 순서를 지키고, `collapsed`에 든 일감의 하위는 뺀다.
+    public static func tree(_ issues: [Issue], context: [Issue] = [], collapsed: Set<Int> = []) -> [TreeRow] {
+        let listed = Set(issues.map(\.id))
+        let all = issues + context.filter { !listed.contains($0.id) }
+        let ids = Set(all.map(\.id))
         var children: [Int: [Issue]] = [:]
         var roots: [Issue] = []
-        for issue in issues {
+        for issue in all {
             if let parent = issue.parent?.id, ids.contains(parent), parent != issue.id {
                 children[parent, default: []].append(issue)
             } else {
                 roots.append(issue)
             }
         }
+        // 목록 순서를 지키도록 묶음마다 그 안에서 가장 앞선 목록 일감의 자리를 잰다. 목록 일감이 없는 상위는 뺀다
+        let position = Dictionary(issues.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { a, _ in a })
+        var rank: [Int: Int] = [:]
+        var ranking = Set<Int>()
+        func measure(_ issue: Issue) -> Int {
+            if let known = rank[issue.id] { return known }
+            guard ranking.insert(issue.id).inserted else { return Int.max }
+            let best = (children[issue.id] ?? []).map(measure).min() ?? Int.max
+            let value = min(position[issue.id] ?? Int.max, best)
+            rank[issue.id] = value
+            return value
+        }
+        for issue in all { _ = measure(issue) }
+        func ordered(_ list: [Issue]) -> [Issue] {
+            list.filter { rank[$0.id] != Int.max }.sorted { rank[$0.id, default: .max] < rank[$1.id, default: .max] }
+        }
         var rows: [TreeRow] = []
         var visited = Set<Int>()
         func walk(_ issue: Issue, depth: Int) {
             // 상위 관계가 고리를 이루는 망가진 자료에서 끝없이 돌지 않게
             guard visited.insert(issue.id).inserted else { return }
-            let kids = children[issue.id] ?? []
-            rows.append(TreeRow(issue: issue, depth: depth, hasChildren: !kids.isEmpty))
+            let kids = ordered(children[issue.id] ?? [])
+            rows.append(TreeRow(issue: issue, depth: depth, hasChildren: !kids.isEmpty, isContext: !listed.contains(issue.id)))
             guard !collapsed.contains(issue.id) else { return }
             for kid in kids { walk(kid, depth: depth + 1) }
         }
-        for root in roots { walk(root, depth: 0) }
+        for root in ordered(roots) { walk(root, depth: 0) }
         // 접힌 상위 아래 모든 깊이의 하위는 일부러 뺀 것이다
         var hidden = Set<Int>()
         var stack = Array(collapsed)
@@ -440,5 +463,18 @@ extension Redmine {
             walk(issue, depth: 0)
         }
         return rows
+    }
+
+    /// 목록 일감의 상위 가운데 아직 받지 않은 번호.
+    public static func missingParents(_ issues: [Issue], known: Set<Int>) -> [Int] {
+        Array(Set(issues.compactMap(\.parent?.id)).subtracting(known).subtracting(issues.map(\.id))).sorted()
+    }
+
+    /// 번호로 일감 여럿 받기 (닫힌 일감도).
+    public static func issuesRequest(base: URL, key: String, ids: [Int]) -> URLRequest {
+        request(base, "issues.json", key: key, query: [
+            URLQueryItem(name: "issue_id", value: ids.map(String.init).joined(separator: ",")),
+            URLQueryItem(name: "status_id", value: "*"), URLQueryItem(name: "limit", value: "100"),
+        ])
     }
 }

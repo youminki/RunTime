@@ -145,6 +145,29 @@ private let issueJSON = #"""
         #expect(Redmine.tree(all, collapsed: [2]).map(\.id) == [1, 2, 4])
     }
 
+    /// 내 일감의 상위는 남의 일감이라 목록에 없다. 상위를 끼워 넣어야 트리가 트리로 보인다.
+    @Test func insertsParentsAsContext() {
+        let mine = [issue(10, parent: 2), issue(20, parent: 3), issue(11, parent: 2)]
+        // 상위 1 아래 2·3, 쓰이지 않는 상위 9는 뺀다
+        let context = [issue(1), issue(2, parent: 1), issue(3, parent: 1), issue(9)]
+        let rows = Redmine.tree(mine, context: context)
+        #expect(rows.map(\.id) == [1, 2, 10, 11, 3, 20])
+        #expect(rows.map(\.depth) == [0, 1, 2, 2, 1, 2])
+        #expect(rows.map(\.isContext) == [true, true, false, false, true, false])
+        #expect(Redmine.tree(mine, context: context, collapsed: [2]).map(\.id) == [1, 2, 3, 20])
+    }
+
+    @Test func keepsListOrderAcrossBranches() {
+        let mine = [issue(20, parent: 3), issue(10, parent: 2)]
+        let rows = Redmine.tree(mine, context: [issue(2), issue(3)])
+        #expect(rows.map(\.id) == [3, 20, 2, 10])
+    }
+
+    @Test func findsParentsStillToFetch() {
+        let list = [issue(10, parent: 2), issue(11, parent: 10), issue(12, parent: 3)]
+        #expect(Redmine.missingParents(list, known: [3]) == [2])
+    }
+
     @Test func survivesParentCycles() {
         let rows = Redmine.tree([issue(1, parent: 2), issue(2, parent: 1)])
         #expect(Set(rows.map(\.id)) == [1, 2])

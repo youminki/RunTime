@@ -46,7 +46,9 @@ final class RedmineStore: ObservableObject {
     @Published var sort: Column = .updated
     @Published var ascending = false
     /// 상위·하위 일감을 들여 써서 보인다.
-    @Published var treeMode = false
+    @Published var treeMode = false { didSet { if treeMode { loadAncestors() } } }
+    /// 트리에 끼워 넣는 상위 일감 (번호 → 일감). 목록 조건에는 안 맞아도 하위의 자리를 보인다.
+    @Published private(set) var ancestors: [Int: Redmine.Issue] = [:]
     @Published var collapsed: Set<Int> = []
 
     var filter: Redmine.Filter {
@@ -221,10 +223,27 @@ final class RedmineStore: ObservableObject {
                     }
                     // 상세를 받아 둔 일감은 목록 값으로 덮지 않는다 (기록·첨부가 빠진 목록 값이라)
                     for issue in collected where self.details[issue.id] != nil { self.merge(issue) }
+                    if self.treeMode { self.loadAncestors() }
                 }
             }
         }
         page(0)
+    }
+
+    /// 목록 일감의 상위를 맨 위까지 받는다. 내 일감의 상위는 남의 일감이라 목록에 없어, 이것 없이는 트리가 평평하다.
+    func loadAncestors() {
+        guard let (base, key) = credentials else { return }
+        func step(_ depth: Int) {
+            let known = Set(ancestors.keys)
+            let missing = Redmine.missingParents(issues + Array(ancestors.values), known: known)
+            guard !missing.isEmpty, depth < 8 else { return }
+            fetch(Redmine.issuesRequest(base: base, key: key, ids: Array(missing.prefix(100)))) { [weak self] data, status, _ in
+                guard let self, status == 200, let data, let list = try? Redmine.issues(data).issues, !list.isEmpty else { return }
+                for issue in list { self.ancestors[issue.id] = issue }
+                step(depth + 1)
+            }
+        }
+        step(0)
     }
 
     func loadDetail(_ id: Int) {
@@ -406,7 +425,7 @@ final class RedmineStore: ObservableObject {
             let order = compare(a, b)
             return order == .orderedSame ? a.id > b.id : (order == .orderedAscending) == ascending
         }
-        return treeMode ? Redmine.tree(sorted, collapsed: collapsed)
+        return treeMode ? Redmine.tree(sorted, context: Array(ancestors.values), collapsed: collapsed)
             : sorted.map { Redmine.TreeRow(issue: $0, depth: 0, hasChildren: false) }
     }
 

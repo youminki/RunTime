@@ -167,7 +167,7 @@ private struct RedmineIssueTable: View {
     var body: some View {
         let rows = store.rows
         VStack(alignment: .leading, spacing: 0) {
-            header(count: rows.count)
+            header(count: rows.filter { !$0.isContext }.count)
             Rectangle().fill(WL.border).frame(height: 1)
             GeometryReader { geo in
                 let columns = Self.columns(for: geo.size.width)
@@ -404,7 +404,7 @@ private struct TableRow: View {
                     }
                 }
                 TrackerTag(name: issue.tracker.name)
-                subject(issue)
+                subject(issue).opacity(row.isContext ? 0.55 : 1)
                 if issue.priority.id > 2 {
                     Text(issue.priority.name).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.red).fixedSize()
                 }
@@ -426,7 +426,8 @@ private struct TableRow: View {
     }
 
     private func subject(_ issue: Redmine.Issue) -> some View {
-        let path = WorkLogStore.shared.log.issue(issue.id)?.path ?? []
+        // 트리에서는 위 줄들이 경로를 보여 주어 되풀이하지 않는다
+        let path = store.treeMode ? [] : WorkLogStore.shared.log.issue(issue.id)?.path ?? []
         let prefix = path.isEmpty ? Text("") : Text(path.joined(separator: " › ") + " › ").foregroundColor(WL.quiet)
         return (prefix + Text(issue.subject).foregroundColor(WL.text))
             .font(WL.body)
