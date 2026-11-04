@@ -50,7 +50,8 @@ struct EntryRow: View {
             .foregroundStyle(editing ? WL.text : .clear)
             .overlay(alignment: .leading) {
                 if !editing {
-                    let shown = leaf(store.entry(entry.id)?.title ?? entry.title)
+                    // 묶음 밖 줄은 경로가 길어 끝 이름이 잘리므로 마지막 두 단계만 보인다 (전체는 말풍선에)
+                    let shown = WorkLogFormat.shortPath(leaf(store.entry(entry.id)?.title ?? entry.title))
                     // 글 칸 글자를 감추면 비어 있을 때의 자리표시자도 함께 사라져 여기서 대신 쓴다
                     Text(shown.isEmpty ? "내용" : shown)
                         .font(.system(size: 14))

@@ -178,9 +178,23 @@ private struct RedmineIssueTable: View {
                         message(error, icon: "exclamationmark.triangle")
                     } else if rows.isEmpty {
                         if store.loading {
-                            VStack { ProgressView() }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                            VStack(spacing: 10) {
+                                ProgressView()
+                                Text("\(store.scope.title) 불러오는 중").font(WL.meta).foregroundStyle(WL.muted)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
-                            message(emptyText, icon: "tray")
+                            VStack(spacing: 10) {
+                                message(emptyText, icon: "tray").frame(height: 90)
+                                if store.quick != .all || !store.search.isEmpty {
+                                    Button("거르기 지우기") {
+                                        store.quick = .all
+                                        store.search = ""
+                                    }
+                                    .buttonStyle(NotionButtonStyle())
+                                }
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                     } else {
                         SlimScrollView {

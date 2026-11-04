@@ -227,6 +227,12 @@ enum WorkLogFormat {
         return (String(text[..<open]).trimmingCharacters(in: .whitespaces), status)
     }
 
+    /// `A > B > C > 이름`의 마지막 두 단계만. 단계가 둘 이하면 그대로.
+    static func shortPath(_ title: String) -> String {
+        let parts = title.components(separatedBy: " > ")
+        return parts.count > 2 ? parts.suffix(2).joined(separator: " > ") : title
+    }
+
     /// `화면 > 기능 > 할 일`을 앞 경로와 마지막 이름으로 나눈다. 읽기 전용 줄에서 이름만 크게 보이고 경로는 아래 작은 글로 둔다.
     static func breadcrumb(_ title: String) -> (path: String?, leaf: String) {
         guard let range = title.range(of: " > ", options: .backwards) else { return (nil, title) }

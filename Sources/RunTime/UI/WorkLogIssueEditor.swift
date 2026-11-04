@@ -90,7 +90,7 @@ struct IssueFieldEditor<Footer: View>: View {
                 Text(title).font(.system(size: 13, weight: .medium))
                 Text("지금 " + (now?.isEmpty == false ? now! : "없음")).font(WL.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            .frame(width: 104, alignment: .leading)
+            .frame(width: 130, alignment: .leading)
             control().labelsHidden().frame(maxWidth: .infinity)
         }
     }
@@ -112,7 +112,7 @@ private struct DateRow: View {
                 Text(title).font(.system(size: 13, weight: .medium))
                 Text("지금 " + (now.map(WorkLogFormat.shortDay) ?? "없음")).font(WL.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            .frame(width: 104, alignment: .leading)
+            .frame(width: 130, alignment: .leading)
             Picker("", selection: Binding(
                 get: { mode },
                 set: { next in
