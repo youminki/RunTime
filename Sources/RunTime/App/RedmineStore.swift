@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 import WorkLogCore
 
 /// 앱 안 레드마인 화면의 데이터. 목록과 상세가 같은 일감 값을 보아, 칸을 고치면 두 곳이 함께 바뀐다
@@ -94,6 +95,10 @@ final class RedmineStore: ObservableObject {
     /// 프로젝트별 담당자로 고를 수 있는 사람.
     @Published private(set) var people: [Int: [Redmine.Ref]] = [:]
     @Published var flash: String?
+    /// 모든 프로젝트에서 찾은 결과.
+    @Published private(set) var results: [Redmine.Found] = []
+    @Published var showsResults = false
+    @Published private(set) var searching = false
     /// 새 일감 창이 열려 있는지.
     @Published var creating = false
 
@@ -146,7 +151,7 @@ final class RedmineStore: ObservableObject {
     private static func serveFixture(_ request: URLRequest, folder: String, done: @escaping (Data?, Int, Error?) -> Void) {
         let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            if request.httpMethod == "PUT" { return done(Data(), 204, nil) }
+            if request.httpMethod == "PUT" || request.httpMethod == "DELETE" { return done(Data(), 204, nil) }
             if request.httpMethod == "POST" {
                 let sample = path == "issues.json" ? FileManager.default.contents(atPath: (folder as NSString).appendingPathComponent("created.json")) : nil
                 return done(sample ?? Data("{}".utf8), 201, nil)
@@ -353,6 +358,82 @@ final class RedmineStore: ObservableObject {
             self.total += 1
             done(nil)
             self.selected = made.id
+        }
+    }
+
+    /// 파일을 올리고 댓글과 함께 일감에 붙인다. 하나라도 못 올리면 아무것도 붙이지 않고 까닭을 돌려준다.
+    func comment(_ id: Int, text: String, files: [URL], done: @escaping (Bool) -> Void) {
+        guard let (base, key) = credentials else { return done(false) }
+        var uploads: [RedmineAPI.Upload] = []
+        func next(_ rest: [URL]) {
+            guard let file = rest.first else {
+                return update(id, Redmine.Change(notes: text, uploads: uploads), done: { done($0) })
+            }
+            guard let data = try? Data(contentsOf: file) else {
+                flash = "\(file.lastPathComponent)을 읽지 못했습니다"
+                return done(false)
+            }
+            fetch(RedmineAPI.uploadRequest(base: base, key: key, filename: file.lastPathComponent, data: data)) { [weak self] body, status, failure in
+                guard let self else { return }
+                guard (200..<300).contains(status), let body, let token = RedmineAPI.parseUploadToken(body) else {
+                    self.flash = "\(file.lastPathComponent)을 올리지 못했습니다: " + Self.message(status: status, error: failure, data: body)
+                    return done(false)
+                }
+                let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+                uploads.append(RedmineAPI.Upload(token: token, filename: file.lastPathComponent, contentType: type))
+                next(Array(rest.dropFirst()))
+            }
+        }
+        next(files)
+    }
+
+    /// 관계·지켜보기처럼 일감 칸이 아닌 것을 고친다. 되면 일감을 다시 받고, 안 되면 까닭을 알린다.
+    private func send(_ request: URLRequest?, id: Int, what: String) {
+        guard let request else { return }
+        fetch(request) { [weak self] data, status, failure in
+            guard let self else { return }
+            guard (200..<300).contains(status) else {
+                self.flash = "\(what)하지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                return
+            }
+            self.loadDetail(id)
+        }
+    }
+
+    func addRelation(_ id: Int, to: Int, type: String) {
+        guard let (base, key) = credentials else { return }
+        send(try? Redmine.addRelationRequest(base: base, key: key, issue: id, to: to, type: type), id: id, what: "관계를 더")
+    }
+
+    func removeRelation(_ relation: Int, issue: Int) {
+        guard let (base, key) = credentials else { return }
+        send(try? Redmine.removeRelationRequest(base: base, key: key, relation: relation), id: issue, what: "관계를 지우")
+    }
+
+    func setWatching(_ id: Int, _ on: Bool) {
+        guard let (base, key) = credentials, let me else { return }
+        send(try? Redmine.watchRequest(base: base, key: key, issue: id, user: me.id, on: on), id: id, what: "지켜보기를 바꾸")
+    }
+
+    /// 찾는 칸에서 Enter: `#123`이면 그 일감을 바로 열고, 아니면 모든 프로젝트에서 찾는다.
+    func submitSearch() {
+        let text = search.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        if let number = Redmine.issueNumber(text) {
+            selected = number
+            return
+        }
+        guard let (base, key) = credentials else { return }
+        searching = true
+        fetch(Redmine.searchRequest(base: base, key: key, query: text)) { [weak self] data, status, failure in
+            guard let self else { return }
+            self.searching = false
+            guard status == 200, let data, let list = try? Redmine.found(data) else {
+                self.flash = "찾지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                return
+            }
+            self.results = list
+            self.showsResults = true
         }
     }
 

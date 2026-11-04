@@ -311,6 +311,16 @@ enum UIShots {
             ("main-redmine-dark", .darkAqua, nil, mainPage(.redmine, engine: engine)),
             // 일감 창은 시트라 따로 찍는다 (RUNTIME_SHOT_ISSUE 일감)
             ("redmine-issue", .aqua, nil, AnyView(RedmineIssueSheet(store: .shared, state: RedmineViewState()).frame(width: 940, height: 900))),
+            ("redmine-issue-edit", .aqua, nil, {
+                let state = RedmineViewState()
+                state.editingDescription = RedmineStore.shared.selected
+                state.descriptionDraft = "고칠 설명"
+                state.editingSubject = RedmineStore.shared.selected
+                state.subjectDraft = "고칠 제목"
+                return AnyView(RedmineIssueSheet(store: .shared, state: state).frame(width: 940, height: 900))
+            }()),
+            ("redmine-new", .aqua, nil, AnyView(RedmineNewIssueSheet(store: .shared))),
+            ("redmine-time", .aqua, nil, AnyView(TimeEntryForm(store: .shared, issue: 1))),
             ("redmine-issue-dark", .darkAqua, nil, AnyView(RedmineIssueSheet(store: .shared, state: RedmineViewState()).frame(width: 940, height: 900))),
             ("main-redmine-tree", .aqua, nil, {
                 RedmineStore.shared.treeMode = ProcessInfo.processInfo.environment["RUNTIME_SHOT_TREE"] != nil

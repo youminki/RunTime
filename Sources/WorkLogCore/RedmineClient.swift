@@ -274,12 +274,18 @@ public enum Redmine {
         public var startDate: String?
         public var dueDate: String?
         public var subject: String?
+        /// 평문으로 받아 HTML로 넘긴다.
+        public var description: String?
         public var notes: String?
+        /// 먼저 올려 받은 첨부 토큰.
+        public var uploads: [RedmineAPI.Upload] = []
 
         public init(statusID: Int? = nil, doneRatio: Int? = nil, priorityID: Int? = nil, assignedToID: Int? = nil,
-                    startDate: String? = nil, dueDate: String? = nil, subject: String? = nil, notes: String? = nil) {
+                    startDate: String? = nil, dueDate: String? = nil, subject: String? = nil, description: String? = nil,
+                    notes: String? = nil, uploads: [RedmineAPI.Upload] = []) {
             (self.statusID, self.doneRatio, self.priorityID, self.assignedToID) = (statusID, doneRatio, priorityID, assignedToID)
-            (self.startDate, self.dueDate, self.subject, self.notes) = (startDate, dueDate, subject, notes)
+            (self.startDate, self.dueDate, self.subject, self.description, self.notes) = (startDate, dueDate, subject, description, notes)
+            self.uploads = uploads
         }
 
         public var isEmpty: Bool { fields.isEmpty }
@@ -293,6 +299,10 @@ public enum Redmine {
             if let startDate { fields["start_date"] = startDate }
             if let dueDate { fields["due_date"] = dueDate }
             if let subject { fields["subject"] = subject }
+            if let description { fields["description"] = description.isEmpty ? "" : RedmineNote.html(description) }
+            if !uploads.isEmpty {
+                fields["uploads"] = uploads.map { ["token": $0.token, "filename": $0.filename, "content_type": $0.contentType] }
+            }
             if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["notes"] = RedmineNote.html(notes) }
             return fields
         }
@@ -307,6 +317,7 @@ public enum Redmine {
             if let startDate { copy.startDate = startDate.isEmpty ? nil : startDate }
             if let dueDate { copy.dueDate = dueDate.isEmpty ? nil : dueDate }
             if let subject { copy.subject = subject }
+            if let description { copy.description = description.isEmpty ? nil : RedmineNote.html(description) }
             return copy
         }
     }
@@ -317,6 +328,61 @@ public enum Redmine {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["issue": change.fields])
         return request
+    }
+
+    /// 관계 종류. 레드마인 값과 웹의 이름.
+    public static let relationTypes: [(value: String, label: String)] = [
+        ("relates", "관련"), ("blocks", "막음"), ("precedes", "앞섬"), ("duplicates", "중복"), ("copied_to", "복사함"),
+    ]
+
+    private static func json(_ request: URLRequest, method: String, body: [String: Any]?) throws -> URLRequest {
+        var request = request
+        request.httpMethod = method
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        return request
+    }
+
+    public static func addRelationRequest(base: URL, key: String, issue: Int, to: Int, type: String) throws -> URLRequest {
+        try json(request(base, "issues/\(issue)/relations.json", key: key), method: "POST",
+                 body: ["relation": ["issue_to_id": to, "relation_type": type]])
+    }
+
+    public static func removeRelationRequest(base: URL, key: String, relation: Int) throws -> URLRequest {
+        try json(request(base, "relations/\(relation).json", key: key), method: "DELETE", body: nil)
+    }
+
+    public static func watchRequest(base: URL, key: String, issue: Int, user: Int, on: Bool) throws -> URLRequest {
+        on ? try json(request(base, "issues/\(issue)/watchers.json", key: key), method: "POST", body: ["user_id": user])
+            : try json(request(base, "issues/\(issue)/watchers/\(user).json", key: key), method: "DELETE", body: nil)
+    }
+
+    /// 찾기 결과 한 줄.
+    public struct Found: Decodable, Equatable, Identifiable {
+        public let id: Int
+        public let title: String
+        public let type: String
+        public let url: String?
+
+        public var isIssue: Bool { type.hasPrefix("issue") }
+    }
+
+    public static func searchRequest(base: URL, key: String, query: String) -> URLRequest {
+        request(base, "search.json", key: key, query: [URLQueryItem(name: "q", value: query), URLQueryItem(name: "issues", value: "1"),
+                                                       URLQueryItem(name: "limit", value: "50")])
+    }
+
+    public static func found(_ data: Data) throws -> [Found] {
+        struct Results: Decodable { let results: [Found] }
+        return try decoder.decode(Results.self, from: data).results.filter(\.isIssue)
+    }
+
+    /// `#123`이나 `123`처럼 번호만 쓴 찾는 말의 일감 번호.
+    public static func issueNumber(_ text: String) -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        return Int(trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed).flatMap { $0 > 0 ? $0 : nil }
     }
 
     /// 새 일감. 설명은 평문으로 받아 HTML로 넘긴다 (이 레드마인은 HTML로 저장한다).

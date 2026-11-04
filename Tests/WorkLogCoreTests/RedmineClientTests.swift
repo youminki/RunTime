@@ -73,6 +73,24 @@ private let issueJSON = #"""
         #expect(request.httpMethod == "PUT" && request.url?.path == "/issues/101.json")
     }
 
+    @Test func requestsForRelationsWatchersAndSearch() throws {
+        let base = URL(string: "https://example.com")!
+        let add = try Redmine.addRelationRequest(base: base, key: "k", issue: 1, to: 2, type: "blocks")
+        #expect(add.httpMethod == "POST" && add.url?.path == "/issues/1/relations.json")
+        let remove = try Redmine.removeRelationRequest(base: base, key: "k", relation: 9)
+        #expect(remove.httpMethod == "DELETE" && remove.url?.path == "/relations/9.json")
+        #expect(try Redmine.watchRequest(base: base, key: "k", issue: 1, user: 3, on: true).url?.path == "/issues/1/watchers.json")
+        #expect(try Redmine.watchRequest(base: base, key: "k", issue: 1, user: 3, on: false).url?.path == "/issues/1/watchers/3.json")
+        #expect(Redmine.issueNumber(" #123 ") == 123 && Redmine.issueNumber("123") == 123)
+        #expect(Redmine.issueNumber("API") == nil && Redmine.issueNumber("#0") == nil)
+        let found = #"{"results":[{"id":1,"title":"작업 #1: 목록","type":"issue","url":"u"},{"id":2,"title":"닫힘","type":"issue-closed","url":"u"},{"id":3,"title":"위키","type":"wiki-page","url":"u"}]}"#
+        #expect(try Redmine.found(Data(found.utf8)).map(\.id) == [1, 2])
+        let upload = RedmineAPI.Upload(token: "t", filename: "a.png", contentType: "image/png")
+        let change = Redmine.Change(notes: "", uploads: [upload])
+        #expect(!change.isEmpty && (change.fields["uploads"] as? [[String: String]])?.first?["token"] == "t")
+        #expect(Redmine.Change(description: "").fields["description"] as? String == "")
+    }
+
     @Test func newIssueSendsOnlyWhatWasFilled() throws {
         var issue = Redmine.NewIssue(projectID: 7, trackerID: 5, subject: "  목록 오류  ")
         #expect(issue.isValid)

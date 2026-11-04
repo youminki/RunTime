@@ -32,6 +32,8 @@ struct RedmineView: View {
                 .sheet(item: Binding(get: { store.selected.map(IssueRef.init) }, set: { store.selected = $0?.id })) { _ in
                     RedmineIssueSheet(store: store, state: state)
                         .frame(minWidth: 820, idealWidth: 940, minHeight: 600, idealHeight: 760)
+                        // 창 아래 안내는 일감 창에 가려, 저장·첨부 실패를 여기서도 보인다
+                        .overlay(alignment: .bottom) { RedmineFlash(store: store) }
                 }
                 .sheet(isPresented: $store.creating) { RedmineNewIssueSheet(store: store) }
             } else {
@@ -123,6 +125,14 @@ final class RedmineViewState: ObservableObject {
     @Published var pickedDate = Date()
     @Published var history = HistoryTab.all
     @Published var loggingTime = false
+    @Published var editingSubject: Int?
+    @Published var subjectDraft = ""
+    @Published var editingDescription: Int?
+    @Published var descriptionDraft = ""
+    @Published var relationType = "relates"
+    @Published var relationTarget = ""
+    /// 일감마다 댓글에 붙일 파일.
+    @Published var files: [Int: [URL]] = [:]
 
     enum HistoryTab: String, CaseIterable { case all = "전체", comments = "댓글", changes = "변경 내역" }
 }
@@ -275,21 +285,52 @@ private struct RedmineIssueTable: View {
                     .tip("상위 일감 아래에 하위 일감을 들여 씁니다")
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.secondary)
-                    TextField("번호·제목·담당자로 찾기", text: $store.search).textFieldStyle(.plain).font(WL.meta)
+                    TextField("찾기 · Enter로 전체 찾기, #번호로 열기", text: $store.search).textFieldStyle(.plain).font(WL.meta)
+                        .onSubmit { store.submitSearch() }
+                    if store.searching { ProgressView().controlSize(.mini) }
                     if !store.search.isEmpty {
                         Button { store.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.muted) }
                             .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 8)
-                .frame(width: 210, height: 28)
+                .frame(width: 250, height: 28)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+                .popover(isPresented: $store.showsResults, arrowEdge: .bottom) { searchResults }
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 12)
+    }
+
+    /// 모든 프로젝트에서 찾은 일감. 누르면 그 일감을 연다.
+    private var searchResults: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(store.results.isEmpty ? "찾은 일감이 없습니다" : "찾은 일감 \(store.results.count)건").font(WL.heading).padding(12)
+            if !store.results.isEmpty {
+                Rectangle().fill(WL.border).frame(height: 1)
+                SlimScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(store.results) { found in
+                            Button {
+                                store.showsResults = false
+                                store.selected = found.id
+                            } label: {
+                                Text(found.title).font(WL.meta).lineLimit(2).multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 12).padding(.vertical, 7)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 380)
+            }
+        }
+        .frame(width: 460)
     }
 
     // MARK: 칸
@@ -545,6 +586,13 @@ struct RedmineIssueSheet: View {
             Spacer()
             if let id = store.selected, let issue = store.details[id] {
                 if store.saving.contains(id) || store.loadingDetail == id { ProgressView().controlSize(.small) }
+                if let me = store.me {
+                    let watching = issue.watchers?.contains { $0.id == me.id } == true
+                    Button { store.setWatching(id, !watching) } label: {
+                        Label(watching ? "지켜보는 중" : "지켜보기", systemImage: watching ? "star.fill" : "star")
+                    }
+                    .buttonStyle(TextLinkButtonStyle())
+                }
                 Button { addToLog(issue) } label: { Label("오늘 일지에 넣기", systemImage: "text.badge.plus") }
                     .buttonStyle(TextLinkButtonStyle())
                     .tip("오늘 업무 일지에 이 일감 줄을 넣습니다 (이미 있으면 상태만 맞춥니다)")
@@ -567,11 +615,9 @@ struct RedmineIssueSheet: View {
             VStack(alignment: .leading, spacing: 22) {
                 header(issue)
                 fields(issue)
-                if let description = issue.description, !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    section("설명") { HTMLText(html: description, rendered: HTMLCache.shared.cached(description)) }
-                }
+                description(issue)
                 if let children = issue.children, !children.isEmpty { section("하위 일감 \(children.count)") { childList(children, depth: 0) } }
-                if let relations = issue.relations, !relations.isEmpty { section("관계 일감 \(relations.count)") { relationList(relations, issue: issue.id) } }
+                section("관계 일감 \(issue.relations?.count ?? 0)") { relationList(issue.relations ?? [], issue: issue.id) }
                 if let attachments = issue.attachments, !attachments.isEmpty { section("첨부 파일 \(attachments.count)") { attachmentList(attachments) } }
                 history(issue)
                 composer(issue)
@@ -598,12 +644,73 @@ struct RedmineIssueSheet: View {
             if let path = WorkLogStore.shared.log.issue(issue.id)?.path, !path.isEmpty {
                 Text(path.joined(separator: " › ")).font(WL.meta).foregroundStyle(WL.quiet)
             }
-            Text(issue.subject).font(.system(size: 22, weight: .semibold)).textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            if state.editingSubject == issue.id {
+                HStack(spacing: 8) {
+                    TextField("제목", text: $state.subjectDraft).textFieldStyle(.roundedBorder).font(WL.section)
+                        .onSubmit { saveSubject(issue) }
+                    Button("저장") { saveSubject(issue) }.buttonStyle(NotionButtonStyle(kind: .primary))
+                    Button("취소") { state.editingSubject = nil }.buttonStyle(NotionButtonStyle())
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(issue.subject).font(.system(size: 22, weight: .semibold)).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        state.subjectDraft = issue.subject
+                        state.editingSubject = issue.id
+                    } label: { Image(systemName: "pencil") }
+                    .buttonStyle(GhostIconButtonStyle())
+                    .tip("제목 고치기")
+                }
+            }
             Text([issue.author.map { "\($0.name)이(가) 등록" }, issue.createdOn.flatMap(Redmine.date).map { WorkLogFormat.when($0) },
                   issue.updated.map { "마지막 수정 " + WorkLogFormat.when($0) }]
                 .compactMap { $0 }.joined(separator: " · "))
                 .font(WL.caption).foregroundStyle(WL.quiet)
+        }
+    }
+
+    private func saveSubject(_ issue: Redmine.Issue) {
+        let text = state.subjectDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.editingSubject = nil
+        if !text.isEmpty, text != issue.subject { store.update(issue.id, Redmine.Change(subject: text)) }
+    }
+
+    /// 설명 보기·고치기. 평문으로 고쳐 문단과 줄바꿈만 남으니 저장 전에 알린다.
+    @ViewBuilder private func description(_ issue: Redmine.Issue) -> some View {
+        let html = issue.description ?? ""
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("설명").font(WL.section)
+                Spacer()
+                if state.editingDescription != issue.id {
+                    Button("고치기") {
+                        state.descriptionDraft = RedmineNote.plain(html)
+                        state.editingDescription = issue.id
+                    }
+                    .buttonStyle(TextLinkButtonStyle())
+                }
+            }
+            if state.editingDescription == issue.id {
+                TextEditor(text: $state.descriptionDraft)
+                    .font(WL.body).frame(minHeight: 160).padding(6)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+                HStack {
+                    Text("저장하면 목록·굵은 글씨 같은 서식은 문단으로 바뀝니다").font(WL.caption).foregroundStyle(WL.waiting)
+                    Spacer()
+                    Button("취소") { state.editingDescription = nil }.buttonStyle(NotionButtonStyle())
+                    Button("저장") {
+                        state.editingDescription = nil
+                        store.update(issue.id, Redmine.Change(description: state.descriptionDraft))
+                    }
+                    .buttonStyle(NotionButtonStyle(kind: .primary))
+                }
+            } else if html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("설명이 없습니다").font(WL.meta).foregroundStyle(WL.quiet)
+            } else {
+                HTMLText(html: html, rendered: HTMLCache.shared.cached(html))
+            }
         }
     }
 
@@ -774,18 +881,41 @@ struct RedmineIssueSheet: View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(relations) { relation in
                 let (other, label) = relation.describe(from: issue)
-                Button { store.selected = other } label: {
-                    HStack(spacing: 8) {
-                        Text(label).font(WL.caption).foregroundStyle(WL.muted).frame(width: 48, alignment: .leading)
-                        Text(verbatim: "#\(other)").font(WL.meta.monospacedDigit())
-                        Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    Button { store.selected = other } label: {
+                        HStack(spacing: 8) {
+                            Text(label).font(WL.caption).foregroundStyle(WL.muted).frame(width: 48, alignment: .leading)
+                            Text(verbatim: "#\(other)").font(WL.meta.monospacedDigit())
+                            Spacer(minLength: 0)
+                        }
+                        .frame(height: 26)
+                        .contentShape(Rectangle())
                     }
-                    .frame(height: 26)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    Button { store.removeRelation(relation.id, issue: issue) } label: { Image(systemName: "xmark") }
+                        .buttonStyle(GhostIconButtonStyle())
+                        .tip("관계 지우기")
                 }
-                .buttonStyle(.plain)
             }
+            HStack(spacing: 6) {
+                Picker("", selection: $state.relationType) {
+                    ForEach(Redmine.relationTypes, id: \.value) { Text($0.label).tag($0.value) }
+                }
+                .labelsHidden().frame(width: 84)
+                TextField("일감 번호", text: $state.relationTarget).textFieldStyle(.roundedBorder).frame(width: 100)
+                    .onSubmit { addRelation(issue) }
+                Button("관계 추가") { addRelation(issue) }
+                    .buttonStyle(TextLinkButtonStyle())
+                    .disabled(Redmine.issueNumber(state.relationTarget) == nil)
+            }
+            .padding(.top, 4)
         }
+    }
+
+    private func addRelation(_ issue: Int) {
+        guard let target = Redmine.issueNumber(state.relationTarget), target != issue else { return }
+        store.addRelation(issue, to: target, type: state.relationType)
+        state.relationTarget = ""
     }
 
     private func attachmentList(_ attachments: [Redmine.Attachment]) -> some View {
@@ -879,22 +1009,47 @@ struct RedmineIssueSheet: View {
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            let files = state.files[issue.id] ?? []
+            if !files.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(files, id: \.self) { file in
+                        HStack(spacing: 6) {
+                            Image(systemName: "paperclip").foregroundStyle(WL.muted)
+                            Text(file.lastPathComponent).font(WL.meta).lineLimit(1).truncationMode(.middle)
+                            Button { state.files[issue.id]?.removeAll { $0 == file } } label: { Image(systemName: "xmark") }
+                                .buttonStyle(GhostIconButtonStyle())
+                        }
+                    }
+                }
+            }
             HStack {
+                Button { pickFiles(issue.id) } label: { Label("파일 첨부", systemImage: "paperclip") }
+                    .buttonStyle(TextLinkButtonStyle())
                 Text("[작업 내용]처럼 대괄호 머리를 쓰면 단락이 나뉩니다").font(WL.caption).foregroundStyle(WL.quiet)
                 Spacer()
                 Button("댓글 남기기") {
-                    let id = issue.id, text = state.comments[issue.id] ?? ""
-                    store.update(id, Redmine.Change(notes: text)) { ok in
+                    let id = issue.id, text = state.comments[issue.id] ?? "", sending = state.files[id] ?? []
+                    store.comment(id, text: text, files: sending) { ok in
                         // 보내는 사이 고쳐 쓴 글은 지우지 않는다
-                        if ok, state.comments[id] == text { state.comments[id] = nil }
+                        guard ok else { return }
+                        if state.comments[id] == text { state.comments[id] = nil }
+                        state.files[id] = nil
                     }
                 }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled((state.comments[issue.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.saving.contains(issue.id))
+                .disabled(((state.comments[issue.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty)
+                          || store.saving.contains(issue.id))
                 .tip("⌘↩")
             }
         }
+    }
+
+    private func pickFiles(_ id: Int) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK { state.files[id, default: []] += panel.urls }
     }
 
     // MARK: 일지·담당자
@@ -938,7 +1093,7 @@ private final class TimeDraft: ObservableObject {
 }
 
 /// 일감에 소요 시간을 남긴다. 시간은 `1.5`처럼 소수로 받는다.
-private struct TimeEntryForm: View {
+struct TimeEntryForm: View {
     @ObservedObject var store: RedmineStore
     let issue: Int
     @StateObject private var draft = TimeDraft()
@@ -1000,7 +1155,7 @@ private final class NewIssueDraft: ObservableObject {
 }
 
 /// 새 일감 만들기. 프로젝트 화면에서 열면 그 프로젝트를 고른 채로 연다.
-private struct RedmineNewIssueSheet: View {
+struct RedmineNewIssueSheet: View {
     @ObservedObject var store: RedmineStore
     @StateObject private var draft = NewIssueDraft()
     @Environment(\.dismiss) private var dismiss
