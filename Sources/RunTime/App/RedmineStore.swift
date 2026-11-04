@@ -194,11 +194,12 @@ final class RedmineStore: ObservableObject {
                 }
                 // 받는 사이 누가 고쳐 순서가 바뀌면 같은 일감이 다음 쪽에 또 나온다
                 let seen = Set(collected.map(\.id))
-                collected += result.issues.filter { !seen.contains($0.id) }
+                let fresh = result.issues.filter { !seen.contains($0.id) }
+                collected += fresh
                 // 프로젝트 전체는 수백 건이라 1000건까지 받는다 (더 많으면 거르기를 좁히라고 알린다)
                 // 다음 쪽은 서버 위치로 센다. 겹침을 뺀 건수로 세면 같은 쪽을 끝없이 다시 받는다
                 let next = offset + result.issues.count
-                if next < result.total, collected.count < 1000, !result.issues.isEmpty {
+                if next < result.total, collected.count < 1000, !fresh.isEmpty {
                     page(next)
                 } else {
                     self.loading = false

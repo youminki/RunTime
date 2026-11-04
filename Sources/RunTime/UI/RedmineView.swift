@@ -404,7 +404,8 @@ private struct TableRow: View {
         return (prefix + Text(issue.subject).foregroundColor(WL.text))
             .font(WL.body)
             .lineLimit(1)
-            .truncationMode(.head)
+            // 메뉴 경로가 붙으면 끝의 일감 이름이 남게 앞을 자르고, 제목만이면 뒤를 자른다
+            .truncationMode(path.isEmpty ? .tail : .head)
             .help(([path.joined(separator: " › ")].filter { !$0.isEmpty } + [issue.subject]).joined(separator: " › "))
     }
 }
