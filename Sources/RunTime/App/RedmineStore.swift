@@ -85,11 +85,15 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var statuses: [Redmine.Status] = []
     @Published private(set) var trackers: [Redmine.Ref] = []
     @Published private(set) var priorities: [Redmine.Ref] = []
+    /// 시간 기록에 고르는 활동.
+    @Published private(set) var activities: [RedmineAPI.Activity] = []
     /// 내 계정 ("나에게" 담당자로 둘 때).
     @Published private(set) var me: Redmine.Ref?
     /// 프로젝트별 담당자로 고를 수 있는 사람.
     @Published private(set) var people: [Int: [Redmine.Ref]] = [:]
     @Published var flash: String?
+    /// 새 일감 창이 열려 있는지.
+    @Published var creating = false
 
     private var settings: WorkLogSettings { .shared }
     private var started = false
@@ -141,6 +145,10 @@ final class RedmineStore: ObservableObject {
         let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             if request.httpMethod == "PUT" { return done(Data(), 204, nil) }
+            if request.httpMethod == "POST" {
+                let sample = path == "issues.json" ? FileManager.default.contents(atPath: (folder as NSString).appendingPathComponent("created.json")) : nil
+                return done(sample ?? Data("{}".utf8), 201, nil)
+            }
             let names = [path.replacingOccurrences(of: "/", with: "_"), (path as NSString).lastPathComponent]
             for name in names {
                 if let data = FileManager.default.contents(atPath: (folder as NSString).appendingPathComponent(name)) {
@@ -167,6 +175,9 @@ final class RedmineStore: ObservableObject {
         }
         fetch(Redmine.prioritiesRequest(base: base, key: key)) { [weak self] data, _, _ in
             if let data, let list = try? Redmine.priorities(data) { self?.priorities = list }
+        }
+        fetch(RedmineAPI.activitiesRequest(base: base, key: key)) { [weak self] data, _, _ in
+            if let data, let list = try? RedmineAPI.parseActivities(data) { self?.activities = list }
         }
         fetch(Redmine.currentUserRequest(base: base, key: key)) { [weak self] data, _, _ in
             if let data, let user = try? Redmine.currentUser(data) { self?.me = user }
@@ -306,6 +317,38 @@ final class RedmineStore: ObservableObject {
             }
             self.loadDetail(id)
             done?(true)
+        }
+    }
+
+    /// 새 일감을 만든다. 되면 목록 맨 앞에 넣고 그 일감을 연다. 실패 까닭은 창에 그대로 보이게 돌려준다.
+    func create(_ issue: Redmine.NewIssue, done: @escaping (String?) -> Void) {
+        guard let (base, key) = credentials, let request = try? Redmine.createRequest(base: base, key: key, issue: issue) else {
+            return done("레드마인 주소나 API 키를 읽지 못했습니다")
+        }
+        fetch(request) { [weak self] data, status, failure in
+            guard let self else { return }
+            guard status == 201, let data, let made = try? Redmine.issue(data) else {
+                return done(Self.message(status: status, error: failure, data: data))
+            }
+            self.issues.insert(made, at: 0)
+            self.total += 1
+            done(nil)
+            self.selected = made.id
+        }
+    }
+
+    /// 소요 시간을 남긴다. 되면 일감을 다시 받아 소요 시간을 맞춘다.
+    func logTime(_ id: Int, day: String, hours: Double, activityID: Int?, comment: String, done: @escaping (String?) -> Void) {
+        guard let (base, key) = credentials,
+              let request = try? RedmineAPI.timeEntryRequest(base: base, key: key, issue: id, spentOn: day, hours: hours,
+                                                             activityID: activityID, comments: comment) else {
+            return done("레드마인 주소나 API 키를 읽지 못했습니다")
+        }
+        fetch(request) { [weak self] data, status, failure in
+            guard let self else { return }
+            guard (200..<300).contains(status) else { return done(Self.message(status: status, error: failure, data: data)) }
+            self.loadDetail(id)
+            done(nil)
         }
     }
 

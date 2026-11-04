@@ -104,6 +104,8 @@ public enum Redmine {
         public let name: String
         public let identifier: String
         public let parent: Ref?
+        /// 이 프로젝트에서 쓰는 트래커 (새 일감에서 고른다). 레드마인 전체 트래커는 50개가 넘는다.
+        public var trackers: [Ref]?
     }
 
     /// 레드마인에 저장한 질의. `projectId`가 있으면 그 프로젝트에서만 쓴다.
@@ -242,7 +244,8 @@ public enum Redmine {
     }
 
     public static func projectsRequest(base: URL, key: String) -> URLRequest {
-        request(base, "projects.json", key: key, query: [URLQueryItem(name: "limit", value: "100")])
+        request(base, "projects.json", key: key, query: [URLQueryItem(name: "limit", value: "100"),
+                                                         URLQueryItem(name: "include", value: "trackers")])
     }
 
     public static func queriesRequest(base: URL, key: String) -> URLRequest {
@@ -313,6 +316,45 @@ public enum Redmine {
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["issue": change.fields])
+        return request
+    }
+
+    /// 새 일감. 설명은 평문으로 받아 HTML로 넘긴다 (이 레드마인은 HTML로 저장한다).
+    public struct NewIssue: Equatable {
+        public var projectID: Int
+        public var trackerID: Int
+        public var subject: String
+        public var description = ""
+        public var priorityID: Int?
+        public var assignedToID: Int?
+        public var parentID: Int?
+        public var startDate: String?
+        public var dueDate: String?
+
+        public init(projectID: Int, trackerID: Int, subject: String) {
+            (self.projectID, self.trackerID, self.subject) = (projectID, trackerID, subject)
+        }
+
+        public var isValid: Bool { !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        public var fields: [String: Any] {
+            var fields: [String: Any] = ["project_id": projectID, "tracker_id": trackerID,
+                                         "subject": subject.trimmingCharacters(in: .whitespacesAndNewlines)]
+            if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fields["description"] = RedmineNote.html(description) }
+            if let priorityID { fields["priority_id"] = priorityID }
+            if let assignedToID { fields["assigned_to_id"] = assignedToID }
+            if let parentID { fields["parent_issue_id"] = parentID }
+            if let startDate { fields["start_date"] = startDate }
+            if let dueDate { fields["due_date"] = dueDate }
+            return fields
+        }
+    }
+
+    public static func createRequest(base: URL, key: String, issue: NewIssue) throws -> URLRequest {
+        var request = request(base, "issues.json", key: key)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["issue": issue.fields])
         return request
     }
 

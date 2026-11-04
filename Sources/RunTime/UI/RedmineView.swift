@@ -33,6 +33,7 @@ struct RedmineView: View {
                     RedmineIssueSheet(store: store, state: state)
                         .frame(minWidth: 820, idealWidth: 940, minHeight: 600, idealHeight: 760)
                 }
+                .sheet(isPresented: $store.creating) { RedmineNewIssueSheet(store: store) }
             } else {
                 notConnected
             }
@@ -120,6 +121,7 @@ final class RedmineViewState: ObservableObject {
     @Published var editingDate: String?
     @Published var pickedDate = Date()
     @Published var history = HistoryTab.all
+    @Published var loggingTime = false
 
     enum HistoryTab: String, CaseIterable { case all = "전체", comments = "댓글", changes = "변경 내역" }
 }
@@ -218,6 +220,11 @@ private struct RedmineIssueTable: View {
                     .menuStyle(.borderlessButton).fixedSize()
                     .tip("레드마인에 저장해 둔 질의로 봅니다")
                 }
+                Button { store.creating = true } label: { Label("새 일감", systemImage: "plus") }
+                    .buttonStyle(NotionButtonStyle(kind: .primary))
+                    .keyboardShortcut("n", modifiers: .command)
+                    .disabled(store.projects.isEmpty)
+                    .tip("새 일감 만들기 (⌘N)")
                 Button { store.refresh() } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(GhostIconButtonStyle())
                     .keyboardShortcut("r", modifiers: .command)
@@ -619,6 +626,9 @@ struct RedmineIssueSheet: View {
                           issue.spentHours.flatMap { $0 > 0 ? "소요 \(hours($0))" : nil }].compactMap { $0 }.joined(separator: " · ")
                         .ifEmpty("기록 없음"))
                         .font(WL.meta).foregroundStyle(WL.muted)
+                    Button("시간 기록") { state.loggingTime = true }
+                        .buttonStyle(TextLinkButtonStyle())
+                        .popover(isPresented: $state.loggingTime) { TimeEntryForm(store: store, issue: issue.id) }
                 }
             }
         }
@@ -875,6 +885,181 @@ struct RedmineIssueSheet: View {
             return
         }
         store.update(issue.id, Redmine.Change(assignedToID: me.id))
+    }
+}
+
+/// 시간 기록 창의 입력값.
+private final class TimeDraft: ObservableObject {
+    @Published var day = Date()
+    @Published var hours = "1"
+    @Published var activityID: Int?
+    @Published var comment = ""
+    @Published var sending = false
+    @Published var error: String?
+}
+
+/// 일감에 소요 시간을 남긴다. 시간은 `1.5`처럼 소수로 받는다.
+private struct TimeEntryForm: View {
+    @ObservedObject var store: RedmineStore
+    let issue: Int
+    @StateObject private var draft = TimeDraft()
+    @Environment(\.dismiss) private var dismiss
+
+    private var hours: Double? { Double(draft.hours.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 && $0 <= 24 ? $0 : nil } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("시간 기록").font(WL.heading)
+            DatePicker("날짜", selection: $draft.day, displayedComponents: .date)
+            HStack {
+                Text("시간")
+                TextField("1.5", text: $draft.hours).textFieldStyle(.roundedBorder).frame(width: 70)
+            }
+            Picker("활동", selection: $draft.activityID) {
+                Text("기본값").tag(Int?.none)
+                ForEach(store.activities) { Text($0.name).tag(Int?.some($0.id)) }
+            }
+            TextField("설명 (선택)", text: $draft.comment).textFieldStyle(.roundedBorder)
+            if let error = draft.error { Text(error).font(WL.caption).foregroundStyle(Palette.red).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                Button("기록") {
+                    guard let hours else { return }
+                    draft.sending = true
+                    draft.error = nil
+                    store.logTime(issue, day: WorkDay.key(draft.day), hours: hours, activityID: draft.activityID, comment: draft.comment) { error in
+                        draft.sending = false
+                        if let error { draft.error = error } else { dismiss() }
+                    }
+                }
+                .buttonStyle(NotionButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
+                .disabled(hours == nil || draft.sending)
+            }
+        }
+        .font(WL.meta)
+        .padding(14)
+        .frame(width: 280)
+    }
+}
+
+/// 새 일감 창의 입력값.
+private final class NewIssueDraft: ObservableObject {
+    @Published var projectID: Int?
+    @Published var trackerID: Int?
+    @Published var subject = ""
+    @Published var description = ""
+    @Published var priorityID: Int?
+    @Published var assigneeID: Int?
+    @Published var parent = ""
+    @Published var hasStart = false
+    @Published var start = Date()
+    @Published var hasDue = false
+    @Published var due = Date()
+    @Published var sending = false
+    @Published var error: String?
+}
+
+/// 새 일감 만들기. 프로젝트 화면에서 열면 그 프로젝트를 고른 채로 연다.
+private struct RedmineNewIssueSheet: View {
+    @ObservedObject var store: RedmineStore
+    @StateObject private var draft = NewIssueDraft()
+    @Environment(\.dismiss) private var dismiss
+
+    private var project: Redmine.Project? { store.projects.first { $0.id == draft.projectID } }
+    private var trackers: [Redmine.Ref] { project?.trackers ?? store.trackers }
+    private var parentID: Int? { Int(draft.parent.trimmingCharacters(in: CharacterSet(charactersIn: "# "))) }
+    private var parentValid: Bool { draft.parent.trimmingCharacters(in: .whitespaces).isEmpty || parentID != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("새 일감").font(WL.title).padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 14)
+            Rectangle().fill(WL.border).frame(height: 1)
+            Form {
+                Picker("프로젝트", selection: $draft.projectID) {
+                    ForEach(store.projects) { Text($0.name).tag(Int?.some($0.id)) }
+                }
+                Picker("트래커", selection: $draft.trackerID) {
+                    ForEach(trackers) { Text($0.name).tag(Int?.some($0.id)) }
+                }
+                TextField("제목", text: $draft.subject)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("설명")
+                    TextEditor(text: $draft.description)
+                        .font(WL.body).frame(height: 130).padding(4)
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+                }
+                Picker("우선순위", selection: $draft.priorityID) {
+                    Text("기본값").tag(Int?.none)
+                    ForEach(store.priorities) { Text($0.name).tag(Int?.some($0.id)) }
+                }
+                Picker("담당자", selection: $draft.assigneeID) {
+                    Text("없음").tag(Int?.none)
+                    if let me = store.me { Text("나에게 (\(me.name))").tag(Int?.some(me.id)) }
+                    ForEach((draft.projectID.flatMap { store.people[$0] } ?? []).filter { $0.id != store.me?.id }) { Text($0.name).tag(Int?.some($0.id)) }
+                }
+                TextField("상위 일감 번호 (선택)", text: $draft.parent)
+                Toggle("시작일", isOn: $draft.hasStart)
+                if draft.hasStart { DatePicker("", selection: $draft.start, displayedComponents: .date).labelsHidden() }
+                Toggle("완료 기한", isOn: $draft.hasDue)
+                if draft.hasDue { DatePicker("", selection: $draft.due, displayedComponents: .date).labelsHidden() }
+            }
+            .formStyle(.grouped)
+            .font(WL.meta)
+            if let error = draft.error {
+                Text(error).font(WL.meta).foregroundStyle(Palette.red).padding(.horizontal, 24).padding(.top, 8)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("취소") { dismiss() }.buttonStyle(NotionButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("만들기") { submit() }
+                    .buttonStyle(NotionButtonStyle(kind: .primary))
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(!ready || draft.sending)
+                    .tip("⌘↩")
+            }
+            .padding(16)
+        }
+        .frame(width: 560, height: 640)
+        .background(WL.canvas)
+        .onAppear {
+            if case .project(let project) = store.scope { draft.projectID = project.id } else { draft.projectID = store.projects.first?.id }
+            pickTracker()
+            if let id = draft.projectID { store.loadPeople(project: id) }
+        }
+        .onChange(of: draft.projectID) { id in
+            pickTracker()
+            draft.assigneeID = nil
+            if let id { store.loadPeople(project: id) }
+        }
+    }
+
+    private var ready: Bool {
+        draft.projectID != nil && draft.trackerID != nil && parentValid
+            && !draft.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 프로젝트마다 쓰는 트래커가 달라, 고른 것이 없으면 첫 트래커로 둔다.
+    private func pickTracker() {
+        if !trackers.contains(where: { $0.id == draft.trackerID }) { draft.trackerID = trackers.first?.id }
+    }
+
+    private func submit() {
+        guard let projectID = draft.projectID, let trackerID = draft.trackerID else { return }
+        var issue = Redmine.NewIssue(projectID: projectID, trackerID: trackerID, subject: draft.subject)
+        issue.description = draft.description
+        issue.priorityID = draft.priorityID
+        issue.assignedToID = draft.assigneeID
+        issue.parentID = parentID
+        if draft.hasStart { issue.startDate = WorkDay.key(draft.start) }
+        if draft.hasDue { issue.dueDate = WorkDay.key(draft.due) }
+        draft.sending = true
+        draft.error = nil
+        store.create(issue) { error in
+            draft.sending = false
+            if let error { draft.error = error } else { store.creating = false }
+        }
     }
 }
 

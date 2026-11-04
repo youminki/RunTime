@@ -73,6 +73,21 @@ private let issueJSON = #"""
         #expect(request.httpMethod == "PUT" && request.url?.path == "/issues/101.json")
     }
 
+    @Test func newIssueSendsOnlyWhatWasFilled() throws {
+        var issue = Redmine.NewIssue(projectID: 7, trackerID: 5, subject: "  목록 오류  ")
+        #expect(issue.isValid)
+        #expect(issue.fields["subject"] as? String == "목록 오류")
+        #expect(issue.fields["description"] == nil && issue.fields["parent_issue_id"] == nil)
+        issue.description = "재현 절차"
+        issue.parentID = 100
+        issue.dueDate = "2026-11-07"
+        #expect((issue.fields["description"] as? String)?.hasPrefix("<p>") == true)
+        #expect(issue.fields["parent_issue_id"] as? Int == 100)
+        let request = try Redmine.createRequest(base: URL(string: "https://example.com")!, key: "k", issue: issue)
+        #expect(request.httpMethod == "POST" && request.url?.path == "/issues.json")
+        #expect(!Redmine.NewIssue(projectID: 7, trackerID: 5, subject: "   ").isValid)
+    }
+
     @Test func appliesChangeBeforeTheServerAnswers() throws {
         let issue = try Redmine.issue(Data(issueJSON.utf8))
         let statuses = [Redmine.Status(id: 4, name: "테스트", isClosed: false)]
