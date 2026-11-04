@@ -181,6 +181,32 @@ private let issueJSON = #"""
         #expect(rows.map(\.id) == [3, 20, 2, 10])
     }
 
+    @Test func timelineBars() {
+        let from = Redmine.dayNumber("2026-11-02")!
+        #expect(Redmine.monday(of: from) == from)
+        #expect(Redmine.monday(of: Redmine.dayNumber("2026-11-08")!) == from)
+        #expect(Redmine.dayNumber("2026-02-30") == nil && Redmine.dayNumber(nil) == nil)
+        #expect(Redmine.bar(start: "2026-11-03", due: "2026-11-05", from: from, days: 14) == .init(offset: 1, length: 3))
+        // 한쪽 날짜만, 뒤바뀐 날짜, 창에 걸친 기간, 창 밖
+        #expect(Redmine.bar(start: nil, due: "2026-11-04", from: from, days: 14) == .init(offset: 2, length: 1))
+        #expect(Redmine.bar(start: "2026-11-05", due: "2026-11-03", from: from, days: 14) == .init(offset: 3, length: 1))
+        #expect(Redmine.bar(start: "2026-10-01", due: "2026-12-31", from: from, days: 14) == .init(offset: 0, length: 14))
+        #expect(Redmine.bar(start: "2026-11-16", due: "2026-11-20", from: from, days: 14) == nil)
+        #expect(Redmine.bar(start: "2026-10-01", due: "2026-11-01", from: from, days: 14) == nil)
+        #expect(Redmine.bar(start: nil, due: nil, from: from, days: 14) == nil)
+        #expect(Redmine.weeks(from: from, days: 14).map(\.label) == ["11.2", "11.9"])
+        #expect(Redmine.weeks(from: from + 1, days: 14).map(\.offset) == [6, 13])
+    }
+
+    /// 앱이 받는 최대치(1000건)를 그리는 동안 트리를 만들어도 한 프레임을 넘기지 않아야 한다.
+    @Test func treeStaysFastAtListLimit() {
+        let parents = (1...200).map { issue($0) }
+        let list = (1001...2000).map { issue($0, parent: ($0 % 200) + 1) }
+        let started = Date()
+        for _ in 0..<10 { #expect(Redmine.tree(list, context: parents).count == 1200) }
+        #expect(Date().timeIntervalSince(started) / 10 < 0.016)
+    }
+
     @Test func findsParentsStillToFetch() {
         let list = [issue(10, parent: 2), issue(11, parent: 10), issue(12, parent: 3)]
         #expect(Redmine.missingParents(list, known: [3]) == [2])

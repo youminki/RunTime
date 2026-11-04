@@ -32,7 +32,12 @@ final class RedmineStore: ObservableObject {
 
     /// 받은 목록을 한 번 더 걸러 보는 빠른 거르기 (다시 받지 않는다).
     enum Quick: String, CaseIterable {
-        case all = "전체", stabilization = "안정화", qa = "QA·결함", dueSoon = "기한 임박", unassigned = "담당 없음"
+        case all = "전체", recent = "최근 변경", stabilization = "안정화", qa = "QA·결함", dueSoon = "기한 임박", unassigned = "담당 없음"
+    }
+
+    /// 목록을 보이는 방식. 트리와 일정은 상위·하위를 편 줄을 쓴다.
+    enum Layout: String, CaseIterable {
+        case list = "목록", tree = "트리", timeline = "일정"
     }
 
     /// 목록 칸. 머리를 누르면 그 칸으로 정렬한다.
@@ -46,8 +51,13 @@ final class RedmineStore: ObservableObject {
     @Published var quick: Quick = .all
     @Published var sort: Column = .updated
     @Published var ascending = false
-    /// 상위·하위 일감을 들여 써서 보인다.
-    @Published var treeMode = false { didSet { if treeMode { loadAncestors() } } }
+    @Published var layout: Layout = .list { didSet { if treeMode { loadAncestors() } } }
+    var treeMode: Bool { layout != .list }
+    /// 일정 창을 오늘 자리에서 옮긴 주 수.
+    @Published var timelineShift = 0
+    static let timelineDays = 91
+    /// 일정 창 첫날: 2주 전 월요일에서 옮긴 만큼.
+    var timelineStart: Int { Redmine.monday(of: (Redmine.dayNumber(WorkDay.today()) ?? 0) - 14) + timelineShift * 7 }
     /// 트리에 끼워 넣는 상위 일감 (번호 → 일감). 목록 조건에는 안 맞아도 하위의 자리를 보인다.
     @Published private(set) var ancestors: [Int: Redmine.Issue] = [:]
     @Published var collapsed: Set<Int> = []
@@ -483,6 +493,7 @@ final class RedmineStore: ObservableObject {
         case .stabilization: return issue.tracker.name == "안정화"
         case .qa: return Self.qaTrackers.contains(issue.tracker.name)
         case .unassigned: return issue.assignedTo == nil
+        case .recent: return (issue.updated ?? .distantPast) > Date().addingTimeInterval(-7 * 86_400)
         case .dueSoon:
             let soon = WorkDay.adding(3, to: WorkDay.today())
             let closed = Set(statuses.filter { $0.isClosed == true }.map(\.id))

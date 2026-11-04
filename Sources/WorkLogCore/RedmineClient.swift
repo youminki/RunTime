@@ -531,6 +531,52 @@ extension Redmine {
         return rows
     }
 
+    /// `yyyy-MM-dd`를 1970-01-01부터 센 날수로. 일정 보기는 날짜를 정수로만 다룬다.
+    public static func dayNumber(_ text: String?) -> Int? {
+        let parts = (text ?? "").split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let components = DateComponents(year: parts[0], month: parts[1], day: parts[2])
+        guard components.isValidDate(in: calendar), let date = calendar.date(from: components) else { return nil }
+        return Int(date.timeIntervalSince1970 / 86_400)
+    }
+
+    /// 그 날이 든 주의 월요일.
+    public static func monday(of day: Int) -> Int { day - (((day + 3) % 7) + 7) % 7 }
+
+    /// 일정 보기의 막대 한 개. `offset`은 창 첫날부터의 날수다.
+    public struct Bar: Equatable {
+        public let offset: Int
+        public let length: Int
+
+        public init(offset: Int, length: Int) { (self.offset, self.length) = (offset, length) }
+    }
+
+    /// 일감 기간을 `from`부터 `days`일 창에 맞춘 막대. 한쪽 날짜만 있으면 그 하루, 창 밖이면 nil.
+    public static func bar(start: String?, due: String?, from: Int, days: Int) -> Bar? {
+        guard let first = dayNumber(start) ?? dayNumber(due), let end = dayNumber(due) ?? dayNumber(start) else { return nil }
+        let last = max(first, end)
+        guard last >= from, first < from + days else { return nil }
+        let offset = max(first, from) - from
+        return Bar(offset: offset, length: min(last, from + days - 1) - from - offset + 1)
+    }
+
+    /// 창 안의 월요일마다 자리와 `M.d` 이름.
+    public static func weeks(from: Int, days: Int) -> [(offset: Int, label: String)] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        var day = monday(of: from)
+        if day < from { day += 7 }
+        var result: [(offset: Int, label: String)] = []
+        while day < from + days {
+            let parts = calendar.dateComponents([.month, .day], from: Date(timeIntervalSince1970: Double(day) * 86_400))
+            result.append((day - from, "\(parts.month ?? 0).\(parts.day ?? 0)"))
+            day += 7
+        }
+        return result
+    }
+
     /// 목록 일감의 상위 가운데 아직 받지 않은 번호.
     public static func missingParents(_ issues: [Issue], known: Set<Int>) -> [Int] {
         Array(Set(issues.compactMap(\.parent?.id)).subtracting(known).subtracting(issues.map(\.id))).sorted()

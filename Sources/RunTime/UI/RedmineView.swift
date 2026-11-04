@@ -180,13 +180,15 @@ private struct RedmineIssueTable: View {
             header(count: rows.filter { !$0.isContext }.count)
             Rectangle().fill(WL.border).frame(height: 1)
             GeometryReader { geo in
-                let columns = Self.columns(for: geo.size.width)
+                let timeline = store.layout == .timeline
+                let subjectWidth: CGFloat = geo.size.width < 900 ? 240 : 340
+                let columns: [(RedmineStore.Column, CGFloat?)] = timeline ? [(.id, 60), (.subject, subjectWidth)] : Self.columns(for: geo.size.width)
                 VStack(spacing: 0) {
-                    columnHeader(columns)
-                    Rectangle().fill(WL.border).frame(height: 1)
                     if let error = store.error {
+                        columnHeader(columns, timeline: timeline)
                         message(error, icon: "exclamationmark.triangle")
                     } else if rows.isEmpty {
+                        columnHeader(columns, timeline: timeline)
                         if store.loading {
                             VStack(spacing: 10) {
                                 ProgressView()
@@ -208,11 +210,16 @@ private struct RedmineIssueTable: View {
                         }
                     } else {
                         SlimScrollView {
-                            LazyVStack(spacing: 0) {
-                                ForEach(rows) { row in TableRow(row: row, columns: columns, store: store) }
-                                if store.total > store.issues.count {
-                                    Text("레드마인에는 \(store.total)건이 있고 앞의 \(store.issues.count)건만 보입니다. 거르기를 좁혀 보세요")
-                                        .font(WL.caption).foregroundStyle(WL.quiet).padding(14)
+                            // 머리를 스크롤 칸 안에 고정해야 스크롤 막대 폭만큼 칸이 어긋나지 않는다
+                            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                                Section {
+                                    ForEach(rows) { row in TableRow(row: row, columns: columns, timeline: timeline, store: store) }
+                                    if store.total > store.issues.count {
+                                        Text("레드마인에는 \(store.total)건이 있고 앞의 \(store.issues.count)건만 보입니다. 거르기를 좁혀 보세요")
+                                            .font(WL.caption).foregroundStyle(WL.quiet).padding(14)
+                                    }
+                                } header: {
+                                    columnHeader(columns, timeline: timeline)
                                 }
                             }
                         }
@@ -238,6 +245,7 @@ private struct RedmineIssueTable: View {
                 if store.loading && !store.issues.isEmpty { ProgressView().controlSize(.small) }
                 if case .project(let project) = store.scope { ReportNameMenu(project: project.name) }
                 Spacer()
+                searchField
                 if !store.queries.isEmpty {
                     Menu {
                         ForEach(store.queries) { query in
@@ -280,29 +288,42 @@ private struct RedmineIssueTable: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Toggle(isOn: $store.treeMode) { Label("트리", systemImage: "list.bullet.indent") }
-                    .toggleStyle(.button)
-                    .tip("상위 일감 아래에 하위 일감을 들여 씁니다")
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.secondary)
-                    TextField("찾기 · Enter로 전체 찾기, #번호로 열기", text: $store.search).textFieldStyle(.plain).font(WL.meta)
-                        .onSubmit { store.submitSearch() }
-                    if store.searching { ProgressView().controlSize(.mini) }
-                    if !store.search.isEmpty {
-                        Button { store.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.muted) }
-                            .buttonStyle(.plain)
-                    }
+                if store.layout == .timeline {
+                    Button { store.timelineShift -= 4 } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(GhostIconButtonStyle()).tip("4주 앞으로")
+                    Button("오늘") { store.timelineShift = 0 }
+                        .buttonStyle(TextLinkButtonStyle()).disabled(store.timelineShift == 0)
+                    Button { store.timelineShift += 4 } label: { Image(systemName: "chevron.right") }
+                        .buttonStyle(GhostIconButtonStyle()).tip("4주 뒤로")
                 }
-                .padding(.horizontal, 8)
-                .frame(width: 250, height: 28)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
-                .popover(isPresented: $store.showsResults, arrowEdge: .bottom) { searchResults }
+                Picker("", selection: $store.layout) {
+                    ForEach(RedmineStore.Layout.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.segmented).fixedSize()
+                .tip("트리는 상위 아래에 하위를, 일정은 기간을 막대로 보입니다")
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 12)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(.secondary)
+            TextField("찾기 · Enter로 전체 찾기, #번호로 열기", text: $store.search).textFieldStyle(.plain).font(WL.meta)
+                .onSubmit { store.submitSearch() }
+            if store.searching { ProgressView().controlSize(.mini) }
+            if !store.search.isEmpty {
+                Button { store.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.muted) }
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(width: 250, height: 28)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+        .popover(isPresented: $store.showsResults, arrowEdge: .bottom) { searchResults }
     }
 
     /// 모든 프로젝트에서 찾은 일감. 누르면 그 일감을 연다.
@@ -344,7 +365,7 @@ private struct RedmineIssueTable: View {
         return columns
     }
 
-    private func columnHeader(_ columns: [(RedmineStore.Column, CGFloat?)]) -> some View {
+    private func columnHeader(_ columns: [(RedmineStore.Column, CGFloat?)], timeline: Bool) -> some View {
         HStack(spacing: 10) {
             ForEach(columns, id: \.0) { column, width in
                 Button { store.sort(by: column) } label: {
@@ -362,10 +383,12 @@ private struct RedmineIssueTable: View {
                 }
                 .buttonStyle(.plain)
             }
+            if timeline { TimelineWeeks(store: store).frame(maxWidth: .infinity) }
         }
         .padding(.horizontal, 20)
         .frame(height: 30)
         .background(WL.sidebar)
+        .overlay(alignment: .bottom) { Rectangle().fill(WL.border).frame(height: 1) }
     }
 
     private func message(_ text: String, icon: String) -> some View {
@@ -378,10 +401,64 @@ private struct RedmineIssueTable: View {
     }
 }
 
+/// 일정 보기의 머리: 월요일마다 날짜를 쓰고 오늘 자리를 표시한다.
+private struct TimelineWeeks: View {
+    @ObservedObject var store: RedmineStore
+
+    var body: some View {
+        let from = store.timelineStart, days = RedmineStore.timelineDays
+        Canvas { context, size in
+            let unit = size.width / CGFloat(days)
+            let weeks = Redmine.weeks(from: from, days: days)
+            // 좁으면 이름이 겹쳐 격주로만 쓴다
+            let step = unit * 7 < 34 ? 2 : 1
+            for (index, week) in weeks.enumerated() where index % step == 0 {
+                context.draw(Text(week.label).font(WL.label).foregroundColor(WL.quiet),
+                             at: CGPoint(x: CGFloat(week.offset) * unit, y: size.height / 2), anchor: .leading)
+            }
+        }
+    }
+}
+
+/// 일정 보기의 한 줄: 주 눈금, 오늘 선, 기간 막대. 막대의 진한 부분이 진척률이다.
+private struct TimelineLane: View {
+    let row: Redmine.TreeRow
+    @ObservedObject var store: RedmineStore
+
+    var body: some View {
+        let issue = row.issue, from = store.timelineStart, days = RedmineStore.timelineDays
+        let today = (Redmine.dayNumber(WorkDay.today()) ?? from) - from
+        let late = issue.doneRatio < 100 && (Redmine.dayNumber(issue.dueDate) ?? Int.max) < today + from
+        let bar = Redmine.bar(start: issue.startDate, due: issue.dueDate, from: from, days: days)
+        Canvas { context, size in
+            let unit = size.width / CGFloat(days)
+            for week in Redmine.weeks(from: from, days: days) {
+                let x = CGFloat(week.offset) * unit
+                context.fill(Path(CGRect(x: x, y: 0, width: 0.5, height: size.height)), with: .color(WL.border))
+            }
+            if let bar {
+                let rect = CGRect(x: CGFloat(bar.offset) * unit, y: 11, width: max(CGFloat(bar.length) * unit, 4), height: 12)
+                let tint = late ? Palette.red : WL.accent
+                context.opacity = row.isContext ? 0.45 : 1
+                context.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(tint.opacity(0.25)))
+                var done = rect
+                done.size.width *= CGFloat(issue.doneRatio) / 100
+                context.fill(Path(roundedRect: done, cornerRadius: 3), with: .color(tint))
+                context.opacity = 1
+            }
+            if (0..<days).contains(today) {
+                context.fill(Path(CGRect(x: CGFloat(today) * unit, y: 0, width: 1, height: size.height)), with: .color(Palette.red.opacity(0.7)))
+            }
+        }
+        .help([issue.startDate, issue.dueDate].compactMap { $0 }.joined(separator: " ~ "))
+    }
+}
+
 /// 표 한 줄. 제목 칸은 트리 깊이만큼 들여 쓰고, 짧은 일감 이름이면 업무 일지 장부의 메뉴 경로를 옅게 앞에 붙인다.
 private struct TableRow: View {
     let row: Redmine.TreeRow
     let columns: [(RedmineStore.Column, CGFloat?)]
+    let timeline: Bool
     @ObservedObject var store: RedmineStore
     @StateObject private var hover = HoverFlag()
 
@@ -394,6 +471,7 @@ private struct TableRow: View {
                         .frame(width: width, alignment: .leading)
                         .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
                 }
+                if timeline { TimelineLane(row: row, store: store).frame(maxWidth: .infinity) }
             }
             .padding(.horizontal, 20)
             .frame(height: 34)
