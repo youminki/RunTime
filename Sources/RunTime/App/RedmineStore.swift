@@ -105,6 +105,11 @@ final class RedmineStore: ObservableObject {
     /// 프로젝트별 담당자로 고를 수 있는 사람.
     @Published private(set) var people: [Int: [Redmine.Ref]] = [:]
     @Published var flash: String?
+    /// 첨부를 올리고 댓글을 보내는 중인 일감.
+    @Published private(set) var sending: Set<Int> = []
+    private static let uploadLimit = 100 * 1024 * 1024
+    /// 칸을 막아야 하는 일감: 저장 중이거나 댓글을 보내는 중.
+    func isBusy(_ id: Int) -> Bool { saving.contains(id) || sending.contains(id) }
     /// 모든 프로젝트에서 찾은 결과.
     @Published private(set) var results: [Redmine.Found] = []
     @Published var showsResults = false
@@ -321,8 +326,16 @@ final class RedmineStore: ObservableObject {
     /// 끝나면 기록(누가 무엇을 바꿨는지)이 붙은 상세를 다시 받는다.
     func update(_ id: Int, _ change: Redmine.Change, done: ((Bool) -> Void)? = nil) {
         // 보내는 중에 또 보내면 같은 댓글이 두 번 올라가고, 되돌릴 값도 틀어진다
-        guard !change.isEmpty, !saving.contains(id), let (base, key) = credentials,
-              let request = try? Redmine.updateRequest(base: base, key: key, id: id, change: change) else { return }
+        guard !saving.contains(id) else {
+            flash = "#\(id)을 저장하는 중입니다. 끝난 뒤 다시 누르세요"
+            done?(false)
+            return
+        }
+        guard !change.isEmpty, let (base, key) = credentials,
+              let request = try? Redmine.updateRequest(base: base, key: key, id: id, change: change) else {
+            done?(false)
+            return
+        }
         let before = details[id] ?? issues.first { $0.id == id }
         if let before {
             let after = change.applied(to: before, statuses: statuses, priorities: priorities, people: people[before.project.id] ?? [])
@@ -373,25 +386,39 @@ final class RedmineStore: ObservableObject {
 
     /// 파일을 올리고 댓글과 함께 일감에 붙인다. 하나라도 못 올리면 아무것도 붙이지 않고 까닭을 돌려준다.
     func comment(_ id: Int, text: String, files: [URL], done: @escaping (Bool) -> Void) {
-        guard let (base, key) = credentials else { return done(false) }
+        // 올리는 동안 또 누르면 같은 댓글과 파일이 두 번 올라간다
+        guard let (base, key) = credentials, sending.insert(id).inserted else { return done(false) }
+        func finish(_ ok: Bool) {
+            sending.remove(id)
+            done(ok)
+        }
         var uploads: [RedmineAPI.Upload] = []
         func next(_ rest: [URL]) {
             guard let file = rest.first else {
-                return update(id, Redmine.Change(notes: text, uploads: uploads), done: { done($0) })
+                return update(id, Redmine.Change(notes: text, uploads: uploads), done: finish)
             }
-            guard let data = try? Data(contentsOf: file) else {
-                flash = "\(file.lastPathComponent)을 읽지 못했습니다"
-                return done(false)
-            }
-            fetch(RedmineAPI.uploadRequest(base: base, key: key, filename: file.lastPathComponent, data: data)) { [weak self] body, status, failure in
-                guard let self else { return }
-                guard (200..<300).contains(status), let body, let token = RedmineAPI.parseUploadToken(body) else {
-                    self.flash = "\(file.lastPathComponent)을 올리지 못했습니다: " + Self.message(status: status, error: failure, data: body)
-                    return done(false)
+            let name = file.lastPathComponent
+            // 큰 파일을 읽는 동안 화면이 멈추지 않게 뒤에서 읽는다
+            DispatchQueue.global(qos: .userInitiated).async {
+                let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                let data = size > Self.uploadLimit ? nil : try? Data(contentsOf: file)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    guard let data else {
+                        self.flash = size > Self.uploadLimit ? "\(name)이 100MB를 넘어 올리지 않았습니다" : "\(name)을 읽지 못했습니다"
+                        return finish(false)
+                    }
+                    self.fetch(RedmineAPI.uploadRequest(base: base, key: key, filename: name, data: data)) { [weak self] body, status, failure in
+                        guard let self else { return }
+                        guard (200..<300).contains(status), let body, let token = RedmineAPI.parseUploadToken(body) else {
+                            self.flash = "\(name)을 올리지 못했습니다: " + Self.message(status: status, error: failure, data: body)
+                            return finish(false)
+                        }
+                        let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+                        uploads.append(RedmineAPI.Upload(token: token, filename: name, contentType: type))
+                        next(Array(rest.dropFirst()))
+                    }
                 }
-                let type = UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-                uploads.append(RedmineAPI.Upload(token: token, filename: file.lastPathComponent, contentType: type))
-                next(Array(rest.dropFirst()))
             }
         }
         next(files)

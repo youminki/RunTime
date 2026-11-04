@@ -125,12 +125,11 @@ final class RedmineViewState: ObservableObject {
     @Published var pickedDate = Date()
     @Published var history = HistoryTab.all
     @Published var loggingTime = false
-    @Published var editingSubject: Int?
-    @Published var subjectDraft = ""
-    @Published var editingDescription: Int?
-    @Published var descriptionDraft = ""
+    /// 일감마다 고치는 중인 글. 일감을 오가도 다른 일감에 섞이지 않게 번호로 나눈다.
+    @Published var subjectDrafts: [Int: String] = [:]
+    @Published var descriptionDrafts: [Int: String] = [:]
     @Published var relationType = "relates"
-    @Published var relationTarget = ""
+    @Published var relationTargets: [Int: String] = [:]
     /// 일감마다 댓글에 붙일 파일.
     @Published var files: [Int: [URL]] = [:]
 
@@ -722,20 +721,21 @@ struct RedmineIssueSheet: View {
             if let path = WorkLogStore.shared.log.issue(issue.id)?.path, !path.isEmpty {
                 Text(path.joined(separator: " › ")).font(WL.meta).foregroundStyle(WL.quiet)
             }
-            if state.editingSubject == issue.id {
+            if state.subjectDrafts[issue.id] != nil {
                 HStack(spacing: 8) {
-                    TextField("제목", text: $state.subjectDraft).textFieldStyle(.roundedBorder).font(WL.section)
+                    TextField("제목", text: Binding(get: { state.subjectDrafts[issue.id] ?? "" }, set: { state.subjectDrafts[issue.id] = $0 }))
+                        .textFieldStyle(.roundedBorder).font(WL.section)
                         .onSubmit { saveSubject(issue) }
                     Button("저장") { saveSubject(issue) }.buttonStyle(NotionButtonStyle(kind: .primary))
-                    Button("취소") { state.editingSubject = nil }.buttonStyle(NotionButtonStyle())
+                        .disabled(store.isBusy(issue.id))
+                    Button("취소") { state.subjectDrafts[issue.id] = nil }.buttonStyle(NotionButtonStyle())
                 }
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(issue.subject).font(.system(size: 22, weight: .semibold)).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
-                        state.subjectDraft = issue.subject
-                        state.editingSubject = issue.id
+                        state.subjectDrafts[issue.id] = issue.subject
                     } label: { Image(systemName: "pencil") }
                     .buttonStyle(GhostIconButtonStyle())
                     .tip("제목 고치기")
@@ -749,40 +749,51 @@ struct RedmineIssueSheet: View {
     }
 
     private func saveSubject(_ issue: Redmine.Issue) {
-        let text = state.subjectDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        state.editingSubject = nil
-        if !text.isEmpty, text != issue.subject { store.update(issue.id, Redmine.Change(subject: text)) }
+        let id = issue.id, text = (state.subjectDrafts[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text != issue.subject else {
+            state.subjectDrafts[id] = nil
+            return
+        }
+        // 실패하면 쓴 글이 남아 있어야 해서 저장이 끝난 뒤에 닫는다
+        store.update(id, Redmine.Change(subject: text)) { ok in if ok { state.subjectDrafts[id] = nil } }
     }
 
-    /// 설명 보기·고치기. 평문으로 고쳐 문단과 줄바꿈만 남으니 저장 전에 알린다.
+    private func saveDescription(_ issue: Redmine.Issue) {
+        let id = issue.id, html = issue.description ?? "", editable = RedmineNote.editable(html)
+        guard let text = state.descriptionDrafts[id], text != editable ?? html else {
+            state.descriptionDrafts[id] = nil
+            return
+        }
+        let change = Redmine.Change(description: text, descriptionRaw: editable == nil || !WorkLogSettings.shared.redmineHTML)
+        store.update(id, change) { ok in if ok { state.descriptionDrafts[id] = nil } }
+    }
+
+    /// 설명 보기·고치기. 평문으로 고치면 서식을 잃는 설명은 HTML 그대로 고친다.
     @ViewBuilder private func description(_ issue: Redmine.Issue) -> some View {
         let html = issue.description ?? ""
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("설명").font(WL.section)
                 Spacer()
-                if state.editingDescription != issue.id {
-                    Button("고치기") {
-                        state.descriptionDraft = RedmineNote.plain(html)
-                        state.editingDescription = issue.id
-                    }
+                if state.descriptionDrafts[issue.id] == nil {
+                    Button("고치기") { state.descriptionDrafts[issue.id] = RedmineNote.editable(html) ?? html }
                     .buttonStyle(TextLinkButtonStyle())
                 }
             }
-            if state.editingDescription == issue.id {
-                TextEditor(text: $state.descriptionDraft)
+            if state.descriptionDrafts[issue.id] != nil {
+                TextEditor(text: Binding(get: { state.descriptionDrafts[issue.id] ?? "" }, set: { state.descriptionDrafts[issue.id] = $0 }))
                     .font(WL.body).frame(minHeight: 160).padding(6)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
                     .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
                 HStack {
-                    Text("저장하면 목록·굵은 글씨 같은 서식은 문단으로 바뀝니다").font(WL.caption).foregroundStyle(WL.waiting)
-                    Spacer()
-                    Button("취소") { state.editingDescription = nil }.buttonStyle(NotionButtonStyle())
-                    Button("저장") {
-                        state.editingDescription = nil
-                        store.update(issue.id, Redmine.Change(description: state.descriptionDraft))
+                    if RedmineNote.editable(html) == nil {
+                        Text("목록·표·링크 같은 서식이 있어 HTML 그대로 고칩니다").font(WL.caption).foregroundStyle(WL.waiting)
                     }
-                    .buttonStyle(NotionButtonStyle(kind: .primary))
+                    Spacer()
+                    Button("취소") { state.descriptionDrafts[issue.id] = nil }.buttonStyle(NotionButtonStyle())
+                    Button("저장") { saveDescription(issue) }
+                        .buttonStyle(NotionButtonStyle(kind: .primary))
+                        .disabled(store.isBusy(issue.id))
                 }
             } else if html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("설명이 없습니다").font(WL.meta).foregroundStyle(WL.quiet)
@@ -795,7 +806,7 @@ struct RedmineIssueSheet: View {
     // MARK: 칸 (레드마인 일감 화면처럼 두 줄로)
 
     private func fields(_ issue: Redmine.Issue) -> some View {
-        let busy = store.saving.contains(issue.id)
+        let busy = store.isBusy(issue.id)
         return HStack(alignment: .top, spacing: 28) {
             VStack(spacing: 0) {
                 fieldRow("상태") {
@@ -980,20 +991,21 @@ struct RedmineIssueSheet: View {
                     ForEach(Redmine.relationTypes, id: \.value) { Text($0.label).tag($0.value) }
                 }
                 .labelsHidden().frame(width: 84)
-                TextField("일감 번호", text: $state.relationTarget).textFieldStyle(.roundedBorder).frame(width: 100)
+                TextField("일감 번호", text: Binding(get: { state.relationTargets[issue] ?? "" }, set: { state.relationTargets[issue] = $0 }))
+                    .textFieldStyle(.roundedBorder).frame(width: 100)
                     .onSubmit { addRelation(issue) }
                 Button("관계 추가") { addRelation(issue) }
                     .buttonStyle(TextLinkButtonStyle())
-                    .disabled(Redmine.issueNumber(state.relationTarget) == nil)
+                    .disabled(Redmine.issueNumber(state.relationTargets[issue] ?? "") == nil)
             }
             .padding(.top, 4)
         }
     }
 
     private func addRelation(_ issue: Int) {
-        guard let target = Redmine.issueNumber(state.relationTarget), target != issue else { return }
+        guard let target = Redmine.issueNumber(state.relationTargets[issue] ?? ""), target != issue else { return }
         store.addRelation(issue, to: target, type: state.relationType)
-        state.relationTarget = ""
+        state.relationTargets[issue] = nil
     }
 
     private func attachmentList(_ attachments: [Redmine.Attachment]) -> some View {
@@ -1105,19 +1117,19 @@ struct RedmineIssueSheet: View {
                     .buttonStyle(TextLinkButtonStyle())
                 Text("[작업 내용]처럼 대괄호 머리를 쓰면 단락이 나뉩니다").font(WL.caption).foregroundStyle(WL.quiet)
                 Spacer()
-                Button("댓글 남기기") {
+                Button(store.sending.contains(issue.id) ? "보내는 중…" : "댓글 남기기") {
                     let id = issue.id, text = state.comments[issue.id] ?? "", sending = state.files[id] ?? []
                     store.comment(id, text: text, files: sending) { ok in
-                        // 보내는 사이 고쳐 쓴 글은 지우지 않는다
+                        // 보내는 사이 고쳐 쓴 글과 더 붙인 파일은 지우지 않는다
                         guard ok else { return }
                         if state.comments[id] == text { state.comments[id] = nil }
-                        state.files[id] = nil
+                        state.files[id]?.removeAll { sending.contains($0) }
                     }
                 }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(((state.comments[issue.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty)
-                          || store.saving.contains(issue.id))
+                          || store.isBusy(issue.id))
                 .tip("⌘↩")
             }
         }

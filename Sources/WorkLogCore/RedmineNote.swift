@@ -69,6 +69,22 @@ public enum RedmineNote {
         return result
     }
 
+    /// 평문으로 고쳐도 잃는 것이 없는 HTML의 평문. 문단·줄바꿈 말고 다른 서식(목록·표·링크·그림)이 있거나
+    /// `html`로 되돌렸을 때 보이는 글이 달라지면 nil이다. 그때는 HTML 그대로 고쳐야 내용이 상하지 않는다.
+    public static func editable(_ html: String) -> String? {
+        let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = trimmed
+        for (pattern, replacement) in [(#"</p>\s*<p>"#, "\n\n"), (#"<br\s*/?>\s*"#, "\n"), (#"</?p>"#, "")] {
+            text = text.replacingOccurrences(of: pattern, with: replacement, options: [.regularExpression, .caseInsensitive])
+        }
+        guard !text.contains("<") else { return nil }
+        text = decodeEntities(text).trimmingCharacters(in: .whitespacesAndNewlines)
+        func visible(_ source: String) -> String {
+            source.replacingOccurrences(of: #"</?p>|<br\s*/?>|\s"#, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+        return visible(Self.html(text)) == visible(trimmed) ? text : nil
+    }
+
     /// 레드마인에 남은 HTML 댓글을 평문으로 (보낸 댓글을 다시 찾을 때 비교용).
     public static func plain(_ html: String) -> String {
         var text = html.replacingOccurrences(of: "<br />", with: "\n").replacingOccurrences(of: "<br/>", with: "\n")

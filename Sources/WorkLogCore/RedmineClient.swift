@@ -274,18 +274,23 @@ public enum Redmine {
         public var startDate: String?
         public var dueDate: String?
         public var subject: String?
-        /// 평문으로 받아 HTML로 넘긴다.
+        /// 평문으로 받아 HTML로 넘긴다. `descriptionRaw`면 쓴 그대로 넘긴다 (서식 있는 설명, 평문 레드마인).
         public var description: String?
+        public var descriptionRaw = false
         public var notes: String?
         /// 먼저 올려 받은 첨부 토큰.
         public var uploads: [RedmineAPI.Upload] = []
 
         public init(statusID: Int? = nil, doneRatio: Int? = nil, priorityID: Int? = nil, assignedToID: Int? = nil,
                     startDate: String? = nil, dueDate: String? = nil, subject: String? = nil, description: String? = nil,
-                    notes: String? = nil, uploads: [RedmineAPI.Upload] = []) {
+                    descriptionRaw: Bool = false, notes: String? = nil, uploads: [RedmineAPI.Upload] = []) {
             (self.statusID, self.doneRatio, self.priorityID, self.assignedToID) = (statusID, doneRatio, priorityID, assignedToID)
             (self.startDate, self.dueDate, self.subject, self.description, self.notes) = (startDate, dueDate, subject, description, notes)
-            self.uploads = uploads
+            (self.descriptionRaw, self.uploads) = (descriptionRaw, uploads)
+        }
+
+        private var descriptionValue: String? {
+            description.map { descriptionRaw || $0.isEmpty ? $0 : RedmineNote.html($0) }
         }
 
         public var isEmpty: Bool { fields.isEmpty }
@@ -299,7 +304,7 @@ public enum Redmine {
             if let startDate { fields["start_date"] = startDate }
             if let dueDate { fields["due_date"] = dueDate }
             if let subject { fields["subject"] = subject }
-            if let description { fields["description"] = description.isEmpty ? "" : RedmineNote.html(description) }
+            if let descriptionValue { fields["description"] = descriptionValue }
             if !uploads.isEmpty {
                 fields["uploads"] = uploads.map { ["token": $0.token, "filename": $0.filename, "content_type": $0.contentType] }
             }
@@ -317,7 +322,7 @@ public enum Redmine {
             if let startDate { copy.startDate = startDate.isEmpty ? nil : startDate }
             if let dueDate { copy.dueDate = dueDate.isEmpty ? nil : dueDate }
             if let subject { copy.subject = subject }
-            if let description { copy.description = description.isEmpty ? nil : RedmineNote.html(description) }
+            if let descriptionValue { copy.description = descriptionValue.isEmpty ? nil : descriptionValue }
             return copy
         }
     }

@@ -313,10 +313,10 @@ enum UIShots {
             ("redmine-issue", .aqua, nil, AnyView(RedmineIssueSheet(store: .shared, state: RedmineViewState()).frame(width: 940, height: 900))),
             ("redmine-issue-edit", .aqua, nil, {
                 let state = RedmineViewState()
-                state.editingDescription = RedmineStore.shared.selected
-                state.descriptionDraft = "고칠 설명"
-                state.editingSubject = RedmineStore.shared.selected
-                state.subjectDraft = "고칠 제목"
+                if let id = RedmineStore.shared.selected {
+                    state.descriptionDrafts[id] = "고칠 설명"
+                    state.subjectDrafts[id] = "고칠 제목"
+                }
                 return AnyView(RedmineIssueSheet(store: .shared, state: state).frame(width: 940, height: 900))
             }()),
             ("redmine-new", .aqua, nil, AnyView(RedmineNewIssueSheet(store: .shared))),

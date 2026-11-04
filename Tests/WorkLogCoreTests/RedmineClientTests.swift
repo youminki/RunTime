@@ -73,6 +73,22 @@ private let issueJSON = #"""
         #expect(request.httpMethod == "PUT" && request.url?.path == "/issues/101.json")
     }
 
+    /// 평문으로 고칠 수 있는 설명만 평문을 준다. 나머지는 nil이라 HTML 그대로 고친다.
+    @Test func descriptionEditableOnlyWhenLossless() {
+        #expect(RedmineNote.editable("<p>첫 문단</p>\n<p>둘째<br />\n줄</p>") == "첫 문단\n\n둘째\n줄")
+        #expect(RedmineNote.editable("평문 설명") == "평문 설명")
+        #expect(RedmineNote.editable("") == "")
+        #expect(RedmineNote.editable("<p>a &lt; b &amp; c</p>") == "a < b & c")
+        for html in ["<ul><li>하나</li><li>둘</li></ul>", "<table><tr><td>a</td></tr></table>",
+                     #"<a href="https://x.y/z">링크</a>"#, #"<p><img src="a.png"></p>"#, #"<p style="color:red">a</p>"#,
+                     "&ldquo;인용&rdquo;", "a < b 이고 c > d 이다", "&lt;p&gt;태그 설명"] {
+            #expect(RedmineNote.editable(html) == nil, "\(html)")
+        }
+        let raw = Redmine.Change(description: "<ul><li>a</li></ul>", descriptionRaw: true)
+        #expect(raw.fields["description"] as? String == "<ul><li>a</li></ul>")
+        #expect(Redmine.Change(description: "a").fields["description"] as? String == "<p>a</p>")
+    }
+
     @Test func requestsForRelationsWatchersAndSearch() throws {
         let base = URL(string: "https://example.com")!
         let add = try Redmine.addRelationRequest(base: base, key: "k", issue: 1, to: 2, type: "blocks")
