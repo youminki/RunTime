@@ -866,6 +866,7 @@ struct RedmineIssueSheet: View {
             }
             if state.descriptionDrafts[issue.id] != nil {
                 TextEditor(text: Binding(get: { state.descriptionDrafts[issue.id] ?? "" }, set: { state.descriptionDrafts[issue.id] = $0 }))
+                    .scrollContentBackground(.hidden)
                     .font(WL.body).frame(minHeight: 160).padding(6)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
                     .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
@@ -1205,6 +1206,7 @@ struct RedmineIssueSheet: View {
             let empty = (state.comments[issue.id] ?? "").isEmpty
             TextEditor(text: Binding(get: { state.comments[issue.id] ?? "" }, set: { state.comments[issue.id] = $0 }))
                 .font(WL.body)
+                .scrollContentBackground(.hidden)
                 // 비어 있으면 이력을 가리지 않게 한 줄로 두고, 쓰기 시작하면 넓힌다
                 .frame(height: empty ? 24 : 96)
                 .overlay(alignment: .topLeading) {

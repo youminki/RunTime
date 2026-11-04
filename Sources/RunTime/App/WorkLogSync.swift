@@ -840,6 +840,11 @@ final class WorkLogSync: ObservableObject {
 
     /// 백그라운드 큐에서 응답을 기다린다. 부른 자리는 실패를 알릴 때 코드 위치로 쓴다.
     private static func fetch(_ request: URLRequest, file: String = #filePath, line: Int = #line, function: String = #function) throws -> Data {
+        if let stub {
+            let (status, data) = stub(request)
+            guard (200..<300).contains(status), let data else { throw SyncError("HTTP \(status)") }
+            return data
+        }
         let semaphore = DispatchSemaphore(value: 0)
         var output: Result<Data, Error> = .failure(SyncError("응답 없음"))
         var timed = request
@@ -1387,8 +1392,15 @@ final class WorkLogSync: ObservableObject {
     }
 
     /// 뒤 큐에서 한 요청을 끝까지 기다린다. 422처럼 상태 번호로 갈라야 해서 fetch와 따로 둔다.
+    /// 점검용: 서버 대신 답한다 (`--worklog-flow`).
+    nonisolated(unsafe) static var stub: ((URLRequest) -> (Int, Data?))?
+
     private static func perform(_ request: URLRequest, file: String = #filePath, line: Int = #line,
                                 function: String = #function) -> (ok: Bool, status: Int?, message: String, data: Data?) {
+        if let stub {
+            let (status, data) = stub(request)
+            return ((200..<300).contains(status), status, "HTTP \(status)", data)
+        }
         let semaphore = DispatchSemaphore(value: 0)
         var output: (ok: Bool, status: Int?, message: String, data: Data?) = (false, nil, "응답 없음", nil)
         var timed = request
