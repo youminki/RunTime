@@ -631,6 +631,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 앱 창을 열고 그 화면으로 간다. 이미 떠 있으면 지금 화면을 뒤로 가기 기록에 남기고 옮긴다.
     private func showMain(_ page: MainPage) {
         closePopover()
+        // 일감 창이 떠 있으면 다른 화면으로 옮겨도 가려 보이지 않는다
+        if page != .redmine { RedmineStore.shared.selected = nil }
         let created = mainWindow == nil
         let window = mainWindow ?? makeMainWindow()
         // 최소화한 창은 보이지 않아도 쓰던 중이라 기록을 지우지 않는다

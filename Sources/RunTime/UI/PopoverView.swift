@@ -413,7 +413,7 @@ struct PopoverView: View {
                             Text("사용량")
                         }
                     }
-                    .buttonStyle(GameButtonStyle(kind: .plain, height: 22))
+                    .buttonStyle(GameButtonStyle(height: 22))
                     .keyboardShortcut(.cancelAction)
                 }
                 Spacer()
@@ -444,7 +444,7 @@ struct PopoverView: View {
                             Text("아무거나")
                         }
                     }
-                    .buttonStyle(GameButtonStyle(kind: .plain, height: 22))
+                    .buttonStyle(GameButtonStyle(height: 22))
                     .tip("다른 러너 하나를 아무거나 고르기")
                 }
             }

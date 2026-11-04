@@ -434,7 +434,8 @@ struct WorkLogPreview: View {
                     if settings.redmineReady { sync.checkPosted(updates) }
                     loadScreens(updates)
                 }
-                .onChange(of: updates.map(\.issue)) { _ in
+                // 번호가 같아도 줄이 더해지면 댓글이 달라져 다시 본다
+                .onChange(of: updates.map { "\($0.issue)|\($0.note)" }) { _ in
                     sync.loadInfo(updates.map(\.issue))
                     if settings.redmineReady { sync.checkPosted(updates) }
                     loadScreens(updates)
@@ -444,6 +445,11 @@ struct WorkLogPreview: View {
                     for issue in hints.keys where !page.hintApplied.contains(issue) {
                         page.hintApplied.insert(issue)
                         page.redmineNoNote.insert(issue)
+                    }
+                    // 판정이 풀렸으면 자동으로 뺀 댓글을 되살린다
+                    for issue in page.hintApplied where hints[issue] == nil {
+                        page.hintApplied.remove(issue)
+                        page.redmineNoNote.remove(issue)
                     }
                 }
             }
@@ -475,7 +481,7 @@ struct WorkLogPreview: View {
                     }
                     HStack {
                         Button("Claude용 복사") {
-                            copy(WorkReport.redmineRequest(chosen, fields: fieldsByIssue(chosen), html: settings.redmineHTML), message: "고른 \(chosen.count)건을 Claude에 붙여 넣을 글로 복사했습니다")
+                            copy(WorkReport.redmineRequest(chosen, fields: fieldsByIssue(chosen), html: settings.redmineHTML, withoutNotes: page.redmineNoNote), message: "고른 \(chosen.count)건을 Claude에 붙여 넣을 글로 복사했습니다")
                         }
                         .tip("Claude Code에 붙여 넣으면 git을 다시 훑지 않고 고른 일감만 MCP로 올립니다")
                         Spacer()
@@ -712,7 +718,8 @@ struct WorkLogPreview: View {
                     .font(WL.heading).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Text(current.project).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1)
             } else {
-                Text("일감 정보를 받는 중…").font(WL.caption).foregroundStyle(WL.quiet)
+                Text(sync.unknownIssues.contains(update.issue) ? "레드마인에서 찾지 못했습니다. 번호를 확인하세요" : "일감 정보를 받는 중…")
+                    .font(WL.caption).foregroundStyle(sync.unknownIssues.contains(update.issue) ? WL.waiting : WL.quiet)
             }
         }
     }
@@ -1021,7 +1028,7 @@ struct WorkLogPreview: View {
                             get: { page.noteEditing == update.issue },
                             set: { if !$0 { page.noteEditing = nil } }
                         ), arrowEdge: .leading) {
-                            EntryEditor(store: store, page: page, id: target)
+                            EntryEditor(store: store, page: page, id: target, siblings: update.entryIDs)
                         }
                 }
             }
@@ -1316,6 +1323,8 @@ struct WorkLogPreview: View {
     // MARK: 보내기
 
     private func send(_ updates: [WorkReport.RedmineUpdate], confirmed: Bool = false) {
+        // 저장이 막힌 동안 보내면 보냄 기록이 남지 않아 나중에 같은 댓글을 또 보낸다
+        if store.loadError != nil { return page.flash("일지 파일을 읽지 못해 보내지 않습니다. 파일을 고친 뒤 보내세요") }
         if !confirmed {
             page.confirmingSend = updates.map(\.issue)
             return
@@ -1343,6 +1352,8 @@ struct WorkLogPreview: View {
             page.redmineNoNote.remove(issue)
             page.redmineNoScreens.remove(issue)
             page.hintApplied.remove(issue)
+            // 남기면 값이 다시 내보내질 때 hintApplied와 댓글 빼기가 되살아난다
+            sync.postedHints[issue] = nil
             page.redmineSkipped.remove(issue)
             page.issueEdits[issue] = nil
         }

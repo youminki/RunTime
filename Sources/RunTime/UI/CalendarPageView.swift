@@ -143,7 +143,7 @@ struct CalendarPageView: View {
 
     private func cell(_ day: String, entries: [WorkEntry], inMonth: Bool, height: CGFloat) -> some View {
         let isToday = day == WorkDay.today()
-        let isSelected = day == page.day
+        let isSelected = day == page.calendarDay
         let holiday = KoreanHolidays.name(on: day)
         let tint = WorkLogFormat.dayTint(day)
         // 날짜 줄(약 26pt)을 뺀 높이에 한 줄 16pt씩 들어간다. 넘치면 마지막 줄을 "N개 더"로 쓴다
@@ -206,7 +206,7 @@ struct CalendarPageView: View {
     // MARK: 고른 날
 
     private var detail: some View {
-        let day = page.day
+        let day = page.calendarDay
         let entries = visible(store.log.entries(on: day))
         let holiday = KoreanHolidays.name(on: day)
         return VStack(alignment: .leading, spacing: 0) {
@@ -335,7 +335,7 @@ struct CalendarPageView: View {
     }
 
     private func select(_ day: String) {
-        page.day = day
+        page.calendarDay = day
         // 앞뒤 달의 날을 누르면 그 달로 넘긴다
         if !WorkDay.month(of: page.calendarMonth).contains(day) { page.calendarMonth = day }
     }

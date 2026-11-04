@@ -31,6 +31,8 @@ final class WorkLogPage: ObservableObject {
         let oldest = WorkDay.adding(-14, to: WorkDay.today())
         UserDefaults.standard.set(edits.filter { $0.key >= oldest }, forKey: key)
     }
+    /// 캘린더에서 고른 날. 구경만 해도 일지의 날이 바뀌면 다른 날에 적게 되어 따로 둔다.
+    @Published var calendarDay = WorkDay.today()
     /// Claude로 다듬는 중인 날.
     @Published var polishingDay: String?
     /// 고른 날. 바꾸면 왼쪽 달력도 그 달로 간다.
@@ -217,6 +219,7 @@ final class WorkLogPage: ObservableObject {
     func resetToToday() {
         _ = dayChange
         day = WorkDay.today()
+        calendarDay = day
         dayReport = Self.defaultReport(for: day)
         editing = nil
         statusPicking = nil

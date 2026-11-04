@@ -420,7 +420,7 @@ final class WorkLogStore: ObservableObject {
         change { log in
             if let index = log.sent.firstIndex(where: { $0.id == record.id }) { log.sent[index].undoneAt = Date() }
             for index in log.entries.indices where ids.contains(log.entries[index].id) {
-                if !record.note.isEmpty && reopenNote { log.entries[index].postedAt = nil }
+                if reopenNote { log.entries[index].postedAt = nil }
                 if !record.timeEntryIDs.isEmpty { log.entries[index].timeLogged = false }
             }
         }

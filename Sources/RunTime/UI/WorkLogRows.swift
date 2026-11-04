@@ -201,11 +201,42 @@ struct StatusPicker: View {
 }
 
 /// 일감 번호, 레드마인 댓글, 보냄 표시를 고친다.
+/// 일감 번호 칸. 칠 때마다 줄을 옮기면 카드가 사라지고 틀린 번호가 장부에 쌓여, Enter나 칸을 떠날 때 한 번만 반영한다.
+private final class IssueNumberDraft: ObservableObject {
+    @Published var text: String?
+}
+
+private struct IssueNumberField: View {
+    let value: Int?
+    let commit: (Int?) -> Void
+    @StateObject private var draft = IssueNumberDraft()
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("번호", text: Binding(get: { draft.text ?? value.map(String.init) ?? "" }, set: { draft.text = $0 }))
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 92)
+            .focused($focused)
+            .onSubmit(apply)
+            .onChange(of: focused) { if !$0 { apply() } }
+            .onDisappear(perform: apply)
+    }
+
+    private func apply() {
+        guard let text = draft.text else { return }
+        draft.text = nil
+        let number = Int(text.filter(\.isNumber))
+        if number != value { commit(number) }
+    }
+}
+
 struct EntryEditor: View {
     @ObservedObject var store: WorkLogStore
     @ObservedObject var page: WorkLogPage
     @ObservedObject var sync: WorkLogSync = .shared
     let id: UUID
+    /// 레드마인 카드에서 열면 그 일감의 모든 줄. 번호를 바꾸면 함께 옮긴다.
+    var siblings: [UUID] = []
 
     var body: some View {
         if let entry = store.entry(id) {
@@ -220,12 +251,7 @@ struct EntryEditor: View {
                 }
                 field("레드마인 일감") {
                     HStack(spacing: 6) {
-                        TextField("번호", text: Binding(
-                            get: { entry.issue.map(String.init) ?? "" },
-                            set: { value in store.update(id) { $0.issue = Int(value.filter(\.isNumber)) } }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 92)
+                        IssueNumberField(value: entry.issue) { number in setIssue(number) }
                         if !sync.myIssues.isEmpty {
                             Menu {
                                 ForEach(sortedIssues(for: entry), id: \.id) { issue in
@@ -334,6 +360,12 @@ struct EntryEditor: View {
     }
 
     /// 이 줄과 이름이 겹치는 레드마인 프로젝트의 일감을 앞에 둔다.
+    private func setIssue(_ number: Int?) {
+        for entry in siblings.isEmpty ? [id] : siblings { store.update(entry) { $0.issue = number } }
+        // 번호가 바뀌면 카드가 옮겨 가서, 옛 번호 카드가 돌아왔을 때 창이 저절로 열리지 않게 닫는다
+        if !siblings.isEmpty { page.noteEditing = nil }
+    }
+
     private func sortedIssues(for entry: WorkEntry) -> [IssueInfo] {
         let project = entry.project.lowercased()
         let related = { (issue: IssueInfo) in

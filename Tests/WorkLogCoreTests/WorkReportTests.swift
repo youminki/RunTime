@@ -12,6 +12,15 @@ private let sample = """
 """
 
 @Suite struct WorkReportTests {
+    @Test func redmineSkipsBlankTitlesAndDroppedNotes() {
+        let rows = [WorkEntry(day: "2026-10-30", project: "p", title: "  ", issue: 1),
+                    WorkEntry(day: "2026-10-30", project: "p", title: "한 일", issue: 2)]
+        let updates = WorkReport.redmineUpdates(rows)
+        #expect(updates.map(\.issue) == [2])
+        let request = WorkReport.redmineRequest(updates, withoutNotes: [2])
+        #expect(request.contains("댓글 없음") && !request.contains("한 일"))
+    }
+
     @Test func parsesPastedReport() {
         let entries = WorkReport.parse(sample, day: "2026-10-20")
         #expect(entries.map(\.project) == ["uxhub", "uxhub", "VeloX", "VeloX"])

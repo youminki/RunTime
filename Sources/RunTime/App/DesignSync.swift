@@ -191,6 +191,8 @@ final class DesignSync: ObservableObject {
             history = DesignHistory()
             loadError = "디자인 기록 파일을 읽지 못해 새 기록을 저장하지 않습니다: \(error.localizedDescription)"
             ProblemReporter.screen("디자인", loadError ?? "", detail: "오류: \(error)")
+            // 체크가 저장되지 않으니 처음부터 화면에 알린다
+            errors["*"] = loadError
         }
         markUnmarkedOnce()
     }
@@ -866,7 +868,11 @@ final class DesignSync: ObservableObject {
                                               message: source.scope.isEmpty ? "‘\(name)’ 전체를 지켜보고 있어 이 화면도 들어 있습니다" : "이미 지켜보는 화면입니다"))
                 }
                 let scope = try await linkedNode(node, in: key, token: token)
-                settings.sources[index].scope.append(scope)
+                // 기다리는 사이 순서를 바꾸거나 지웠을 수 있어 다시 찾는다
+                guard let current = settings.sources.firstIndex(where: { $0.fileKey == key }) else {
+                    return .failure(LinkProblem(message: "프로젝트가 지워졌습니다"))
+                }
+                settings.sources[current].scope.append(scope)
                 // 새 화면은 파일이 그대로여도 받아야 한다
                 history.files[key]?.lastModified = nil
                 persist()

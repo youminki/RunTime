@@ -744,12 +744,18 @@ final class WorkLogSync: ObservableObject {
 
     /// 장부에 없는 일감만 받아 넣는다 (일감 번호를 새로 적었을 때).
     func loadInfo(_ ids: [Int]) {
+        // 레드마인을 쓰지 않는 사람에게 설정하라는 오류를 띄우지 않는다
+        guard settings.redmineReady else { return }
         let missing = ids.filter { store.log.issue($0) == nil && !requestedInfo.contains($0) }
         guard !missing.isEmpty else { return }
         requestedInfo.formUnion(missing)
         // 망 오류로 못 받았으면 다음에 다시 묻는다 (남겨 두면 그 카드가 앱을 다시 켤 때까지 "받는 중"에 멈춘다)
         fetchBook(assigned: false, extra: missing) { [weak self] in
-            if self?.issuesError != nil { self?.requestedInfo.subtract(missing) }
+            guard let self else { return }
+            if self.issuesError != nil { self.requestedInfo.subtract(missing) } else {
+                // 응답에 없으면 없는 번호이거나 볼 권한이 없다
+                self.unknownIssues.formUnion(missing.filter { self.store.log.issue($0) == nil })
+            }
         }
     }
 
@@ -929,6 +935,8 @@ final class WorkLogSync: ObservableObject {
 
     /// Claude 등으로 이미 올린 것 같은 댓글 (일감 번호 → 그 댓글). 같은 글을 두 번 올리지 않게 카드에 알린다.
     @Published var postedHints: [Int: RedmineAPI.Journal] = [:]
+    /// 레드마인에서 찾지 못한 일감 번호.
+    @Published private(set) var unknownIssues: Set<Int> = []
     private var checkedNotes: [Int: String] = [:]
 
     /// 보낼 일감마다 레드마인 댓글을 읽어 비슷한 댓글이 이미 있는지 본다. 같은 글은 한 번만 본다.
@@ -936,7 +944,11 @@ final class WorkLogSync: ObservableObject {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
         let todo = updates.filter { $0.needsNote && checkedNotes[$0.issue] != $0.note }
         guard !todo.isEmpty else { return }
-        for update in todo { checkedNotes[update.issue] = update.note }
+        for update in todo {
+            checkedNotes[update.issue] = update.note
+            // 글이 바뀌었으면 옛 글로 낸 판정을 남기지 않는다. 남기면 새 내용까지 댓글 없이 나간다
+            postedHints[update.issue] = nil
+        }
         // 앱이 전에 올린 자기 댓글은 ‘이미 올린 댓글’로 보지 않는다 (이어 쓰는 오늘 댓글이 빠지지 않게)
         let mine = Dictionary(grouping: store.log.sent.filter { $0.undoneAt == nil }, by: \.issue)
         queue.async { [weak self] in
@@ -950,8 +962,15 @@ final class WorkLogSync: ObservableObject {
                 // Claude는 MR을 올릴 때(머지 전날일 수 있다) 댓글을 다니, 첫날 사흘 전부터 본다
                 let since = update.days.first.flatMap(WorkDay.date).map { $0.addingTimeInterval(-3 * 86_400) } ?? .distantPast
                 let own = Set((mine[update.issue] ?? []).compactMap { $0.matchJournal(journals)?.id })
-                let hit = RedmineComment.alreadyPosted(update.note, journals: journals.filter { !own.contains($0.id) }, since: since)
-                DispatchQueue.main.async { self?.postedHints[update.issue] = hit }
+                // 상태만 고쳐 다시 올리는 줄은 글이 그대로라, 내가 올린 댓글과 똑같으면 이미 올린 것으로 본다
+                func plain(_ text: String) -> String { RedmineNote.plain(RedmineNote.html(text)) }
+                let repeated = (mine[update.issue] ?? []).first { plain($0.note) == plain(update.note) }?.matchJournal(journals)
+                let hit = repeated ?? RedmineComment.alreadyPosted(update.note, journals: journals.filter { !own.contains($0.id) }, since: since)
+                DispatchQueue.main.async {
+                    // 받는 사이 글이 또 바뀌었으면 늦은 판정을 버린다
+                    guard self?.checkedNotes[update.issue] == update.note else { return }
+                    self?.postedHints[update.issue] = hit
+                }
             }
         }
     }
@@ -1202,6 +1221,11 @@ final class WorkLogSync: ObservableObject {
         if let screens {
             result.failures += screens.failures.map { "#\(update.issue) \($0)" }
             if !screens.section.isEmpty { note += (html ? "\n" : "\n\n") + screens.section }
+        }
+        if fresh == nil, !plan(update, known).isEmpty {
+            // 고른 칸을 지금 값과 견주지 못한다. 칸만 빼고 보내면 고른 값이 알림 없이 사라지니 보내지 않고 남긴다
+            result.failures.append("#\(update.issue)를 읽지 못해 보내지 않음. 다시 보내세요")
+            return result
         }
         var extra = fresh == nil ? WorkReport.IssueFields() : plan(update, current)
         if let problem = extra.problem(current: current) {

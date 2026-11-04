@@ -645,7 +645,8 @@ public enum WorkReport {
         var grouped: [Int: [WorkEntry]] = [:]
         let entries = log.map { log in entries.map { tidied($0, in: log) } } ?? entries
         for entry in entries.sorted(by: { $0.day < $1.day }) {
-            guard let issue = entry.issue else { continue }
+            // 제목을 비운 줄은 보고서처럼 빈 항목이 되지 않게 뺀다
+            guard let issue = entry.issue, !entry.title.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
             if grouped[issue] == nil { order.append(issue) }
             grouped[issue, default: []].append(entry)
         }
@@ -818,7 +819,8 @@ public enum WorkReport {
 
     /// Claude에게 그대로 붙여 넣는 글. git을 다시 훑지 않고 이 글만 보고 올리게 해 토큰을 아낀다.
     /// `html`이면 댓글을 레드마인에 실릴 HTML 그대로 넣어, Claude가 꼴을 바꾸다 줄바꿈을 잃지 않게 한다.
-    public static func redmineRequest(_ updates: [RedmineUpdate], fields: [Int: IssueFields] = [:], html: Bool = false) -> String {
+    public static func redmineRequest(_ updates: [RedmineUpdate], fields: [Int: IssueFields] = [:], html: Bool = false,
+                                      withoutNotes: Set<Int> = []) -> String {
         guard !updates.isEmpty else { return "" }
         let head = html
             ? "레드마인 일감에 아래 진척률과 댓글을 반영해 줘. 적힌 칸 말고는 바꾸지 말고, 댓글은 HTML이니 고치지 말고 notes에 그대로 넣어 (줄바꿈을 지우지 마)."
@@ -830,6 +832,8 @@ public enum WorkReport {
             if let start = extra.startDate { parts.append(start.isEmpty ? "시작일 비우기" : "시작일 \(start)") }
             if let due = extra.dueDate { parts.append(due.isEmpty ? "완료 기한 비우기" : "완료 기한 \(due)") }
             if let assignee = extra.assignee { parts.append("담당자 \(assignee.name)(id \(assignee.id))") }
+            // 카드에서 댓글을 뺀 일감은 여기서도 빼야 Claude가 같은 댓글을 또 올리지 않는다
+            if withoutNotes.contains(update.issue) { return "#\(update.issue) \(parts.joined(separator: " · ")) (댓글 없음)" }
             return "#\(update.issue) \(parts.joined(separator: " · "))\n\(html ? RedmineNote.html(update.note) : update.note)"
         }
         return ([head] + blocks).joined(separator: "\n\n---\n")

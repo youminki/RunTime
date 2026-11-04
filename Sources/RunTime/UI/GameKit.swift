@@ -5,29 +5,21 @@ import GameCore
 /// 면은 평평한 색 하나로 칠한다. 번지는 빛과 그러데이션은 쓰지 않는다.
 enum GameKit {
     static let gold = Color(nsColor: NSColor(hex: 0xFFD45E))
-    static let goldEdge = Color(nsColor: NSColor(hex: 0x9A5B0C))
-    static let ink = Color(nsColor: NSColor(hex: 0x3A2306))
     /// 칸 바탕. 카드보다 한 단계 짙게 두어 그림이 떠 보이게 한다.
     static let slot = Color(white: 0.105)
 }
 
-/// 아래 모서리에 두께가 있는 단추. 금색은 사기·받기·열기처럼 코인이 오가는 일, 보통은 그 밖의 일에 쓴다.
+/// 아래 모서리에 두께가 있는 단추.
 struct GameButtonStyle: ButtonStyle {
-    enum Kind { case gold, plain, warning }
-
-    var kind: Kind = .gold
     var height: CGFloat = 24
-    var fill = false
 
     func makeBody(configuration: Configuration) -> some View {
-        GameButtonBody(configuration: configuration, kind: kind, height: height, fill: fill)
+        GameButtonBody(configuration: configuration, height: height)
     }
 
     private struct GameButtonBody: View {
         let configuration: ButtonStyleConfiguration
-        let kind: Kind
         let height: CGFloat
-        let fill: Bool
         @Environment(\.isEnabled) private var enabled
         @StateObject private var hover = HoverFlag()
 
@@ -40,7 +32,6 @@ struct GameButtonStyle: ButtonStyle {
                 .foregroundStyle(colors.text)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
-                .frame(maxWidth: fill ? .infinity : nil)
                 .frame(height: height)
                 .background(shape.fill(colors.top).brightness(enabled && hover.on && !pressed ? 0.05 : 0))
                 // 아래 모서리만 짙게 두어 두께를 보인다
@@ -55,11 +46,7 @@ struct GameButtonStyle: ButtonStyle {
             guard enabled else {
                 return (Color(white: 0.22), Color(white: 0.22), Color(white: 0.13), Color.white.opacity(0.38))
             }
-            switch kind {
-            case .gold: return (GameKit.gold, GameKit.gold, GameKit.goldEdge, GameKit.ink)
-            case .warning: return (Theme.warning, Theme.warning, Color(nsColor: NSColor(hex: 0x9A4A06)), GameKit.ink)
-            case .plain: return (Color(white: 0.3), Color(white: 0.3), Color(white: 0.16), Theme.primary)
-            }
+            return (Color(white: 0.3), Color(white: 0.3), Color(white: 0.16), Theme.primary)
         }
     }
 }
