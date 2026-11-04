@@ -52,6 +52,8 @@ final class AccountSwitcher: ObservableObject {
     static let autoSwitchCooldown: TimeInterval = 2 * 60
     /// 바꾼 직후 이만큼은 막힘 기록을 새 계정 것으로 보지 않는다. 바꾸기 전에 보낸 요청이 늦게 막힐 수 있다.
     static let switchSettle: TimeInterval = 20
+    /// 계정을 바꿀 때 토큰 갱신 잠금을 기다리는 한도. Claude Code의 갱신 요청 제한(30초)보다 길게 둔다.
+    static let lockWait: TimeInterval = 40
     static let keychainService = "RunTime Claude account"
     /// 앱이 직접 만들던 예전 저장소. 켤 때 한 번 옮기고 지운다.
     static let legacyKeychainService = "dev.runtime.RunTime.accounts"
@@ -278,6 +280,13 @@ final class AccountSwitcher: ObservableObject {
 
     /// queue 전용. 실패하면 까닭, 성공하면 nil.
     private func performSwitch(to id: String) -> String? {
+        // Claude Code나 사용량 조회가 지금 계정 토큰을 새로 받는 중에 바꾸면, 늦게 끝난 쪽이 새 계정 로그인 정보를 앞 계정 것으로 덮는다.
+        // 같은 잠금을 잡고 바꾼다
+        guard let lock = ClaudeRefreshLock.acquire(waiting: Self.lockWait) else {
+            return "Claude Code가 로그인 토큰을 새로 받는 중입니다. 잠시 뒤 다시 시도해 주세요"
+        }
+        var held: ClaudeRefreshLock? = lock
+        defer { held?.release() }
         // Claude Code가 그동안 토큰을 새로 받았을 수 있어, 떠나는 계정은 지금 토큰으로 다시 남긴다
         if let current = ClaudeLogin.currentAccount() {
             switch saveSnapshot(current) {
@@ -287,6 +296,7 @@ final class AccountSwitcher: ObservableObject {
             case .saved, .unchanged: break
             }
         }
+        lock.touch()   // 토큰 주인을 묻느라 기다린 사이 버려진 잠금으로 보이지 않게
         let target = DispatchQueue.main.sync { self.accounts.first { $0.id == id } }
         let configAccount = target?.configAccount
         // 오래 쉰 계정은 바꾸기 전에 토큰을 새로 받아 둔다. 리프레시 토큰이 죽었으면 바꿔도 Claude Code가 로그인을 다시 묻는다
@@ -295,6 +305,7 @@ final class AccountSwitcher: ObservableObject {
         case .mismatch: return "저장된 \(target?.email ?? "그 계정") 로그인 정보가 다른 계정 것입니다. 그 계정으로 Claude Code에서 /login 해 주세요"
         case .usable, .unavailable: break
         }
+        lock.touch()
         let previous = ClaudeLogin.liveCredentials()
         // 저장본에는 Claude 로그인만 있다 (예전 저장본은 MCP 토큰까지 들어 있어 떼어 쓴다). MCP 토큰은 지금 값을 둔다.
         guard let part = storedCredentials(for: id).flatMap(ClaudeLogin.oauthPart(of:)),
@@ -310,6 +321,9 @@ final class AccountSwitcher: ObservableObject {
             if let previous { _ = ClaudeLogin.setLiveCredentials(previous) }
             return "~/.claude.json을 고치지 못했습니다"
         }
+        // 엔진이 곧바로 새 계정 토큰을 새로 받을 수 있게 잠금을 먼저 푼다
+        held?.release()
+        held = nil
         // 지금 계정 표시를 바꾸기 전에 엔진이 앞 계정 토큰으로 받은 값을 버리게 한다
         let activatedAt = Date()
         willActivate()

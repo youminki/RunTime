@@ -39,6 +39,10 @@ final class UsageEngine: ObservableObject {
     @Published var nextWeeklyReset: Date?
     /// 주간 사용처별 비중 (Claude Code, 채팅 등). 공식 값이 있을 때만.
     @Published var weeklyBreakdown: [UsageShare] = []
+    /// 지금 Claude Code에 로그인한 계정 (`~/.claude.json`). 게이지가 누구 값인지 보여 준다.
+    @Published var account: ClaudeAccountInfo?
+    /// 앱 밖에서(`/login` 등) 계정이 바뀐 것을 알아챘다. 메인 스레드에서 보낸다.
+    let accountSwitched = PassthroughSubject<Void, Never>()
 
     let settings: AppSettings
 
@@ -98,6 +102,10 @@ final class UsageEngine: ObservableObject {
     private var officialInFlight = false
     /// 계정을 바꿀 때마다 1 늘린다. 바꾸기 전에 보낸 조회 결과를 가려낸다.
     private var accountGeneration = 0
+    private let accountWatcher = ClaudeAccountWatcher()
+    /// 마지막으로 맞춘 계정. 처음 읽기 전에는 `accountChecked`가 false다.
+    private var knownAccount: ClaudeAccountInfo?
+    private var accountChecked = false
     private var officialBackoffUntil: Date?
     private var lastOfficialFailure = ""
     /// 켠 뒤 공식 조회 결과를 한 번이라도 받았는지. 그 전에는 주간 경계를 모른다.
@@ -157,22 +165,39 @@ final class UsageEngine: ObservableObject {
         }
     }
 
-    /// Claude Code 계정을 바꿨다. 앞 계정의 공식 값과 오름세를 버리고 새 토큰으로 바로 다시 받는다.
-    /// 세대는 바로 올려서, 돌아온 뒤에는 앞 계정 토큰으로 보낸 조회 결과가 쓰이지 않는다. workQueue에서 부르지 않는다.
+    /// 계정 전환이 Claude Code 로그인 정보를 바꿨다. 앞 계정의 공식 값과 오름세를 버리고 새 토큰으로 바로 다시 받는다.
+    /// 세대는 돌아오기 전에 올려서, 그 뒤로는 앞 계정 토큰으로 보낸 조회 결과가 쓰이지 않는다. workQueue에서 부르지 않는다.
+    /// 틱이 먼저 알아채 맞췄으면 두 번 버리지 않는다.
     func accountChanged() {
-        workQueue.sync {
-            accountGeneration += 1
-            provider.invalidateCachedToken()
+        workQueue.sync { syncAccount(force: true) }
+        workQueue.async { [weak self] in self?.tick() }
+    }
+
+    /// workQueue 전용. `~/.claude.json`의 계정이 바뀌었으면 앞 계정 값을 버리고 바로 다시 받는다.
+    /// 앱 밖에서 `/login`으로 바꾼 계정도 Claude Code를 쓰기 전에 바로 보이게 틱마다 본다 (파일이 바뀔 때만 푼다).
+    /// - force: 계정 전환이 알린 것. 계정이 같아 보여도 로그인 정보가 바뀌었을 수 있어 토큰 캐시는 버린다.
+    private func syncAccount(force: Bool = false) {
+        let current = accountWatcher.current()
+        let changed = accountChecked && current?.uuid != knownAccount?.uuid
+        if current != knownAccount || !accountChecked {
+            DispatchQueue.main.async { self.account = current }
         }
-        workQueue.async { [weak self] in
-            guard let self else { return }
-            self.officialValue = nil
-            self.sessionTrend = OfficialTrend()
-            self.officialBackoffUntil = nil
-            self.publishOfficial(nil, status: .waiting)
-            self.tick()
-            self.fetchOfficial(minInterval: 0)
-        }
+        knownAccount = current
+        accountChecked = true
+        guard changed || force else { return }
+        provider.resetForAccountChange()
+        // 로그인 정보는 계정 정보보다 먼저 바뀌므로, 틱이 먼저 알아채 맞췄으면 그 뒤 조회는 이미 새 계정 값이다
+        guard changed else { return }
+        accountGeneration += 1
+        log.info("Claude 계정 바뀜")
+        officialValue = nil
+        sessionTrend = OfficialTrend()
+        officialBackoffUntil = nil
+        lastOfficialFailure = ""
+        knownWeeklyReset = nil
+        publishOfficial(nil, status: config.officialEnabled ? .waiting : .disabled)
+        fetchOfficial(minInterval: 0)
+        if !force { DispatchQueue.main.async { self.accountSwitched.send() } }
     }
 
     private func applyPollInterval(_ interval: TimeInterval) {
@@ -254,6 +279,7 @@ final class UsageEngine: ObservableObject {
             log.warning("tick 지연: \(Int(now.timeIntervalSince(last)))초 만에 재개")
         }
         lastTickAt = now
+        syncAccount()
 
         // 유예 시간을 넘긴 공식 값은 버린다 (조회가 계속 실패하거나 잠자기에서 깬 경우).
         let official = UsageEvaluator.usableOfficial(officialValue, enabled: config.officialEnabled,
@@ -518,6 +544,7 @@ final class UsageEngine: ObservableObject {
             case .http(429): return "요청 제한, 10분 뒤 재시도"
             case .http(let code): return "HTTP \(code)"
             case .badResponse: return "응답 형식이 바뀜"
+            case .loginRequired: return "로그인이 풀림, Claude Code에서 /login"
             }
         case is URLError:
             return "네트워크 오류"

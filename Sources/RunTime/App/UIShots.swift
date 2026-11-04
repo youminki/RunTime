@@ -305,6 +305,14 @@ enum UIShots {
             ("main-hosts-add", .aqua, nil, AnyView(HostsSheetShots.add("10.0.1.20 api.dev.example.com new.dev.example.com\n#10.0.2.31 admin.stg.example.com\napi.stg.example.com 10.0.2.40\n문의는 서버팀", group: "Dev"))),
             ("main-hosts-edit", .aqua, nil, AnyView(HostsSheetShots.edit())),
             ("main-settings", .aqua, nil, mainPage(.settings, engine: engine)),
+            // 지금 계정, 세션·주간 사용률, 계정 목록이 한 화면에 보이는지 본다
+            ("main-settings-usage", .darkAqua, nil, {
+                let navigator = MainNavigator()
+                navigator.start(at: .settings)
+                return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.usage))
+                    .frame(width: mainSize.width, height: mainSize.height))
+            }()),
             ("storage", .darkAqua, nil, AnyView(StorageView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),
             ("popover-quests", .darkAqua, nil,
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .quests))),

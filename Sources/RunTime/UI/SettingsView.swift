@@ -255,12 +255,36 @@ struct SettingsView: View {
                            footer: "Anthropic 계정 기준 사용률을 3분마다 받습니다. 끄거나 받지 못하면 사용률은 비워 두고, 속도와 오늘 사용량은 이 Mac의 기록으로 계속 보여 줍니다.") {
                 ToggleRow(title: "공식 사용량 연동", icon: "chart.pie.fill", tint: Palette.indigo, isOn: $settings.officialEnabled)
                 GroupedRow("상태", icon: "antenna.radiowaves.left.and.right", tint: officialStatusColor) {
-                    Text(officialStatusText).foregroundStyle(.secondary).lineLimit(1)
+                    HStack(spacing: 8) {
+                        Text(officialStatusText).foregroundStyle(.secondary).lineLimit(1)
+                        Button("지금 받기") { engine.refreshNow(forceOfficial: true) }
+                            .disabled(!settings.officialEnabled)
+                    }
                 }
                 .tip(officialStatusText)
+                if let account = engine.account {
+                    GroupedRow("계정", icon: "person.crop.circle.fill", tint: Palette.green) {
+                        Text(account.email + (account.organizationType.map { " · " + AccountSwitcher.Account.planName($0) } ?? ""))
+                            .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                    .tip("지금 Claude Code에 로그인한 계정. 아래 사용률은 이 계정 기준입니다")
+                }
+                GroupedRow("세션 (5시간)", icon: "clock.fill", tint: Palette.orange) {
+                    Text(Self.gaugeText(engine.sessionGauge, reset: engine.sessionResetsAt.map { Format.resetCountdown(until: $0) }))
+                        .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                }
+                GroupedRow("주간 (7일)", icon: "calendar", tint: Palette.blue) {
+                    Text(Self.gaugeText(engine.weeklyGauge, reset: engine.nextWeeklyReset.map { "\(Format.weekdayTime($0)) 초기화" }))
+                        .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                }
+                if let shares = weeklySharesText {
+                    GroupedRow("주간 사용처", icon: "chart.bar.fill", tint: Palette.indigo) {
+                        Text(shares).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
             }
 
-            AccountSection(switcher: AccountSwitcher.shared)
+            AccountSection(switcher: AccountSwitcher.shared, engine: engine)
 
             GroupedSection("속도", footer: "민감도가 높을수록 적은 사용량에도 빨리 달립니다. 확인 주기가 짧을수록 러너가 빨리 반응합니다.") {
                 GroupedRow("민감도", icon: "hare.fill", tint: Palette.orange) {
@@ -334,6 +358,18 @@ struct SettingsView: View {
         guard let version = info?["CFBundleShortVersionString"] as? String else { return "개발 실행" }
         let build = (info?["CFBundleVersion"] as? String).map { " · 빌드 \($0)" } ?? ""
         return (info?["RunTimeCommit"] as? String).map { "\(version)\(build) (\($0))" } ?? version + build
+    }
+
+    /// "42% · 2시간 10분 뒤 초기화". 공식 값이 없으면 "-".
+    static func gaugeText(_ gauge: GaugeReading?, reset: String?) -> String {
+        guard let gauge else { return "-" }
+        return ["\(gauge.displayPercent)%", reset].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private var weeklySharesText: String? {
+        let used = engine.weeklyBreakdown.filter { $0.percent >= 1 }.sorted { $0.percent > $1.percent }
+        guard !used.isEmpty else { return nil }
+        return used.map { "\($0.name) \(Int($0.percent))%" }.joined(separator: " · ")
     }
 
     private var officialStatusText: String {
@@ -510,6 +546,24 @@ final class SettingsTabState: ObservableObject {
 /// Claude Code 계정 목록. 고르면 바꾸고, 쓰지 않는 계정은 지운다.
 private struct AccountSection: View {
     @ObservedObject var switcher: AccountSwitcher
+    @ObservedObject var engine: UsageEngine
+
+    /// 지금 계정은 방금 받은 값을, 다른 계정은 10분마다 받아 둔 값을 쓴다.
+    private func usageText(_ account: AccountSwitcher.Account) -> String {
+        if account.id == engine.account?.uuid, engine.sessionGauge != nil || engine.weeklyGauge != nil {
+            return "세션 \(engine.sessionGauge.map { "\($0.displayPercent)%" } ?? "-") · 주간 \(engine.weeklyGauge.map { "\($0.displayPercent)%" } ?? "-")"
+        }
+        return PopoverView.usageSuffix(account.lastUsage).trimmingCharacters(in: .whitespaces)
+    }
+
+    private func usageTip(_ account: AccountSwitcher.Account) -> String {
+        guard let usage = account.lastUsage else { return "아직 사용률을 받지 못했습니다" }
+        let now = Date()
+        func line(_ name: String, _ reset: Date?) -> String? {
+            reset.map { $0 > now ? "\(name) \(Format.weekdayTime($0)) 초기화" : "\(name) 초기화됨" }
+        }
+        return [line("세션", usage.sessionResetsAt), line("주간", usage.weeklyResetsAt)].compactMap { $0 }.joined(separator: "\n")
+    }
 
     var body: some View {
         GroupedSection("Claude 계정", footer: footer) {
@@ -520,8 +574,9 @@ private struct AccountSection: View {
                         if account.needsLogin == true {
                             Text("다시 로그인 필요").foregroundStyle(Palette.orange)
                                 .tip("저장한 로그인이 풀렸습니다. 이 계정으로 Claude Code에서 /login 하면 다시 기억합니다")
-                        } else if let usage = account.lastUsage {
-                            Text("\(Int(usage.effectivePercent(now: Date())))%").foregroundStyle(.secondary).monospacedDigit()
+                        } else if !usageText(account).isEmpty {
+                            Text(usageText(account)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                                .tip(usageTip(account))
                         }
                         if account.id == switcher.activeID {
                             Text("사용 중").foregroundStyle(.secondary)

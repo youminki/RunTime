@@ -323,7 +323,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Claude 계정이 둘 이상이면 고를 수 있는 하위 메뉴. 하나뿐이면 늘리는 법을 설정에서 보여 준다.
     private func addAccountMenu(to menu: NSMenu) {
         let switcher = AccountSwitcher.shared
-        let parent = NSMenuItem(title: switcher.active.map { "Claude 계정: \($0.email)" } ?? "Claude 계정",
+        // 저장하지 못한 계정(키체인을 안 쓰는 실행 등)이어도 지금 로그인한 계정은 보이게 엔진 값을 먼저 쓴다
+        let email = engine.account?.email ?? switcher.active?.email
+        let parent = NSMenuItem(title: email.map { "Claude 계정: \($0)" } ?? "Claude 계정",
                                 action: nil, keyEquivalent: "")
         let sub = NSMenu()
         for account in switcher.accounts {
@@ -331,7 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let item = NSMenuItem(title: account.label + note,
                                   action: #selector(runMenuAction(_:)), keyEquivalent: "")
             item.target = self
-            item.state = account.id == switcher.activeID ? .on : .off
+            item.state = account.id == (engine.account?.uuid ?? switcher.activeID) ? .on : .off
             item.isEnabled = !switcher.switching
             item.representedObject = MenuAction { switcher.switchTo(account.id) }
             sub.addItem(item)
@@ -389,8 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 계정 옆에 붙일 마지막 사용률 (리셋이 지났으면 0%).
     private static func usageNote(_ usage: ClaudeLogin.LastUsage?) -> String {
-        guard let usage else { return "" }
-        return "  (\(Int(usage.effectivePercent(now: Date())))%)"
+        PopoverView.usageSuffix(usage)
     }
 
     private func startAccountSwitcher() {
@@ -413,6 +414,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { hit in switcher.limitReached(hit) }
             .store(in: &cancellables)
         switcher.willActivate = { [engine] in engine.accountChanged() }
+        // /login으로 바뀐 계정을 엔진이 먼저 알아채면 계정 목록도 바로 맞춘다
+        engine.accountSwitched
+            .sink { switcher.captureCurrent() }
+            .store(in: &cancellables)
         switcher.onExhausted = { account, resetsAt in
             let when = resetsAt.map { " \(Self.clockFormatter.string(from: $0))에 \(account?.email ?? "")부터 다시 쓸 수 있습니다." } ?? ""
             Notifier.shared.send(title: "모든 Claude 계정이 한도에 닿았습니다", body: "바꿀 계정이 없습니다." + when)

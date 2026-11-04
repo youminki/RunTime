@@ -37,6 +37,7 @@ struct PopoverView: View {
     @ObservedObject private var wallet = GameWallet.shared
     @ObservedObject private var design = DesignSync.shared
     @ObservedObject private var updater = AppUpdater.shared
+    @ObservedObject private var switcher = AccountSwitcher.shared
 
     private var customSelection: Binding<String?> {
         Binding(get: { settings.customRunnerID },
@@ -244,8 +245,55 @@ struct PopoverView: View {
         footer.padding(.top, 10)
     }
 
+    /// 게이지가 어느 계정 값인지. 기억한 계정이 둘 이상이면 여기서 바로 바꾼다.
+    @ViewBuilder
+    private var accountLine: some View {
+        if let account = engine.account {
+            let plan = account.organizationType.map(AccountSwitcher.Account.planName)
+            let others = switcher.accounts.filter { $0.id != account.uuid }
+            HStack(spacing: 5) {
+                Image(systemName: "person.crop.circle").foregroundStyle(Theme.tertiary)
+                Text(account.email).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+                if let plan { Text(plan).foregroundStyle(Theme.tertiary) }
+                if switcher.switching { ProgressView().controlSize(.mini) }
+                Spacer(minLength: 4)
+                if !others.isEmpty {
+                    Menu {
+                        ForEach(others) { other in
+                            Button(other.label + Self.usageSuffix(other.lastUsage)) { switcher.switchTo(other.id) }
+                                .disabled(other.needsLogin == true)
+                        }
+                    } label: {
+                        Text("계정 바꾸기").foregroundStyle(Theme.tertiary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(switcher.switching)
+                    .tip("기억한 다른 Claude 계정으로 바꿉니다")
+                }
+            }
+            .font(captionFont)
+            .padding(.top, 10)
+            .tip("지금 Claude Code에 로그인한 계정. 사용률은 이 계정 기준입니다")
+        }
+    }
+
+    /// 메뉴 항목 옆 마지막 사용률. 리셋이 지난 창은 0%로 본다.
+    static func usageSuffix(_ usage: ClaudeLogin.LastUsage?) -> String {
+        guard let usage else { return "" }
+        let now = Date()
+        func value(_ pct: Double?, _ reset: Date?) -> String {
+            guard let pct else { return "-" }
+            if let reset, reset <= now { return "0%" }
+            return "\(Int(pct))%"
+        }
+        return "  세션 \(value(usage.sessionPercent, usage.sessionResetsAt)) · 주간 \(value(usage.weeklyPercent, usage.weeklyResetsAt))"
+    }
+
     @ViewBuilder
     private var usageCards: some View {
+        accountLine
         // 세션과 주간을 나란히 두어 두 값을 한눈에 견준다
         Card(padding: 0) {
             HStack(alignment: .top, spacing: 0) {
