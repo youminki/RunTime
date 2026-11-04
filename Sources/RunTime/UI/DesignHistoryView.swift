@@ -1073,7 +1073,7 @@ private struct DesignSidebar: View {
     /// 숨긴 메뉴를 뺀 그 프로젝트의 트리.
     private func tree(_ fileKey: String) -> [DesignMenuTree.Node] {
         let source = sync.source(fileKey)
-        var menus = sync.history.menus().filter { $0.fileKey == fileKey && !$0.path.isEmpty && source?.hides($0.path) != true }
+        var menus = sync.menus.filter { $0.fileKey == fileKey && !$0.path.isEmpty && source?.hides($0.path) != true }
         // 찾는 동안은 경로나 그 메뉴 화면의 이름·ID가 맞는 메뉴만 남긴다 (위 묶음은 경로로 따라 남는다)
         let terms = DesignSearch.terms(page.search)
         if !terms.isEmpty {

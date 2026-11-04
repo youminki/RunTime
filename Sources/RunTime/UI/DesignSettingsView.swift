@@ -327,7 +327,7 @@ struct DesignAlertPicker: View {
     @StateObject private var choice = DesignAlertChoice()
 
     private var nodes: [DesignMenuTree.Node] {
-        let menus = sync.history.menus().filter { $0.fileKey == fileKey && $0.screenCount > 0 }
+        let menus = sync.menus.filter { $0.fileKey == fileKey && $0.screenCount > 0 }
         return DesignMenuTree.build(menus, compact: false)
     }
 

@@ -150,7 +150,45 @@ actor FigmaClient {
 final class DesignSync: ObservableObject {
     static let shared = DesignSync()
 
-    @Published private(set) var history: DesignHistory
+    @Published private(set) var history: DesignHistory {
+        didSet {
+            cachedMenus = nil
+            eventIndex = nil
+        }
+    }
+    /// 화면은 마우스만 지나가도 다시 그려져, 기록 전체를 훑는 값은 기록이 바뀔 때만 다시 만든다.
+    private var cachedMenus: [DesignHistory.Menu]?
+    private var eventIndex: EventIndex?
+
+    private struct EventIndex {
+        /// 파일과 프레임별 변경. 고친 뒤 프레임이 바뀐 변경은 앞뒤 프레임 양쪽에 든다.
+        var byFrame: [String: [DesignEvent]] = [:]
+        /// 파일별 이력 줄. 화면 ID와 메뉴로 맞춰 봐야 해서 따로 둔다.
+        var changelogs: [String: [DesignEvent]] = [:]
+    }
+
+    var menus: [DesignHistory.Menu] {
+        if let cachedMenus { return cachedMenus }
+        let made = history.menus()
+        cachedMenus = made
+        return made
+    }
+
+    private var index: EventIndex {
+        if let eventIndex { return eventIndex }
+        var made = EventIndex()
+        for event in history.events {
+            if event.kind == .changelog {
+                made.changelogs[event.fileKey, default: []].append(event)
+                continue
+            }
+            for frame in Set([event.frameID, event.beforeFrameID].compactMap { $0 }) {
+                made.byFrame[event.fileKey + "|" + frame, default: []].append(event)
+            }
+        }
+        eventIndex = made
+        return made
+    }
     @Published private(set) var syncing = false
     @Published private(set) var progress = ""
     /// 파일 키 → 마지막 오류
@@ -378,15 +416,12 @@ final class DesignSync: ObservableObject {
 
     /// 이 화면에 생긴 변경과 화면 ID를 적은 이력. 최근 것이 앞.
     func events(for screen: ScreenSnapshot, in fileKey: String) -> [DesignEvent] {
-        history.events.filter { event in
-            guard event.fileKey == fileKey else { return false }
-            if event.kind == .changelog {
-                return event.screenID.components(separatedBy: ", ").contains(screen.screenID)
-                    || (event.menus ?? []).contains { DesignStatus.covers($0, screen.menuPath) }
-            }
-            return event.frameID == screen.frameID || event.beforeFrameID == screen.frameID
+        let index = index
+        let notes = (index.changelogs[fileKey] ?? []).filter { event in
+            event.screenID.components(separatedBy: ", ").contains(screen.screenID)
+                || (event.menus ?? []).contains { DesignStatus.covers($0, screen.menuPath) }
         }
-        .sorted { $0.detectedAt > $1.detectedAt }
+        return ((index.byFrame[fileKey + "|" + screen.frameID] ?? []) + notes).sorted { $0.detectedAt > $1.detectedAt }
     }
 
     /// 이 화면에서 아직 반영하지 않은, 마크업에 고칠 것이 있는 변경 (이력 줄과 섹션 표시만 바뀐 변경 제외).
