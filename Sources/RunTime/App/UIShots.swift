@@ -97,7 +97,7 @@ enum UIShots {
         let store = WorkLogStore.shared
         if let name = store.log.allProjects.last { store.setHidden(name, true) }
         if let name = store.log.issues.values.filter(\.assigned).map(\.project).sorted().first { store.setRedmineHidden(name, true) }
-        page.showsHidden = mode == .issues
+        page.showsHidden = true
         return page
     }
 
@@ -284,8 +284,20 @@ enum UIShots {
             ("main-runners", .darkAqua, nil, mainPage(.runners, engine: engine)),
             ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),
             ("main-worklog-dark", .darkAqua, nil, mainPage(.workLog, engine: engine)),
-            ("main-worklog-issues", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .issues)),
             ("main-calendar", .aqua, nil, mainPage(.calendar, engine: engine)),
+            // 레드마인은 RUNTIME_REDMINE_URL·KEY로 실제 레드마인을 읽는다 (보내지 않음). RUNTIME_SHOT_ISSUE면 그 일감 상세까지
+            ("main-redmine", .aqua, nil, {
+                if let id = ProcessInfo.processInfo.environment["RUNTIME_SHOT_ISSUE"].flatMap(Int.init) { RedmineStore.shared.selected = id }
+                return mainPage(.redmine, engine: engine)
+            }()),
+            ("main-redmine-dark", .darkAqua, nil, mainPage(.redmine, engine: engine)),
+            // 일감 창은 시트라 따로 찍는다 (RUNTIME_SHOT_ISSUE 일감)
+            ("redmine-issue", .aqua, nil, AnyView(RedmineIssueSheet(store: .shared, state: RedmineViewState()).frame(width: 940, height: 900))),
+            ("redmine-issue-dark", .darkAqua, nil, AnyView(RedmineIssueSheet(store: .shared, state: RedmineViewState()).frame(width: 940, height: 900))),
+            ("main-redmine-tree", .aqua, nil, {
+                RedmineStore.shared.treeMode = ProcessInfo.processInfo.environment["RUNTIME_SHOT_TREE"] != nil
+                return mainPage(.redmine, engine: engine)
+            }()),
             ("main-calendar-dark", .darkAqua, nil, mainPage(.calendar, engine: engine)),
             ("main-worklog-week", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .week)),
             ("main-hosts", .aqua, nil, mainPage(.hosts, engine: engine)),
@@ -364,20 +376,7 @@ enum UIShots {
             ("worklog-month", .aqua, 700, AnyView(WorkLogView(store: .shared, page: workLogPage(.month)))),
             ("worklog-search", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, search: "ㄷㅇㅌ")))),
             ("worklog-new-project", .aqua, 700, AnyView(WorkLogView(store: .shared, page: workLogPage(.day, newProject: "회의·보고")))),
-            ("worklog-issues", .aqua, 760, AnyView(WorkLogView(store: .shared, page: workLogPage(.issues)))),
-            ("worklog-issues-query", .aqua, 760, AnyView(WorkLogView(store: .shared, page: {
-                // 좁은 창에서 일감 찾기 칸의 글이 잘리지 않는지 본다
-                let page = workLogPage(.issues)
-                page.issueQuery = "목록 화면"
-                return page
-            }()))),
-            ("worklog-issues-stabilization", .aqua, 760, AnyView(WorkLogView(store: .shared, page: {
-                let page = workLogPage(.issues)
-                page.issueFilter = .stabilization
-                return page
-            }()))),
-            ("worklog-issues-dark", .darkAqua, 760, AnyView(WorkLogView(store: .shared, page: workLogPage(.issues)))),
-            ("worklog-hidden", .aqua, 760, AnyView(WorkLogView(store: .shared, page: hiddenPage(.issues)))),
+            ("worklog-hidden", .aqua, 760, AnyView(WorkLogView(store: .shared, page: hiddenPage(.day)))),
             ("worklog-quickadd", .aqua, nil, AnyView(QuickAddView(model: QuickAddModel(), store: .shared) {})),
             ("worklog-quickadd-dark", .darkAqua, nil, AnyView(QuickAddView(model: QuickAddModel(), store: .shared) {})),
             ("worklog-editor", .aqua, nil, AnyView(Group {

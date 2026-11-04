@@ -3,7 +3,8 @@ import WorkLogCore
 
 /// 업무 일지 창 상태. `@State` 대신 쓴다 (HoverFlag 참고).
 final class WorkLogPage: ObservableObject {
-    enum Mode: String, CaseIterable { case day = "하루", week = "주간", month = "월간", project = "프로젝트", issues = "내 일감" }
+    /// 레드마인 일감은 앱의 레드마인 화면에서 본다. 프로젝트는 왼쪽 프로젝트를 눌렀을 때만 그 기록을 연다.
+    enum Mode: String, CaseIterable { case day = "하루", week = "주간", month = "월간", project = "프로젝트" }
     enum Preview { case report, redmine }
 
     @Published var mode = Mode.day
@@ -88,11 +89,6 @@ final class WorkLogPage: ObservableObject {
     /// 카드에서 직접 고른 상태·날짜·담당자 (일감 번호 → 고른 칸). 보내면 비운다.
     @Published var issueEdits: [Int: WorkReport.IssueEdit] = [:]
     @Published var fieldEditing: Int?
-    /// 내 일감에서 바로 고치는 일감과 고르는 중인 칸.
-    @Published var boardEditing: Int?
-    @Published var boardDraft = WorkReport.IssueEdit()
-    /// 내 일감 고치기 창에서 저장 전에 바뀔 칸을 한 번 더 보여 주는 중인지.
-    @Published var boardConfirming = false
     @Published var confirmingUndo: RedmineSent?
     @Published var editing: UUID?
     @Published var statusPicking: UUID?
@@ -124,15 +120,9 @@ final class WorkLogPage: ObservableObject {
     @Published var teamsTestFailed = false
     /// 접어 둔 묶음 (프로젝트 이름, 날짜).
     @Published var collapsed: Set<String> = []
-    /// 내 일감 보기: 찾는 말과 거르기.
-    @Published var issueQuery = ""
-    @Published var issueFilter = IssueFilter.all
     @Published var renamingRedmine: String?
     @Published var redmineRenameText = ""
 
-    enum IssueFilter: String, CaseIterable {
-        case all = "전체", working = "진행 중", due = "기한 임박", logged = "오늘 적은", stabilization = "안정화"
-    }
     /// 설정 창에서 고른 칸.
     @Published var settingsSection = SettingsSection.gitlab
 

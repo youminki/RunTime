@@ -1211,6 +1211,12 @@ final class WorkLogSync: ObservableObject {
 
     static func transitionKey(_ from: Int, _ to: Int) -> String { "\(from)>\(to)" }
 
+    /// 레드마인이 받지 않은 상태 전환을 기억한다 (레드마인 화면에서 직접 바꾸다 막혔을 때).
+    func rememberBlocked(from: Int, to: Int) {
+        blockedTransitions.insert(Self.transitionKey(from, to))
+        defaults.set(Array(blockedTransitions).sorted(), forKey: "workLog.blockedTransitions")
+    }
+
     /// 일지로 정한 상태가 이미 막힌 전환이면 뺀다. 직접 고른 상태는 그대로 보내 다시 확인하게 둔다.
     static func droppingBlocked(_ auto: WorkReport.IssueFields, current: IssueInfo?, blocked: Set<String>) -> WorkReport.IssueFields {
         guard let status = auto.status, let from = current?.statusID, blocked.contains(transitionKey(from, status.id)) else { return auto }

@@ -1,8 +1,9 @@
+import WorkLogCore
 import SwiftUI
 
 /// 한 창 안에서 오가는 화면. 메뉴바·팝오버·알림의 단추도 새 창을 띄우지 않고 이 창의 화면을 바꾼다.
 enum MainPage: String, CaseIterable {
-    case usage, game, runners, workLog, calendar, design, hosts, settings
+    case usage, game, runners, workLog, calendar, design, hosts, redmine, settings
 
     /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 순위는 게임).
     init?(windowName: String) {
@@ -20,6 +21,7 @@ enum MainPage: String, CaseIterable {
         case .calendar: return "캘린더"
         case .design: return "디자인"
         case .hosts: return "호스트"
+        case .redmine: return "레드마인"
         case .settings: return "설정"
         }
     }
@@ -33,6 +35,7 @@ enum MainPage: String, CaseIterable {
         case .calendar: return "calendar"
         case .design: return "paintpalette"
         case .hosts: return "network"
+        case .redmine: return "list.bullet.rectangle.portrait"
         case .settings: return "gearshape"
         }
     }
@@ -46,12 +49,13 @@ enum MainPage: String, CaseIterable {
         case .calendar: return "업무 일지를 한 달 달력으로 크게, 공휴일과 함께"
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
         case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 백업"
+        case .redmine: return "레드마인 일감 보기·고치기·댓글, 저장한 질의"
         case .settings: return "일반, 러너, 사용량 설정"
         }
     }
 
     /// 들른 뒤로 숨겨 두고 다시 쓰는 화면 (MainWindowView.content 참고).
-    static let kept: [MainPage] = [.workLog, .calendar, .design]
+    static let kept: [MainPage] = [.workLog, .calendar, .design, .redmine]
 
     /// 팝오버와 같은 어두운 색 규칙으로 그리는 화면. 이 화면에서는 창 전체를 어둡게 한다.
     var isDark: Bool { self == .usage || self == .game || self == .runners }
@@ -237,6 +241,15 @@ struct MainWindowView: View {
             DesignHistoryView(sync: .shared, settings: .shared, page: designPage)
         case .hosts:
             HostsView(store: .shared, page: .shared)
+        case .redmine:
+            RedmineView(store: .shared, settings: .shared, workLogPage: workLogPage,
+                        openWorkLogSend: { [navigator, workLogPage] in
+                            workLogPage.search = ""
+                            workLogPage.day = WorkDay.today()
+                            workLogPage.mode = .day
+                            workLogPage.preview = .redmine
+                            navigator.go(.workLog)
+                        })
         case .settings:
             SettingsView(settings: settings, engine: engine, tab: settingsTab, workLog: workLogPage)
         }

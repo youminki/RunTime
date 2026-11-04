@@ -32,6 +32,25 @@ public enum RedmineNote {
             .replacingOccurrences(of: ">", with: "&gt;")
     }
 
+    /// 화면에 그리기 전에 외부 자원을 그 자리에서 받는 꼴을 지운다. HTML 해석기는 그림을 메인 스레드에서 내려받아
+    /// 화면이 멈추고 추적 그림이 새어 나갈 수 있다. 그림은 `[이미지]` 자리만 남기고, 원본은 첨부에서 연다.
+    public static func safeHTML(_ html: String) -> String {
+        let attr = #"(?:[^>"']|"[^"]*"|'[^']*')*"#
+        let steps: [(String, String)] = [
+            // 짝이 있는 요소는 내용째 지운다
+            (#"<(script|style|iframe|object|video|audio|svg|noscript|template)\b"# + attr + #">[\s\S]*?</\1\s*>"#, ""),
+            (#"<(img|image)\b"# + attr + ">", "[이미지]"),
+            (#"<(script|style|iframe|object|embed|video|audio|svg|link|source|input|meta|base)\b"# + attr + ">", ""),
+            (#"\s(background|srcset|poster)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#, ""),
+            (#"(url|image-set)\s*\([^)]*\)"#, ""),
+        ]
+        var result = html
+        for (pattern, replacement) in steps {
+            result = result.replacingOccurrences(of: pattern, with: replacement, options: [.regularExpression, .caseInsensitive])
+        }
+        return result
+    }
+
     /// 레드마인에 남은 HTML 댓글을 평문으로 (보낸 댓글을 다시 찾을 때 비교용).
     public static func plain(_ html: String) -> String {
         var text = html.replacingOccurrences(of: "<br />", with: "\n").replacingOccurrences(of: "<br/>", with: "\n")

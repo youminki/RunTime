@@ -49,7 +49,7 @@ struct WorkLogPreview: View {
             Button("올리기") { postTeams(to: .chat) }
             Button("취소", role: .cancel) {}
         } message: {
-            Text((progressDraft?.stale == true && !isPlan && (page.mode == .day || page.mode == .issues)
+            Text((progressDraft?.stale == true && !isPlan && (page.mode == .day)
                   ? "다듬은 뒤 일지·레드마인 값이 바뀐 초안입니다. 올리기 전에 상태를 확인하세요.\n\n" : "")
                  + (settings.teamsDirect(.chat)
                  || (settings.teamsAutoSend && settings.teamsAutoPaste && AXIsProcessTrusted() && TeamsOpener.teamsPWA() != nil)
@@ -66,7 +66,7 @@ struct WorkLogPreview: View {
 
     private var scopeEntries: [WorkEntry] {
         switch page.mode {
-        case .day, .issues: return store.log.entries(on: page.day)
+        case .day: return store.log.entries(on: page.day)
         case .week: return store.log.entries(in: WorkDay.week(of: page.day))
         case .month: return store.log.entries(in: WorkDay.month(of: page.day))
         case .project: return selectedProject.map { name in store.log.entries.filter { $0.project == name } } ?? []
@@ -80,7 +80,7 @@ struct WorkLogPreview: View {
 
     private var reportTitle: String {
         switch page.mode {
-        case .day, .issues: return "일일보고"
+        case .day: return "일일보고"
         case .week: return "주간 보고"
         case .month: return "월간 보고"
         case .project: return "프로젝트 요약"
@@ -89,16 +89,16 @@ struct WorkLogPreview: View {
 
     private var rangeText: String {
         switch page.mode {
-        case .day, .issues: return WorkLogFormat.dayTitle(page.day)
+        case .day: return WorkLogFormat.dayTitle(page.day)
         case .week: return WorkLogFormat.weekTitle(page.day)
         case .month: return WorkLogFormat.monthTitle(page.day)
         case .project: return selectedProject ?? ""
         }
     }
 
-    private var copyName: String { isPlan ? "진행 예정" : page.mode == .day || page.mode == .issues ? "진행 사항" : reportTitle }
+    private var copyName: String { isPlan ? "진행 예정" : page.mode == .day ? "진행 사항" : reportTitle }
 
-    private var isPlan: Bool { (page.mode == .day || page.mode == .issues) && page.dayReport == .plan }
+    private var isPlan: Bool { (page.mode == .day) && page.dayReport == .plan }
 
     /// 일지에서 만든 진행 예정 사항 (고쳐 쓰기 전).
     private var generatedPlan: String {
@@ -146,7 +146,7 @@ struct WorkLogPreview: View {
     /// 머리줄을 뺀 보고서 몸통.
     private var reportBody: String {
         switch page.mode {
-        case .day, .issues:
+        case .day:
             if isPlan { return page.planEdits[page.day]?.text ?? generatedPlan }
             return progressDraft?.text ?? generatedProgress
         default:
@@ -159,7 +159,7 @@ struct WorkLogPreview: View {
     /// 팀즈에 올릴 제목 (굵게 첫 줄로 간다).
     private var postTitle: String {
         switch page.mode {
-        case .day, .issues: return dayHeader
+        case .day: return dayHeader
         case .project: return "\(selectedProject ?? "프로젝트") 요약"
         default: return reportText.components(separatedBy: "\n").first ?? reportTitle
         }
@@ -167,7 +167,7 @@ struct WorkLogPreview: View {
 
     private var reportText: String {
         switch page.mode {
-        case .day, .issues:
+        case .day:
             let body = reportBody
             // 머리줄(`[10/27 금일 진행 사항]`)은 팀즈에 올릴 때와 같게 늘 붙인다
             return body.isEmpty ? body : dayHeader + "\n" + body
@@ -191,7 +191,7 @@ struct WorkLogPreview: View {
         let text = reportText
         // 보고서 이름은 바로 위 탭에 있고 머리줄은 글 첫 줄에 있어, 여기서는 범위만 적는다
         return VStack(alignment: .leading, spacing: 12) {
-            if page.mode == .day || page.mode == .issues {
+            if page.mode == .day {
                 // 출근 때는 진행 예정, 퇴근 때는 진행 사항을 올린다
                 HStack(spacing: 8) {
                     Picker("", selection: $page.dayReport) {
@@ -208,7 +208,7 @@ struct WorkLogPreview: View {
             }
             if isPlan {
                 planEditor
-            } else if (page.mode == .day || page.mode == .issues), let draft = progressDraft {
+            } else if (page.mode == .day), let draft = progressDraft {
                 progressEditor(draft)
             } else {
                 ReportText(text: text.isEmpty ? "적은 일이 여기 보고서 꼴로 만들어집니다." : text, placeholder: text.isEmpty)
@@ -216,7 +216,7 @@ struct WorkLogPreview: View {
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
             }
             if !isPlan {
-                if page.mode == .day || page.mode == .issues, progressDraft == nil, !text.isEmpty {
+                if page.mode == .day, progressDraft == nil, !text.isEmpty {
                     polishBar
                 }
                 unreflectedNote

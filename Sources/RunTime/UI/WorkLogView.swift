@@ -61,8 +61,6 @@ struct WorkLogView: View {
                             case .week: periodPage(weekEntries, span: "이 주")
                             case .month: periodPage(monthEntries, span: "이 달")
                             case .project: projectPage
-                            case .issues: IssueBoard(store: store, page: page, sync: sync, settings: settings)
-                                .environment(\.narrowRows, layout.middle < 640)
                             }
                         }
                     }
@@ -89,7 +87,10 @@ struct WorkLogView: View {
     /// 날 이동은 왼쪽 달력에서 고르고, 단추 대신 ⌘[ ⌘] ⌘T 단축키만 둔다 (좁은 창에서 새로고침이 밀려 잘리지 않게).
     private func topBar(gutter: CGFloat) -> some View {
         HStack(spacing: 4) {
-            PageTabs(items: WorkLogPage.Mode.allCases.map { ($0, $0.rawValue) }, selection: Binding(
+            // 프로젝트 기록은 왼쪽 프로젝트를 눌렀을 때만 열려, 그동안만 그 이름으로 탭을 보인다
+            PageTabs(items: [WorkLogPage.Mode.day, .week, .month].map { ($0, $0.rawValue) }
+                     + (page.mode == .project ? [(WorkLogPage.Mode.project, page.project ?? WorkLogPage.Mode.project.rawValue)] : []),
+                     selection: Binding(
                 get: { page.mode },
                 set: { page.search = ""; page.mode = $0 }
             ))
