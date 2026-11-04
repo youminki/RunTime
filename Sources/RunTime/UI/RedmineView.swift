@@ -1233,12 +1233,16 @@ struct RedmineIssueSheet: View {
                 Text("[작업 내용]처럼 대괄호 머리를 쓰면 단락이 나뉩니다").font(WL.caption).foregroundStyle(WL.quiet)
                 Spacer()
                 Button(store.sending.contains(issue.id) ? "보내는 중…" : "댓글 남기기") {
-                    let id = issue.id, text = state.comments[issue.id] ?? "", sending = state.files[id] ?? []
-                    store.comment(id, text: text, files: sending) { ok in
-                        // 보내는 사이 고쳐 쓴 글과 더 붙인 파일은 지우지 않는다
-                        guard ok else { return }
-                        if state.comments[id] == text { state.comments[id] = nil }
-                        state.files[id]?.removeAll { sending.contains($0) }
+                    // 한글을 조합하는 중에 ⌘↩를 누르면 마지막 글자가 아직 글에 없어 조합을 끝낸 뒤 읽는다
+                    if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.hasMarkedText() { editor.unmarkText() }
+                    DispatchQueue.main.async {
+                        let id = issue.id, text = state.comments[id] ?? "", sending = state.files[id] ?? []
+                        store.comment(id, text: text, files: sending) { ok in
+                            // 보내는 사이 고쳐 쓴 글과 더 붙인 파일은 지우지 않는다
+                            guard ok else { return }
+                            if state.comments[id] == text { state.comments[id] = nil }
+                            state.files[id]?.removeAll { sending.contains($0) }
+                        }
                     }
                 }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
