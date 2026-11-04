@@ -43,6 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 점검용: 앱 창의 한 화면을 바로 연다 (UI 자동화로 눌러 볼 때)
+        if let name = ProcessInfo.processInfo.environment["RUNTIME_OPEN_PAGE"], let page = MainPage(rawValue: name) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.showMain(page)
+                if ProcessInfo.processInfo.environment["RUNTIME_SHEET_CHECK"] != nil { MainActor.assumeIsolated { RedmineFlowCheck.sheets() } }
+            }
+        }
         EditMenu.install()
         animator.canvas = MenuBarCanvas(barHeight: NSStatusBar.system.thickness, zoom: engine.settings.runnerSize.zoom,
                                         backing: NSScreen.main?.backingScaleFactor ?? 2)

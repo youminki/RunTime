@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import WorkLogCore
 
 /// `--redmine-flow`: 레드마인 화면의 일을 가짜 응답으로 끝까지 돌려 나가는 요청을 살핀다.
@@ -60,6 +60,43 @@ enum RedmineFlowCheck {
             await flow(folder: folder)
             print(failures == 0 ? "레드마인 흐름 모두 통과" : "레드마인 흐름 실패 \(failures)건")
             try? FileManager.default.removeItem(at: folder)
+            exit(failures == 0 ? 0 : 1)
+        }
+    }
+
+    /// 앱 창을 띄운 채 일감 창이 실제로 뜨고 닫히는지 본다 (`RUNTIME_SHEET_CHECK`). 시트는 띄워 봐야 알 수 있다.
+    static func sheets() {
+        Task {
+            let store = RedmineStore.shared
+            func sheet() -> NSWindow? { NSApp.windows.compactMap(\.attachedSheet).first }
+            await settle(3)
+            let id = store.issues[2].id
+            store.selected = id
+            await settle(1)
+            let first = sheet()
+            check("일감을 고르면 창이 뜬다", first != nil)
+            store.move(1)
+            await settle(1)
+            check("앞뒤로 옮겨도 같은 창이 그대로다", sheet() === first && first != nil && store.selected != id)
+            let issue = store.details[id]
+            store.selected = nil
+            await settle(1)
+            check("닫으면 창이 사라진다", sheet() == nil)
+            if let issue {
+                store.selected = issue.id
+                await settle(1)
+                store.createChild(of: issue)
+                await settle(1.2)
+                check("하위 일감 창으로 넘어간다", sheet() != nil && store.creating && store.selected == nil)
+            }
+            var made: String??
+            store.create(Redmine.NewIssue(projectID: 1, trackerID: 1, subject: "새 일감")) { error in
+                made = .some(error)
+                store.creating = false
+            }
+            await settle(2)
+            check("만든 뒤 새 일감 창이 닫히고 그 일감이 열린다", made == .some(nil) && !store.creating && store.selected != nil && sheet() != nil)
+            print(failures == 0 ? "창 전환 모두 통과" : "창 전환 실패 \(failures)건")
             exit(failures == 0 ? 0 : 1)
         }
     }
