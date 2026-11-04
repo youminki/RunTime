@@ -75,6 +75,8 @@ final class DesignCompareModel: ObservableObject {
         self.fileKey = fileKey
         self.path = path
         self.screen = screen
+        // 앱을 며칠 켜 두어도 빠른 기간이 오늘부터 세어지게 다시 맞춘다
+        if preset > 0 { let days = preset; preset = days }
     }
 
     /// 지금 고른 프로젝트·범위·날짜로 낸 결과인지. 조건을 바꾸면 옛 결과를 새 것처럼 보이지 않게 한다.
@@ -146,9 +148,11 @@ final class DesignCompareModel: ObservableObject {
         Task {
             defer { running = false; progress = "" }
             do {
-                let list = try await loadVersions(fileKey, until: from, token: token)
                 let calendar = Calendar.current
-                guard let before = DesignCompare.version(atEndOf: from, in: list) else {
+                // 기록 보기처럼 시작일 안의 변경도 넣으려면 기준은 시작일 전날 끝이어야 한다
+                let baseDay = calendar.date(byAdding: .day, value: -1, to: from) ?? from
+                let list = try await loadVersions(fileKey, until: baseDay, token: token)
+                guard let before = DesignCompare.version(atEndOf: baseDay, in: list) else {
                     let oldest = list.last.map { " 피그마에 남은 가장 오래된 버전은 \(DesignFormat.stamp($0.createdAt))입니다." } ?? ""
                     error = "\(DesignCompareModel.day(from)) 이전 버전이 없습니다.\(oldest)"
                     return
@@ -158,7 +162,9 @@ final class DesignCompareModel: ObservableObject {
                 // 그 기록이 기준보다 오래됐거나, 메뉴를 골라 받아 고른 범위의 내용이 옛것일 수 있으면 피그마 최신 버전을 받는다
                 var recorded: (snapshot: VersionSnapshot, version: FigmaAPI.FileVersion)?
                 var checkedAt: Date?
-                let todayRecord = calendar.isDateInToday(to) ? sync.history.files[fileKey] : nil
+                // 링크한 화면만 지켜보면 기록에 나머지 화면이 없어, 전체 버전과 견주면 모두 삭제로 나온다
+                let wholeFile = sync.source(fileKey)?.scope.isEmpty ?? true
+                let todayRecord = calendar.isDateInToday(to) && wholeFile ? sync.history.files[fileKey] : nil
                 let recordSnapshot = await Task.detached(priority: .userInitiated) {
                     todayRecord.flatMap { VersionSnapshot(record: $0, fileKey: fileKey) }
                 }.value

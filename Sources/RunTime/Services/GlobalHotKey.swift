@@ -49,7 +49,10 @@ final class GlobalHotKey {
 
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
+        // 한 줄 적기가 같은 조합을 잡고 있으면 등록이 실패해 먼저 놓는다
+        releaseQuick()
         enabled ? register() : unregister()
+        setQuickAdd(quickEnabled)
     }
 
     /// 새 조합을 저장하고, 켜져 있으면 바로 다시 등록한다.
@@ -61,6 +64,8 @@ final class GlobalHotKey {
         defaults.set(Int(combo.modifiers), forKey: Key.modifiers)
         defaults.set(combo.label, forKey: Key.label)
         unregister()
+        // ⌃⌥L로 바꾸면 한 줄 적기가 잡고 있어 등록이 실패한다. 놓은 뒤 defer에서 충돌을 판단한다
+        releaseQuick()
         if enabled { register() }
     }
 
@@ -68,6 +73,10 @@ final class GlobalHotKey {
     func suspend() {
         unregister()
         // 새 조합을 기록하는 동안 ⌃⌥L도 비켜 둔다
+        releaseQuick()
+    }
+
+    private func releaseQuick() {
         if let quickHotKey { UnregisterEventHotKey(quickHotKey) }
         quickHotKey = nil
     }
@@ -79,10 +88,10 @@ final class GlobalHotKey {
 
     func setQuickAdd(_ enabled: Bool) {
         quickEnabled = enabled
-        if let quickHotKey { UnregisterEventHotKey(quickHotKey) }
-        quickHotKey = nil
+        releaseQuick()
         quickFailed = false
-        quickClashes = enabled && combo.keyCode == Self.quickCombo.keyCode && combo.modifiers == Self.quickCombo.modifiers
+        // 사용량 단축키가 꺼져 있으면 같은 조합이어도 겹치지 않는다
+        quickClashes = enabled && self.enabled && combo.keyCode == Self.quickCombo.keyCode && combo.modifiers == Self.quickCombo.modifiers
         guard enabled, !quickClashes else { return }
         installHandler()
         let id = EventHotKeyID(signature: OSType(0x5254_494D), id: 2)

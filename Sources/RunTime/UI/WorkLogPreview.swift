@@ -51,8 +51,7 @@ struct WorkLogPreview: View {
         } message: {
             Text((progressDraft?.stale == true && !isPlan && (page.mode == .day)
                   ? "다듬은 뒤 일지·레드마인 값이 바뀐 초안입니다. 올리기 전에 상태를 확인하세요.\n\n" : "")
-                 + (settings.teamsDirect(.chat)
-                 || (settings.teamsAutoSend && settings.teamsAutoPaste && AXIsProcessTrusted() && TeamsOpener.teamsPWA() != nil)
+                 + (sync.teamsSendsDirectly(.chat)
                  ? "\(postTitle)을 팀 채팅에 바로 올립니다. 올린 글은 팀즈에서 지워야 합니다."
                  : "팀즈에서 보고 채팅을 열고 \(postTitle)을 붙여 넣습니다. 확인하고 Enter를 누르면 올라갑니다."))
         }
@@ -383,8 +382,10 @@ struct WorkLogPreview: View {
     }
 
     private func postTeams(to target: TeamsTarget) {
-        sync.postTeams(reportBody, title: postTitle, to: target) { message, _ in
-            page.flash(message)
+        sync.postTeams(reportBody, title: postTitle, to: target) { message, failed in
+            page.flash(message, seconds: failed ? 8 : 1.8)
+            // 팀즈가 앞으로 나오거나 다른 화면으로 옮기면 창 안 안내는 보이지 않는다
+            if failed { Notifier.shared.send(title: "팀즈에 올리지 못했습니다", body: message, opens: .workLog) }
         }
     }
 
@@ -1318,7 +1319,10 @@ struct WorkLogPreview: View {
             let sentIDs = Set(fresh.flatMap(\.entryIDs))
             let left = Set(store.log.entries.filter { sentIDs.contains($0.id) && $0.needsRedmine }.compactMap(\.issue))
             forgetChoices(issues.filter { !left.contains($0) })
-            page.flash(failures.isEmpty ? "레드마인에 \(sent)건 보냈습니다" : "\(sent)건 보냄 · " + failures.joined(separator: ", "))
+            guard !failures.isEmpty else { return page.flash("레드마인에 \(sent)건 보냈습니다") }
+            let message = "\(sent)건 보냄 · " + failures.joined(separator: ", ")
+            page.flash(message, seconds: 8)
+            Notifier.shared.send(title: "레드마인에 일부를 보내지 못했습니다", body: message, opens: .workLog)
         }
     }
 

@@ -107,6 +107,11 @@ struct HostsView: View {
         .overlay(alignment: .bottom) {
             if let toast = page.toast { Toast(message: toast).padding(.bottom, store.dirty ? 70 : 18).transition(.opacity) }
         }
+        .background {
+            // 지연 목록 안에 두면 머리가 화면에서 벗어날 때 함께 사라져 단축키가 먹지 않는다
+            Button("") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
+            Button("") { page.sheet = .add(group: nil) }.keyboardShortcut("n", modifiers: .command).disabled(!store.canEdit).hidden()
+        }
         .sheet(item: $page.sheet) { sheet in
             switch sheet {
             case .add(let group): HostsAddSheet(store: store, page: page, group: group)
@@ -175,7 +180,6 @@ struct HostsView: View {
                 Button { page.sheet = .add(group: nil) } label: { Label("추가", systemImage: "plus") }
                     .buttonStyle(NotionButtonStyle(kind: .primary))
                     .disabled(!store.canEdit)
-                    .keyboardShortcut("n", modifiers: .command)
                     .tip("호스트 추가 (⌘N) · 메신저·위키에서 받은 여러 줄을 그대로 붙여 넣어도 됩니다")
             }
         }
@@ -257,10 +261,6 @@ struct HostsView: View {
         .padding(.horizontal, 10)
         .frame(height: 30)
         .wlSurface(radius: 6)
-        .background {
-            // 어느 칸에 있든 ⌘F로 찾기 칸에 들어간다
-            Button("") { searching = true }.keyboardShortcut("f", modifiers: .command).hidden()
-        }
         .padding(.bottom, 8)
     }
 

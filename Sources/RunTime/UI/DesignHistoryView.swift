@@ -1223,7 +1223,7 @@ private struct DesignSidebar: View {
 
     private func fetch(_ fileKey: String, name: String) {
         sync.sync(only: fileKey) { count in
-            page.flash(count > 0 ? "‘\(name)’ 변경 \(count)건을 찾았습니다" : "‘\(name)’ 새 변경이 없습니다")
+            page.flash(sync.fetchMessage(count, name: name, fileKey: fileKey))
         }
     }
 
@@ -1489,7 +1489,7 @@ private struct DesignSidebar: View {
 
     private func fetchMenu(_ fileKey: String, _ path: String, name: String) {
         sync.syncMenu(path, in: fileKey) { count in
-            page.flash(count > 0 ? "‘\(name)’ 변경 \(count)건을 찾았습니다" : "‘\(name)’ 새 변경이 없습니다")
+            page.flash(sync.fetchMessage(count, name: name, fileKey: fileKey))
         }
     }
 
@@ -1570,7 +1570,7 @@ private struct DesignSidebar: View {
                 } else if let key = scopedFileKey {
                     fetch(key, name: sync.projectName(key))
                 } else {
-                    sync.sync { count in page.flash(count > 0 ? "변경 \(count)건을 찾았습니다" : "새 변경이 없습니다") }
+                    sync.sync { count in page.flash(sync.fetchMessage(count)) }
                 }
             } label: {
                 if sync.syncing { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
@@ -1942,7 +1942,7 @@ struct DesignTimeline: View {
         let busy = menu.map { sync.isBusy(fileKey, menu: $0) } ?? sync.isBusy(fileKey)
         return Button {
             let name = menu.map { $0.components(separatedBy: " > ").last ?? $0 } ?? sync.projectName(fileKey)
-            let done: (Int) -> Void = { count in page.flash(count > 0 ? "‘\(name)’ 변경 \(count)건을 찾았습니다" : "‘\(name)’ 새 변경이 없습니다") }
+            let done: (Int) -> Void = { count in page.flash(sync.fetchMessage(count, name: name, fileKey: fileKey)) }
             if let menu { sync.syncMenu(menu, in: fileKey, completion: done) } else { sync.sync(only: fileKey, completion: done) }
         } label: {
             HStack(spacing: 6) {

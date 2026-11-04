@@ -211,7 +211,7 @@ struct DesignScreenDetail: View {
                 if sync.canFetchMenu(fileKey, screen.menuPath) {
                     Button("이 메뉴 새로 가져오기") {
                         sync.syncMenu(screen.menuPath, in: fileKey) { count in
-                            page.flash(count > 0 ? "변경 \(count)건을 찾았습니다" : "새 변경이 없습니다")
+                            page.flash(sync.fetchMessage(count, fileKey: fileKey))
                         }
                     }
                     .disabled(sync.isBusy(fileKey, menu: screen.menuPath) || !DesignSyncSettings.shared.hasToken)

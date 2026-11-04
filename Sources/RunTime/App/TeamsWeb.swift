@@ -216,7 +216,7 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         notifiedLogout = true
         Diagnostics.record("팀즈", "웹 로그인이 풀림")
         Notifier.shared.send(title: "팀즈 웹 로그인이 풀렸습니다",
-                             body: "설정 > 팀즈에서 다시 로그인하세요. 그동안은 팀즈 앱을 열어 붙여 넣습니다.", opens: .workLog)
+                             body: "업무 일지 설정 > 팀즈에서 다시 로그인하세요. 그동안은 팀즈 앱을 열어 붙여 넣습니다.", opens: .workLog)
     }
 
     /// 켜 둔 동안 12시간마다 한 번 숨은 팀즈를 띄워 로그인을 새로 하고 (토큰·쿠키가 오래 묵지 않게),

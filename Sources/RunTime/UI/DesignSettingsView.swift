@@ -182,7 +182,12 @@ struct DesignSettingsView: View {
                 }
                 Menu("링크한 화면 빼기") {
                     ForEach(source.scope, id: \.nodeID) { scope in
-                        Button(scope.name.isEmpty ? scope.nodeID : scope.name) { sync.removeScope(scope.nodeID, from: source.fileKey) }
+                        let name = scope.name.isEmpty ? scope.nodeID : scope.name
+                        if source.scope.count > 1 {
+                            Button(name) { sync.removeScope(scope.nodeID, from: source.fileKey) }
+                        } else {
+                            Button("\(name) (마지막 화면이라 프로젝트 기록도 지움)") { confirmRemoval(source.fileKey) }
+                        }
                     }
                 }
                 .disabled(sync.syncing)
@@ -196,7 +201,7 @@ struct DesignSettingsView: View {
             }
             Button(source.isHidden ? "다시 보이고 가져오기" : "숨기기 (가져오지 않음)") { sync.setProjectHidden(source.fileKey, hidden: !source.isHidden) }
             Divider()
-            Button("지켜보지 않기 (기록도 지움)") { sync.removeSource(source.fileKey) }.disabled(sync.syncing)
+            Button("지켜보지 않기 (기록도 지움)") { confirmRemoval(source.fileKey) }.disabled(sync.syncing)
         } label: {
             Image(systemName: "ellipsis").foregroundStyle(WL.muted)
         }
@@ -205,6 +210,16 @@ struct DesignSettingsView: View {
         .fixedSize()
         .frame(width: 28, height: 28)
         .tip("가져오기 주기·범위·숨기기·지우기")
+    }
+
+    /// 변경 기록과 반영 체크까지 지워져 되돌릴 수 없어 묻는다.
+    private func confirmRemoval(_ fileKey: String) {
+        let alert = NSAlert()
+        alert.messageText = "‘\(sync.projectName(fileKey))’를 그만 지켜볼까요?"
+        alert.informativeText = "이 프로젝트의 변경 기록과 본 표시, 반영·구현 체크가 모두 지워지고 되돌릴 수 없습니다."
+        alert.addButton(withTitle: "지우기")
+        alert.addButton(withTitle: "취소")
+        if alert.runModal() == .alertFirstButtonReturn { sync.removeSource(fileKey) }
     }
 
     private func pasteAndAdd() {

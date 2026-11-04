@@ -188,14 +188,14 @@ final class WorkLogPage: ObservableObject {
         }
     }
 
-    func flash(_ message: String) {
+    func flash(_ message: String, seconds: Double = 1.8) {
         withAnimation(.easeOut(duration: 0.15)) { toast = message }
         toastWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             withAnimation(.easeIn(duration: 0.2)) { self?.toast = nil }
         }
         toastWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
     /// 창을 다시 열면 오늘로 돌아온다. 자정을 넘겨 켜 둔 창이 어제에 머물지 않게.

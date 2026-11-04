@@ -189,7 +189,7 @@ struct PopoverView: View {
             HStack(spacing: 0) {
                 StatColumn(label: "내 최고 점수", value: GameRecords.best.formatted())
                 Rectangle().fill(Theme.hairline).frame(width: 1)
-                StatColumn(label: "한 판 수", value: GameRecords.plays.formatted(), unit: "판")
+                StatColumn(label: "판 수", value: GameRecords.plays.formatted(), unit: "판")
                 Rectangle().fill(Theme.hairline).frame(width: 1)
                 StatColumn(label: "코인", value: wallet.coins.formatted())
                     .tip("러너 화면의 상점에서 꾸미기를 삽니다")

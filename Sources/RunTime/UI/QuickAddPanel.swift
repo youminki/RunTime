@@ -15,7 +15,7 @@ final class QuickAddPanel {
     }
 
     func show() {
-        model.text = ""
+        // 다른 곳을 눌러 닫혀도 쓰던 글은 남긴다. 넣으면 그때 비운다
         model.prepare()
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -163,6 +163,8 @@ struct QuickAddView: View {
             UserDefaults.standard.set(model.project, forKey: "workLog.quickProject")
             model.added = "\(model.project) · \(WorkReport.line(entry))"
             model.text = ""
+        } else {
+            model.problem = "내용을 쓰세요. 상태나 일감 번호만으로는 넣지 않습니다"
         }
     }
 }

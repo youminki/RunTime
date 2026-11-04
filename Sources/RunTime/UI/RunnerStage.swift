@@ -78,6 +78,7 @@ struct RunnerStage: View {
         }
         .onDisappear {
             model.setPointer(false)   // 커서를 올린 채 팝오버가 닫혀도 짝을 맞춘다
+            _ = model.game?.creditRun()   // 판 도중에 닫아도 먹은 코인을 넣는다
             model.popoverClosed()
             LeaderboardFeed.shared.stageDisappeared()
         }

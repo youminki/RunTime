@@ -194,6 +194,8 @@ final class GameSession {
             }
             guard event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 .subtracting([.function, .numericPad, .capsLock]).isEmpty else { return event }
+            // 같은 창의 글 칸(순위 닉네임 등)에 치는 글자를 게임이 가져가지 않게 한다
+            if self.window()?.firstResponder is NSTextView { return event }
             let down = event.type == .keyDown
             switch event.keyCode {
             case 49, 126, 13:   // 스페이스, ↑, W
@@ -219,7 +221,11 @@ final class GameSession {
                 }
                 return nil
             case 53:            // esc
-                if down { self.onExit() }
+                if down {
+                    // 판 도중에 나가도 먹은 코인은 넣는다
+                    _ = self.creditRun()
+                    self.onExit()
+                }
                 return nil
             default:
                 return event

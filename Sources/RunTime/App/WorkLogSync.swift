@@ -1012,6 +1012,13 @@ final class WorkLogSync: ObservableObject {
         }.resume()
     }
 
+    /// 올리기를 누르면 확인 없이 바로 올라가는지. 확인창 문구가 실제 보내는 길과 어긋나지 않게 여기서만 정한다.
+    func teamsSendsDirectly(_ target: TeamsTarget) -> Bool {
+        if settings.teamsDirect(target) { return true }
+        if let link = settings.teamsLink(target), TeamsWeb.shared.everReady, TeamsWeb.canSend(link) { return true }
+        return settings.teamsAutoSend && settings.teamsAutoPaste && AXIsProcessTrusted() && TeamsOpener.teamsPWA() != nil
+    }
+
     private func openTeams(_ report: String, title: String, target: TeamsTarget,
                            done: @escaping (_ message: String, _ failed: Bool) -> Void) {
         guard let link = settings.teamsLink(target) else {

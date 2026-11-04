@@ -176,6 +176,8 @@ final class DesignSync: ObservableObject {
     private var timer: Timer?
     /// 가져오는 동안 메뉴를 바꾼 파일. 끝난 뒤 다음에 새로 받도록 버전을 비운다.
     private var menusChanged = Set<String>()
+    /// 링크 범위를 프로젝트 전체로 넓히고 아직 받지 않은 파일.
+    private var widened = Set<String>()
     /// 받는 동안 전부 가져오기를 눌렀다.
     private var queuedAll = false
     /// 받는 동안 들어온 요청의 끝 알림. 그 요청이 고른 프로젝트(nil이면 전부)에서 찾은 건수를 넘긴다.
@@ -635,6 +637,8 @@ final class DesignSync: ObservableObject {
                         // 링크로 고른 화면만 받았으면 그 화면의 경로를 엔진이 정해 둔다
                         if !capture.scoped { capture.menus = Set(current) }
                         capture.rules = rules(for: source.fileKey)
+                        // 넓힌 뒤 처음 보는 화면은 새로 생긴 것이 아니라 이제 지켜보기 시작한 것이라 기준만 세운다
+                        if widened.remove(source.fileKey) != nil { capture.fresh = Set(capture.screens.map(\.candidateID)) }
                         let events = history.record(capture, at: Date())
                         found += events
                         counts[source.fileKey] = events.count
@@ -914,10 +918,19 @@ final class DesignSync: ObservableObject {
         if updated != settings.sources[index].scope { settings.sources[index].scope = updated }
     }
 
+    /// 가져오기가 끝난 뒤 알릴 글. 받지 못하고 끝나도 건수는 0이라 오류를 먼저 본다.
+    func fetchMessage(_ count: Int, name: String? = nil, fileKey: String? = nil) -> String {
+        let prefix = name.map { "‘\($0)’ " } ?? ""
+        if count > 0 { return "\(prefix)변경 \(count)건을 찾았습니다" }
+        let failure = errors["*"] ?? (fileKey.map { errors[$0] } ?? errors.values.first)
+        return failure.map { "\(prefix)가져오지 못했습니다: \($0)" } ?? "\(prefix)새 변경이 없습니다"
+    }
+
     /// 링크로 고른 화면만 보던 파일을 전체로 넓힌다. 다음에 가져올 때 모든 화면을 받는다.
     func widen(_ fileKey: String) {
         guard let index = settings.sources.firstIndex(where: { $0.fileKey == fileKey }), !settings.sources[index].scope.isEmpty else { return }
         settings.sources[index].scope = []
+        widened.insert(fileKey)
         if syncing { menusChanged.insert(fileKey) }
         history.files[fileKey]?.lastModified = nil
         persist()
