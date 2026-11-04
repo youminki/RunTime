@@ -1,7 +1,7 @@
 import DesignSyncCore
 import Foundation
 
-/// 업데이트가 실패하거나 멈추거나 화면에서 일이 실패하거나 앱이 죽거나 멈추면 만든 사람에게 알린다. 순위 서버의 `/v1/reports`로 보내고, 서버가 메일로 넘긴다.
+/// 업데이트가 실패하거나 멈추거나 화면에서 일이 실패하거나 앱이 죽거나 멈추면 만든 사람에게 알린다. 보고 서버의 `/v1/reports`로 보내고, 서버가 메일로 넘긴다.
 /// 무작위 설치 ID, 앱 버전, macOS 버전, 까닭, 사용자 폴더·이름을 가린 기록 끝부분만 보낸다. 설정 > 일반 > 문제 기록에서 끈다.
 /// 같은 까닭은 서버가 하루 한 번만 메일로 보낸다. 메인 스레드에서만 쓴다.
 enum ProblemReporter {
@@ -15,6 +15,14 @@ enum ProblemReporter {
     }
 
     static let key = "reportProblems", installKey = "reportInstallID"
+
+    /// 보고를 받는 서버. 끝에 /가 있어야 상대 경로가 붙는다. 직접 띄운 서버로 바꾸려면
+    /// `defaults write dev.runtime.RunTime leaderboardURL <주소>`.
+    private static var serverURL: URL? {
+        let custom = UserDefaults.standard.string(forKey: "leaderboardURL").flatMap(URL.init(string:)).flatMap { $0.scheme == nil ? nil : $0 }
+        guard let url = custom ?? URL(string: "https://tokencat-leaderboard.youminki.workers.dev") else { return nil }
+        return url.absoluteString.hasSuffix("/") ? url : URL(string: url.absoluteString + "/")
+    }
 
     /// 기본은 켜 둔다. 다른 사람 Mac에서 생긴 문제는 그 사람이 알려 주기 전에는 알 수 없어서다.
     static var isOn: Bool {
@@ -96,7 +104,7 @@ enum ProblemReporter {
                      app: String? = nil, commit: String? = nil, log: String? = nil, done: ((Int) -> Void)? = nil) {
         // swift run처럼 install.sh를 거치지 않은 실행과 화면 점검은 보내지 않는다
         guard isOn, Bundle.main.infoDictionary?["RunTimeCommitSHA"] != nil, !CommandLine.arguments.contains("--ui-shots"),
-              let base = Leaderboard.shared.baseURL, let url = URL(string: "v1/reports", relativeTo: base) else { return }
+              let url = URL(string: "v1/reports", relativeTo: serverURL) else { return }
         let body = payload(kind, message, screen: screen, source: source, detail: detail, app: app, commit: commit, log: log)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

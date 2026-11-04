@@ -16,8 +16,6 @@ enum GameShots {
         guard let session = model.game else { return }
         let game = session.game
         let pilot = Autopilot(game: game)
-        // 순위 서버 없이 라이벌 목표·깃발·추월 배너가 보이게 가짜 두 명을 둔다
-        session.rivalSource = { [Rival(name: "토큰고양이", score: 160), Rival(name: "bob", score: 430)] }
 
         func step(_ seconds: Double, autoplay: Bool) {
             for _ in 0..<Int(seconds / frame) {
@@ -67,12 +65,12 @@ enum GameShots {
         ]
         session.companionOverride = PetdexStore.shared.pets.first.flatMap(PetdexStore.shared.character(for:))
         for (item, dust) in looks where game.phase == .playing {
-            GameWallet.shared.preview = [item, dust, .confettiCrash]
+            GameDecor.shared.preview = [item, dust, .confettiCrash]
             step(0.5, autoplay: true)
             try shot("2-play-\(item.rawValue)")
         }
         // 후반 모습: 5000점까지 달리며 1000점마다 한 장 (빨라진 속도, 몰려오는 장애물, 다섯 자리 점수)
-        GameWallet.shared.preview = nil
+        GameDecor.shared.preview = nil
         var nextLate = 1000
         while game.phase == .playing, game.score < 5000 {
             step(1, autoplay: true)
@@ -91,22 +89,20 @@ enum GameShots {
         while game.phase == .playing { step(0.02, autoplay: false) }
         step(0.12, autoplay: false)
         try shot("3-crash")
-        GameWallet.shared.preview = nil
+        GameDecor.shared.preview = nil
         step(0.6, autoplay: false)
         try shot("4-over")
 
         // 방금 판을 고스트로 두고 겨룬다. 같은 자동 플레이에 앞으로 조금 나가 고스트와 겹치지 않게 한다
         // 고스트는 그 판을 달린 러너 모습이어야 한다 (내 러너와 다르게 용으로)
         session.savedGhost = GhostStore.record(of: game, runner: Runner.dragon.rawValue)
-        let packed = GhostStore.packInputs(game.inputLog) ?? ""
-        let unpacked = GhostStore.unpackInputs(packed) ?? []
         let ok = GhostStore.verified(session.savedGhost!, tuning: game.tuning, runnerWidth: game.runnerWidth,
                                      runnerHeight: game.runnerHeight)
         var forged = session.savedGhost!
         forged = GhostRecord(seed: forged.seed, score: forged.score + 500, layout: forged.layout, inputs: forged.inputs)
         let forgedOK = GhostStore.verified(forged, tuning: game.tuning, runnerWidth: game.runnerWidth,
                                            runnerHeight: game.runnerHeight)
-        print("ghost inputs \(game.inputLog.count)개 → \(packed.count)자, 되풀기 \(unpacked == game.inputLog), 확인 \(ok), 부풀린 점수 \(forgedOK)")
+        print("ghost inputs \(game.inputLog.count)개, 확인 \(ok), 부풀린 점수 \(forgedOK)")
         try shot("5-over-ghost")
         session.startRace(session.savedGhost)
         game.setMove(forward: true)
@@ -153,14 +149,14 @@ enum GameBench {
         guard let session = model.game else { return }
         let game = session.game
         game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 3, glide: true))
-        GameWallet.shared.preview = [.rainbowTrail, .rainbowDust, .fireworksCrash]
+        GameDecor.shared.preview = [.rainbowTrail, .rainbowDust, .fireworksCrash]
         let pilot = Autopilot(game: game)
         session.press()
         session.release()
         measure("게임", model) { pilot.step() }
-        GameWallet.shared.preview = nil
+        GameDecor.shared.preview = nil
 
-        // 상점 칸 미리보기. 한 화면에 칸이 여러 개라 가장 무거운 칸을 본다
+        // 꾸미기 칸 미리보기. 한 화면에 칸이 여러 개라 가장 무거운 칸을 본다
         let cell = CGSize(width: 160, height: 62)
         var worst = (name: "", ms: 0.0), total = 0.0
         for item in Cosmetic.allCases {
@@ -171,7 +167,7 @@ enum GameBench {
             total += ms
             if ms > worst.ms { worst = (item.rawValue, ms) }
         }
-        print(String(format: "상점 칸: 평균 %.2fms, 가장 무거운 %@ %.2fms (20fps 한 칸이면 1초에 %.0fms)",
+        print(String(format: "꾸미기 칸: 평균 %.2fms, 가장 무거운 %@ %.2fms (20fps 한 칸이면 1초에 %.0fms)",
                      total / Double(Cosmetic.allCases.count), worst.name, worst.ms, worst.ms * 20))
     }
 }
@@ -181,7 +177,7 @@ enum GameBench {
 enum GameFrames {
     @MainActor
     static func run(to directory: URL, character: RunnerCharacter) throws {
-        // README GIF라 내 지갑 대신 예시 값을 쓴다 (팬아트인 Petdex 동료가 찍히지 않게)
+        // README GIF라 내 꾸미기 대신 예시 값을 쓴다 (팬아트인 Petdex 동료가 찍히지 않게)
         ReadmeShots.useDemoDefaults()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = StageModel()
@@ -213,7 +209,7 @@ enum GameFrames {
         session.savedGhost = GhostStore.record(of: game, runner: Runner.dragon.rawValue)
 
         // 꾸미기와 능력을 달고 고스트와 겨룬다. 앞뒤로 움직여 고스트와 겹치지 않게 한다
-        GameWallet.shared.preview = [.rainbowTrail, .rainbowDust]
+        GameDecor.shared.preview = [.rainbowTrail, .rainbowDust]
         game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 2))
         session.startRace(session.savedGhost)
         step(1.2)
@@ -242,7 +238,7 @@ enum GameFrames {
             game.setMove(back: k % 2 == 1)
             try step(1.1, every: 3, capture: capture)
         }
-        GameWallet.shared.preview = nil
+        GameDecor.shared.preview = nil
         print("frames \(index)")
     }
 }

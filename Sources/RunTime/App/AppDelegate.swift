@@ -82,7 +82,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         animator.compactProvider = { [weak self] in self?.currentLabel != nil }
         animator.set(display: .normal(.sleeping))
-        LeaderboardFeed.shared.start()
         // 설정·업무 일지 창이나 파일 고르는 창을 쓰는 중에는 업데이트가 앱을 끄지 않게 본다.
         // 업무 일지 창은 하루 종일 열어 두기도 해서, 다른 앱을 쓰는 동안은 쓰는 중으로 보지 않는다
         AppUpdater.shared.isInUse = { [weak self] in
@@ -309,7 +308,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         addHostsMenu(to: menu)
         menu.addItem(.separator())
         add("러너와 게임") { [weak self] in self?.showMain(.runners) }
-        add("게임 순위") { [weak self] in self?.openLeaderboard() }
         menu.addItem(.separator())
         add("설정…") { [weak self] in self?.openSettings() }
         add("업데이트 확인") { [weak self] in
@@ -472,7 +470,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   openDailyDetail: { [weak self] in self?.openDailyDetail() },
                                   openWorkLog: { [weak self] in self?.openWorkLog() },
                                   openDesign: { [weak self] in self?.showMain(.design) },
-                                  openLeaderboard: { [weak self] in self?.openLeaderboard() },
                                   openAsWindow: { [weak self] in self?.openUsageWindow() },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))
         // 내용 크기가 바뀌면 창 제약 대신 팝오버에 알려서, 팝오버가 메뉴바 쪽 자리를 지킨 채 크기를 바꾸게 한다
@@ -602,7 +599,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popoverFrameObservers = []
         anchorWindow?.orderOut(nil)
         // 상점에서 써 보던 트랙·날씨가 닫힌 뒤에도 남지 않게
-        GameWallet.shared.tryingOn = nil
+        GameDecor.shared.tryingOn = nil
         AppUpdater.shared.appClosedWindow()
     }
 
@@ -630,10 +627,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func openUsageWindow() { showMain(.usage) }
     private func openDailyDetail() { showMain(.usage) }
     private func openWorkLog() { showMain(.workLog) }
-    private func openLeaderboard() {
-        RunnerHubRequest.shared.section = .ranking
-        showMain(.runners)
-    }
 
     /// 앱 창을 열고 그 화면으로 간다. 이미 떠 있으면 지금 화면을 뒤로 가기 기록에 남기고 옮긴다.
     private func showMain(_ page: MainPage) {

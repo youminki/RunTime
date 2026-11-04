@@ -2,23 +2,18 @@ import AppKit
 import SwiftUI
 import UsageCore
 
-/// README 그림 (`--readme-shots <폴더>`): 내 사용량·지갑 대신 꾸민 예시 값으로 사용량 창, 상점, 창고, 퀘스트를 찍는다.
+/// README 그림 (`--readme-shots <폴더>`): 내 사용량 대신 꾸민 예시 값으로 사용량 창과 꾸미기를 찍는다.
 /// 예시 값은 저장하지 않는 임시 설정 영역에 두고, 실제 기록과 공식 사용량은 읽지 않는다.
 /// Petdex 펫은 사용자가 올린 팬아트라 README에 싣지 않게 동료를 비운다.
 @MainActor
 enum ReadmeShots {
-    /// GameWallet·AppSettings가 처음 읽히기 전에 불러야 한다.
+    /// GameDecor·AppSettings가 처음 읽히기 전에 불러야 한다.
     static func useDemoDefaults() {
-        let pending = (try? JSONEncoder().encode([GameWallet.PendingReward]())) ?? Data()
         UserDefaults.standard.setVolatileDomain([
             "runner": "cat", "customRunner": "", "spriteTheme": "auto",
             "gameCompanion": "",
-            "gameWalletCoins": 1280,
-            "gameCosmeticsOwned": ["pineTrack", "cityTrack", "snowWeather", "rainbowTrail", "fireTrail", "starDust",
-                                   "heartCrash"],
             "gameCosmeticsEquipped": ["pineTrack", "rainbowTrail", "starDust"],
-            "gameAbilityLevels": ["airJump": 1, "shield": 2],
-            "gamePendingRewards": pending,
+            "gameAbilitiesOn": ["airJump", "shield"],
         ], forName: UserDefaults.argumentDomain)
     }
 
@@ -34,11 +29,8 @@ enum ReadmeShots {
         Sky.hourOverride = 12
         let screens: [(String, AnyView)] = [
             ("usage", AnyView(PopoverView(engine: engine, settings: engine.settings))),
-            ("shop", AnyView(GameShopView(settings: engine.settings, tab: .track)
+            ("decor", AnyView(RunnerDecorView(settings: engine.settings, tab: .track)
                 .padding(14).frame(width: 376).background(Theme.background))),
-            ("storage", AnyView(StorageView(settings: engine.settings)
-                .padding(14).frame(width: 376).background(Theme.background))),
-            ("quests", AnyView(QuestView().padding(14).frame(width: 376).background(Theme.background))),
         ]
         let windows = screens.map { _, view -> NSWindow in
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
@@ -48,7 +40,7 @@ enum ReadmeShots {
             window.orderBack(nil)
             return window
         }
-        // 무대가 달리기 시작하고 상점 미리보기가 한 바퀴 돌 때까지 기다린다
+        // 무대가 달리기 시작하고 꾸미기 미리보기가 한 바퀴 돌 때까지 기다린다
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
             for ((name, _), window) in zip(screens, windows) {
                 guard let view = window.contentView,

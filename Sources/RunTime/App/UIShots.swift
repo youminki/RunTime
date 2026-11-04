@@ -3,7 +3,7 @@ import DesignSyncCore
 import SwiftUI
 import WorkLogCore
 
-/// 화면 점검: 팝오버·설정·일별·순위표를 실제 데이터로 창에 띄워 PNG로 저장한다.
+/// 화면 점검: 팝오버·설정·일별을 실제 데이터로 창에 띄워 PNG로 저장한다.
 /// `ImageRenderer`는 Form·Toggle 같은 AppKit 컨트롤을 그리지 못해서 창에 올린 뒤 그 뷰를 찍는다.
 /// 화면 점검 창. 화면 밖에 두어도 키 창이 되면 사용자가 다른 앱에서 치는 글자를 가져가서, 키 창이 되지 않게 한다.
 final class ShotWindow: NSWindow {
@@ -281,10 +281,8 @@ enum UIShots {
             ("popover", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings))),
             ("popover-runners", .darkAqua, nil,
              AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .runners))),
-            ("popover-shop", .darkAqua, nil,
-             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .shop))),
-            ("popover-storage", .darkAqua, nil,
-             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .storage))),
+            ("popover-decor", .darkAqua, nil,
+             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .decor))),
             ("main-usage", .darkAqua, nil, mainPage(.usage, engine: engine)),
             // 사용량 화면은 시스템 모습을 따른다
             ("main-usage-light", .aqua, nil, mainPage(.usage, engine: engine)),
@@ -295,11 +293,9 @@ enum UIShots {
                                               workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.runner))
                     .frame(width: mainSize.width, height: mainSize.height))
             }()),
-            ("main-runners-ranking", .darkAqua, nil, runnersTab(.ranking, engine: engine)),
             ("main-runners", .darkAqua, nil, mainPage(.runners, engine: engine)),
             // 러너 화면의 오른쪽 탭 (아이콘 막대를 뺀 폭으로)
-            ("main-runners-shop", .darkAqua, nil, runnersTab(.shop, engine: engine)),
-            ("main-runners-storage", .darkAqua, nil, runnersTab(.storage, engine: engine)),
+            ("main-runners-decor", .darkAqua, nil, runnersTab(.decor, engine: engine)),
             ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),
             ("main-worklog-dark", .darkAqua, nil, mainPage(.workLog, engine: engine)),
             ("main-calendar", .aqua, nil, mainPage(.calendar, engine: engine)),
@@ -342,17 +338,13 @@ enum UIShots {
                                               workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.usage))
                     .frame(width: mainSize.width, height: mainSize.height))
             }()),
-            ("storage", .darkAqua, nil, AnyView(StorageView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),
-            ("popover-quests", .darkAqua, nil,
-             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .quests))),
-            ("shop-buddy", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .buddy).padding(14).frame(width: 376).background(Theme.background))),
-            ("shop-track", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .track).padding(14).frame(width: 376).background(Theme.background))),
-            ("shop-weather", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .weather).padding(14).frame(width: 376).background(Theme.background))),
-            ("quests", .darkAqua, nil, AnyView(QuestView().padding(14).frame(width: 376).background(Theme.background))),
-            ("shop-ability", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .ability).padding(14).frame(width: 376).background(Theme.background))),
-            ("shop-trail", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .trail).padding(14).frame(width: 376).background(Theme.background))),
-            ("shop-dust", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .dust).padding(14).frame(width: 376).background(Theme.background))),
-            ("shop-crash", .darkAqua, nil, AnyView(GameShopView(settings: engine.settings, tab: .crash).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-buddy", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .buddy).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-track", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .track).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-weather", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .weather).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-ability", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .ability).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-trail", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .trail).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-dust", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .dust).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-crash", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .crash).padding(14).frame(width: 376).background(Theme.background))),
             ("welcome", .darkAqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("welcome-light", .aqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, close: {}).background(windowBackground))),
@@ -459,7 +451,7 @@ enum UIShots {
             window.orderBack(nil)
             return window
         }
-        // 무대 애니메이션과 비동기로 오는 순위·사용량이 자리 잡을 때까지 기다린다
+        // 무대 애니메이션과 비동기로 오는 사용량이 자리 잡을 때까지 기다린다
         func shot(_ name: String, _ window: NSWindow) {
             guard let view = window.contentView,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }

@@ -5,8 +5,8 @@ import AppKit
 @MainActor
 enum StageShots {
     static func run(to directory: URL, character: RunnerCharacter, wearing: [Cosmetic] = []) throws {
-        GameWallet.shared.preview = wearing.isEmpty ? nil : Set(wearing)
-        defer { GameWallet.shared.preview = nil }
+        GameDecor.shared.preview = wearing.isEmpty ? nil : Set(wearing)
+        defer { GameDecor.shared.preview = nil }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let displays: [(String, SpriteDisplay)] = [
             ("sleeping", .normal(.sleeping)), ("walking", .normal(.walking)), ("running", .normal(.running)),

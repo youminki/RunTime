@@ -263,7 +263,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--app-icon") {
     }
 }
 
-// README 그림: 예시 값으로 사용량 창, 상점, 창고, 퀘스트를 찍어 PNG로 저장하고 종료.
+// README 그림: 예시 값으로 사용량 창과 꾸미기를 찍어 PNG로 저장하고 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--readme-shots") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "readme-shots"
     let app = NSApplication.shared

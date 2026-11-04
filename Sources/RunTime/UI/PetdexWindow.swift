@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Petdex 펫 찾기 창. 팝오버·설정·상점 어디서 열든 같은 창 하나를 쓴다.
+/// Petdex 펫 찾기 창. 팝오버·설정·꾸미기 어디서 열든 같은 창 하나를 쓴다.
 /// 팝오버 안에서 시트를 띄우면 팝오버가 닫히며 시트도 사라져서 따로 창을 연다.
 @MainActor
 final class PetdexWindow {

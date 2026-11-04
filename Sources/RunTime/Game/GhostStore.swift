@@ -11,7 +11,7 @@ struct GhostRecord: Codable {
     let inputs: [RunnerGame.InputRecord]
     /// 그 판을 달린 러너 (AppSettings.runnerID). 고스트를 이 러너 모습으로 그린다.
     var runner: String?
-    /// 순위 고스트의 닉네임과 등수. 내 고스트는 nil.
+    /// 예전 순위 고스트의 닉네임과 등수. 내 고스트는 nil.
     var name: String?
     var rank: Int?
     /// 그 판에 쓴 능력. 같은 능력으로 돌려야 같은 판이 나온다.
@@ -60,21 +60,6 @@ enum GhostStore {
         }
     }
 
-    /// 순위 서버로 보낼 입력. JSON을 압축해 base64로 싼다.
-    static func packInputs(_ inputs: [RunnerGame.InputRecord]) -> String? {
-        guard let json = try? JSONEncoder().encode(inputs),
-              let packed = try? (json as NSData).compressed(using: .zlib) as Data
-        else { return nil }
-        return packed.base64EncodedString()
-    }
-
-    static func unpackInputs(_ text: String) -> [RunnerGame.InputRecord]? {
-        guard let packed = Data(base64Encoded: text),
-              let json = try? (packed as NSData).decompressed(using: .zlib) as Data
-        else { return nil }
-        return try? JSONDecoder().decode([RunnerGame.InputRecord].self, from: json)
-    }
-
     /// 끝까지 돌려 본 점수가 적힌 점수와 같은 고스트만 믿는다. 오래 걸릴 수 있어 메인 스레드 밖에서 부른다.
     static func verified(_ record: GhostRecord, tuning: RunnerGame.Tuning, runnerWidth: Double, runnerHeight: Double) -> Bool {
         guard let seed = record.seedValue else { return false }
@@ -83,65 +68,4 @@ enum GhostStore {
         return ghost.finalScore(maxTicks: maxReplayTicks) == record.score
     }
 
-    /// 순위 서버에는 능력을 따로 둘 칸이 없어 layout 뒤에 붙여 보낸다 ("<layout>;abilities=<JSON>").
-    /// 능력이 없으면 layout 그대로라 옛 앱이 올린 고스트와 같다.
-    private static let abilitiesMark = ";abilities="
-
-    static func remoteLayout(_ record: GhostRecord) -> String {
-        guard let abilities = record.abilities, let json = try? JSONEncoder().encode(abilities),
-              let text = String(data: json, encoding: .utf8) else { return record.layout }
-        return record.layout + abilitiesMark + text
-    }
-
-    static func splitRemoteLayout(_ text: String) -> (layout: String, abilities: RunnerGame.Abilities?) {
-        guard let range = text.range(of: abilitiesMark) else { return (text, nil) }
-        let json = Data(text[range.upperBound...].utf8)
-        return (String(text[..<range.lowerBound]), try? JSONDecoder().decode(RunnerGame.Abilities.self, from: json))
-    }
-}
-
-/// 순위 1위(고스트를 올린 사람 가운데 가장 높은 점수)의 고스트. 게임을 켤 때 받아 두고 1분마다 새로 받는다.
-final class TopGhost {
-    static let all = TopGhost(.all)
-    static let week = TopGhost(.week)
-
-    let period: Leaderboard.Period
-    private(set) var record: GhostRecord?
-
-    private init(_ period: Leaderboard.Period) {
-        self.period = period
-    }
-    private var fetchedAt: Date?
-    private var loading = false
-
-    /// 이 규칙으로 돌릴 수 있고, 돌려 본 점수가 순위 점수와 같은 고스트만 둔다.
-    func refresh(for game: RunnerGame) {
-        guard !loading, Leaderboard.shared.isAvailable,
-              fetchedAt.map({ Date().timeIntervalSince($0) > 60 }) ?? true else { return }
-        loading = true
-        let layout = GhostStore.layout(of: game)
-        let tuning = game.tuning, width = game.runnerWidth, height = game.runnerHeight
-        Leaderboard.shared.fetchTopGhost(period) { [weak self] result in
-            guard let self else { return }
-            self.fetchedAt = Date()
-            let split = (try? result.get()).flatMap { $0 }.map { GhostStore.splitRemoteLayout($0.layout) }
-            guard case .success(let remote) = result, let remote, let split, split.layout == layout,
-                  let inputs = GhostStore.unpackInputs(remote.inputs)
-            else {
-                if case .success = result { self.record = nil }   // 서버에 없으면 지운다 (실패면 둔다)
-                self.loading = false
-                return
-            }
-            let record = GhostRecord(seed: remote.seed, score: remote.score, layout: split.layout, inputs: inputs,
-                                     runner: remote.runner, name: remote.nickname, rank: remote.rank,
-                                     abilities: split.abilities)
-            DispatchQueue.global(qos: .utility).async {
-                let ok = GhostStore.verified(record, tuning: tuning, runnerWidth: width, runnerHeight: height)
-                DispatchQueue.main.async {
-                    self.record = ok ? record : nil
-                    self.loading = false
-                }
-            }
-        }
-    }
 }

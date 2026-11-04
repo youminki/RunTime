@@ -8,7 +8,7 @@ struct RunnerPicker: View {
     @ObservedObject var settings: AppSettings
     /// 팝오버처럼 파일 창을 띄우면 닫혀 버리는 곳에서는 그림 불러오기를 이 동작(팝오버를 닫고 파일 창 열기)으로 넘긴다.
     var importInPlace: (() -> Void)?
-    /// 팝오버처럼 늘 어두운 곳에서는 상점·창고와 같은 칸 틀을 쓴다. 설정 창은 시스템 밝기를 따른다.
+    /// 팝오버처럼 늘 어두운 곳에서는 꾸미기와 같은 칸 틀을 쓴다. 설정 창은 시스템 밝기를 따른다.
     var gameStyle = false
     @ObservedObject private var store = CustomRunnerStore.shared
     @ObservedObject private var petdex = PetdexStore.shared
@@ -154,7 +154,7 @@ struct RunnerPicker: View {
         .contentShape(Rectangle())
     }
 
-    /// 칸 바탕. 팝오버는 상점과 같은 칸 틀, 설정 창은 밝기에 맞춘 캐릭터 바탕.
+    /// 칸 바탕. 팝오버는 꾸미기와 같은 칸 틀, 설정 창은 밝기에 맞춘 캐릭터 바탕.
     private struct TileFrame: ViewModifier {
         let gameStyle: Bool
         let selected: Bool
@@ -162,7 +162,7 @@ struct RunnerPicker: View {
 
         func body(content: Content) -> some View {
             if gameStyle {
-                content.rarityFrame(nil, highlight: selected ? Theme.accent : nil, radius: 8)
+                content.slotFrame(highlight: selected ? Theme.accent : nil, radius: 8)
             } else {
                 content
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous)

@@ -86,22 +86,6 @@ extension GameSession {
             }
         }
 
-        // 다음 목표 깃발
-        if let x = flagX(), x > -10, x < size.width + 10 {
-            cg.setStrokeColor(NSColor(white: 0.92, alpha: 0.9).cgColor)
-            cg.setLineWidth(1.5)
-            cg.move(to: CGPoint(x, groundY))
-            cg.addLine(to: CGPoint(x, groundY - 46))
-            cg.strokePath()
-            let wave = CGFloat(sin(time * 8)) * 1.5
-            cg.setFillColor(NSColor(hex: 0xFF6B5E).cgColor)
-            cg.move(to: CGPoint(x, groundY - 46))
-            cg.addLine(to: CGPoint(x + 15, groundY - 41 + wave))
-            cg.addLine(to: CGPoint(x, groundY - 36))
-            cg.closePath()
-            cg.fillPath()
-        }
-
         if let ghost = ghost?.game {
             let left = Self.runnerX + CGFloat(ghost.distance + ghost.runnerOffset - game.distance)
             if left > -60, left < size.width + 20 {

@@ -70,12 +70,12 @@ extension GameSession {
 
     /// 발을 디딜 때 먼지. 상점 발먼지를 달면 그 색과 모양으로.
     func dust(at feet: CGPoint, landing: Bool) {
-        spray(GameFX.dust(GameWallet.shared.equipped(.dust), landing: landing), at: feet)
+        spray(GameFX.dust(GameDecor.shared.equipped(.dust), landing: landing), at: feet)
     }
 
     /// 부딪힌 순간. 기본은 흰 점, 상점 효과를 달면 그 모양으로 터진다.
     func crashBurst(at center: CGPoint) {
-        for part in GameFX.crash(GameWallet.shared.equipped(.crash)) {
+        for part in GameFX.crash(GameDecor.shared.equipped(.crash)) {
             // offset의 y는 위로 + (입자 좌표처럼 바닥 위 높이)
             spray(part.spray, at: CGPoint(center.x + part.offset.x, center.y + part.offset.y))
         }
@@ -87,7 +87,7 @@ extension GameSession {
     }
 
     func updateTrail(_ k: CGFloat) {
-        guard game.phase == .playing, GameWallet.shared.equipped(.trail) != nil else {
+        guard game.phase == .playing, GameDecor.shared.equipped(.trail) != nil else {
             if !trail.isEmpty { trail.removeFirst() }
             return
         }
@@ -99,14 +99,14 @@ extension GameSession {
     }
 
     func drawTrail(_ cg: CGContext, groundY: CGFloat, time: Double) {
-        guard let item = GameWallet.shared.equipped(.trail) else { return }
+        guard let item = GameDecor.shared.equipped(.trail) else { return }
         GameFX.drawTrail(item, points: trail.map { CGPoint($0.x, groundY - $0.y) }, time: time, cg)
     }
 
     // MARK: 동료
 
     /// 데려간 Petdex 펫. 점검 도구는 저장하지 않고 바꿔 본다.
-    var companion: RunnerCharacter? { companionOverride ?? GameWallet.shared.companion }
+    var companion: RunnerCharacter? { companionOverride ?? GameDecor.shared.companion }
 
     /// 동료는 러너 뒤에서 조금 늦게 따라 뛴다. 러너 높이를 0.15초 늦춰 쓴다 (화면 주사율과 상관없이).
     func updateBuddy() {

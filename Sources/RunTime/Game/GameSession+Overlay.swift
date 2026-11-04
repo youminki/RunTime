@@ -44,10 +44,9 @@ extension GameSession {
                                 position: CGPoint(12, 10), anchor: .topLeading, opacity: hudAlpha))
             // 점수 아래 한 줄: 최고 점수, 먹은 코인, 남은 보호막
             var line = Text(verbatim: "BEST \(max(game.best, game.score))").foregroundColor(.white.opacity(0.6))
-            if game.coinsTaken > 0 || boosted {
+            if game.coinsTaken > 0 {
                 line = line + Text("   ") + Text(Image(systemName: "circle.fill")).foregroundColor(gold)
                     + Text(verbatim: " \(game.coinsTaken)").foregroundColor(gold)
-                if boosted { line = line + Text(" ×2").foregroundColor(gold.opacity(0.75)) }
             }
             if game.abilities.shields > 0 {
                 line = line + Text("   ") + Text(Image(systemName: "shield.fill"))
@@ -61,30 +60,11 @@ extension GameSession {
                                     .foregroundColor(gold.opacity(Double(min(1, popup.life * 2)))),
                                 position: CGPoint(popup.position.x, (size.height - 15) - popup.position.y - 14)))
         }
-        if game.phase == .playing, let next = tracker.next {
-            // 오른쪽 위 단추와 겹치지 않게 긴 닉네임은 자른다
-            let name = next.name.count > 6 ? next.name.prefix(6) + "…" : Substring(next.name)
-            labels.append(Label(text: (Text(Image(systemName: "flag.fill")).foregroundColor(Color(nsColor: NSColor(hex: 0xFF6B5E)))
-                                       + Text(" \(String(name))까지 ").foregroundColor(.white.opacity(0.7))
-                                       + Text(verbatim: "\(max(0, next.score + 1 - game.score))").foregroundColor(.white))
-                                    .font(caption),
-                                position: CGPoint(size.width / 2, 14)))
-            if let x = flagX(), x > 0, x < size.width {
-                labels.append(Label(text: Text(next.name).font(.system(size: 9.5, weight: .bold))
-                                        .foregroundColor(.white),
-                                    position: CGPoint(x + 8, size.height - 15 - 56)))
-            }
-        }
         if game.phase == .playing, let lead = raceLead, let raceTarget {
             let who = Self.shortName(raceTarget.name)
             let text = lead > 0 ? "\(who) 추월 +\(lead)" : "\(who)까지 \(1 - lead)"
             labels.append(Label(text: Text(text).font(caption).foregroundColor(lead > 0 ? gold : .white.opacity(0.85)),
                                 position: CGPoint(size.width / 2, 14)))
-        }
-        if let overtaken, game.phase == .playing {
-            labels.append(Label(text: Text("\(overtaken.name) 추월!").font(GameFont.pixel(18))
-                                    .foregroundColor(gold.opacity(Double(min(1, overtaken.life * 2)))),
-                                position: CGPoint(size.width / 2, 34)))
         }
         if let zoneBanner, game.phase == .playing {
             labels.append(Label(text: Text(zoneBanner.text).font(GameFont.pixel(18))
@@ -99,7 +79,7 @@ extension GameSession {
         if recordBanner > 0, game.phase == .playing {
             labels.append(Label(text: Text("신기록!").font(GameFont.pixel(18))
                                     .foregroundColor(gold.opacity(Double(min(1, recordBanner * 3)))),
-                                position: CGPoint(size.width / 2, overtaken == nil ? 34 : 52)))
+                                position: CGPoint(size.width / 2, 34)))
         }
 
         // 시작·결과 카드는 오른쪽에 두어 왼쪽의 러너와 부딪힌 장애물이 가려지지 않게 한다
@@ -108,13 +88,9 @@ extension GameSession {
         let cardLeft = runnerLeft + CGFloat(Self.runnerWidth) / 2 > size.width / 2 ? 10 : size.width - cardWidth - 10
         let cardTop: CGFloat = 36
         let inset = cardLeft + 12
-        // 고스트 단축키. 두 개까지 한 줄에 두고 키 글자만 금색으로
+        // 고스트 단축키. 키 글자만 금색으로
         var races: [(key: String, text: String)] = []
         if let savedGhost { races.append(("G", "내 고스트 \(savedGhost.score)")) }
-        if let top = TopGhost.all.record {
-            races.append(("1", "\(top.rank.map { "\($0)위" } ?? "1위") \(Self.shortName(top.name))"))
-        }
-        if let week = weekGhost { races.append(("2", "주간 \(Self.shortName(week.name))")) }
         let raceText = races.prefix(2).enumerated().reduce(Text("")) { line, item in
             line + Text(item.offset == 0 ? "" : "   ") + Text(item.element.key).foregroundColor(gold)
                 .font(.system(size: 10.5, weight: .heavy).monospaced())
@@ -141,11 +117,11 @@ extension GameSession {
             }
             card(height: height)
         case .over:
-            // 겨루는 판은 순위 대신 고스트와의 차이를 보여 준다
+            // 겨루는 판은 고스트와의 차이를 보여 준다
             let raceLine = raceLead.map { lead in
                 lead > 0 ? "\(lead)점 앞섬 · 기록에는 남지 않음" : "\(-lead + 1)점 모자람"
             }
-            let middle = raceLine ?? rankLine
+            let middle = raceLine
             let won = (raceLead ?? 0) > 0
             let who = raceTarget?.name.map { "\(Self.shortName($0)) 고스트" } ?? "고스트"
             let title = isRace ? (won ? "\(who)를 이겼다" : "\(who)에게 졌다")

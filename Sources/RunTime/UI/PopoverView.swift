@@ -12,14 +12,13 @@ struct PopoverView: View {
     var openDailyDetail: () -> Void = {}
     var openWorkLog: () -> Void = {}
     var openDesign: () -> Void = {}
-    var openLeaderboard: () -> Void = {}
     /// 팝오버를 닫고 같은 화면을 창으로 띄운다. 창 안에서는 비워 두어 단추를 숨긴다.
     var openAsWindow: (() -> Void)?
     /// 무대에서 러너를 누르거나 메뉴에서 동작을 고르면 메뉴바 러너도 같은 동작을 한다.
     var performTrick: (Trick) -> Void = { _ in }
-    /// 화면 점검에서 러너·상점·퀘스트 화면을 바로 띄울 때.
+    /// 화면 점검에서 러너·꾸미기 화면을 바로 띄울 때.
     var startSection: PopoverPage.Section?
-    /// 팝오버인지, 앱 창의 어느 화면인지. 창에서는 사용량과 러너(게임·꾸미기·순위)를 따로 크게 보인다.
+    /// 팝오버인지, 앱 창의 어느 화면인지. 창에서는 사용량과 러너(게임·꾸미기)를 따로 크게 보인다.
     var layout: Layout = .popover
 
     enum Layout { case popover, usagePage, runnersPage }
@@ -34,7 +33,6 @@ struct PopoverView: View {
     @StateObject private var page = PopoverPage()
     @ObservedObject private var customRunners = CustomRunnerStore.shared
     @ObservedObject private var petdex = PetdexStore.shared
-    @ObservedObject private var wallet = GameWallet.shared
     @ObservedObject private var design = DesignSync.shared
     @ObservedObject private var updater = AppUpdater.shared
     @ObservedObject private var switcher = AccountSwitcher.shared
@@ -82,13 +80,6 @@ struct PopoverView: View {
                 page.showsRunners = true
             }
         }
-        // 메뉴바 메뉴의 "순위"처럼 밖에서 러너 화면의 탭을 고를 때
-        .onReceive(RunnerHubRequest.shared.$section.compactMap { $0 }) { section in
-            guard layout == .runnersPage else { return }
-            page.section = section
-            // @Published는 값을 넣기 전에 알려, 여기서 바로 비우면 보낸 쪽의 대입이 뒤에 끝나 요청이 남는다
-            DispatchQueue.main.async { RunnerHubRequest.shared.section = nil }
-        }
     }
 
     private var stage: some View { stage(height: RunnerStage.height) }
@@ -97,8 +88,6 @@ struct PopoverView: View {
     private func stage(height: CGFloat) -> some View {
         RunnerStage(display: display, character: settings.character, theme: settings.spriteTheme,
                     onPet: performTrick,
-                    // 창의 러너 화면은 순위를 옆 탭에 두어 화면을 옮기지 않는다
-                    openLeaderboard: layout == .runnersPage ? { [page] in page.section = .ranking } : openLeaderboard,
                     trickRequest: page.trick,
                     claudeFinished: engine.turnEnded.eraseToAnyPublisher(), tempo: engine.tempo,
                     reactions: engine.reacted.eraseToAnyPublisher(), height: height)
@@ -183,29 +172,26 @@ struct PopoverView: View {
         }
     }
 
-    /// 이 Mac의 최고 점수, 판 수, 코인. 순위 서버에 참여하지 않아도 보인다.
+    /// 이 Mac의 최고 점수와 판 수.
     private var gameRecord: some View {
         Card(padding: 0) {
             HStack(spacing: 0) {
                 StatColumn(label: "내 최고 점수", value: GameRecords.best.formatted())
                 Rectangle().fill(Theme.hairline).frame(width: 1)
                 StatColumn(label: "판 수", value: GameRecords.plays.formatted(), unit: "판")
-                Rectangle().fill(Theme.hairline).frame(width: 1)
-                StatColumn(label: "코인", value: wallet.coins.formatted())
-                    .tip("러너 화면의 상점에서 꾸미기를 삽니다")
             }
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 4)
     }
 
-    /// 창의 러너 화면: 왼쪽에 키운 무대와 조작법·내 기록·퀘스트, 오른쪽에 러너·상점·창고·순위 탭.
-    /// 게임과 꾸미기를 한 화면에 두어, 산 꾸미기를 바로 무대에서 써 보고 그 자리에서 게임과 순위를 본다.
+    /// 창의 러너 화면: 왼쪽에 키운 무대와 조작법·내 기록, 오른쪽에 러너·꾸미기 탭.
+    /// 게임과 꾸미기를 한 화면에 두어, 고른 꾸미기를 바로 무대에서 써 본다.
     private var runnersPage: some View {
         HStack(alignment: .top, spacing: 24) {
             GeometryReader { geo in
                 // 장면은 팝오버 무대와 같은 348×150으로 계산하고 비율을 지킨 채 키운다.
-                // 장면 폭이 창마다 달라지면 장애물을 미리 보는 거리가 달라져 순위 점수가 공정하지 않다.
+                // 장면 폭이 창마다 달라지면 장애물을 미리 보는 거리가 달라져 최고 점수를 견줄 수 없다.
                 // 2배보다 크게 키우면 픽셀 그림·효과 그림이 흐려지고 점수판 글자가 화면을 가려 그만큼에서 멈춘다
                 let height = max(RunnerStage.height,
                                  min(geo.size.width / Self.stageRatio, geo.size.height - 330,
@@ -215,10 +201,6 @@ struct PopoverView: View {
                     stageCaption
                     gameKeys
                     gameRecord
-                    // 남는 높이에는 오늘·이번 주 퀘스트를 늘 보이게 둔다
-                    Rectangle().fill(Theme.hairline).frame(height: 1)
-                    SlimScrollView { QuestView().padding(.horizontal, 2).padding(.bottom, 4) }
-                        .frame(maxHeight: .infinity)
                 }
                 .frame(width: height * Self.stageRatio)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -230,7 +212,6 @@ struct PopoverView: View {
         .padding(.horizontal, 28)
         .padding(.vertical, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { if page.section == .quests { page.section = .runners } }
     }
 
     static let sideStageWidth: CGFloat = 400
@@ -402,26 +383,18 @@ struct PopoverView: View {
 
     // MARK: 러너 고르기
 
-    /// 러너 이름을 누르면 아래 사용량 대신 러너·상점·퀘스트 화면을 띄운다. 무대는 위에 그대로 두어 고른 러너와 꾸미기가 바로 보인다.
+    /// 러너 이름을 누르면 아래 사용량 대신 러너·꾸미기 화면을 띄운다. 무대는 위에 그대로 두어 고른 러너와 꾸미기가 바로 보인다.
     private var runnerPage: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 hubTabs
                 Spacer(minLength: 4)
-                coinBalance
             }
-            if page.section == .ranking {
-                // 순위는 자기 목록을 스스로 넘기고 참여 칸을 바닥에 붙여 둔다
-                LeaderboardView().frame(maxHeight: .infinity)
-            } else {
             SlimScrollView {
                 Group {
                     switch page.section {
                     case .runners: RunnerPicker(settings: settings, importInPlace: importRunner, gameStyle: true)
-                    case .shop: GameShopView(settings: settings)
-                    case .storage: StorageView(settings: settings) { page.section = .shop }
-                    case .quests: QuestView()
-                    case .ranking: EmptyView()
+                    case .decor: RunnerDecorView(settings: settings)
                     }
                 }
                 .padding(.horizontal, 2)
@@ -430,8 +403,7 @@ struct PopoverView: View {
             // 팝오버는 사용량 화면과 높이를 맞춰 전환할 때 출렁이지 않게 고정하고, 창에서는 남은 높이를 다 쓴다
             .frame(height: windowed ? nil : 304)
             .frame(maxHeight: windowed ? .infinity : nil)
-            }
-            // 시스템 단추 대신 상점·창고와 같은 단추로 둔다
+            // 시스템 단추 대신 꾸미기와 같은 단추로 둔다
             HStack(spacing: 6) {
                 if !windowed {
                     Button { page.showsRunners = false } label: {
@@ -479,24 +451,13 @@ struct PopoverView: View {
         }
     }
 
-    /// 러너·상점·창고·퀘스트. 퀘스트에는 오늘 남은 미션 수를 붙인다.
+    /// 러너·꾸미기 탭.
     private var hubTabs: some View {
         HStack(spacing: 2) {
-            // 팝오버는 폭이 좁아 순위를 앱 창으로 넘긴다 (무대의 트로피 단추)
-            // 창에서는 퀘스트를 무대 아래에 늘 보이므로 탭에서 뺀다
-            ForEach(PopoverPage.Section.allCases.filter { windowed ? $0 != .quests : $0 != .ranking }, id: \.self) { section in
+            ForEach(PopoverPage.Section.allCases, id: \.self) { section in
                 let on = page.section == section
                 Button { page.section = section } label: {
-                    HStack(spacing: 4) {
-                        Text(section.title)
-                        if section == .quests, questsLeft > 0 {
-                            Text("\(questsLeft)")
-                                .font(.system(size: 9, weight: .heavy).monospacedDigit())
-                                .foregroundStyle(.white)
-                                .frame(minWidth: 15, minHeight: 15)
-                                .background(Circle().fill(wallet.pending.isEmpty ? Theme.critical : Theme.positive))
-                        }
-                    }
+                    Text(section.title)
                     .font(.system(size: 11.5, weight: on ? .semibold : .medium))
                     .foregroundStyle(on ? Theme.primary : Theme.secondary)
                     .padding(.horizontal, 10)
@@ -505,38 +466,13 @@ struct PopoverView: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(section == .quests && questsLeft > 0
-                    ? "\(section.title), \(wallet.pending.isEmpty ? "남은 미션" : "받을 보상") \(questsLeft)개" : section.title)
+                .accessibilityLabel(section.title)
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
         .padding(2)
         .background(Capsule().fill(GameKit.slot))
         .overlay(Capsule().strokeBorder(Theme.hairline))
-    }
-
-    /// 받을 보상이 있으면 그 수, 없으면 오늘 남은 미션 수.
-    private var questsLeft: Int {
-        if !wallet.pending.isEmpty { return wallet.pending.count }
-        let daily = wallet.missions
-        return daily.missions.count - daily.doneCount
-    }
-
-    private var coinBalance: some View {
-        HStack(spacing: 4) {
-            CoinIcon(size: 15)
-            Text(wallet.coins.formatted()).contentTransition(.numericText())
-                .font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
-                .foregroundStyle(GameKit.gold)
-        }
-        .padding(.leading, 4).padding(.trailing, 9)
-        .frame(height: 24)
-        .background(Capsule().fill(GameKit.slot))
-        .overlay(Capsule().strokeBorder(GameKit.gold.opacity(0.3)))
-        .animation(.easeOut(duration: 0.25), value: wallet.coins)
-        .tip("미니게임에서 먹은 코인과 퀘스트 보상. Claude가 일하는 동안 한 판은 두 배")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("코인 \(wallet.coins)개")
     }
 
     // MARK: 세션 · 주간
@@ -821,15 +757,12 @@ final class HoverIndex: ObservableObject {
 /// 팝오버 안 화면과 무대에 보낼 동작. `@State`를 못 쓰는 이유는 HoverFlag 참고.
 final class PopoverPage: ObservableObject {
     enum Section: CaseIterable {
-        case runners, shop, storage, quests, ranking
+        case runners, decor
 
         var title: String {
             switch self {
             case .runners: "러너"
-            case .shop: "상점"
-            case .storage: "창고"
-            case .quests: "퀘스트"
-            case .ranking: "순위"
+            case .decor: "꾸미기"
             }
         }
     }
@@ -839,8 +772,3 @@ final class PopoverPage: ObservableObject {
     @Published var trick: TrickRequest?
 }
 
-/// 앱 창의 러너 화면에 열어 달라고 보내는 탭 (메뉴바 메뉴의 "순위" 등). 받은 화면이 비운다.
-final class RunnerHubRequest: ObservableObject {
-    static let shared = RunnerHubRequest()
-    @Published var section: PopoverPage.Section?
-}

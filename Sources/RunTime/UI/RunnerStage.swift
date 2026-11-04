@@ -10,7 +10,6 @@ struct RunnerStage: View {
     let character: RunnerCharacter
     let theme: SpriteTheme
     var onPet: (Trick) -> Void = { _ in }
-    var openLeaderboard: () -> Void = {}
     /// 메뉴에서 고른 동작. 바뀔 때마다 무대 러너가 그 동작을 한다.
     var trickRequest: TrickRequest?
     /// Claude가 대화 차례를 마쳤다 (폴더 이름).
@@ -73,14 +72,11 @@ struct RunnerStage: View {
         .background(WindowReader { model.window = $0 })
         .onHover { model.setPointer($0) }
         .onAppear {
-            model.listenForNews()
             model.greet(display: display)
         }
         .onDisappear {
             model.setPointer(false)   // 커서를 올린 채 팝오버가 닫혀도 짝을 맞춘다
-            _ = model.game?.creditRun()   // 판 도중에 닫아도 먹은 코인을 넣는다
             model.popoverClosed()
-            LeaderboardFeed.shared.stageDisappeared()
         }
         .tip(model.game == nil ? "러너를 누르면 장난을 쳐요"
               : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓·오른쪽 클릭 숙이기, ←→ 이동, G·1·2 고스트와 겨루기, esc 나가기")
@@ -93,9 +89,6 @@ struct RunnerStage: View {
     /// 오른쪽 위 작은 단추: 게임 켜기, 게임 중에는 소리와 나가기.
     private var controls: some View {
         HStack(spacing: 4) {
-            if Leaderboard.shared.isAvailable {
-                StageButton(systemImage: "trophy.fill", label: "순위", action: openLeaderboard).tip("순위")
-            }
             if model.game == nil {
                 StageButton(systemImage: "gamecontroller.fill", title: "게임") { model.startGame(character: character) }
                     .tip("장애물 피하기 게임 (최고 \(GameRecords.best)점)")
@@ -156,7 +149,7 @@ struct RunnerStage: View {
                     .tip(updater.incoming.isEmpty ? "누르면 바로 업데이트해요"
                          : "누르면 바로 업데이트해요\n" + updater.incoming.map { "· \($0)" }.joined(separator: "\n"))
                     .scaleEffect(scale)
-                    // 오른쪽 위 순위·게임 단추 줄 아래에 둔다
+                    // 오른쪽 위 게임 단추 줄 아래에 둔다
                     .position(x: min(geo.size.width * StageModel.runnerAnchor + 100 * scale, geo.size.width - 100 * scale),
                               y: 46 * scale)
                     .transition(.opacity.combined(with: .offset(y: 3)))
@@ -286,26 +279,8 @@ final class StageModel: ObservableObject {
         let session = GameSession(character: character, live: !rehearsal)
         session.window = { [weak self] in self?.window }
         session.onExit = { [weak self] in self?.endGame() }
-        session.rivalSource = { LeaderboardFeed.shared.rivals }
-        session.onFinish = { [weak self, weak session] game in
+        session.onFinish = { [weak self] game in
             if game.isNewRecord { DispatchQueue.main.async { self?.say("신기록!", seconds: 1.6) } }
-            guard !rehearsal, let run = session?.runID else { return }
-            // 판 사이에 미뤄 둔 순위 소식
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.deliverNews() }
-            // 다음 판이 game을 다시 쓰므로 고스트는 지금 떠 둔다
-            let ghost = GhostStore.record(of: game, runner: AppSettings.shared.shareableRunnerID)
-            Leaderboard.shared.submit(game) { result in
-                // 올린 결과로 1위가 됐는지, 라이벌이 바뀌었는지 바로 다시 본다
-                if case .success = result {
-                    LeaderboardFeed.shared.refresh()
-                    Leaderboard.shared.uploadGhost(ghost)
-                }
-                guard let session, session.runID == run else { return }
-                switch result {
-                case .success(let rank): session.rankLine = "전체 \(rank.rank)위 · \(rank.total)명"
-                case .failure(let error): session.rankLine = error.localizedDescription
-                }
-            }
         }
         game = session
         bubble = nil
@@ -342,34 +317,13 @@ final class StageModel: ObservableObject {
 
     // MARK: 말풍선·장난
 
-    /// 순위 소식을 듣는다. 열 때 한 번 받고, 열려 있는 동안 30초마다 받는다.
-    func listenForNews() {
-        LeaderboardFeed.shared.onNews = { [weak self] in self?.deliverNews() }
-        LeaderboardFeed.shared.stageAppeared()
-    }
-
-    /// 쌓인 소식을 차례로 말한다. 게임 중이면 판이 끝날 때까지 미룬다.
-    func deliverNews() {
-        guard game?.game.phase != .playing, LeaderboardFeed.shared.hasNews else { return }
-        for (i, line) in LeaderboardFeed.shared.takeNews().enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45 + Double(i) * 2.9) { [weak self] in
-                self?.say(line, seconds: 2.6)
-            }
-        }
-    }
-
     func greet(display: SpriteDisplay) {
         AppUpdater.shared.checkIfStale()
-        // 업데이트 소식, 자리를 비운 사이 생긴 순위 소식 순서로 인사 대신 먼저 말한다
+        // 업데이트 소식이 있으면 인사 대신 먼저 말한다
         if let update = AppUpdater.shared.takeBubble() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
                 self?.say(update, seconds: 2.8)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self?.deliverNews() }
             }
-            return
-        }
-        if LeaderboardFeed.shared.hasNews {
-            deliverNews()
             return
         }
         let hour = Calendar.current.component(.hour, from: Date())
@@ -522,7 +476,7 @@ final class StageModel: ObservableObject {
                                   width: shadowW, height: 5))
 
         // 데려간 Petdex 펫이 러너 뒤를 따라 걷는다 (멈춰 있으면 제자리에서 숨 쉰다)
-        if let companion = GameWallet.shared.companion {
+        if let companion = GameDecor.shared.companion {
             let x = origin.x + bounds.minX * scale - 26
             let moving = speed > 1
             cg.setFillColor(NSColor.black.withAlphaComponent(0.22).cgColor)
@@ -553,7 +507,7 @@ final class StageModel: ObservableObject {
         let leftEdge = -origin.x / scale
         let loopPhase = gait - floor(gait)
         // 무대는 메뉴바보다 훨씬 커서 흐린 잔상과 빛 꼬리가 번져 보인다. 전력 질주도 공기 줄만 쓰고,
-        // 그 대신 하늘 바람 줄·상점 꼬리·발먼지로 빠르기를 보인다
+        // 그 대신 하늘 바람 줄·꼬리·발먼지로 빠르기를 보인다
         let effects = Self.stageEffects(display)
         if playing == nil {
             effects.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: false, leftEdge: leftEdge)
@@ -638,7 +592,7 @@ final class StageModel: ObservableObject {
 
     private func drawBackdrop(_ cg: CGContext, size: CGSize, sky: Sky, time: CGFloat, groundY: CGFloat) {
         Backdrop.draw(cg, size: size, sky: sky, time: time, groundY: groundY, scroll: scroll, speed: speed,
-                      track: GameWallet.shared.equipped(.track), weather: GameWallet.shared.equipped(.weather))
+                      track: GameDecor.shared.equipped(.track), weather: GameDecor.shared.equipped(.weather))
     }
 
     /// 질주할 때 하늘을 가로지르는 공기 줄. 앞머리가 진하고 꼬리로 갈수록 옅어진다.

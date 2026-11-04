@@ -2,7 +2,7 @@ import AppKit
 import GameCore
 
 /// 팝오버 무대에서 러너가 달리는 동안 생기는 일들. 길 위 코인을 줍고, 빠를 때는 작은 장애물을 뛰어넘고,
-/// 발을 디딜 때마다 상점 발먼지가 일고 등 뒤로 상점 꼬리가 끌린다. 하늘에는 시간대에 맞는 새나 별똥별이 지나간다.
+/// 발을 디딜 때마다 고른 발먼지가 일고 등 뒤로 고른 꼬리가 끌린다. 하늘에는 시간대에 맞는 새나 별똥별이 지나간다.
 /// 자리는 모두 땅 좌표(scroll 기준)로 두어 배경과 같은 속도로 흘러간다.
 final class StageExtras {
     private enum Kind { case coin, hurdle(GameSprite) }
@@ -139,7 +139,7 @@ final class StageExtras {
             lastStep = step
             wasAirborne = airborne
         }
-        let dust = GameWallet.shared.equipped(.dust)
+        let dust = GameDecor.shared.equipped(.dust)
         if wasAirborne && !airborne {
             puffs.append(Puff(spray: GameFX.dust(dust, landing: true), worldX: scroll + feet.x, y: feet.y, at: time,
                               zoom: dust?.art == nil ? 2.4 : 1.6))
@@ -153,7 +153,7 @@ final class StageExtras {
     /// 꼬리를 달았으면 등 자리를 땅 좌표로 남긴다.
     func record(back: CGPoint, scroll: CGFloat, speed: CGFloat, body: CGRect) {
         self.body = body
-        guard GameWallet.shared.equipped(.trail) != nil, speed > 12 else {
+        guard GameDecor.shared.equipped(.trail) != nil, speed > 12 else {
             if !trail.isEmpty { trail.removeFirst() }
             return
         }
@@ -198,7 +198,7 @@ final class StageExtras {
                 GameAssets.draw(image, in: CGRect(x: x - 8, y: y - 8, width: 16, height: 16), cg)
             }
         }
-        if let item = GameWallet.shared.equipped(.trail), trail.count > 1 {
+        if let item = GameDecor.shared.equipped(.trail), trail.count > 1 {
             GameFX.drawTrail(item, points: trail.map { CGPoint($0.worldX - scroll, $0.y) }, time: time, cg)
         }
         for puff in puffs {

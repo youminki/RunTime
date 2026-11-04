@@ -168,7 +168,6 @@ enum SpriteTheme: String, CaseIterable {
     case purple
     case yellow
     case rainbow   // 프레임마다 색이 돈다
-    // 상점 색: 미니게임 코인으로 산다
     case gold, ruby, mint, aurora
 
     var displayName: String {

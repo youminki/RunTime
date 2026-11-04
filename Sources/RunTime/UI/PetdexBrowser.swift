@@ -9,7 +9,7 @@ struct PetdexBrowser: View {
     @ObservedObject var settings: AppSettings
     var purpose: Purpose = .runner
     var close: () -> Void
-    @ObservedObject private var wallet = GameWallet.shared
+    @ObservedObject private var wallet = GameDecor.shared
     @ObservedObject private var store = PetdexStore.shared
     @StateObject private var form = PetdexSearch()
 
@@ -122,7 +122,7 @@ struct PetdexBrowser: View {
                 // 받는 사이 다른 펫을 눌렀으면 마지막으로 누른 펫을 고른다
                 guard form.pending == pet.slug else { return }
                 if purpose == .companion {
-                    GameWallet.shared.companionID = PetdexStore.storageID(pet.slug)
+                    GameDecor.shared.companionID = PetdexStore.storageID(pet.slug)
                     form.show("'\(pet.name)'을(를) 동료로 데려갑니다.", error: false)
                 } else {
                     settings.customRunnerID = PetdexStore.storageID(pet.slug)

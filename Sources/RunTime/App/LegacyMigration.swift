@@ -1,7 +1,7 @@
 import Foundation
 
 /// 옛 이름(TokenCat)으로 쓰던 설정과 파일을 처음 켤 때 한 번 옮긴다.
-/// 번들 ID와 폴더 이름이 바뀌어서, 옮기지 않으면 설정·최고 점수·순위 ID·받은 펫이 보이지 않는다.
+/// 번들 ID와 폴더 이름이 바뀌어서, 옮기지 않으면 설정·최고 점수·받은 펫이 보이지 않는다.
 enum LegacyMigration {
     static let oldBundleID = "dev.tokencat.TokenCat"
     private static let doneKey = "migratedFromTokenCat"

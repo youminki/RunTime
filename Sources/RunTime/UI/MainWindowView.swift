@@ -5,7 +5,7 @@ import SwiftUI
 enum MainPage: String, CaseIterable {
     case usage, runners, workLog, calendar, redmine, design, hosts, settings
 
-    /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 게임·순위는 러너).
+    /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 게임은 러너).
     init?(windowName: String) {
         let legacy: [String: MainPage] = ["daily": .usage, "dailyDetail": .usage, "leaderboard": .runners, "game": .runners]
         guard let page = MainPage(rawValue: windowName) ?? legacy[windowName] else { return nil }
@@ -41,7 +41,7 @@ enum MainPage: String, CaseIterable {
     var detail: String {
         switch self {
         case .usage: return "세션·주간 사용률, 최근 30분, 날짜별 토큰과 비용"
-        case .runners: return "게임과 퀘스트, 러너 고르기, 상점, 창고, 순위"
+        case .runners: return "게임, 러너 고르기, 꾸미기"
         case .workLog: return "업무 일지와 일일·주간 보고, 레드마인 보내기"
         case .calendar: return "업무 일지를 한 달 달력으로 크게, 공휴일과 함께"
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
@@ -228,7 +228,6 @@ struct MainWindowView: View {
                         openDailyDetail: { [navigator] in navigator.go(.usage) },
                         openWorkLog: { [navigator] in navigator.go(.workLog) },
                         openDesign: { [navigator] in navigator.go(.design) },
-                        openLeaderboard: {},
                         performTrick: performTrick,
                         layout: page == .usage ? .usagePage : .runnersPage)
             // 러너 화면만 늘 어둡게, 사용량은 시스템 모습을 그대로 따른다
