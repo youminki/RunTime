@@ -865,6 +865,9 @@ private struct HostsPreviewSheet: View {
                 Text("저장하기 전 판은 백업에 남습니다").foregroundStyle(WL.quiet)
             }
             .font(.system(size: 12.5))
+            if title == "백업" && store.dirty {
+                Text("저장하지 않은 변경은 이 백업으로 덮여 사라집니다").font(WL.meta).foregroundStyle(WL.waiting)
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(rows(changes)) { row in

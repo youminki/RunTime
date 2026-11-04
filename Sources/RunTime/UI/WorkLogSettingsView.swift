@@ -65,7 +65,7 @@ struct WorkLogSettingsView: View {
     static func dot(_ section: WorkLogPage.SettingsSection, settings: WorkLogSettings, sync: WorkLogSync,
                     store: WorkLogStore) -> Color {
         switch section {
-        case .gitlab: return sync.captureError != nil ? WL.waiting : settings.captureEnabled ? WL.done : .clear
+        case .gitlab: return !settings.captureEnabled ? .clear : sync.captureError != nil ? WL.waiting : WL.done
         case .redmine: return sync.issuesError != nil ? WL.waiting : settings.redmineReady ? WL.done : .clear
         case .teams: return settings.hasTeams(.chat) ? WL.done : .clear
         case .recurring: return store.log.recurring.isEmpty ? .clear : WL.done
@@ -214,11 +214,20 @@ struct WorkLogSettingsView: View {
                 SettingRow("댓글을 HTML로 보내기", UserDefaults.standard.bool(forKey: "workLog.redmineHTMLAuto")
                            ? "이 레드마인의 기존 댓글을 보고 자동으로 정했습니다. 직접 바꾸면 그대로 둡니다."
                            : "웹 편집기를 쓰는 레드마인은 HTML로 보내야 줄바꿈이 살아납니다.") {
-                    // 직접 바꾸면 자동 판별이 다시 덮지 않게 한다
-                    Toggle("", isOn: Binding(get: { settings.redmineHTML }, set: {
-                        UserDefaults.standard.set(false, forKey: "workLog.redmineHTMLAuto")
-                        settings.redmineHTML = $0
-                    })).toggleStyle(.switch).labelsHidden()
+                    HStack(spacing: 10) {
+                        if !UserDefaults.standard.bool(forKey: "workLog.redmineHTMLAuto") {
+                            Button("자동으로") {
+                                sync.redetectNoteFormat()
+                                settings.objectWillChange.send()
+                            }
+                            .buttonStyle(TextLinkButtonStyle())
+                        }
+                        // 직접 바꾸면 자동 판별이 다시 덮지 않게 한다
+                        Toggle("", isOn: Binding(get: { settings.redmineHTML }, set: {
+                            UserDefaults.standard.set(false, forKey: "workLog.redmineHTMLAuto")
+                            settings.redmineHTML = $0
+                        })).toggleStyle(.switch).labelsHidden()
+                    }
                 }
                 SettingRow("상태·날짜도 맞추기", "할일 일감은 일지 상태에 맞춰 진행·완료로 옮기고, 비어 있는 시작일·완료 기한은 일지 날짜로 채웁니다. 테스트·반려 같은 다른 상태는 그대로 둡니다.") {
                     Toggle("", isOn: $settings.syncIssueFields).toggleStyle(.switch).labelsHidden()

@@ -855,6 +855,13 @@ final class WorkLogSync: ObservableObject {
 
     func info(_ id: Int) -> IssueInfo? { store.log.issue(id) }
 
+    /// 직접 고른 형식을 버리고 다시 판별한다.
+    func redetectNoteFormat() {
+        defaults.set(true, forKey: "workLog.redmineHTMLAuto")
+        defaults.set(false, forKey: "workLog.redmineHTMLChecked")
+        detectNoteFormat()
+    }
+
     /// 댓글을 HTML로 보낼지 평문으로 보낼지 이 레드마인의 기존 댓글을 보고 정한다. 웹 편집기(CKEditor 등)를 쓰는 곳은
     /// 댓글에 `<p>`·`<br`가 있고, Textile·Markdown 레드마인은 없다. 사용자가 스위치를 직접 바꿨으면 그대로 둔다.
     private func detectNoteFormat() {

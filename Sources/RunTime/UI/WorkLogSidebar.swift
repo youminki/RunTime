@@ -353,7 +353,11 @@ struct WorkLogSidebar: View {
     private func hide(_ name: String) {
         page.openProjects.remove(name)
         store.setHidden(name, true)
-        if page.project == name && page.mode == .project { page.project = nil }
+        // 프로젝트 보기는 비면 다른 프로젝트를 열어 일 보기로 돌아간다
+        if page.project == name && page.mode == .project {
+            page.project = nil
+            page.mode = .day
+        }
         page.flash("‘\(name)’를 숨겼습니다. 기록과 보고서에는 그대로 남습니다")
     }
 
@@ -376,8 +380,8 @@ struct WorkLogSidebar: View {
         Button { page.showsSettings = true } label: {
             VStack(alignment: .leading, spacing: 4) {
                 // 오류 글은 길어 한 줄에서 잘리니 "확인 필요"로 줄이고 전체 글은 올렸을 때 보인다
-                status("GitLab", on: settings.captureEnabled, error: sync.captureError != nil,
-                       detail: sync.captureError != nil ? "확인 필요"
+                status("GitLab", on: settings.captureEnabled, error: settings.captureEnabled && sync.captureError != nil,
+                       detail: !settings.captureEnabled ? "꺼짐" : sync.captureError != nil ? "확인 필요"
                            : sync.lastCapture.map { "\(WorkLogFormat.when($0)) 가져옴" } ?? (settings.captureEnabled ? "대기" : "꺼짐"))
                     .tip(sync.captureError ?? "")
                 status("레드마인", on: settings.redmineReady, error: sync.issuesError != nil,
