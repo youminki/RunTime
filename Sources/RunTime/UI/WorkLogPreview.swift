@@ -49,7 +49,8 @@ struct WorkLogPreview: View {
             Button("올리기") { postTeams(to: .chat) }
             Button("취소", role: .cancel) {}
         } message: {
-            Text((progressDraft?.stale == true && !isPlan && (page.mode == .day)
+            Text((UserDefaults.standard.string(forKey: Self.lastPostKey) == reportBody ? "같은 내용을 이미 올렸습니다. 또 올리면 채팅에 두 번 남습니다.\n\n" : "")
+                 + (progressDraft?.stale == true && !isPlan && (page.mode == .day)
                   ? "다듬은 뒤 일지·레드마인 값이 바뀐 초안입니다. 올리기 전에 상태를 확인하세요.\n\n" : "")
                  + (sync.teamsSendsDirectly(.chat)
                  ? "\(postTitle)을 팀 채팅에 바로 올립니다. 올린 글은 팀즈에서 지워야 합니다."
@@ -381,9 +382,13 @@ struct WorkLogPreview: View {
         }
     }
 
+    private static let lastPostKey = "workLog.teamsLastPost"
+
     private func postTeams(to target: TeamsTarget) {
-        sync.postTeams(reportBody, title: postTitle, to: target) { message, failed in
+        let body = reportBody, direct = sync.teamsSendsDirectly(target)
+        sync.postTeams(body, title: postTitle, to: target) { message, failed in
             page.flash(message, seconds: failed ? 8 : 1.8)
+            if direct, !failed { UserDefaults.standard.set(body, forKey: Self.lastPostKey) }
             // 팀즈가 앞으로 나오거나 다른 화면으로 옮기면 창 안 안내는 보이지 않는다
             if failed { Notifier.shared.send(title: "팀즈에 올리지 못했습니다", body: message, opens: .workLog) }
         }
@@ -1003,10 +1008,14 @@ struct WorkLogPreview: View {
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
                     .tip(noNote ? "댓글도 함께 보내기" : "댓글은 빼고 진척률·상태·날짜만 보내기")
                 }
-                if let target, update.needsNote, !noNote {
+                if update.needsNote, !noNote {
                     Button { page.noteEditing = update.issue } label: { Label("고치기", systemImage: "pencil") }
                         .buttonStyle(PillButtonStyle())
                         .tip("이 일감 줄의 댓글 고치기")
+                }
+                // 단추에 붙이면 댓글을 뺀 카드의 "일감 번호 바꾸기…"가 열 곳이 없어 늘 있는 자리에 둔다
+                if let target {
+                    Color.clear.frame(width: 1, height: 1)
                         .popover(isPresented: Binding(
                             get: { page.noteEditing == update.issue },
                             set: { if !$0 { page.noteEditing = nil } }

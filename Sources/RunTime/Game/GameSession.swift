@@ -129,12 +129,15 @@ final class GameSession {
 
     func press() {
         let wasOver = game.phase == .over
+        let race = (isRace, ghost)
         if game.phase != .playing {
             isRace = false
             ghost = nil
             if live { game.setAbilities(GameWallet.shared.abilities) }
         }
         game.press()
+        // 부딪힌 직후라 다시 시작되지 않았으면 끝난 고스트 판 화면을 그대로 둔다
+        if wasOver, game.phase == .over { (isRace, ghost) = race }
         if wasOver, game.phase == .playing { restarted() }
     }
 

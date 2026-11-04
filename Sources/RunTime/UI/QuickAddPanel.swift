@@ -19,7 +19,8 @@ final class QuickAddPanel {
         model.prepare()
         let panel = self.panel ?? makePanel()
         self.panel = panel
-        if let screen = NSScreen.main {
+        // 앱이 뒤에 있으면 NSScreen.main이 다른 모니터일 수 있어 포인터가 있는 화면에 띄운다
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
             let frame = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2, y: frame.maxY - frame.height * 0.28))
         }
@@ -55,8 +56,10 @@ final class QuickAddPanel {
 
         /// 앱이 앞에 없으면 편집 메뉴 단축키가 이 패널에 닿지 않아 직접 넘긴다.
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard flags == .command || flags == [.command, .shift], let key = event.charactersIgnoringModifiers?.lowercased()
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
+            // 한글 입력 상태에서는 글자가 ㅍ처럼 와서 키 자리로 가린다
+            let keys: [UInt16: String] = [9: "v", 8: "c", 7: "x", 0: "a", 6: "z"]
+            guard flags == .command || flags == [.command, .shift], let key = keys[event.keyCode]
             else { return super.performKeyEquivalent(with: event) }
             let action: Selector? = {
                 switch (key, flags.contains(.shift)) {

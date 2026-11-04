@@ -234,6 +234,8 @@ struct DesignSettingsView: View {
     }
 
     private func add() {
+        // Enter를 두 번 치면 같은 링크가 둘로 들어간다
+        guard !form.adding else { return }
         form.adding = true
         form.addMessage = nil
         Task {

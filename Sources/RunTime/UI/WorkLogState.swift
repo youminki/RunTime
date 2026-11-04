@@ -12,10 +12,25 @@ final class WorkLogPage: ObservableObject {
     enum DayReport: String, CaseIterable { case plan = "진행 예정", progress = "진행 사항" }
     @Published var dayReport: DayReport = WorkLogPage.defaultReport(for: WorkDay.today())
     /// 날짜별로 고쳐 쓴 진행 예정 사항과, 고칠 때 일지에서 만든 글. 일지가 바뀌면 알아채려고 함께 둔다.
-    @Published var planEdits: [String: (text: String, base: String)] = [:]
+    @Published var planEdits: [String: (text: String, base: String)] = WorkLogPage.savedEdits("workLog.planEdits").mapValues { ($0[0], $0[1]) } {
+        didSet { Self.saveEdits(planEdits.mapValues { [$0.text, $0.base] }, "workLog.planEdits") }
+    }
     /// 날짜별로 Claude로 다듬은 진행 사항: 지금 글, 다듬을 때 일지에서 만든 글, Claude가 돌려준 글.
     /// 고쳐 쓰지 않은 채 일지가 바뀌면 낡은 초안이라 버린다 (`polished`와 같은지로 가린다).
-    @Published var progressEdits: [String: (text: String, base: String, polished: String)] = [:]
+    @Published var progressEdits: [String: (text: String, base: String, polished: String)] = WorkLogPage.savedEdits("workLog.progressEdits", fields: 3).mapValues { ($0[0], $0[1], $0[2]) } {
+        didSet { Self.saveEdits(progressEdits.mapValues { [$0.text, $0.base, $0.polished] }, "workLog.progressEdits") }
+    }
+
+    /// 고쳐 쓴 글은 앱을 끄거나 자동 업데이트로 다시 켜도 남아야 한다.
+    private static func savedEdits(_ key: String, fields: Int = 2) -> [String: [String]] {
+        (UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] ?? [:]).filter { $0.value.count == fields }
+    }
+
+    /// 쌓이지 않게 2주 안의 날만 남긴다.
+    private static func saveEdits(_ edits: [String: [String]], _ key: String) {
+        let oldest = WorkDay.adding(-14, to: WorkDay.today())
+        UserDefaults.standard.set(edits.filter { $0.key >= oldest }, forKey: key)
+    }
     /// Claude로 다듬는 중인 날.
     @Published var polishingDay: String?
     /// 고른 날. 바꾸면 왼쪽 달력도 그 달로 간다.

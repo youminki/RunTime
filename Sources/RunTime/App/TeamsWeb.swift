@@ -379,7 +379,7 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
       }
       return false;
     }
-    const opened = '열려던 채팅이 아닌 곳이 떠 있어 보내지 않았습니다';
+    const opened = '열려던 채팅이 아닌 곳이 떠 있어 보내지 않았습니다. 채팅 이름이 바뀌었다면 설정에서 링크를 지우고 다시 넣으세요';
     if (notes) {
       if (!isNotes(document.title)) go(conversation);
       if (!await settle(isNotes)) return 'open:' + opened;
