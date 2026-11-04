@@ -30,8 +30,8 @@ struct DesignSettingsView: View {
         SlimScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(section == .figma
-                     ? "피그마 화면설계서를 필요할 때나 정한 주기마다 가져와 메뉴·화면별로 바뀐 것을 디자인 화면에 날짜별로 남깁니다."
-                     : "맡은 메뉴를 고르면 디자인 화면은 그 메뉴의 변경만 모아 보이고, 알림도 그 메뉴에서만 옵니다. 작업 중 표시가 붙은 시안의 변경은 알리지 않습니다.")
+                     ? "피그마 화면설계서를 가져와 바뀐 화면을 날짜별로 남깁니다."
+                     : "맡은 메뉴의 변경만 모아 보고 알림도 그 메뉴에서만 받습니다.")
                     .font(.system(size: 12.5)).foregroundStyle(WL.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 6)
@@ -39,7 +39,7 @@ struct DesignSettingsView: View {
                 case .figma:
                     group("연결") { token }
                     group("지켜보는 화면설계서") { files; schedule }
-                    Text("피그마에는 토큰으로 파일 정보와 화면 노드를 묻기만 하고 보내는 것은 없습니다. 가져온 화면 내용은 이 Mac의 Application Support/RunTime/design-history.json에만 둡니다.")
+                    Text("피그마에는 읽기만 하고 보내는 것은 없습니다. 가져온 내용은 이 Mac(Application Support/RunTime)에만 둡니다.")
                         .font(WL.caption).foregroundStyle(WL.faint)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 16)
@@ -78,7 +78,7 @@ struct DesignSettingsView: View {
 
     private var token: some View {
         // 연결 확인 결과는 토큰 줄 설명에 바로 보여 줄을 하나로 둔다. 토큰을 저장하면 저절로 확인한다
-        SettingRow("피그마 토큰", form.tokenStatus ?? "피그마 설정 > Security > Personal access tokens에서 file_content:read 범위로 만듭니다. 날짜 비교까지 쓰려면 file_versions:read도 더합니다. 키체인에 둡니다.",
+        SettingRow("피그마 토큰", form.tokenStatus ?? "피그마 설정 > Security > Personal access tokens에서 file_content:read(날짜 비교는 file_versions:read도) 범위로 만듭니다.",
                    detailTint: form.tokenFailed ? WL.waiting : form.tokenStatus == nil ? nil : WL.done) {
             HStack(alignment: .top, spacing: 6) {
                 if !settings.hasToken {
@@ -119,7 +119,7 @@ struct DesignSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(settings.sources) { source in fileRow(source) }
             SettingRow("링크 더하기", form.addMessage ?? (settings.hasToken
-                        ? "피그마에서 화면을 고르고 ‘링크 복사’한 주소를 넣으면 그 화면만, 파일 주소를 넣으면 프로젝트 전체를 지켜봅니다. 같은 파일의 다른 화면 링크는 그 프로젝트에 더해집니다."
+                        ? "화면 링크는 그 화면만, 파일 주소는 프로젝트 전체를 지켜봅니다."
                         : "토큰을 넣은 뒤에 더할 수 있습니다."),
                        detailTint: form.addMessage == nil ? nil : form.addFailed ? WL.waiting : WL.done) {
                 HStack(spacing: 6) {
@@ -238,7 +238,7 @@ struct DesignSettingsView: View {
     }
 
     private var schedule: some View {
-        SettingRow("기본 가져오기 주기", "프로젝트마다 ⋯에서 따로 정하지 않았으면 이 주기로 가져옵니다. 누를 때만으로 두면 디자인 화면에서 가져오기를 누를 때만 받습니다. 파일이 그대로면 파일 정보만 한 번 묻고 끝냅니다.") {
+        SettingRow("기본 가져오기 주기", "프로젝트마다 ⋯에서 따로 정하지 않았으면 이 주기로 가져옵니다.") {
             Picker("", selection: $settings.intervalMinutes) {
                 ForEach(DesignSyncSettings.intervals, id: \.self) { minutes in
                     Text(minutes == 0 ? "누를 때만" : minutes < 60 ? "\(minutes)분마다" : "\(minutes / 60)시간마다").tag(minutes)
@@ -272,14 +272,14 @@ struct DesignSettingsView: View {
 
     private var rules: some View {
         VStack(spacing: 0) {
-            SettingRow("macOS 알림", "고른 메뉴에서 완료된 화면이 다시 바뀌거나, 화면이 완료되거나, 상태 표시가 없는 화면이 바뀌거나, 디자이너가 이력에 적으면 알립니다.") {
+            SettingRow("macOS 알림", "고른 메뉴의 완료된 화면이 바뀌거나 디자이너가 이력에 적으면 알립니다.") {
                 Toggle("", isOn: $settings.notify).toggleStyle(.switch).labelsHidden()
             }
             SettingRow("작업 중 변경도 알림", "[수정중]처럼 작업 중 표시가 붙은 시안은 계속 바뀌어서 기본은 기록만 합니다.") {
                 Toggle("", isOn: $settings.notifyWorking).toggleStyle(.switch).labelsHidden()
                     .disabled(!settings.notify)
             }
-            SettingRow("상태 표시가 없는 화면", "섹션에 [완료]·[수정중]이나 _v0.4 같은 버전이 없는 화면입니다. 판단하지 않으면 ‘상태 모름’으로 두고, 알림 받는 메뉴에서 바뀔 때마다 알립니다. 표시를 쓰지 않는 디자이너의 화면설계서를 모두 완료로 보면 변경이 전부 완료 후 변경으로 쏟아집니다. 프로젝트마다 오른쪽 클릭으로 따로 정합니다.") {
+            SettingRow("상태 표시가 없는 화면", "[완료]·[수정중] 같은 표시가 없는 화면을 어떻게 볼지 정합니다. 프로젝트마다 오른쪽 클릭으로 따로 정합니다.") {
                 Picker("", selection: Binding(get: { settings.untaggedIsDone.map { $0 ? 1 : 2 } ?? 0 },
                                               set: { settings.untaggedIsDone = [1: true, 2: false][$0] })) {
                     Text("판단하지 않음").tag(0)
@@ -297,6 +297,8 @@ final class DesignAlertChoice: ObservableObject {
     @Published var alerts: Set<String> = []
     /// 접은 묶음
     @Published var folded: Set<String> = []
+    /// 메뉴 찾기 칸
+    @Published var query = ""
 }
 
 /// 알림 받을 메뉴를 고른다. 모든 단계를 펼친 트리에서 줄마다 스위치로 켜고 끈다.
@@ -318,15 +320,65 @@ struct DesignAlertPicker: View {
     }
 
     var body: some View {
-        let nodes = nodes
-        let rows = DesignMenuTree.rows(nodes) { node, _ in choice.folded.contains(node.path) }
+        let nodes = filtered(nodes)
+        let searching = !choice.query.trimmingCharacters(in: .whitespaces).isEmpty
+        // 찾는 동안은 맞는 줄이 접힌 묶음 안에 숨지 않게 모두 펼친다
+        let rows = DesignMenuTree.rows(nodes) { node, _ in !searching && choice.folded.contains(node.path) }
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("알림 받을 메뉴").font(WL.section)
-                    Text(summary).font(WL.meta).foregroundStyle(WL.muted)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("알림 받을 메뉴").font(WL.section)
+                Text("켠 메뉴에서 완료된 화면이 바뀌면 알립니다. 묶음을 켜면 앞으로 생길 화면도 들어갑니다.")
+                    .font(WL.meta).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 12)
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(WL.muted)
+                    TextField("메뉴 찾기", text: $choice.query).textFieldStyle(.plain).font(WL.body)
+                        // esc가 시트의 취소로 넘어가 고른 것을 버리지 않게 찾는 말만 지운다
+                        .onExitCommand { choice.query = "" }
+                    if searching {
+                        Button { choice.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(WL.faint) }
+                            .buttonStyle(.plain).tip("찾는 말 지우기")
+                    }
                 }
-                Spacer()
+                .padding(.horizontal, 10).frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(WL.surface))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+                let parents = allParents(nodes)
+                Button(choice.folded.isEmpty ? "모두 접기" : "모두 펼치기") {
+                    choice.folded = choice.folded.isEmpty ? Set(parents) : []
+                }
+                .buttonStyle(TextLinkButtonStyle())
+                .disabled(parents.isEmpty || searching)
+                .fixedSize()
+            }
+            .padding(.horizontal, 20).padding(.bottom, 10)
+            Rectangle().fill(WL.border).frame(height: 1)
+            SlimScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if rows.isEmpty && searching {
+                        Text("‘\(choice.query)’에 맞는 메뉴가 없습니다").font(WL.meta).foregroundStyle(WL.muted)
+                            .frame(maxWidth: .infinity).padding(.top, 24)
+                    }
+                    ForEach(rows) { item in
+                        row(item.node, depth: item.depth, searching: searching)
+                        if item.depth == 0 && item.id != rows.last?.id && (item.node.children.isEmpty || (!searching && choice.folded.contains(item.node.path))) {
+                            RowDivider(inset: 0)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+            Rectangle().fill(WL.border).frame(height: 1)
+            // macOS 시트처럼 결정 단추는 아래 오른쪽에 두고, 왼쪽에 지금 고른 결과를 보인다
+            HStack(spacing: 8) {
+                Text(summary).font(WL.meta).foregroundStyle(choice.alerts.isEmpty ? WL.muted : WL.text)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if !choice.alerts.isEmpty {
+                    Button("모두 끄기") { choice.alerts = [] }.buttonStyle(TextLinkButtonStyle()).fixedSize()
+                }
+                Spacer(minLength: 8)
                 Button("취소") { dismiss() }.buttonStyle(NotionButtonStyle())
                     .keyboardShortcut(.cancelAction)
                 Button("저장") {
@@ -338,32 +390,8 @@ struct DesignAlertPicker: View {
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 10)
-            HStack(spacing: 4) {
-                let parents = allParents(nodes)
-                Button(choice.folded.isEmpty ? "모두 접기" : "모두 펼치기") {
-                    choice.folded = choice.folded.isEmpty ? Set(parents) : []
-                }
-                .buttonStyle(TextLinkButtonStyle())
-                .disabled(parents.isEmpty)
-                Spacer()
-                Button("모두 끄기") { choice.alerts = [] }
-                    .buttonStyle(TextLinkButtonStyle())
-                    .disabled(choice.alerts.isEmpty)
-            }
-            .padding(.horizontal, 20).padding(.bottom, 10)
-            Rectangle().fill(WL.border).frame(height: 1)
-            SlimScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(rows) { item in
-                        row(item.node, depth: item.depth)
-                        if item.depth == 0 && item.id != rows.last?.id && (item.node.children.isEmpty || choice.folded.contains(item.node.path)) {
-                            RowDivider(inset: 0)
-                        }
-                    }
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
+            .background(WL.surface)
         }
         .frame(width: 520, height: 600)
         .background(WL.canvas)
@@ -373,10 +401,22 @@ struct DesignAlertPicker: View {
         }
     }
 
+    /// 찾는 말이 이름에 든 줄과 그 위 묶음만 남긴다. 묶음 이름이 맞으면 아래를 모두 둔다.
+    private func filtered(_ nodes: [DesignMenuTree.Node]) -> [DesignMenuTree.Node] {
+        let terms = DesignSearch.terms(choice.query)
+        guard !terms.isEmpty else { return nodes }
+        return nodes.compactMap { node in
+            if DesignSearch.matches(terms, [node.path]) { return node }
+            var kept = node
+            kept.children = filtered(node.children)
+            return kept.children.isEmpty ? nil : kept
+        }
+    }
+
     private var summary: String {
-        guard !choice.alerts.isEmpty else { return "고른 메뉴가 없으면 이 프로젝트의 모든 변경을 보고 알림은 보내지 않습니다." }
+        guard !choice.alerts.isEmpty else { return "고른 메뉴가 없으면 모든 변경을 보고 알림은 보내지 않습니다." }
         let screens = screenPaths.filter { path in choice.alerts.contains { DesignStatus.covers($0, path) } }.count
-        return "메뉴 \(screens)개에서 완료된 화면이 바뀌면 알립니다. 묶음을 켜면 앞으로 생길 화면도 들어갑니다."
+        return "메뉴 \(screens)개 켜짐"
     }
 
     private func allParents(_ nodes: [DesignMenuTree.Node]) -> [String] {
@@ -396,11 +436,12 @@ struct DesignAlertPicker: View {
         choice.alerts = Set(DesignStatus.setAlert(path, on: on, in: Array(choice.alerts), screenPaths: screenPaths))
     }
 
-    private func row(_ node: DesignMenuTree.Node, depth: Int) -> some View {
+    private func row(_ node: DesignMenuTree.Node, depth: Int, searching: Bool) -> some View {
         let parent = !node.children.isEmpty
         let on = isOn(node.path)
         let count = coverage(node.path)
-        let folded = choice.folded.contains(node.path)
+        // 찾는 동안은 모두 펼쳐 보이므로 꺾쇠도 펼침으로 두고 막는다
+        let folded = !searching && choice.folded.contains(node.path)
         return HStack(spacing: 8) {
             if parent {
                 Button {
@@ -412,6 +453,7 @@ struct DesignAlertPicker: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(WL.muted)
+                .disabled(searching)
                 .tip(folded ? "펼치기" : "접기")
             } else {
                 Color.clear.frame(width: 18, height: 30)

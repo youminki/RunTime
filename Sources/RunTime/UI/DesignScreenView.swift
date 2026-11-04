@@ -141,9 +141,9 @@ struct DesignScreenDetail: View {
             let width = min(geo.size.width - 64, DesignHistoryView.detailMaxWidth)
             SlimScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    header; actionRow(compact: width < 560); pendingBlock; shot(maxHeight: max(640, width * 1.2)); content
+                    header; actionRow(compact: width < 340); pendingBlock; changedTexts; shot(maxHeight: max(640, width * 1.2)); content
                 }
-                .padding(.horizontal, 32).padding(.vertical, 26)
+                .padding(.horizontal, 32).padding(.top, 26).padding(.bottom, 84)
                 .frame(maxWidth: DesignHistoryView.detailMaxWidth + 64, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -166,7 +166,13 @@ struct DesignScreenDetail: View {
                         .fill((state == .done ? WL.done : state == .working ? WL.waiting : WL.muted).opacity(0.12)))
                 CopyableID(text: screen.screenID) { page.flash("‘\($0)’를 복사했습니다") }
                 Spacer(minLength: 8)
-                Button("목록으로") { page.screen = nil }.buttonStyle(TextLinkButtonStyle())
+                // 목록은 옆 칸에 늘 보여서 "목록으로"가 아니라 상세를 닫는 단추다
+                Button { page.screen = nil } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(WL.muted)
+                .keyboardShortcut(page.searchFocused || !page.bulk.isEmpty ? nil : KeyboardShortcut(.escape, modifiers: []))
+                .tip("상세 닫기 (esc)")
             }
             Text(screen.title.isEmpty ? screen.screenID : screen.title).font(WL.pageTitle).textSelection(.enabled)
             Text(DesignFormat.path(screen.menuPath)).font(WL.body).foregroundStyle(WL.muted).textSelection(.enabled)
@@ -184,15 +190,8 @@ struct DesignScreenDetail: View {
 
     /// 마크업을 시작하는 단추가 맨 앞이다. 덜 쓰는 것은 ⋯에 모은다.
     private func actionRow(compact: Bool) -> some View {
+        // Claude 문구와 반영 완료는 상세 아래 막대에 있어, 위에는 피그마와 덜 쓰는 일만 둔다
         HStack(spacing: 8) {
-            let pending = sync.pendingEvents(for: screen, in: fileKey).count
-            Button(action: copyPrompt) {
-                Label(pending > 0 ? "변경 \(pending)건 Claude 문구 복사" : "Claude 문구 복사", systemImage: "sparkles")
-            }
-            .buttonStyle(NotionButtonStyle(kind: .primary))
-            .tip(pending > 0
-                 ? "반영하지 않은 변경 \(pending)건을 전·후 원문으로 정리해, 이 화면 마크업에 반영해 달라는 글을 복사합니다. 체크한 항목은 뺍니다"
-                 : "이 화면을 마크업해 달라는 글을 복사합니다. 구현 체크한 기능 명세는 빼고 남은 것만 넣습니다")
             if let link {
                 Button { NSWorkspace.shared.open(link) } label: {
                     if compact { FigmaMark(height: 14) } else { HStack(spacing: 7) { FigmaMark(height: 14); Text("피그마에서 열기") } }
@@ -227,11 +226,6 @@ struct DesignScreenDetail: View {
     }
 
     private var built: Set<String> { sync.history.built(screen, in: fileKey) }
-
-    private func copyPrompt() {
-        let prompt = sync.claudePrompt(for: screen, in: fileKey)
-        copy(prompt, DesignFormat.copied(prompt))
-    }
 
     private func copyBrief() {
         let text = ScreenBrief.text(screen, project: sync.projectName(fileKey), state: DesignStateDot.name(state), link: link,
@@ -290,7 +284,13 @@ struct DesignScreenDetail: View {
                     ZStack {
                         RoundedRectangle(cornerRadius: WL.inner, style: .continuous).fill(WL.callout)
                         if case .missing(let reason) = state {
-                            Text(reason).font(WL.caption).foregroundStyle(WL.waiting).multilineTextAlignment(.center).padding(10)
+                            VStack(spacing: 8) {
+                                Text(reason).font(WL.caption).foregroundStyle(WL.waiting).multilineTextAlignment(.center)
+                                if reason.contains("토큰") {
+                                    Button("피그마 토큰 넣기") { page.openSettings(.figma) }.buttonStyle(NotionButtonStyle())
+                                }
+                            }
+                            .padding(10)
                         } else {
                             VStack(spacing: 6) {
                                 ProgressView().controlSize(.small)
@@ -378,13 +378,7 @@ struct DesignScreenDetail: View {
                     Image(systemName: "exclamationmark.circle.fill").font(.system(size: 14)).foregroundStyle(WL.accent)
                     Text("반영할 변경 \(pending.count)건").font(WL.heading)
                     Spacer(minLength: 8)
-                    Button("모두 반영 완료") {
-                        pending.forEach { sync.setApplied($0.id, true) }
-                        page.flash("반영할 변경 \(pending.count)건을 반영 완료로 넘기고 다음 화면을 엽니다. 사이드바 ‘반영 완료’에서 되돌립니다")
-                        page.stepRequest += 1
-                    }
-                    .buttonStyle(NotionButtonStyle())
-                    .tip("이 화면의 변경을 마크업에 다 반영했으면 목록과 알림에서 뺍니다")
+                    Text("다 반영했으면 아래 ‘모두 반영 완료’").font(WL.caption).foregroundStyle(WL.muted)
                 }
                 ForEach(pending.prefix(5), id: \.id) { event in
                     Button { page.selected = event.id; sync.markSeen([event.id]) } label: {
@@ -410,44 +404,124 @@ struct DesignScreenDetail: View {
         }
     }
 
-    /// 목업 문구를 화면 위에서 아래 순서로 한 줄씩. 누르면 그 글자를 복사해 마크업에 그대로 붙인다.
-    @ViewBuilder private var textList: some View {
-        let texts = ScreenBrief.orderedTexts(screen)
-        if !texts.isEmpty {
+    /// 마크업할 때 쓰는 목업 글. 반영할 변경으로 바뀐 글은 이전 → 이후로 맨 위에 늘 펼쳐 두어 코드에서 이전 글을 찾아 바꾸게 하고,
+    /// 나머지는 화면 위쪽·가운데·아래쪽으로 나눠 접어 둔다. 별표 같은 표시와 표 칸의 예시 데이터는 뺀다.
+    private var mockup: (changed: [ScreenBrief.MockupText], areas: [(name: String, texts: [ScreenBrief.MockupText])], samples: Int) {
+        ScreenBrief.mockup(screen, changes: sync.pendingEvents(for: screen, in: fileKey).sorted { $0.detectedAt < $1.detectedAt }.flatMap(\.changes))
+    }
+
+    /// 반영할 변경으로 바뀐 글. 마크업할 때 가장 먼저 보는 것이라 반영할 변경 바로 아래에 둔다.
+    @ViewBuilder private var changedTexts: some View {
+        let changed = mockup.changed
+        if !changed.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Button { page.showsScreenTexts.toggle() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
-                            .rotationEffect(.degrees(page.showsScreenTexts ? 90 : 0))
-                        SectionLabel("목업 문구 · 누르면 복사", trailing: "\(texts.count)")
+                SectionLabel("바뀐 목업 문구 · 이전 글로 코드에서 찾아 바꾸세요", trailing: "\(changed.count)")
+                // 많이 바뀌면 화면 이미지가 한참 밀려 내려가 처음 6줄만 두고 나머지는 펼쳐 본다
+                let shown = page.showsAllChangedTexts ? changed : Array(changed.prefix(6))
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 { RowDivider(inset: 0) }
+                        changedTextRow(item, key: "chg\(index)")
                     }
-                    .contentShape(Rectangle())
+                    if changed.count > 6 {
+                        RowDivider(inset: 0)
+                        Button(page.showsAllChangedTexts ? "접기" : "\(changed.count - 6)개 더 보기") { page.showsAllChangedTexts.toggle() }
+                            .buttonStyle(TextLinkButtonStyle()).padding(.vertical, 9)
+                    }
                 }
-                .buttonStyle(.plain)
-                if page.showsScreenTexts {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(texts.enumerated()), id: \.offset) { index, text in
-                            if index > 0 { RowDivider(inset: 0) }
-                            Button { copy(text, "‘\(DesignText.headline(text, limit: 30))’를 복사했습니다") } label: {
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text(text).font(WL.body).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                                    Spacer(minLength: 4)
-                                    Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(WL.muted)
-                                        .opacity(hover.key == "text\(index)" ? 1 : 0)
-                                }
-                                .padding(.vertical, 8)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { hover.update("text\(index)", $0) }
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .wlSurface()
+            }
+        }
+    }
+
+    @ViewBuilder private var textList: some View {
+        let mockup = mockup
+        let total = mockup.areas.reduce(0) { $0 + $1.texts.count }
+        if total > 0 {
+            VStack(alignment: .leading, spacing: 10) {
+                Group {
+                    Button { page.showsScreenTexts.toggle() } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                                .rotationEffect(.degrees(page.showsScreenTexts ? 90 : 0))
+                            SectionLabel("목업 문구 · 누르면 복사", trailing: "\(total)")
                         }
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .wlSurface()
+                    .buttonStyle(.plain)
+                    if page.showsScreenTexts {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(mockup.areas, id: \.name) { area in
+                                Text(area.name).font(WL.label).foregroundStyle(WL.muted).padding(.top, 10).padding(.bottom, 2)
+                                ForEach(area.texts) { item in textRow(item.text, key: "txt" + item.id) }
+                            }
+                            if mockup.samples > 0 {
+                                Text("표·목록 예시 데이터 \(mockup.samples)개는 뺐습니다").font(WL.caption).foregroundStyle(WL.faint).padding(.vertical, 8)
+                            }
+                        }
+                        .padding(.horizontal, 14).padding(.bottom, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .wlSurface()
+                    }
                 }
             }
         }
+    }
+
+    /// 바뀐 글 한 줄: 이전(지운 줄)과 이후. 올리면 이전 글·이후 글을 따로 복사한다.
+    private func changedTextRow(_ item: ScreenBrief.MockupText, key: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(item.kind == .added ? "추가" : item.kind == .removed ? "삭제" : "수정")
+                .font(WL.label).foregroundStyle(item.kind == .removed ? WL.waiting : WL.accent)
+                .padding(.horizontal, 6).frame(height: 18)
+                .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill((item.kind == .removed ? WL.waiting : WL.accent).opacity(0.12)))
+            VStack(alignment: .leading, spacing: 3) {
+                if let before = item.before, item.kind != .removed {
+                    Text(before).font(WL.meta).strikethrough().foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
+                }
+                Text(item.text).font(WL.body).foregroundStyle(item.kind == .removed ? WL.muted : WL.text)
+                    .strikethrough(item.kind == .removed)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            HStack(spacing: 2) {
+                if let before = item.before {
+                    Button { copy(before, "이전 글 ‘\(DesignText.headline(before, limit: 30))’를 복사했습니다") } label: {
+                        Image(systemName: "magnifyingglass").font(.system(size: 12)).frame(width: 24, height: 22).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(WL.muted)
+                    .tip("이전 글 복사 (코드에서 찾기용)")
+                }
+                if item.kind != .removed {
+                    Button { copy(item.text, "‘\(DesignText.headline(item.text, limit: 30))’를 복사했습니다") } label: {
+                        Image(systemName: "doc.on.doc").font(.system(size: 12)).frame(width: 24, height: 22).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).foregroundStyle(WL.muted)
+                    .tip("바뀐 글 복사")
+                }
+            }
+            .opacity(hover.key == key ? 1 : 0.35)
+        }
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
+        .onHover { hover.update(key, $0) }
+    }
+
+    private func textRow(_ text: String, key: String) -> some View {
+        Button { copy(text, "‘\(DesignText.headline(text, limit: 30))’를 복사했습니다") } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Text(text).font(WL.body).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Image(systemName: "doc.on.doc").font(.system(size: 12)).foregroundStyle(WL.muted)
+                    .opacity(hover.key == key ? 1 : 0)
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover.update(key, $0) }
     }
 
     /// 줄에 올렸을 때만 보이는 복사 단추.

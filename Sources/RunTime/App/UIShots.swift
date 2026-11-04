@@ -158,8 +158,11 @@ enum UIShots {
             ("main-design", .aqua, nil, mainDesign(engine: engine)),
             ("main-design-dark", .darkAqua, nil, mainDesign(engine: engine)),
             ("main-design-working", .aqua, nil, mainDesign(engine: engine, scope: .working, select: false)),
+            ("main-design-bulk", .aqua, nil, mainDesign(engine: engine, scope: .all, select: false, bulk: 2)),
+            ("main-design-search", .aqua, nil, mainDesign(engine: engine, scope: .all, select: false, search: "계정관리 목록")),
             ("main-design-menu", .aqua, nil, mainDesign(engine: engine, scope: firstGroup.map { .group(fileKey: $0.0, head: $0.1) } ?? .all)),
             ("main-design-screen", .aqua, nil, mainDesignScreen(engine: engine)),
+            ("main-design-screen-changed", .aqua, nil, mainDesignScreen(engine: engine, changed: true)),
             ("main-design-compare", .aqua, nil, {
                 let model = DesignCompareModel.shared
                 // 기록이 가장 많은 프로젝트를 최근 4일로 견준다. 토큰을 주면(RUNTIME_FIGMA_TOKEN) 실제 버전 비교 결과까지 찍는다
@@ -210,8 +213,16 @@ enum UIShots {
     }
 
     /// 앱 창의 디자인 화면. 화면마다 새 상태로 찍고, 가장 최근 변경을 골라 둔다.
-    private static func mainDesign(engine: UsageEngine, scope: DesignHistoryPage.Scope = .all, select: Bool = true) -> AnyView {
+    private static func mainDesign(engine: UsageEngine, scope: DesignHistoryPage.Scope = .all, select: Bool = true, bulk: Int? = nil, search: String = "") -> AnyView {
         let page = DesignHistoryPage()
+        // 띄어쓰기 없이 친 말과 여러 낱말로 찾았을 때 메뉴 트리와 목록이 함께 걸러지는지 본다
+        if !search.isEmpty { page.project = nil; page.search = search }
+        // 여러 개 고르기를 켜고 가장 최근 변경 몇 개를 골라 둔 모습
+        if let bulk {
+            page.project = nil
+            page.scope = scope
+            page.bulk = Set(DesignSync.shared.history.events.sorted { $0.detectedAt > $1.detectedAt }.prefix(bulk).map(\.id))
+        }
         // 변경을 고른 채 메뉴로 옮겼을 때 메뉴 밖 변경이 상세에 남지 않는지 보게, 고른 뒤 범위를 바꾼다
         if select { page.selected = DesignSync.shared.history.events.last(where: { $0.kind == .changed })?.id }
         page.scope = scope
@@ -223,11 +234,15 @@ enum UIShots {
     }
 
     /// 바뀐 적 없는 메뉴를 골라 지금 시안 화면 하나를 연 상세. 명세가 가장 많은 화면을 고른다.
-    private static func mainDesignScreen(engine: UsageEngine) -> AnyView {
+    private static func mainDesignScreen(engine: UsageEngine, changed wantsChanged: Bool = false) -> AnyView {
         let page = DesignHistoryPage()
         let changed = Set(DesignSync.shared.history.events.compactMap(\.frameID))
+        // changed면 목업 문구가 바뀐 반영할 변경이 있는 화면을 고른다 (바뀐 목업 문구 칸을 보려고)
         let screen = DesignSync.shared.history.files.flatMap { key, file in file.screens.values.map { (key, $0) } }
-            .filter { !changed.contains($0.1.frameID) }
+            .filter { item in
+                guard wantsChanged else { return !changed.contains(item.1.frameID) }
+                return DesignSync.shared.pendingEvents(for: item.1, in: item.0).contains { $0.changes.contains { $0.layer == .text } }
+            }
             .max { ($0.1.items.count, $1.1.frameID) < ($1.1.items.count, $0.1.frameID) }
         if let (key, screen) = screen {
             page.scope = .menu(fileKey: key, path: screen.menuPath)

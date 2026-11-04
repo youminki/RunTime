@@ -15,6 +15,8 @@ final class DesignImages: ObservableObject {
     }
 
     @Published private(set) var states: [String: State] = [:]
+    /// 토큰이 없어 받지 못한 요청. 토큰을 넣으면 다시 받는다 (보던 상세가 다시 열리지 않아도 그림이 채워지게).
+    private var waitingForToken: [(fileKey: String, nodeIDs: [String], version: String)] = []
     /// 화면을 다시 그릴 때마다 파일을 읽지 않게 한 번 읽은 그림을 둔다. 세로로 긴 화면은 한 장에 십수 MB라, 몇 주씩 켜 두는 앱이 계속 늘지 않게 최근 것만 둔다.
     private let decoded: NSCache<NSURL, NSImage> = {
         let cache = NSCache<NSURL, NSImage>()
@@ -53,6 +55,16 @@ final class DesignImages: ObservableObject {
         return FileManager.default.fileExists(atPath: url.path) ? .ready(url) : nil
     }
 
+    /// 토큰을 넣은 뒤 부른다. 토큰이 없어 비워 둔 그림을 다시 받는다.
+    func retryWaitingForToken() {
+        let waiting = waitingForToken
+        waitingForToken = []
+        for item in waiting {
+            for nodeID in item.nodeIDs { states[Self.key(fileKey: item.fileKey, nodeID: nodeID, version: item.version)] = nil }
+            load(fileKey: item.fileKey, nodeIDs: item.nodeIDs, version: item.version)
+        }
+    }
+
     func load(fileKey: String, nodeID: String, version: String) {
         load(fileKey: fileKey, nodeIDs: [nodeID], version: version)
     }
@@ -75,6 +87,7 @@ final class DesignImages: ObservableObject {
         guard !wanted.isEmpty else { return }
         guard let token = DesignSyncSettings.shared.token else {
             for nodeID in wanted { states[Self.key(fileKey: fileKey, nodeID: nodeID, version: version)] = .missing("피그마 토큰이 없어 이미지를 받지 못했습니다") }
+            waitingForToken.append((fileKey, wanted, version))
             return
         }
         for chunk in stride(from: 0, to: wanted.count, by: Self.batchSize).map({ Array(wanted[$0..<min($0 + Self.batchSize, wanted.count)]) }) {

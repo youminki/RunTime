@@ -18,7 +18,7 @@ struct DesignCompareView: View {
             Rectangle().fill(WL.border).frame(height: 1)
             SlimScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) { results }
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 80)
             }
         }
         .onAppear {
@@ -184,7 +184,8 @@ struct DesignCompareView: View {
             if screens > 0, let events {
                 Button {
                     NSPasteboard.general.clearContents()
-                    let prompt = sync.claudePrompt(events: events, title: scopeTitle)
+                    let prompt = sync.claudePrompt(events: events, title: scopeTitle,
+                                                    unit: model.screen != nil ? "화면" : model.path != nil ? "메뉴" : "프로젝트")
                     NSPasteboard.general.setString(prompt, forType: .string)
                     page.flash(DesignFormat.copied(prompt))
                 } label: { Label("Claude 문구", systemImage: "sparkles") }
@@ -264,7 +265,7 @@ struct DesignCompareView: View {
                         Text("\(group.events.count)번 바뀜").font(WL.label).foregroundStyle(WL.muted).fixedSize()
                     }
                 }
-                Text(([note].compactMap { $0 } + [DesignFormat.subtitle(latest)]).joined(separator: " · "))
+                Text(([note, latest.screenID.isEmpty ? nil : latest.screenID].compactMap { $0 } + [DesignFormat.subtitle(latest)]).joined(separator: " · "))
                     .font(WL.meta).foregroundStyle(WL.muted).lineLimit(1)
                 HStack(spacing: 6) {
                     DesignPhaseBadge(phase: latest.phase)

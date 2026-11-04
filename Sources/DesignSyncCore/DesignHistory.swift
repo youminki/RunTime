@@ -62,7 +62,8 @@ public struct DesignEvent: Codable, Equatable, Identifiable, Sendable {
         switch kind {
         case .added, .removed, .replaced: return true
         case .changelog: return false
-        case .changed: return changes.contains { $0.op != .renumbered && !($0.layer == .header && ClaudePrompt.skippedHeaders.contains($0.label)) }
+        // Claude 문구와 같은 판정을 써서, 별표·표 예시 데이터·내부 부품만 바뀐 변경은 할 일로 세지 않는다
+        case .changed: return changes.contains(where: ClaudePrompt.isActionable)
         }
     }
 

@@ -73,4 +73,22 @@ import Testing
         let round = try JSONDecoder().decode(DesignSource.self, from: JSONEncoder().encode(DesignSource(fileKey: "F", scope: [DesignScope(nodeID: "1:2", name: "목록")])))
         #expect(round.scope == [DesignScope(nodeID: "1:2", name: "목록")])
     }
+
+    /// 마크업용 목업 글: 바뀐 글이 맨 위, 나머지는 화면 자리별, 별표는 빼고 표 칸은 센다.
+    @Test func mockupPutsChangedFirstAndGroupsByArea() {
+        let screen = ScreenSnapshot(frameID: "1:1", screenID: "SC-1", texts: ["a": "검색", "b": "*", "c": "김경북", "d": "저장", "e": "목록"],
+                                    places: ["a": SpecPlace(path: ["툴바"], x: 0.1, y: 0.05, width: 0.1, height: 0.04),
+                                             "c": SpecPlace(path: ["표", "tbody"], x: 0.1, y: 0.5, width: 0.1, height: 0.04),
+                                             "d": SpecPlace(path: ["하단"], x: 0.8, y: 0.9, width: 0.1, height: 0.04),
+                                             "e": SpecPlace(path: ["제목"], x: 0.1, y: 0.02, width: 0.1, height: 0.04)])
+        let changes = [SpecChange(layer: .text, op: .modified, label: "", before: "조회", after: "검색", nodeID: "a"),
+                       SpecChange(layer: .text, op: .removed, label: "", before: "인쇄", nodeID: "z")]
+        let result = ScreenBrief.mockup(screen, changes: changes)
+        #expect(result.changed.map(\.text) == ["검색", "인쇄"])
+        #expect(result.changed.first?.before == "조회")
+        #expect(result.changed.last?.kind == .removed)
+        #expect(result.areas.map(\.name) == ["화면 위쪽", "화면 아래쪽"])
+        #expect(result.areas.first?.texts.map(\.text) == ["목록"])
+        #expect(result.samples == 1)
+    }
 }

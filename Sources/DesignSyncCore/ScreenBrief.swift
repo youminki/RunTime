@@ -20,6 +20,56 @@ public enum ScreenBrief {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
+    /// 마크업할 때 보는 목업 글 한 줄. `before`가 있으면 반영하지 않은 변경으로 바뀐 글이다.
+    public struct MockupText: Equatable, Sendable, Identifiable {
+        public enum Kind: Sendable { case same, changed, added, removed }
+        public let id: String
+        public let text: String
+        public let before: String?
+        public let kind: Kind
+    }
+
+    /// 목업 글을 마크업하기 좋게 나눈다. 바뀐 글은 맨 위, 나머지는 화면 위쪽·가운데·아래쪽 순서로 두고,
+    /// 별표 같은 표시는 빼고 표 칸의 예시 데이터는 따로 센다. `changes`는 반영하지 않은 목업 문구 변경이다.
+    public static func mockup(_ screen: ScreenSnapshot, changes: [SpecChange]) -> (changed: [MockupText], areas: [(name: String, texts: [MockupText])], samples: Int) {
+        let places = screen.places ?? [:]
+        // 같은 글을 여러 번 고쳤으면 Claude 문구처럼 처음 → 마지막 하나로 합친다 (`changes`는 오래된 것부터)
+        let merged = ClaudePrompt.merged(changes.filter { $0.layer == .text && !ClaudePrompt.isSampleData($0) })
+        var touched: [String: SpecChange] = [:]
+        for change in merged { if let id = change.nodeID { touched[id] = change } }
+        let row = { (id: String) in places[id].map { ($0.y * 200).rounded() } ?? .infinity }
+        let ids = screen.texts.keys.sorted { a, b in
+            let ra = row(a), rb = row(b)
+            if ra != rb { return ra < rb }
+            let xa = places[a]?.x ?? .infinity, xb = places[b]?.x ?? .infinity
+            return xa != xb ? xa < xb : a < b
+        }
+        var changed: [MockupText] = []
+        var buckets: [String: [MockupText]] = [:]
+        var samples = 0
+        var seen = Set<String>()
+        for id in ids {
+            guard let text = ClaudePrompt.meaningful(screen.texts[id]) else { continue }
+            if let change = touched[id] {
+                changed.append(MockupText(id: id, text: text, before: change.op == .added ? nil : change.before?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          kind: change.op == .added ? .added : .changed))
+                continue
+            }
+            if ClaudePrompt.isSampleData(place: places[id]) { samples += 1; continue }
+            guard seen.insert(text).inserted else { continue }
+            let area = places[id].map { $0.y + $0.height / 2 < 0.33 ? "화면 위쪽" : $0.y + $0.height / 2 < 0.66 ? "화면 가운데" : "화면 아래쪽" } ?? "자리 모름"
+            buckets[area, default: []].append(MockupText(id: id, text: text, before: nil, kind: .same))
+        }
+        // 지운 글은 지금 시안에 없어 변경에서 가져온다
+        for (index, change) in merged.enumerated() where change.op == .removed {
+            if let text = ClaudePrompt.meaningful(change.before) {
+                changed.append(MockupText(id: "removed:\(index):" + (change.nodeID ?? text), text: text, before: text, kind: .removed))
+            }
+        }
+        let areas = ["화면 위쪽", "화면 가운데", "화면 아래쪽", "자리 모름"].compactMap { name in buckets[name].map { (name: name, texts: $0) } }
+        return (changed, areas, samples)
+    }
+
     /// 목업에 쓴 컴포넌트 이름과 개수. 많이 쓴 것부터.
     public static func components(_ screen: ScreenSnapshot) -> [(name: String, count: Int)] {
         var counts: [String: Int] = [:]

@@ -62,6 +62,7 @@ final class DesignSyncSettings: ObservableObject {
         guard !trimmed.isEmpty, Keychain.write(trimmed, account: Self.tokenAccount) else { return false }
         cachedToken = trimmed
         tokenHint = "••••" + trimmed.suffix(4)
+        DesignImages.shared.retryWaitingForToken()
         return true
     }
 
@@ -421,7 +422,7 @@ final class DesignSync: ObservableObject {
     }
 
     /// 기간 비교 결과처럼 여러 화면의 변경을 화면별로 묶은 글. 지금 시안에 없는 화면은 변경에 남은 이름으로 적는다.
-    func claudePrompt(events: [DesignEvent], title: String) -> String {
+    func claudePrompt(events: [DesignEvent], title: String, unit: String = "메뉴") -> String {
         let groups = Dictionary(grouping: events.filter { $0.kind != .changelog }) { $0.frameID ?? $0.screenID }
         let items = groups.values.compactMap { events -> (screen: ScreenSnapshot, events: [DesignEvent], link: URL?)? in
             guard let latest = events.max(by: { $0.detectedAt < $1.detectedAt }) else { return nil }
@@ -430,7 +431,7 @@ final class DesignSync: ObservableObject {
             return (screen, events, latest.frameID.flatMap { FigmaFileURL.link(fileKey: latest.fileKey, nodeID: $0) })
         }
         .sorted { ($0.screen.menuPath, $0.screen.screenID) < ($1.screen.menuPath, $1.screen.screenID) }
-        return ClaudePrompt.menu(items, path: title, done: checkedMap(items.flatMap(\.events)))
+        return ClaudePrompt.menu(items, path: title, unit: unit, done: checkedMap(items.flatMap(\.events)))
     }
 
     private func checkedMap(_ events: [DesignEvent]) -> [UUID: Set<String>] {
@@ -1004,12 +1005,21 @@ final class DesignSync: ObservableObject {
 
     /// 마크업에 반영을 마쳤다. 목록에서 빠지고 "반영 완료" 보기에만 남는다.
     func setApplied(_ id: UUID, _ applied: Bool) {
+        setApplied([id], applied)
+    }
+
+    /// 여러 변경을 한 번에 넘긴다. 기록 파일이 커서 건마다 저장하지 않고 한 번만 저장한다.
+    func setApplied(_ ids: [UUID], _ applied: Bool) {
+        var copy = history
+        let before = copy.applied
         if applied {
-            guard history.applied.insert(id).inserted else { return }
-            history.seen.insert(id)
+            copy.applied.formUnion(ids)
+            copy.seen.formUnion(ids)
         } else {
-            guard history.applied.remove(id) != nil else { return }
+            copy.applied.subtract(ids)
         }
+        guard copy.applied != before else { return }
+        history = copy
         persist()
     }
 

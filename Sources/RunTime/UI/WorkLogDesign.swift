@@ -340,8 +340,22 @@ struct SidebarMaterial: NSViewRepresentable {
 struct Toast: View {
     let message: String
 
+    /// 끝말로 성공·실패를 가려 아이콘을 붙인다. 알림만 하는 글("새 변경이 없습니다")에는 붙이지 않는다.
+    static func tone(_ message: String) -> (icon: String, color: Color)? {
+        if ["못했", "못 했", "실패", "찾지 못"].contains(where: message.contains) {
+            return ("exclamationmark.circle.fill", Color(nsColor: .systemRed))
+        }
+        if ["했습니다", "었습니다", "았습니다"].contains(where: message.contains) { return ("checkmark.circle.fill", WL.done) }
+        return nil
+    }
+
     var body: some View {
-        Text(message)
+        HStack(spacing: 7) {
+            if let tone = Self.tone(message) {
+                Image(systemName: tone.icon).font(.system(size: 13.5)).foregroundStyle(tone.color)
+            }
+            Text(message)
+        }
             .font(.system(size: 13, weight: .medium))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
