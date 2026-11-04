@@ -219,6 +219,8 @@ private struct IssueNumberField: View {
             .focused($focused)
             .onSubmit(apply)
             .onChange(of: focused) { if !$0 { apply() } }
+            // 메뉴나 제안으로 고르면 치던 글이 고른 번호를 덮지 않게 버린다
+            .onChange(of: value) { _ in draft.text = nil }
             .onDisappear(perform: apply)
     }
 
@@ -256,7 +258,7 @@ struct EntryEditor: View {
                             Menu {
                                 ForEach(sortedIssues(for: entry), id: \.id) { issue in
                                     Button("#\(String(issue.id))  \(issue.reportTitle) · \(issue.doneRatio)%") {
-                                        store.update(id) { $0.issue = issue.id }
+                                        setIssue(issue.id)
                                     }
                                 }
                             } label: {
@@ -283,7 +285,7 @@ struct EntryEditor: View {
                         VStack(alignment: .leading, spacing: 4) {
                             SectionLabel("맞을 만한 일감")
                             ForEach(suggestions) { info in
-                                Button { store.update(id) { $0.issue = info.id } } label: {
+                                Button { setIssue(info.id) } label: {
                                     HStack(spacing: 6) {
                                         Text("#" + String(info.id)).font(WL.number).foregroundStyle(WL.muted)
                                         Text(info.reportTitle).font(.system(size: 13)).foregroundStyle(WL.text).lineLimit(1)

@@ -29,6 +29,13 @@ struct RedmineView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .onAppear { store.start() }
+                .onChange(of: store.generation) { _ in
+                    state.comments = [:]
+                    state.files = [:]
+                    state.subjectDrafts = [:]
+                    state.descriptionDrafts = [:]
+                    state.relationTargets = [:]
+                }
                 .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in store.refreshIfStale() }
                 // 앞뒤 일감으로 옮길 때 창이 닫혔다 열리지 않게 번호가 아니라 있고 없음으로 띄운다
                 .sheet(isPresented: Binding(get: { store.selected != nil }, set: { if !$0 { store.selected = nil } })) {

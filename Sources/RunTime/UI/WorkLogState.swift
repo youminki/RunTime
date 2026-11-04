@@ -31,6 +31,8 @@ final class WorkLogPage: ObservableObject {
         let oldest = WorkDay.adding(-14, to: WorkDay.today())
         UserDefaults.standard.set(edits.filter { $0.key >= oldest }, forKey: key)
     }
+    /// 직접 켜고 끈 댓글. 자동 판정이 풀려도 사용자가 고른 대로 둔다.
+    var noteChosen: Set<Int> = []
     /// 캘린더에서 고른 날. 구경만 해도 일지의 날이 바뀌면 다른 날에 적게 되어 따로 둔다.
     @Published var calendarDay = WorkDay.today()
     /// Claude로 다듬는 중인 날.
@@ -39,6 +41,7 @@ final class WorkLogPage: ObservableObject {
     @Published var day = WorkDay.today() {
         didSet {
             calendarMonth = WorkDay.month(of: day).lowerBound
+            calendarDay = day
             if day != oldValue { dayReport = Self.defaultReport(for: day) }
         }
     }

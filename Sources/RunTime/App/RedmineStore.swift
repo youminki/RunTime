@@ -138,6 +138,8 @@ final class RedmineStore: ObservableObject {
     private var settings: WorkLogSettings { .shared }
     private var started = false
     private var loadedFrom = ""
+    /// 연결이 바뀔 때마다 오른다. 화면은 일감 번호로 묶인 초안을 비운다.
+    @Published private(set) var generation = 0
     private var loadedAt = Date.distantPast
     /// 목록 요청이 겹치면 늦게 온 옛 응답이 새 보기를 덮지 않게 한다.
     private var listToken = 0
@@ -166,6 +168,10 @@ final class RedmineStore: ObservableObject {
         guard started, credentialKey != loadedFrom else { return }
         loadedFrom = credentialKey
         selected = nil
+        // 프로젝트·질의 번호는 옛 서버 것이고, 늦게 온 옛 응답도 버려야 한다
+        scope = .mine
+        detailTokens = detailTokens.mapValues { $0 + 1 }
+        generation += 1
         issues = []
         details = [:]
         total = 0
@@ -175,7 +181,9 @@ final class RedmineStore: ObservableObject {
 
     /// 창으로 돌아올 때. 메뉴바 앱은 며칠 켜 두어 목록이 낡는다.
     func refreshIfStale() {
-        guard started, !loading, selected == nil, Date().timeIntervalSince(loadedAt) > 300 else { return }
+        guard started, !loading, !creating, selected == nil, Date().timeIntervalSince(loadedAt) > 300 else { return }
+        // 끊긴 동안 창을 오갈 때마다 다시 받고 실패를 알리지 않게 시도한 때로 센다
+        loadedAt = Date()
         refresh()
     }
 

@@ -939,28 +939,41 @@ final class WorkLogSync: ObservableObject {
 
     /// Claude 등으로 이미 올린 것 같은 댓글 (일감 번호 → 그 댓글). 같은 글을 두 번 올리지 않게 카드에 알린다.
     @Published var postedHints: [Int: RedmineAPI.Journal] = [:]
+    private var pendingCheck: DispatchWorkItem?
     /// 레드마인에서 찾지 못한 일감 번호.
     @Published private(set) var unknownIssues: Set<Int> = []
     private var checkedNotes: [Int: String] = [:]
 
     /// 보낼 일감마다 레드마인 댓글을 읽어 비슷한 댓글이 이미 있는지 본다. 같은 글은 한 번만 본다.
+    /// 고치기 창에서 칠 때마다 요청이 쌓이지 않게 입력이 멈춘 뒤에 본다.
+    func checkPostedSoon(_ updates: [WorkReport.RedmineUpdate]) {
+        pendingCheck?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.checkPosted(updates) }
+        pendingCheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+    }
+
     func checkPosted(_ updates: [WorkReport.RedmineUpdate]) {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
         let todo = updates.filter { $0.needsNote && checkedNotes[$0.issue] != $0.note }
         guard !todo.isEmpty else { return }
         for update in todo {
-            checkedNotes[update.issue] = update.note
             // 글이 바뀌었으면 옛 글로 낸 판정을 남기지 않는다. 남기면 새 내용까지 댓글 없이 나간다
-            postedHints[update.issue] = nil
+            if let old = checkedNotes[update.issue], old != update.note { postedHints[update.issue] = nil }
+            checkedNotes[update.issue] = update.note
         }
         // 앱이 전에 올린 자기 댓글은 ‘이미 올린 댓글’로 보지 않는다 (이어 쓰는 오늘 댓글이 빠지지 않게)
         let mine = Dictionary(grouping: store.log.sent.filter { $0.undoneAt == nil }, by: \.issue)
         checkQueue.async { [weak self] in
             for update in todo {
+                // 줄 서는 사이 글이 또 바뀌었으면 낡은 글로 요청하지 않는다
+                guard DispatchQueue.main.sync(execute: { self?.checkedNotes[update.issue] }) == update.note else { continue }
                 let response = Self.perform(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: update.issue))
                 guard response.ok, let data = response.data, let journals = try? RedmineAPI.parseJournals(data) else {
                     // 못 읽었으면 확인한 것으로 남기지 않는다. 다음에 목록을 열 때 다시 본다
-                    DispatchQueue.main.async { self?.checkedNotes[update.issue] = nil }
+                    DispatchQueue.main.async {
+                        if self?.checkedNotes[update.issue] == update.note { self?.checkedNotes[update.issue] = nil }
+                    }
                     continue
                 }
                 // Claude는 MR을 올릴 때(머지 전날일 수 있다) 댓글을 다니, 첫날 사흘 전부터 본다

@@ -437,7 +437,7 @@ struct WorkLogPreview: View {
                 // 번호가 같아도 줄이 더해지면 댓글이 달라져 다시 본다
                 .onChange(of: updates.map { "\($0.issue)|\($0.note)" }) { _ in
                     sync.loadInfo(updates.map(\.issue))
-                    if settings.redmineReady { sync.checkPosted(updates) }
+                    if settings.redmineReady { sync.checkPostedSoon(updates) }
                     loadScreens(updates)
                 }
                 .onReceive(sync.$postedHints) { hints in
@@ -449,7 +449,7 @@ struct WorkLogPreview: View {
                     // 판정이 풀렸으면 자동으로 뺀 댓글을 되살린다
                     for issue in page.hintApplied where hints[issue] == nil {
                         page.hintApplied.remove(issue)
-                        page.redmineNoNote.remove(issue)
+                        if !page.noteChosen.contains(issue) { page.redmineNoNote.remove(issue) }
                     }
                 }
             }
@@ -1018,6 +1018,7 @@ struct WorkLogPreview: View {
                         get: { !noNote },
                         set: { on in
                             if on { page.redmineNoNote.remove(update.issue) } else { page.redmineNoNote.insert(update.issue) }
+                            page.noteChosen.insert(update.issue)
                         }
                     ))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
@@ -1359,6 +1360,7 @@ struct WorkLogPreview: View {
             page.redmineNoNote.remove(issue)
             page.redmineNoScreens.remove(issue)
             page.hintApplied.remove(issue)
+            page.noteChosen.remove(issue)
             // 남기면 값이 다시 내보내질 때 hintApplied와 댓글 빼기가 되살아난다
             sync.postedHints[issue] = nil
             page.redmineSkipped.remove(issue)
