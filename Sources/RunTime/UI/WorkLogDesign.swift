@@ -33,11 +33,11 @@ enum WL {
     static let border = dynamic(light: 0xE9E9E7, dark: 0x2F2F2F)
     static let text = dynamic(light: 0x37352F, dark: 0xE6E6E5)
     static let muted = dynamic(light: 0x787774, dark: 0x9B9B9B)
-    static let faint = dynamic(light: 0xACABA9, dark: 0x5A5A5A)
+    static let faint = dynamic(light: 0xACABA9, dark: 0x707070)
     static let accent = dynamic(light: 0x2383E2, dark: 0x529CCA)
     static let done = dynamic(light: 0x448361, dark: 0x4DAB9A)
     static let waiting = dynamic(light: 0xD9730D, dark: 0xFFA344)
-    static let quiet = dynamic(light: 0x9B9A97, dark: 0x7F7F7F)
+    static let quiet = dynamic(light: 0x9B9A97, dark: 0x8C8C8C)
     static let hover = dynamic(light: 0x37352F, dark: 0xFFFFFF, alpha: 0.055)
     static let selected = dynamic(light: 0x2383E2, dark: 0x529CCA, alpha: 0.14)
 

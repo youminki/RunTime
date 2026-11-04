@@ -164,6 +164,17 @@ private let issueJSON = #"""
         #expect(RedmineNote.safeHTML(#"<p style="background:url(http://e/e.png)">d</p>"#) == #"<p style="background:">d</p>"#)
     }
 
+    @Test func decodesEntitiesAndShortensLinks() {
+        #expect(RedmineNote.decodeEntities("&quot;a&quot; &middot; b &amp;lt;") == "\"a\" · b &lt;")
+        #expect(RedmineNote.plain("<p>a &quot;b&quot;</p>") == "a \"b\"")
+        let long = URL(string: "https://www.figma.com/design/abcdefghijklmnopqrstuvwxyz/-UxHub-%ED%99%94%EB%A9%B4?node-id=1")!
+        #expect(RedmineNote.linkLabel(long) == "Figma 열기")
+        let other = URL(string: "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")!
+        #expect(RedmineNote.linkLabel(other) == "example.com/aaaaaaaaaaaaaaaaaaaaaaa…")
+        let short = URL(string: "https://example.com/a")!
+        #expect(RedmineNote.linkLabel(short) == "https://example.com/a")
+    }
+
     @Test func keepsOrdinaryMarkup() {
         let html = #"<p>[작업 내용]<br />- <strong>목록</strong> <a href="https://example.com">링크</a></p><ol><li>하나</li></ol>"#
         #expect(RedmineNote.safeHTML(html) == html)

@@ -23,7 +23,7 @@ struct RedmineView: View {
         Group {
             if settings.redmineReady {
                 HStack(spacing: 0) {
-                    sidebar.frame(width: 210)
+                    sidebar.frame(width: 240)
                     Rectangle().fill(WL.border).frame(width: 1)
                     RedmineIssueTable(store: store)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,7 +80,7 @@ struct RedmineView: View {
                 }
                 if !store.projects.isEmpty {
                     group("프로젝트") {
-                        ForEach(store.projects) { project in item(.project(project), icon: "folder") }
+                        ForEach(store.projects) { project in item(.project(project), icon: nil) }
                     }
                 }
             }
@@ -96,12 +96,13 @@ struct RedmineView: View {
         }
     }
 
-    private func item(_ scope: RedmineStore.Scope, icon: String) -> some View {
+    private func item(_ scope: RedmineStore.Scope, icon: String?) -> some View {
         let on = store.scope == scope
         return Button { store.scope = scope } label: {
             HStack(spacing: 8) {
-                Image(systemName: icon).frame(width: 16).foregroundStyle(on ? WL.accent : WL.muted)
-                Text(scope.title).lineLimit(1).truncationMode(.middle)
+                if let icon { Image(systemName: icon).frame(width: 16).foregroundStyle(on ? WL.accent : WL.muted) }
+                // 프로젝트 이름은 뒤가 달라 가운데를 줄이면 알아볼 수 없다. 두 줄까지 쓴다
+                Text(scope.title).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
             .sidebarRow(selected: on)
@@ -149,7 +150,8 @@ private extension View {
         self.font(WL.meta)
             .foregroundStyle(selected ? WL.accent : WL.text)
             .padding(.horizontal, 8)
-            .frame(height: 28)
+            .padding(.vertical, 5)
+            .frame(minHeight: 28)
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selected ? WL.selected : .clear))
             .contentShape(Rectangle())
     }
@@ -279,11 +281,10 @@ private struct RedmineIssueTable: View {
 
     /// 보일 칸과 너비. 제목은 남는 너비를 모두 쓴다.
     static func columns(for width: CGFloat) -> [(RedmineStore.Column, CGFloat?)] {
-        var columns: [(RedmineStore.Column, CGFloat?)] = [(.id, 64), (.tracker, 72), (.status, 76), (.priority, 64), (.subject, nil),
-                                                         (.assignee, 84), (.ratio, 96), (.due, 86), (.updated, 86)]
-        if width < 1000 { columns.removeAll { $0.0 == .updated } }
-        if width < 880 { columns.removeAll { $0.0 == .priority } }
-        if width < 760 { columns.removeAll { $0.0 == .tracker } }
+        // 트래커는 제목 앞 태그로, 높은 우선순위는 제목 뒤 표시로 보여 칸을 따로 두지 않는다 (제목이 넓어야 읽힌다)
+        var columns: [(RedmineStore.Column, CGFloat?)] = [(.id, 60), (.status, 72), (.subject, nil), (.assignee, 72), (.ratio, 92), (.due, 84), (.updated, 86)]
+        if width < 1100 { columns.removeAll { $0.0 == .updated } }
+        if width < 780 { columns.removeAll { $0.0 == .ratio } }
         return columns
     }
 
@@ -387,7 +388,11 @@ private struct TableRow: View {
                         Color.clear.frame(width: 14)
                     }
                 }
+                TrackerTag(name: issue.tracker.name)
                 subject(issue)
+                if issue.priority.id > 2 {
+                    Text(issue.priority.name).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.red).fixedSize()
+                }
             }
         case .assignee:
             Text(issue.assignedTo?.name ?? "—").font(WL.meta).foregroundStyle(issue.assignedTo == nil ? WL.faint : WL.text).lineLimit(1)
@@ -509,9 +514,8 @@ struct RedmineIssueSheet: View {
                     .buttonStyle(TextLinkButtonStyle())
                     .tip("오늘 업무 일지에 이 일감 줄을 넣습니다 (이미 있으면 상태만 맞춥니다)")
                 if let base = RedmineAPI.baseURL(WorkLogSettings.shared.effectiveRedmineURL) {
-                    Button { NSWorkspace.shared.open(Redmine.webURL(base: base, issue: id)) } label: { Image(systemName: "safari") }
-                        .buttonStyle(GhostIconButtonStyle())
-                        .tip("웹에서 열기")
+                    Button { NSWorkspace.shared.open(Redmine.webURL(base: base, issue: id)) } label: { Label("웹에서 열기", systemImage: "safari") }
+                        .buttonStyle(TextLinkButtonStyle())
                 }
             }
             Button { dismiss() } label: { Image(systemName: "xmark") }
@@ -654,13 +658,13 @@ struct RedmineIssueSheet: View {
 
     /// 값 자리에 둔 메뉴. 값 글자에 작은 화살표를 붙여 누를 수 있다는 것을 보인다.
     private func menu<Content: View>(_ value: String, @ViewBuilder content: () -> Content) -> some View {
-        Menu { content() } label: {
-            HStack(spacing: 4) {
-                Text(value).font(WL.meta.weight(.medium))
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(WL.quiet)
-            }
-        }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        // 누를 수 있는 칸임을 보이게 값에 바탕을 깐다 (읽기만 하는 값과 가른다)
+        Menu { content() } label: { Text(value).font(WL.meta.weight(.medium)) }
+            .menuStyle(.borderlessButton).fixedSize()
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
     }
 
     private func dateMenu(_ issue: Redmine.Issue, value: String?, key: String) -> some View {
@@ -1138,21 +1142,39 @@ final class HTMLCache {
 
     static func render(_ html: String) -> AttributedString {
         let safe = RedmineNote.safeHTML(html)
-        // 평문 댓글(옛 Textile)은 줄바꿈을 살려 그대로 보인다
-        guard safe.contains("<") else { return AttributedString(safe) }
-        let wrapped = "<meta charset=\"utf-8\"><div style=\"font-family:-apple-system;font-size:13.5px\">\(safe)</div>"
-        guard let data = wrapped.data(using: .utf8),
-              let parsed = try? NSMutableAttributedString(
-                data: data,
-                options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
-                documentAttributes: nil) else {
-            return AttributedString(RedmineNote.plain(html))
+        let parsed: NSMutableAttributedString
+        if safe.contains("<") {
+            let wrapped = "<meta charset=\"utf-8\"><div style=\"font-family:-apple-system;font-size:13.5px\">\(safe)</div>"
+            guard let data = wrapped.data(using: .utf8),
+                  let html = try? NSMutableAttributedString(
+                    data: data,
+                    options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
+                    documentAttributes: nil) else {
+                return AttributedString(RedmineNote.plain(html))
+            }
+            parsed = html
+        } else {
+            // 평문 댓글(옛 Textile)은 줄바꿈을 살려 그대로 보인다
+            parsed = NSMutableAttributedString(string: RedmineNote.decodeEntities(safe), attributes: [.font: NSFont.systemFont(ofSize: 13.5)])
         }
         let full = NSRange(location: 0, length: parsed.length)
         parsed.removeAttribute(.foregroundColor, range: full)
         parsed.removeAttribute(.backgroundColor, range: full)
+        shortenLinks(parsed)
         // 끝에 붙는 빈 줄을 뗀다
         while parsed.string.hasSuffix("\n") { parsed.deleteCharacters(in: NSRange(location: parsed.length - 1, length: 1)) }
         return (try? AttributedString(parsed, including: \.appKit)) ?? AttributedString(parsed.string)
+    }
+
+    /// 글에 그대로 쓴 주소를 누를 수 있게 하고, 긴 주소는 짧은 이름으로 보인다 (`%ED%99…`가 두 줄씩 이어지지 않게).
+    private static func shortenLinks(_ text: NSMutableAttributedString) {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return }
+        let matches = detector.matches(in: text.string, range: NSRange(location: 0, length: text.length))
+        for match in matches.reversed() {
+            guard let url = match.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { continue }
+            text.addAttribute(.link, value: url, range: match.range)
+            let label = RedmineNote.linkLabel(url)
+            if label != url.absoluteString { text.replaceCharacters(in: match.range, with: label) }
+        }
     }
 }

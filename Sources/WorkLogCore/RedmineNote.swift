@@ -32,6 +32,24 @@ public enum RedmineNote {
             .replacingOccurrences(of: ">", with: "&gt;")
     }
 
+    /// `&quot;` 같은 HTML 기호를 글자로. `&amp;`는 맨 뒤에 풀어 `&amp;lt;`가 `<`가 되지 않게 한다.
+    public static func decodeEntities(_ text: String) -> String {
+        var result = text
+        for (entity, letter) in [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
+                                 ("&middot;", "·"), ("&nbsp;", " "), ("&hellip;", "…"), ("&rarr;", "→")] {
+            result = result.replacingOccurrences(of: entity, with: letter)
+        }
+        return result.replacingOccurrences(of: "&amp;", with: "&")
+    }
+
+    /// 화면에 보일 링크 글. 길면 호스트와 경로 앞부분만 남기고, 피그마는 이름으로 쓴다.
+    public static func linkLabel(_ url: URL) -> String {
+        let text = url.absoluteString
+        guard text.count > 48, let host = url.host else { return text }
+        if host.hasSuffix("figma.com") { return "Figma 열기" }
+        return host + String(url.path.prefix(24)) + "…"
+    }
+
     /// 화면에 그리기 전에 외부 자원을 그 자리에서 받는 꼴을 지운다. HTML 해석기는 그림을 메인 스레드에서 내려받아
     /// 화면이 멈추고 추적 그림이 새어 나갈 수 있다. 그림은 `[이미지]` 자리만 남기고, 원본은 첨부에서 연다.
     public static func safeHTML(_ html: String) -> String {
@@ -58,8 +76,7 @@ public enum RedmineNote {
         while let open = text.range(of: "<"), let close = text.range(of: ">", range: open.upperBound..<text.endIndex) {
             text.removeSubrange(open.lowerBound..<close.upperBound)
         }
-        text = text.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&nbsp;", with: " ").replacingOccurrences(of: "&amp;", with: "&")
+        text = decodeEntities(text)
         return text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }.joined(separator: "\n")
     }
