@@ -165,6 +165,7 @@ python3 -I scripts/update-aliases.py  # Petdex 캐릭터의 한국어 이름을 
 | `--game-frames <폴더>` | README 게임 GIF용 장면을 이어 찍기 (`scripts/make-game-gif.sh`가 GIF로 만듦) |
 | `--game-bench` | 무대와 게임 한 장면을 그리는 데 드는 시간 재기 (`BENCH_FRAMES`로 장면 수) |
 | `--hero-gif <파일>` | README 맨 위 GIF 만들기 |
+| `RUNTIME_MENU_CHECK=<폴더> RUNTIME_OPEN_PAGE=usage` | 앱 창의 메뉴를 차례로 열어 찍고 전환 시간과 메모리를 잼. `RUNTIME_WORKLOG`, `RUNTIME_DESIGN_HISTORY`, `RUNTIME_HOSTS`로 사본을 가리키고 씀 |
 | `--worklog-flow` | 일지를 레드마인으로 보내는 길을 가짜 응답으로 돌려, 실패 때 줄이 남는지와 겹쳐 나가지 않는지 살핌 (서버에 보내지 않음) |
 | `--redmine-flow` | 레드마인 화면의 받기, 고치기, 댓글, 첨부, 관계, 새 일감, 찾기를 가짜 응답으로 끝까지 돌려 나가는 요청을 살핌 (서버에 보내지 않음) |
 | `--redmine-check dupes` | 보낼 목록을 레드마인 댓글 꼴로 찍고, 일감마다 비슷한 댓글이 이미 있는지 읽어 봄 (쓰지 않음) |

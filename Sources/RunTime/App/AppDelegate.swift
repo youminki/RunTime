@@ -48,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 self?.showMain(page)
                 if ProcessInfo.processInfo.environment["RUNTIME_SHEET_CHECK"] != nil { MainActor.assumeIsolated { RedmineFlowCheck.sheets() } }
+                if let folder = ProcessInfo.processInfo.environment["RUNTIME_MENU_CHECK"], let self {
+                    MainActor.assumeIsolated {
+                        MenuCheck.run(window: { [weak self] in self?.mainWindow }, navigator: self.navigator, page: self.workLogPage, folder: folder)
+                    }
+                }
             }
         }
         EditMenu.install()

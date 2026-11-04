@@ -409,6 +409,8 @@ struct MergedRow: View {
                 title(crumb)
                     .font(.system(size: 14))
                     .lineLimit(1)
+                    // 경로가 앞에 붙어 길어지면 끝의 일감 이름이 남게 앞을 자른다
+                    .truncationMode(.head)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .tip(tip(days: days, steps: steps))
                 if steps.count > 1 {

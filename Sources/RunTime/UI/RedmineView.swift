@@ -1204,6 +1204,7 @@ struct RedmineIssueSheet: View {
             TextEditor(text: Binding(get: { state.comments[issue.id] ?? "" }, set: { state.comments[issue.id] = $0 }))
                 .font(WL.body)
                 .scrollContentBackground(.hidden)
+                .scrollIndicators(empty ? .never : .automatic)
                 // 비어 있으면 이력을 가리지 않게 한 줄로 두고, 쓰기 시작하면 넓힌다
                 .frame(height: empty ? 24 : 96)
                 .overlay(alignment: .topLeading) {
