@@ -110,6 +110,8 @@ final class UsageEngine: ObservableObject {
         didSet { UserDefaults.standard.set(knownWeeklyReset, forKey: Self.weeklyResetKey) }
     }
     private static let weeklyResetKey = "knownWeeklyReset"
+    /// 그 리셋을 받은 계정. 앱이 꺼진 사이 계정을 바꿨으면 앞 계정 경계라 버린다.
+    private static let weeklyResetAccountKey = "knownWeeklyResetAccount"
     /// 최근 공식 세션 %의 오름세. "약 N분 뒤 한도"를 공식 값만으로 계산한다.
     private var sessionTrend = OfficialTrend()
     private var reactions = UsageReactions()
@@ -178,6 +180,9 @@ final class UsageEngine: ObservableObject {
     private func syncAccount(force: Bool = false) {
         let current = accountWatcher.current()
         let changed = accountChecked && current?.uuid != knownAccount?.uuid
+        if !accountChecked, UserDefaults.standard.string(forKey: Self.weeklyResetAccountKey) != current?.uuid {
+            knownWeeklyReset = nil
+        }
         if current != knownAccount || !accountChecked {
             DispatchQueue.main.async { self.account = current }
         }
@@ -292,7 +297,10 @@ final class UsageEngine: ObservableObject {
             if lastOfficialFailure.isEmpty { fetchOfficial(minInterval: Self.officialRefreshThrottle) }
         }
 
-        if let reset = official?.weeklyResetsAt { knownWeeklyReset = reset }
+        if let reset = official?.weeklyResetsAt, reset != knownWeeklyReset {
+            knownWeeklyReset = reset
+            UserDefaults.standard.set(knownAccount?.uuid, forKey: Self.weeklyResetAccountKey)
+        }
         let nextWeeklyReset = knownWeeklyReset.map { WeeklyWindow.nextReset(from: $0, now: now) }
         checkWeeklyReset(nextWeeklyReset, enabled: config.weeklyResetAlertEnabled)
         // 주간 모델 비중도 공식 주간 창으로 집계해 게이지와 같은 기간을 보게 한다.
