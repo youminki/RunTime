@@ -88,11 +88,16 @@ if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
         RunLoop.main.run()
     }
     do {
-        var log = try WorkLogFile.load()
+        let base = try WorkLogFile.load()
+        var log = base
         let result = WorkLogCommand.run(args, log: &log) {
             String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
         }
-        if result.changed { try WorkLogFile.save(log) }
+        if result.changed {
+            // 입력을 기다리는 사이 앱이 파일을 저장했으면 그 내용을 덮지 않게 앱 저장처럼 합친다
+            let disk = try WorkLogFile.load()
+            try WorkLogFile.save(disk == base ? log : WorkLog.merge(mine: log, base: base, disk: disk))
+        }
         print(result.output)
         exit(result.failed ? 1 : 0)
     } catch {
