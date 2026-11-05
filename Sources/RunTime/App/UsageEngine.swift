@@ -105,7 +105,11 @@ final class UsageEngine: ObservableObject {
     private var lastOfficialFailure = ""
     /// 켠 뒤 공식 조회 결과를 한 번이라도 받았는지. 그 전에는 주간 경계를 모른다.
     private var officialAnswered = false
-    private var knownWeeklyReset: Date?
+    /// 마지막으로 받은 공식 주간 리셋. 다시 켰을 때 망이 끊겨 있어도 주간 요약이 월요일을 경계로 잘못 보지 않게 남겨 둔다.
+    private var knownWeeklyReset: Date? = UserDefaults.standard.object(forKey: UsageEngine.weeklyResetKey) as? Date {
+        didSet { UserDefaults.standard.set(knownWeeklyReset, forKey: Self.weeklyResetKey) }
+    }
+    private static let weeklyResetKey = "knownWeeklyReset"
     /// 최근 공식 세션 %의 오름세. "약 N분 뒤 한도"를 공식 값만으로 계산한다.
     private var sessionTrend = OfficialTrend()
     private var reactions = UsageReactions()
@@ -190,6 +194,8 @@ final class UsageEngine: ObservableObject {
         officialBackoffUntil = nil
         lastOfficialFailure = ""
         knownWeeklyReset = nil
+        // 새 계정의 주간 경계는 그 계정 응답을 받은 뒤에 안다
+        officialAnswered = false
         publishOfficial(nil, status: config.officialEnabled ? .waiting : .disabled)
         fetchOfficial(minInterval: 0)
         if !force { DispatchQueue.main.async { self.accountSwitched.send() } }
