@@ -221,10 +221,12 @@ export async function viewReport(key, token, env) {
   const notFound = new Response("없는 보고입니다", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
   if (!/^[0-9a-f]{32}$/.test(key) || !/^[0-9a-f-]{36}$/.test(token ?? "")) return notFound;
   const row = await env.DB.prepare(
-    "SELECT install, kind, message, app, os, commit_sha AS commit, log, screen, source, detail FROM reports WHERE key = ? AND token = ?",
+    "SELECT install, kind, message, app, os, commit_sha, log, screen, source, detail FROM reports WHERE key = ? AND token = ?",
   ).bind(key, token).first();
   if (!row) return notFound;
-  const report = Object.fromEntries(Object.entries(row).map(([name, value]) => [name, value ?? ""]));
+  // commit은 SQLite 예약어라 칸 이름(commit_sha)으로 읽어 옮긴다
+  const { commit_sha: commit, ...rest } = row;
+  const report = Object.fromEntries(Object.entries({ ...rest, commit }).map(([name, value]) => [name, value ?? ""]));
   const nonce = crypto.randomUUID().replaceAll("-", "");
   return new Response(reportPage(report, nonce), {
     headers: {

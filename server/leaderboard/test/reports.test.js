@@ -160,7 +160,7 @@ test("copy page escapes text and only runs its own script", () => {
 test("copy page needs the matching token", async () => {
   const key = "0123456789abcdef0123456789abcdef";
   const token = "11111111-2222-4333-8444-555555555555";
-  const row = { install, kind: "app-hang", message: "main", app: "0.8.75", os: "27", commit: sha, log: "", screen: "", source: "", detail: "" };
+  const row = { install, kind: "app-hang", message: "main", app: "0.8.75", os: "27", commit_sha: sha, log: "", screen: "", source: "", detail: "" };
   const env = { DB: { prepare: () => ({ bind: (k, t) => ({ first: async () => (k === key && t === token ? row : null) }) }) } };
   assert.equal((await viewReport(key, token, env)).status, 200);
   assert.equal((await viewReport(key, "11111111-2222-4333-8444-000000000000", env)).status, 404);
@@ -168,4 +168,5 @@ test("copy page needs the matching token", async () => {
   assert.equal((await viewReport(key, null, env)).status, 404);
   const response = await viewReport(key, token, env);
   assert.match(response.headers.get("content-security-policy"), /script-src 'nonce-/);
+  assert.match(await response.text(), new RegExp(`커밋 ${sha}`));
 });
