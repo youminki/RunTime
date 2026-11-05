@@ -118,6 +118,20 @@ private let tree: [Int: RedmineAPI.Issue] = [
         #expect(merged.dismissed.isEmpty)
     }
 
+    @Test func removalOnDiskSurvivesMyUnrelatedChange() {
+        var base = WorkLog(projects: ["A", "Q"], entries: [])
+        base.dismissed = ["d"]
+        var mine = base
+        mine.projects = ["A", "Q", "N"]   // 나는 N만 더함
+        mine.dismissed = ["d", "e"]
+        var disk = base
+        disk.projects = ["A"]              // 그사이 바깥에서 Q를 빼고
+        disk.dismissed = []                // 지운 줄을 되살림
+        let merged = WorkLog.merge(mine: mine, base: base, disk: disk)
+        #expect(merged.projects == ["A", "N"])
+        #expect(merged.dismissed == ["e"])
+    }
+
     @Test func mergeKeepsReorderAndSkipsDuplicateImport() {
         let a = WorkEntry(day: "2026-10-30", project: "p", title: "가"), b = WorkEntry(day: "2026-10-30", project: "p", title: "나")
         let base = WorkLog(projects: ["p"], entries: [a, b])
