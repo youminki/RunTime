@@ -118,8 +118,9 @@ struct ColumnDivider: View {
                     .frame(width: 9)
                     .contentShape(Rectangle())
                     .onHover { inside in
+                        // 사라질 때 이미 되돌렸으면 늦게 온 떠남 소식으로 두 번 되돌리지 않는다
+                        if inside { NSCursor.resizeLeftRight.push() } else if state.hovering { NSCursor.pop() }
                         state.hovering = inside
-                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
                     }
                     // 올린 채 칸이 사라지면(화면 전환, 상세 닫기) 떠났다는 소식이 오지 않아 화살표 커서가 남는다
                     .onDisappear {
