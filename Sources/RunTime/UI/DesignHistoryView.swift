@@ -592,7 +592,7 @@ struct DesignHistoryView: View {
 
     @ViewBuilder private var detail: some View {
         if let frame = page.screen, let key = screenScope?.fileKey, let screen = sync.history.files[key]?.screens[frame] {
-            DesignScreenDetail(fileKey: key, screen: screen, sync: sync, page: page)
+            DesignScreenDetail(fileKey: key, screen: sync.placed(screen, in: key), sync: sync, page: page)
                 .id(key + frame)
         } else if let id = page.selected,
                   let event = sync.history.events.first(where: { $0.id == id }) ?? compare.currentResult?.events.first(where: { $0.id == id }),

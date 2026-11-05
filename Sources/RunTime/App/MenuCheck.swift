@@ -162,6 +162,12 @@ enum MenuCheck {
             let first = await timed { _ = design.menus }
             let again = await timed { _ = design.menus }
             check("디자인 메뉴 목록 (\(design.menus.count)개, 처음 \(first)ms, 다음 \(again)ms)", again <= max(first, 5))
+            // 기록에는 레이어 자리를 두지 않고, 화면 상세를 열 때 자리 파일에서 채운다
+            let stored = design.history.files.flatMap { key, file in file.screens.values.map { (key, $0) } }
+            check("기록에는 화면 자리를 두지 않는다", stored.allSatisfy { $0.1.places == nil })
+            if let (key, screen) = stored.first(where: { !$0.1.texts.isEmpty }) {
+                check("화면 상세는 자리 파일에서 자리를 채운다", design.placed(screen, in: key).places?.isEmpty == false)
+            }
 
             var started = Date()
             let loaded = try? DesignHistoryFile.load()

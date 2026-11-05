@@ -224,6 +224,10 @@ final class DesignSync: ObservableObject {
     /// 받는 동안 들어온 요청의 끝 알림. 그 요청이 고른 프로젝트(nil이면 전부)에서 찾은 건수를 넘긴다.
     private var queuedCompletions: [(keys: Set<String>?, done: (Int) -> Void)] = []
     private let saveQueue = DispatchQueue(label: "dev.runtime.RunTime.design-history", qos: .utility)
+    /// 화면마다 떼어 둔 레이어 자리 (`DesignPlaceFile`).
+    private let placeFolder = DesignPlaceFile.folder()
+    /// 최근에 연 화면의 자리. 화면 상세는 마우스만 지나가도 다시 그려져 파일을 매번 읽지 않는다.
+    private var placeCache: [String: DesignPlaceFile.Places] = [:]
 
     private init() {
         history = DesignHistory()
@@ -232,10 +236,10 @@ final class DesignSync: ObservableObject {
             finishLoading(Result { try DesignHistoryFile.load() })
             return
         }
-        // 기록이 수십 MB라 메인에서 읽으면 앱을 켤 때 1초쯤 멈춘다
+        // 기록이 수십 MB라 메인에서 읽으면 앱을 켤 때 1초쯤 멈춘다. 화면 자리는 떼어 자리 파일에 둔다
         loading = true
         Task.detached(priority: .userInitiated) { [weak self] in
-            let result = Result { try DesignHistoryFile.load() }
+            let result = Result { try DesignHistoryFile.loadDetachingPlaces() }
             await self?.finishLoading(result)
         }
     }
@@ -447,8 +451,51 @@ final class DesignSync: ObservableObject {
         events(for: screen, in: fileKey).filter { $0.needsMarkup && !history.isApplied($0) }
     }
 
+    // MARK: 화면 자리
+
+    /// 가져온 화면과 견주기 전에 그 파일 화면들의 자리를 다시 채운다. 지운 문구의 자리를 변경에 붙이려고 쓴다.
+    /// 채운 뒤 `detachPlaces`까지는 쉬지 않고 이어 불러, 그사이 저장이 자리를 기록 파일에 쓰지 않게 한다.
+    private func attachPlaces(_ fileKey: String) async {
+        let frames = Array(history.files[fileKey]?.screens.keys ?? [:].keys)
+        let folder = placeFolder
+        let places = await Task.detached(priority: .userInitiated) { DesignPlaceFile.readAll(fileKey, frames: frames, in: folder) }.value
+        DesignPlaceFile.attach(places, to: &history, fileKey: fileKey)
+    }
+
+    /// 기록한 화면의 자리를 떼어 자리 파일로 쓴다.
+    private func detachPlaces(_ fileKey: String) {
+        let moved = DesignPlaceFile.detach(&history, fileKey: fileKey)
+        guard !moved.isEmpty else { return }
+        for item in moved { placeCache[fileKey + "|" + item.frameID] = item.places }
+        let folder = placeFolder
+        saveQueue.async {
+            var failed = 0
+            for item in moved {
+                do { try DesignPlaceFile.write(item.places, item.fileKey, item.frameID, in: folder) } catch { failed += 1 }
+            }
+            if failed > 0 {
+                ProblemReporter.screen("디자인", "화면 자리 파일을 쓰지 못함", detail: "파일: \(fileKey) · 못 쓴 화면 \(failed)/\(moved.count)개")
+            }
+        }
+    }
+
+    /// 자리를 채운 화면. 화면 상세의 목업 문구 순서와 Claude 글에 쓴다.
+    func placed(_ screen: ScreenSnapshot, in fileKey: String) -> ScreenSnapshot {
+        guard screen.places == nil else { return screen }
+        let key = fileKey + "|" + screen.frameID
+        if placeCache[key] == nil {
+            // 상세를 여러 개 오가도 몇 MB를 넘지 않게 오래 둔 것부터 비운다
+            if placeCache.count > 40 { placeCache.removeAll() }
+            placeCache[key] = DesignPlaceFile.read(fileKey, screen.frameID, in: placeFolder) ?? [:]
+        }
+        var filled = screen
+        filled.places = placeCache[key]
+        return filled
+    }
+
     /// Claude Code에 붙일 글. 반영할 변경이 있으면 그 변경만, 없으면 화면을 처음 마크업하는 글.
     func claudePrompt(for screen: ScreenSnapshot, in fileKey: String) -> String {
+        let screen = placed(screen, in: fileKey)
         let link = FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID)
         let pending = pendingEvents(for: screen, in: fileKey)
         guard !pending.isEmpty else { return ClaudePrompt.build(screen, link: link, built: history.built(screen, in: fileKey)) }
@@ -456,7 +503,7 @@ final class DesignSync: ObservableObject {
     }
 
     func claudePrompt(for event: DesignEvent) -> String {
-        let screen = event.frameID.flatMap { history.files[event.fileKey]?.screens[$0] }
+        let screen = event.frameID.flatMap { history.files[event.fileKey]?.screens[$0] }.map { placed($0, in: event.fileKey) }
         let link = event.frameID.flatMap { FigmaFileURL.link(fileKey: event.fileKey, nodeID: $0) }
         return ClaudePrompt.changes([event], screen: screen, link: link, done: checkedMap([event]))
     }
@@ -465,7 +512,7 @@ final class DesignSync: ObservableObject {
     func claudePrompt(menu path: String, in fileKey: String) -> String {
         let items = screens(fileKey, under: path).compactMap { screen -> (screen: ScreenSnapshot, events: [DesignEvent], link: URL?)? in
             let pending = pendingEvents(for: screen, in: fileKey)
-            return pending.isEmpty ? nil : (screen, pending, FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID))
+            return pending.isEmpty ? nil : (placed(screen, in: fileKey), pending, FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID))
         }
         return ClaudePrompt.menu(items, path: path, done: checkedMap(items.flatMap(\.events)))
     }
@@ -473,7 +520,7 @@ final class DesignSync: ObservableObject {
     /// 메뉴 화면들을 처음 마크업해 달라는 글. 구현을 마친 화면은 뺀다.
     func claudeBuildPrompt(menu path: String, in fileKey: String) -> String {
         let items = screens(fileKey, under: path).map { screen in
-            (screen: screen, link: FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID), built: history.built(screen, in: fileKey))
+            (screen: placed(screen, in: fileKey), link: FigmaFileURL.link(fileKey: fileKey, nodeID: screen.frameID), built: history.built(screen, in: fileKey))
         }
         return ClaudePrompt.menuBuild(items, path: path)
     }
@@ -483,7 +530,7 @@ final class DesignSync: ObservableObject {
         let groups = Dictionary(grouping: events.filter { $0.kind != .changelog }) { $0.frameID ?? $0.screenID }
         let items = groups.values.compactMap { events -> (screen: ScreenSnapshot, events: [DesignEvent], link: URL?)? in
             guard let latest = events.max(by: { $0.detectedAt < $1.detectedAt }) else { return nil }
-            let screen = latest.frameID.flatMap { history.files[latest.fileKey]?.screens[$0] }
+            let screen = latest.frameID.flatMap { history.files[latest.fileKey]?.screens[$0] }.map { placed($0, in: latest.fileKey) }
                 ?? ScreenSnapshot(frameID: latest.frameID ?? "", screenID: latest.screenID, title: latest.title, menuPath: latest.menuPath)
             return (screen, events, latest.frameID.flatMap { FigmaFileURL.link(fileKey: latest.fileKey, nodeID: $0) })
         }
@@ -613,7 +660,10 @@ final class DesignSync: ObservableObject {
                         // 프로젝트에 지켜볼 메뉴를 정해 두었으면 같은 페이지의 다른 메뉴 화면은 기준만 고친다
                         capture.menus = Set(self.source(job.fileKey)?.menus ?? [])
                         capture.rules = rules(for: job.fileKey)
-                        found = history.record(capture, at: Date())
+                        await attachPlaces(job.fileKey)
+                        // 자리를 읽는 사이 프로젝트를 지웠으면 기록하지 않는다. 채운 자리는 어느 쪽이든 다시 뗀다
+                        if self.source(job.fileKey) != nil { found = history.record(capture, at: Date()) }
+                        detachPlaces(job.fileKey)
                         rename(job.fileKey, to: capture.fileName)
                     }
                     errors[job.fileKey] = nil
@@ -706,7 +756,11 @@ final class DesignSync: ObservableObject {
                             capture.fresh = Set(capture.screens.map(\.candidateID))
                             capture.baselineOnly = true
                         }
-                        let events = history.record(capture, at: Date())
+                        await attachPlaces(source.fileKey)
+                        // 자리를 읽는 사이 프로젝트를 지웠으면 기록하지 않는다. 채운 자리는 어느 쪽이든 다시 뗀다
+                        let kept = settings.sources.contains(where: { $0.fileKey == source.fileKey })
+                        let events = kept ? history.record(capture, at: Date()) : []
+                        detachPlaces(source.fileKey)
                         found += events
                         counts[source.fileKey] = events.count
                         rename(source.fileKey, to: capture.fileName)
@@ -884,9 +938,12 @@ final class DesignSync: ObservableObject {
         // 읽기 전에 저장하면 빈 기록이 파일을 덮는다
         guard loadError == nil, !loading else { return }
         let snapshot = history
+        let folder = placeFolder
         saveQueue.async {
             do {
                 try DesignHistoryFile.save(snapshot)
+                // 기록에서 빠진 화면의 자리 파일을 지운다 (자리 쓰기는 같은 큐에서 먼저 끝난다)
+                DesignPlaceFile.prune(keeping: snapshot, in: folder)
             } catch {
                 Task { @MainActor in DesignSync.shared.errors["*"] = "디자인 기록을 저장하지 못했습니다: \(error.localizedDescription)" }
                 ProblemReporter.screen("디자인", "디자인 기록을 저장하지 못함", detail: "오류: \(error)")
