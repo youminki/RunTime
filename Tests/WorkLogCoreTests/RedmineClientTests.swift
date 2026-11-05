@@ -97,12 +97,14 @@ private let issueJSON = #"""
     @Test func activityMergesIssueHistory() throws {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let text = #"{"id":7,"project":{"id":1,"name":"p"},"tracker":{"id":1,"name":"t"},"status":{"id":1,"name":"s"},"priority":{"id":2,"name":"n"},"author":{"id":1,"name":"가"},"subject":"일감","done_ratio":0,"created_on":"2026-11-02T00:00:00Z","journals":[{"id":1,"user":{"id":2,"name":"나"},"notes":"옛 댓글","created_on":"2026-10-01T00:00:00Z"},{"id":2,"user":{"id":2,"name":"나"},"notes":"","created_on":"2026-11-03T00:00:00Z","details":[{"property":"attr","name":"status_id"}]},{"id":3,"user":{"id":3,"name":"다"},"notes":"새 댓글","created_on":"2026-11-04T00:00:00Z"},{"id":4,"user":{"id":3,"name":"다"},"notes":"","created_on":"2026-11-04T01:00:00Z"}]}"#
+        let text = #"{"id":7,"project":{"id":1,"name":"p"},"tracker":{"id":1,"name":"t"},"status":{"id":1,"name":"s"},"priority":{"id":2,"name":"n"},"author":{"id":1,"name":"가"},"subject":"일감","done_ratio":0,"created_on":"2026-11-02T00:00:00Z","changesets":[{"revision":"abc","user":{"id":2,"name":"나"},"comments":"고침","committed_on":"2026-11-03T12:00:00Z"}],"journals":[{"id":1,"user":{"id":2,"name":"나"},"notes":"옛 댓글","created_on":"2026-10-01T00:00:00Z"},{"id":2,"user":{"id":2,"name":"나"},"notes":"","created_on":"2026-11-03T00:00:00Z","details":[{"property":"attr","name":"status_id"}]},{"id":3,"user":{"id":3,"name":"다"},"notes":"새 댓글","created_on":"2026-11-04T00:00:00Z"},{"id":4,"user":{"id":3,"name":"다"},"notes":"","created_on":"2026-11-04T01:00:00Z"}]}"#
         let issue = try decoder.decode(Redmine.Issue.self, from: Data(text.utf8))
         let since = try #require(Redmine.date("2026-11-01T00:00:00Z"))
-        let items = Redmine.activity([issue], since: since)
-        #expect(items.map(\.id) == ["7-3", "7-2", "7-new"])
-        #expect(items[0].user == "다" && items[0].notes == "새 댓글" && items[2].created)
+        let log = try Redmine.timeLogs(Data(#"{"time_entries":[{"id":9,"project":{"id":1,"name":"p"},"issue":{"id":7},"user":{"id":3,"name":"다"},"activity":{"id":1,"name":"구현"},"hours":1.5,"comments":"","created_on":"2026-11-05T00:00:00Z"}],"total_count":1}"#.utf8))
+        let items = Redmine.activity([issue], times: log.logs, since: since)
+        #expect(items.map(\.id) == ["time-9", "7-3", "7-rabc", "7-2", "7-new"])
+        #expect(items[0].kind == .time(hours: 1.5, activity: "구현") && items[0].notes == nil && items[0].issue?.id == 7)
+        #expect(items[1].user == "다" && items[1].notes == "새 댓글" && items[4].kind == .created)
     }
 
     @Test func bodyImagesMatchAttachments() throws {

@@ -165,10 +165,13 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var resultsTotal = 0
     private var searchToken = 0
     /// 작업 내역을 만들 일감과 기간(일).
-    @Published private(set) var activityIssues: [Redmine.Issue] = []
+    @Published private(set) var activityItems: [Redmine.Activity] = []
     @Published private(set) var activityLoading = false
-    /// 기간 안에 고친 일감이 받는 한도보다 많아 일부만 보인다.
-    @Published private(set) var activityTruncated = false
+    @Published private(set) var activityProgress = (done: 0, total: 0)
+    /// 이력을 받지 못한 일감 수.
+    @Published private(set) var activityFailed = 0
+    /// 받은 이력. 고친 시각이 같으면 다시 받지 않는다.
+    private var activityCache: [Int: Redmine.Issue] = [:]
     /// 작업 내역은 왼쪽의 프로젝트만 따른다. 내 일감·질의에서는 볼 수 있는 모든 프로젝트를 모은다.
     var activityScope: String {
         if case .project(let project) = scope { return project.name + "의 작업 내역" }
@@ -245,6 +248,10 @@ final class RedmineStore: ObservableObject {
         requestedImages = []
         failedImages = []
         journalAPI = true
+        activityToken += 1
+        activityCache = [:]
+        activityItems = []
+        activityLoading = false
         issues = []
         details = [:]
         total = 0
@@ -260,51 +267,92 @@ final class RedmineStore: ObservableObject {
         refresh()
     }
 
-    /// 고른 프로젝트(아니면 볼 수 있는 모든 프로젝트)에서 최근에 고친 일감의 이력을 받아 작업 내역을 만든다.
-    /// 일감마다 한 번씩 받아야 해서 최근 60건까지 넷씩 받는다.
+    /// 고른 프로젝트(아니면 볼 수 있는 모든 프로젝트)의 작업 내역을 만든다. 기간 안에 고친 일감을 모두 받고
+    /// 이력은 일감마다 받아야 해서, 최근 일감부터 여섯씩 받아 차례로 보이고 바뀌지 않은 일감은 다시 받지 않는다.
     func loadActivity() {
         guard let (base, key) = credentials else { return }
         activityToken += 1
         let token = activityToken
         activityLoading = true
-        activityIssues = []
+        activityItems = []
+        activityProgress = (0, 0)
+        activityFailed = 0
         var project: Int?
         if case .project(let chosen) = scope { project = chosen.id }
         let since = Date().addingTimeInterval(-Double(activityDays) * 86_400)
-        fetch(Redmine.issuesRequest(base: base, key: key, filter: Redmine.Filter(projectID: project, status: "*"), offset: 0)) { [weak self] data, status, failure in
-            guard let self, token == self.activityToken else { return }
-            guard status == 200, let data, let result = try? Redmine.issues(data) else {
-                self.activityLoading = false
-                self.flash = "작업 내역을 받지 못했습니다: " + Self.message(status: status, error: failure, data: data)
-                return
-            }
-            let recent = result.issues.filter { ($0.updated ?? .distantPast) >= since }
-            self.activityTruncated = recent.count > 60
-            var left = recent.prefix(60).map(\.id)
-            var running = 0
+        let from = WorkDay.key(since)
+        var found: [Redmine.Issue] = [], loaded: [Redmine.Issue] = [], times: [Redmine.TimeLog] = []
+
+        func publish() { activityItems = Redmine.activity(loaded, times: times, since: since) }
+        func finish() {
+            publish()
+            activityLoading = false
+        }
+        func history() {
+            var left = found[...]
+            var running = 0, sincePublish = 0
+            activityProgress = (0, found.count)
             func pump() {
-                guard token == self.activityToken else { return }
-                if left.isEmpty && running == 0 {
-                    self.activityLoading = false
-                    return
-                }
-                while running < 4, let id = left.first {
+                guard token == activityToken else { return }
+                if left.isEmpty && running == 0 { return finish() }
+                while running < 6, let summary = left.first {
                     left.removeFirst()
+                    if let kept = activityCache[summary.id], kept.updated == summary.updated {
+                        arrived(kept)
+                        continue
+                    }
                     running += 1
-                    self.fetch(Redmine.issueRequest(base: base, key: key, id: id)) { [weak self] data, status, _ in
+                    fetch(Redmine.issueRequest(base: base, key: key, id: summary.id)) { [weak self] data, status, _ in
                         guard let self, token == self.activityToken else { return }
                         running -= 1
                         if status == 200, let data, let issue = try? Redmine.issue(data) {
-                            self.activityIssues.append(issue)
-                            // 담당자 변경을 번호가 아닌 이름으로 보인다
-                            self.loadPeople(project: issue.project.id)
+                            self.activityCache[issue.id] = issue
+                            arrived(issue)
+                        } else {
+                            self.activityFailed += 1
                         }
                         pump()
                     }
                 }
+                if left.isEmpty && running == 0 { finish() }
+            }
+            func arrived(_ issue: Redmine.Issue) {
+                loaded.append(issue)
+                activityProgress.done += 1
+                // 담당자 변경을 번호가 아닌 이름으로 보인다
+                loadPeople(project: issue.project.id)
+                sincePublish += 1
+                if sincePublish >= 24 {
+                    sincePublish = 0
+                    publish()
+                }
             }
             pump()
         }
+        // 소요시간을 볼 권한이 없어도 일감 이력은 보인다
+        func timePage(_ offset: Int) {
+            fetch(Redmine.timeLogsRequest(base: base, key: key, projectID: project, from: from, offset: offset)) { [weak self] data, status, _ in
+                guard let self, token == self.activityToken else { return }
+                guard status == 200, let data, let page = try? Redmine.timeLogs(data) else { return history() }
+                times += page.logs
+                if !page.logs.isEmpty, times.count < page.total { timePage(times.count) } else { history() }
+            }
+        }
+        func issuePage(_ offset: Int) {
+            var filter = Redmine.Filter(projectID: project, status: "*")
+            filter.updatedSince = from
+            fetch(Redmine.issuesRequest(base: base, key: key, filter: filter, offset: offset)) { [weak self] data, status, failure in
+                guard let self, token == self.activityToken else { return }
+                guard status == 200, let data, let page = try? Redmine.issues(data) else {
+                    self.activityLoading = false
+                    self.flash = "작업 내역을 받지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                    return
+                }
+                found += page.issues
+                if !page.issues.isEmpty, found.count < page.total { issuePage(found.count) } else { timePage(0) }
+            }
+        }
+        issuePage(0)
     }
 
     /// 업무 일지에서 보낸 뒤. 표의 진척률과 상태를 맞춘다.

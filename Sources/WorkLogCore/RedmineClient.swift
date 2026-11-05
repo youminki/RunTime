@@ -217,6 +217,8 @@ public enum Redmine {
         public var status = "open"
         public var trackerID: Int?
         public var sort = "updated_on:desc"
+        /// `yyyy-MM-dd`. 이날 뒤에 고친 일감만 받는다.
+        public var updatedSince: String?
 
         public init(queryID: Int? = nil, projectID: Int? = nil, assignedToMe: Bool = false, authoredByMe: Bool = false,
                     status: String = "open", trackerID: Int? = nil, sort: String = "updated_on:desc") {
@@ -236,6 +238,7 @@ public enum Redmine {
             if assignedToMe { items.append(URLQueryItem(name: "assigned_to_id", value: "me")) }
             if authoredByMe { items.append(URLQueryItem(name: "author_id", value: "me")) }
             if let trackerID { items.append(URLQueryItem(name: "tracker_id", value: "\(trackerID)")) }
+            if let updatedSince { items.append(URLQueryItem(name: "updated_on", value: ">=" + updatedSince)) }
             return items
         }
     }
@@ -363,33 +366,84 @@ public enum Redmine {
         return request
     }
 
+    /// 소요시간 기록 한 건.
+    public struct TimeLog: Codable, Equatable, Identifiable {
+        public struct IssueID: Codable, Equatable { public let id: Int }
+        public let id: Int
+        public let project: Ref
+        public let issue: IssueID?
+        public let user: Ref
+        public let activity: Ref?
+        public let hours: Double
+        public let comments: String?
+        public let createdOn: String?
+    }
+
+    private struct TimeLogs: Codable {
+        let timeEntries: [TimeLog]
+        let totalCount: Int?
+    }
+
+    public static func timeLogsRequest(base: URL, key: String, projectID: Int?, from: String, offset: Int) -> URLRequest {
+        var query = [URLQueryItem(name: "from", value: from), URLQueryItem(name: "limit", value: "100"),
+                     URLQueryItem(name: "offset", value: "\(offset)")]
+        if let projectID { query.append(URLQueryItem(name: "project_id", value: "\(projectID)")) }
+        return request(base, "time_entries.json", key: key, query: query)
+    }
+
+    public static func timeLogs(_ data: Data) throws -> (logs: [TimeLog], total: Int) {
+        let page = try decoder.decode(TimeLogs.self, from: data)
+        return (page.timeEntries, page.totalCount ?? page.timeEntries.count)
+    }
+
     /// 작업 내역 한 줄: 누가 언제 어느 일감에 무엇을 했는지.
     public struct Activity: Equatable, Identifiable {
+        public enum Kind: Equatable {
+            case created, change
+            case time(hours: Double, activity: String?)
+            case commit(revision: String)
+        }
         public let id: String
         public let date: Date
         public let user: String
-        public let issue: Issue
+        public let project: String
+        public let issueID: Int?
+        /// 소요시간의 일감이 받은 목록에 없으면 비어 있다.
+        public let issue: Issue?
         public let notes: String?
         public let details: [Detail]
-        /// 일감을 새로 만든 줄.
-        public let created: Bool
+        public let kind: Kind
     }
 
-    /// 일감들의 이력을 시간순으로 모은다. 웹의 작업 내역은 API 키로 읽을 수 없어 일감 이력에서 만든다.
-    public static func activity(_ issues: [Issue], since: Date) -> [Activity] {
+    /// 일감 이력과 소요시간을 시간순으로 모은다. 웹의 작업 내역은 API 키로 읽을 수 없어 여기서 만든다.
+    public static func activity(_ issues: [Issue], times: [TimeLog] = [], since: Date) -> [Activity] {
         var items: [Activity] = []
+        func add(_ id: String, _ date: Date, _ user: String?, _ issue: Issue, notes: String? = nil, details: [Detail] = [], kind: Activity.Kind) {
+            items.append(Activity(id: id, date: date, user: user ?? "알 수 없음", project: issue.project.name, issueID: issue.id, issue: issue,
+                                  notes: notes, details: details, kind: kind))
+        }
         for issue in issues {
             if let text = issue.createdOn, let date = Redmine.date(text), date >= since {
-                items.append(Activity(id: "\(issue.id)-new", date: date, user: issue.author?.name ?? "알 수 없음", issue: issue,
-                                      notes: nil, details: [], created: true))
+                add("\(issue.id)-new", date, issue.author?.name, issue, kind: .created)
             }
             for journal in issue.journals ?? [] {
                 guard let date = journal.created, date >= since else { continue }
                 let notes = journal.notes.flatMap { $0.isEmpty ? nil : $0 }
                 guard notes != nil || !(journal.details ?? []).isEmpty else { continue }
-                items.append(Activity(id: "\(issue.id)-\(journal.id)", date: date, user: journal.user?.name ?? "알 수 없음", issue: issue,
-                                      notes: notes, details: journal.details ?? [], created: false))
+                add("\(issue.id)-\(journal.id)", date, journal.user?.name, issue, notes: notes, details: journal.details ?? [], kind: .change)
             }
+            for commit in issue.changesets ?? [] {
+                guard let date = commit.committedOn.flatMap(Redmine.date), date >= since else { continue }
+                add("\(issue.id)-r\(commit.revision)", date, commit.user?.name, issue, notes: commit.comments, kind: .commit(revision: commit.revision))
+            }
+        }
+        let byID = Dictionary(issues.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for log in times {
+            guard let date = log.createdOn.flatMap(Redmine.date), date >= since else { continue }
+            let notes = log.comments.flatMap { $0.isEmpty ? nil : $0 }
+            items.append(Activity(id: "time-\(log.id)", date: date, user: log.user.name, project: log.project.name, issueID: log.issue?.id,
+                                  issue: log.issue.flatMap { byID[$0.id] }, notes: notes, details: [],
+                                  kind: .time(hours: log.hours, activity: log.activity?.name)))
         }
         return items.sorted { $0.date > $1.date }
     }

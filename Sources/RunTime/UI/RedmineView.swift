@@ -583,19 +583,31 @@ private struct RedmineIssueTable: View {
 }
 
 private final class ActivityFilter: ObservableObject {
+    enum Kind: String, CaseIterable {
+        case all = "모든 종류", comments = "댓글", status = "상태 변경", created = "새 일감", time = "소요시간", commit = "커밋"
+
+        func matches(_ item: Redmine.Activity) -> Bool {
+            switch (self, item.kind) {
+            case (.all, _), (.created, .created), (.time, .time), (.commit, .commit): return true
+            case (.comments, .change): return item.notes != nil
+            case (.status, .change): return item.details.contains { $0.name == "status_id" }
+            default: return false
+            }
+        }
+    }
+
     @Published var person: String?
-    @Published var commentsOnly = false
+    @Published var kind = Kind.all
 }
 
-/// 작업 내역: 프로젝트에서 사람들이 남긴 댓글과 변경을 시간순으로 본다. 웹의 작업 내역 자리.
+/// 작업 내역: 프로젝트에서 사람들이 남긴 댓글과 변경, 소요시간, 커밋을 시간순으로 본다. 웹의 작업 내역 자리.
 private struct RedmineActivity: View {
     @ObservedObject var store: RedmineStore
     @StateObject private var filter = ActivityFilter()
 
     var body: some View {
-        let since = Date().addingTimeInterval(-Double(store.activityDays) * 86_400)
-        let all = Redmine.activity(store.activityIssues, since: since)
-        let items = all.filter { (filter.person == nil || $0.user == filter.person) && (!filter.commentsOnly || $0.notes != nil) }
+        let all = store.activityItems
+        let items = all.filter { (filter.person == nil || $0.user == filter.person) && filter.kind.matches($0) }
         let days = Dictionary(grouping: items) { WorkDay.key($0.date) }
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -612,10 +624,23 @@ private struct RedmineActivity: View {
                     }
                 }
                 .menuStyle(.borderlessButton).fixedSize()
-                Toggle("댓글만", isOn: $filter.commentsOnly).toggleStyle(.checkbox).font(WL.meta)
-                if store.activityLoading { ProgressView().controlSize(.small) }
+                Menu(filter.kind.rawValue) {
+                    ForEach(ActivityFilter.Kind.allCases, id: \.self) { kind in
+                        Button(kind.rawValue) { filter.kind = kind }
+                    }
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                if store.activityLoading {
+                    ProgressView().controlSize(.small)
+                    if store.activityProgress.total > 0 {
+                        Text("이력 \(store.activityProgress.done)/\(store.activityProgress.total)건")
+                            .font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
+                    }
+                }
                 Spacer()
-                if store.activityTruncated { Text("최근 고친 일감 60건까지 봅니다").font(WL.caption).foregroundStyle(WL.quiet) }
+                if store.activityFailed > 0 {
+                    Text("일감 \(store.activityFailed)건의 이력을 받지 못했습니다").font(WL.caption).foregroundStyle(WL.waiting)
+                }
                 Text("\(items.count)건").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
             }
             .padding(.horizontal, 20).frame(height: 42)
@@ -640,24 +665,34 @@ private struct RedmineActivity: View {
         }
     }
 
+    private func summary(_ item: Redmine.Activity) -> String? {
+        switch item.kind {
+        case .created: return "새 일감을 만들었습니다"
+        case .change: return nil
+        case .time(let hours, let activity):
+            return [activity, String(format: "%gh", hours) + " 기록"].compactMap { $0 }.joined(separator: " ")
+        case .commit(let revision): return "커밋 " + String(revision.prefix(10))
+        }
+    }
+
     private func row(_ item: Redmine.Activity) -> some View {
-        Button { store.selected = item.issue.id } label: {
+        Button { if let id = item.issueID { store.selected = id } } label: {
             HStack(alignment: .top, spacing: 10) {
                 Initials(name: item.user)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(item.user).font(WL.meta.weight(.semibold))
                         Text(item.date.formatted(date: .omitted, time: .shortened)).font(WL.caption).foregroundStyle(WL.quiet)
-                        TrackerTag(name: item.issue.tracker.name)
-                        Text(verbatim: "#\(item.issue.id)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
-                        Text(item.issue.subject).font(WL.meta).lineLimit(1)
+                        if let issue = item.issue { TrackerTag(name: issue.tracker.name) }
+                        if let id = item.issueID { Text(verbatim: "#\(id)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet) }
+                        if let issue = item.issue { Text(issue.subject).font(WL.meta).lineLimit(1) }
                         Spacer(minLength: 8)
-                        Text(item.issue.project.name).font(WL.caption).foregroundStyle(WL.quiet).lineLimit(1)
+                        Text(item.project).font(WL.caption).foregroundStyle(WL.quiet).lineLimit(1)
                     }
-                    if item.created { Text("새 일감을 만들었습니다").font(WL.meta).foregroundStyle(WL.muted) }
+                    if let text = summary(item) { Text(text).font(WL.meta).foregroundStyle(WL.muted) }
                     ForEach(Array(item.details.enumerated()), id: \.offset) { _, detail in
                         Text("• " + Redmine.describe(detail, statuses: store.statuses, trackers: store.trackers, priorities: store.priorities,
-                                                      people: store.people[item.issue.project.id] ?? []))
+                                                      people: item.issue.flatMap { store.people[$0.project.id] } ?? []))
                             .font(WL.caption).foregroundStyle(WL.muted)
                     }
                     if let notes = item.notes {

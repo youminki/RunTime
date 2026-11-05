@@ -331,6 +331,11 @@ if CommandLine.arguments.contains("--worklog-flow") {
     RunLoop.main.run()
 }
 
+if CommandLine.arguments.contains("--redmine-activity") {
+    MainActor.assumeIsolated { RedmineFlowCheck.activityCount() }
+    RunLoop.main.run()
+}
+
 // 레드마인 화면의 일을 가짜 응답으로 끝까지 돌려 나가는 요청을 살핀다. 서버에는 보내지 않는다.
 if CommandLine.arguments.contains("--redmine-flow") {
     MainActor.assumeIsolated { RedmineFlowCheck.run(folder: RedmineFlowCheck.prepare()) }

@@ -64,6 +64,23 @@ enum RedmineFlowCheck {
         }
     }
 
+    /// 작업 내역을 끝까지 모아 건수를 찍는다 (`--redmine-activity`). 읽기만 하며 서버 건수와 맞춰 보는 데 쓴다.
+    static func activityCount() {
+        Task {
+            let store = RedmineStore.shared
+            store.start()
+            await settle(2)
+            let started = Date()
+            store.layout = .activity
+            await settle(1)
+            while store.activityLoading { await settle(0.5) }
+            let times = store.activityItems.filter { if case .time = $0.kind { return true } else { return false } }.count
+            print("작업 내역 \(store.activityItems.count)건 · 일감 \(store.activityProgress.total)건 · 소요시간 \(times)건 · 실패 \(store.activityFailed)건 · \(Int(Date().timeIntervalSince(started)))초")
+            fflush(stdout)
+            exit(0)
+        }
+    }
+
     /// 앱 창을 띄운 채 일감 창이 실제로 뜨고 닫히는지 본다 (`RUNTIME_SHEET_CHECK`). 시트는 띄워 봐야 알 수 있다.
     static func sheets() {
         Task {
