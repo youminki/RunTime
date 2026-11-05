@@ -81,7 +81,9 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(WorkCapture.issueNumber(in: ["x"], branch: "fix/qa-1020-dataset-agent") == nil)
         #expect(WorkCapture.issueNumber(in: ["x"], branch: "fix/#1020") == 1020)
         // 설명의 색 값은 번호가 아니고, 설명보다 브랜치 번호를 먼저 믿는다
-        #expect(WorkCapture.issueNumber(in: ["버튼 정리", "배경색 #333333 적용"], branch: "feature/37828-x") == 37828)
+        #expect(WorkCapture.issueNumber(in: ["버튼 정리", "배경색 #333333 적용"], branch: "feature/37828-x", branchBeforeRest: true) == 37828)
+        #expect(WorkCapture.issueNumber(in: ["버튼 정리", "#45200 수정"], branch: "feature/45123-x") == 45200)   // 커밋 묶음은 제목들을 먼저
+        #expect(WorkCapture.issueNumber(in: ["배경 이미지 수정 #123456"]) == 123456)
         #expect(WorkCapture.issueNumber(in: ["버튼 정리", "color: #000000; 로 바꿈"]) == nil)
         #expect(WorkCapture.issueNumber(in: ["버튼 정리", "[일감] #123456"]) == 123456)
         #expect(RedmineComment.allIssueRefs(["[일감] #37828", "배경색 #333333 적용"]) == [37828])

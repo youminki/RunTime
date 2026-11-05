@@ -141,14 +141,14 @@ public enum RedmineComment {
         }
     }
 
-    /// `#333333`처럼 숫자만 든 색 값. 바로 앞에 색을 가리키는 말이 있거나 CSS처럼 `;`가 뒤따를 때만 색으로 본다
+    /// `#333333`처럼 숫자만 든 색 값. 색을 가리키는 말(`배경색`, `color:`) 바로 뒤이거나 CSS처럼 `;`가 뒤따를 때만 색으로 본다
     /// (`#123456`도 일감 번호일 수 있다).
     static func isColor(_ text: String, at range: Range<String.Index>) -> Bool {
         let digits = text[range].dropFirst()
         guard digits.count == 3 || digits.count == 6 else { return false }
         if text[range.upperBound...].first == ";" { return true }
-        let before = text[..<range.lowerBound].suffix(16).lowercased()
-        return ["색", "color", "colour", "배경", "background", "border", "fill", "stroke", "rgb"].contains { before.contains($0) }
+        let before = String(text[..<range.lowerBound].suffix(24)).lowercased()
+        return before.range(of: #"(색|colou?r|background|border|fill|stroke)\s*[:=]?\s*$"#, options: .regularExpression) != nil
     }
 
     /// MR 글 전체에 나온 일감 번호 (나온 순서, 겹침 없이).

@@ -256,8 +256,8 @@ public enum WorkCapture {
 
     /// 제목·설명의 `#1234`, 브랜치의 `feature/12345-x`, `fix/#1234`.
     /// 브랜치의 맨숫자는 QA 시트 번호(`qa-1020`)와 헷갈려 다섯 자리 이상만 일감으로 본다.
-    /// 제목 다음에 브랜치를 보고 나머지(설명 등)를 본다. 설명에는 다른 일감이나 색 값(`#333333`)이 섞여 브랜치가 더 믿을 만하다.
-    public static func issueNumber(in texts: [String], branch: String? = nil) -> Int? {
+    /// MR(`branchBeforeRest`)은 제목 다음에 브랜치를 보고 설명을 본다. 설명에는 다른 일감이나 색 값이 섞여 브랜치가 더 믿을 만하다.
+    public static func issueNumber(in texts: [String], branch: String? = nil, branchBeforeRest: Bool = false) -> Int? {
         func ref(in text: String) -> Int? {
             var from = text.startIndex
             while let range = text.range(of: #"#\d{3,7}"#, options: .regularExpression, range: from..<text.endIndex) {
@@ -266,11 +266,12 @@ public enum WorkCapture {
             }
             return nil
         }
-        if let first = texts.first, let found = ref(in: first) { return found }
+        let ahead = branchBeforeRest ? Array(texts.prefix(1)) : texts
+        if let found = ahead.lazy.compactMap(ref).first { return found }
         if let branch, let range = branch.range(of: #"#\d{3,7}|(^|[/_-])\d{5,7}([/_-]|$)"#, options: .regularExpression) {
             return Int(branch[range].filter(\.isNumber))
         }
-        return texts.dropFirst().lazy.compactMap(ref).first
+        return branchBeforeRest ? texts.dropFirst().lazy.compactMap(ref).first : nil
     }
 
     /// GitLab 묶음 이름으로 보고서 프로젝트를 정한다. 이름을 바꿔 둔 게 있으면 그것을, 대소문자만 다른 프로젝트가 있으면 그것을 쓴다.
@@ -306,7 +307,7 @@ public enum WorkCapture {
             let title = cleanTitle(mr.title)
             // 같은 브랜치로 앞서 적힌 줄의 일감 번호를 이어받는다
             let earlierIssue = log.entries.last { $0.source == branchSource && $0.issue != nil }?.issue
-            let issue = issueNumber(in: [mr.title, mr.description], branch: mr.sourceBranch) ?? earlierIssue
+            let issue = issueNumber(in: [mr.title, mr.description], branch: mr.sourceBranch, branchBeforeRest: true) ?? earlierIssue
             // MR 설명은 리뷰어용 글이라 레드마인 댓글 꼴로 다듬는다 (tidyMRNotes). 일감이 여럿이면 일감마다 줄을 나눈다
             let raw = mr.description.trimmingCharacters(in: .whitespacesAndNewlines)
             if let index = log.entries.firstIndex(where: { $0.source == branchSource && $0.day == day }) {
@@ -435,7 +436,7 @@ public enum WorkCapture {
                   (entry.mrBody ?? entry.note) != raw else { continue }
             log.entries[index].mrBody = raw
             if entry.postedAt == nil {
-                if entry.issue == nil { log.entries[index].issue = issueNumber(in: [mr.title, raw], branch: mr.sourceBranch) }
+                if entry.issue == nil { log.entries[index].issue = issueNumber(in: [mr.title, raw], branch: mr.sourceBranch, branchBeforeRest: true) }
                 log.entries[index].updatedAt = now
             } else if source == mr.source {
                 let listed = listedTitles(raw)
