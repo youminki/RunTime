@@ -86,9 +86,13 @@ public enum ClaudeLogin {
     /// 자격증명을 바꿔 넣고 다시 읽어 같은지 확인한다.
     /// 키체인은 Claude Code처럼 `security`로 쓰되, 토큰이 프로세스 인자로 드러나지 않게 표준 입력으로 넘긴다.
     public static func setLiveCredentials(_ data: Data) -> Bool {
-        let file = ClaudePaths.configDirectory.appendingPathComponent(".credentials.json")
-        if FileManager.default.fileExists(atPath: file.path) {
+        let link = ClaudePaths.configDirectory.appendingPathComponent(".credentials.json")
+        if FileManager.default.fileExists(atPath: link.path) {
+            // 원자적 쓰기는 새 파일로 바꿔 넣어 링크가 끊기고 권한이 기본값(0644)이 된다. 토큰 파일이라 0600을 지킨다
+            let file = link.resolvingSymlinksInPath()
+            let permissions = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.posixPermissions] ?? 0o600
             guard (try? data.write(to: file, options: .atomic)) != nil else { return false }
+            try? FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: file.path)
             return OAuthUsageProvider.fileCredentials() == data
         }
         return writeKeychain(data, service: "Claude Code-credentials")
