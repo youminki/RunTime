@@ -852,13 +852,15 @@ final class RedmineStore: ObservableObject {
         }
         requestedImages.insert(file.id)
         failedImages.remove(file.id)
+        let started = generation
         fetch(request) { [weak self] data, status, _ in
             guard let self else { return }
             guard status == 200, let data else { return self.imageFailed(file.id) }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let image = Self.scaled(data)
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    // 줄이는 동안 연결을 바꿨으면 옛 서버 그림이 같은 첨부 번호 자리에 들어가지 않게 버린다
+                    guard let self, self.generation == started else { return }
                     guard let image else { return self.imageFailed(file.id) }
                     self.images[file.id] = image
                     self.imageOrder.append(file.id)
