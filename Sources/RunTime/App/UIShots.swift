@@ -320,7 +320,7 @@ enum UIShots {
             ("redmine-issue-dark", .darkAqua, nil, AnyView(RedmineIssueSheet(store: .shared, state: RedmineViewState()).frame(width: 940, height: 900))),
             ("main-redmine-tree", .aqua, nil, {
                 let wanted = ProcessInfo.processInfo.environment["RUNTIME_SHOT_TREE"]
-                RedmineStore.shared.layout = ["timeline": .timeline, "board": .board, "calendar": .calendar][wanted ?? ""] ?? (wanted != nil ? .tree : .list)
+                RedmineStore.shared.layout = ["timeline": .timeline, "board": .board, "calendar": .calendar, "activity": .activity][wanted ?? ""] ?? (wanted != nil ? .tree : .list)
                 return mainPage(.redmine, engine: engine)
             }()),
             ("main-calendar-dark", .darkAqua, nil, mainPage(.calendar, engine: engine)),

@@ -171,6 +171,11 @@ enum RedmineFlowCheck {
         store.grouping = .assignee
         check("담당자로 묶는다", store.groups.count == 1 && store.groups[0].rows.count == 2)
         store.grouping = .none
+        let written = writes().count
+        store.layout = .activity
+        await settle(0.8)
+        check("작업 내역은 읽기만 하고 끝난다", !store.activityLoading && writes().count == written)
+        store.layout = .list
         store.checked = [10, 11]
         store.search = "일감 11"
         check("찾기로 가린 일감은 고칠 대상에서 빠진다", store.checkedVisible == [11])

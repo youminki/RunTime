@@ -363,6 +363,37 @@ public enum Redmine {
         return request
     }
 
+    /// 작업 내역 한 줄: 누가 언제 어느 일감에 무엇을 했는지.
+    public struct Activity: Equatable, Identifiable {
+        public let id: String
+        public let date: Date
+        public let user: String
+        public let issue: Issue
+        public let notes: String?
+        public let details: [Detail]
+        /// 일감을 새로 만든 줄.
+        public let created: Bool
+    }
+
+    /// 일감들의 이력을 시간순으로 모은다. 웹의 작업 내역은 API 키로 읽을 수 없어 일감 이력에서 만든다.
+    public static func activity(_ issues: [Issue], since: Date) -> [Activity] {
+        var items: [Activity] = []
+        for issue in issues {
+            if let text = issue.createdOn, let date = Redmine.date(text), date >= since {
+                items.append(Activity(id: "\(issue.id)-new", date: date, user: issue.author?.name ?? "알 수 없음", issue: issue,
+                                      notes: nil, details: [], created: true))
+            }
+            for journal in issue.journals ?? [] {
+                guard let date = journal.created, date >= since else { continue }
+                let notes = journal.notes.flatMap { $0.isEmpty ? nil : $0 }
+                guard notes != nil || !(journal.details ?? []).isEmpty else { continue }
+                items.append(Activity(id: "\(issue.id)-\(journal.id)", date: date, user: journal.user?.name ?? "알 수 없음", issue: issue,
+                                      notes: notes, details: journal.details ?? [], created: false))
+            }
+        }
+        return items.sorted { $0.date > $1.date }
+    }
+
     /// 본문이 넣은 그림에 맞는 첨부. 레드마인은 `<img src="파일 이름">`을 그 일감의 첨부로 푼다.
     public static func images(in html: String, attachments: [Attachment]) -> [Attachment] {
         let names = RedmineNote.imageSources(html).map { source -> String in

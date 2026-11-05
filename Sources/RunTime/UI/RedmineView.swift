@@ -206,7 +206,9 @@ private struct RedmineIssueTable: View {
                 let columns: [(RedmineStore.Column, CGFloat?)] = timeline ? [(.id, 60), (.subject, subjectWidth)]
                     : Self.columns(for: geo.size.width, shown: store.shownColumns)
                 VStack(spacing: 0) {
-                    if let error = store.error {
+                    if store.layout == .activity {
+                        RedmineActivity(store: store)
+                    } else if let error = store.error {
                         columnHeader(columns, timeline: timeline)
                         VStack(spacing: 10) {
                             message(error, icon: "exclamationmark.triangle").frame(height: 110)
@@ -313,7 +315,9 @@ private struct RedmineIssueTable: View {
                     .tip("다시 받기 (⌘R)")
             }
             HStack(spacing: 8) {
-                if case .query = store.scope {
+                if store.layout == .activity {
+                    Text(store.activityScope).font(WL.caption).foregroundStyle(WL.quiet)
+                } else if case .query = store.scope {
                     Text("질의 조건으로 봅니다").font(WL.caption).foregroundStyle(WL.quiet)
                 } else {
                     Picker("", selection: $store.statusFilter) {
@@ -340,6 +344,8 @@ private struct RedmineIssueTable: View {
                         }
                     }
                 }
+                .opacity(store.layout == .activity ? 0 : 1)
+                .disabled(store.layout == .activity)
                 Spacer(minLength: 8)
                 if store.layout == .timeline {
                     legend
@@ -350,13 +356,15 @@ private struct RedmineIssueTable: View {
                     Button { store.timelineShift += 4 } label: { Image(systemName: "chevron.right") }
                         .buttonStyle(GhostIconButtonStyle()).tip("다음 4주")
                 }
-                refineMenu
-                viewMenu
+                if store.layout != .activity {
+                    refineMenu
+                    viewMenu
+                }
                 Picker("", selection: $store.layout) {
                     ForEach(RedmineStore.Layout.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .labelsHidden().pickerStyle(.segmented).fixedSize()
-                .tip("트리는 상위 아래에 하위를, 일정은 기간을 막대로, 보드는 상태별 칸으로, 달력은 기한 날에 보입니다")
+                .tip("트리는 상위 아래에 하위를, 일정은 기간을 막대로, 보드는 상태별 칸으로, 달력은 기한 날에, 작업 내역은 사람들의 댓글과 변경을 시간순으로 보입니다")
             }
         }
         .padding(.horizontal, 20)
@@ -571,6 +579,98 @@ private struct RedmineIssueTable: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private final class ActivityFilter: ObservableObject {
+    @Published var person: String?
+    @Published var commentsOnly = false
+}
+
+/// 작업 내역: 프로젝트에서 사람들이 남긴 댓글과 변경을 시간순으로 본다. 웹의 작업 내역 자리.
+private struct RedmineActivity: View {
+    @ObservedObject var store: RedmineStore
+    @StateObject private var filter = ActivityFilter()
+
+    var body: some View {
+        let since = Date().addingTimeInterval(-Double(store.activityDays) * 86_400)
+        let all = Redmine.activity(store.activityIssues, since: since)
+        let items = all.filter { (filter.person == nil || $0.user == filter.person) && (!filter.commentsOnly || $0.notes != nil) }
+        let days = Dictionary(grouping: items) { WorkDay.key($0.date) }
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Picker("", selection: $store.activityDays) {
+                    Text("7일").tag(7)
+                    Text("30일").tag(30)
+                }
+                .labelsHidden().pickerStyle(.segmented).fixedSize()
+                Menu(filter.person ?? "모든 사람") {
+                    Button("모든 사람") { filter.person = nil }
+                    Divider()
+                    ForEach(Array(Set(all.map(\.user))).sorted(), id: \.self) { name in
+                        Button(name) { filter.person = name }
+                    }
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                Toggle("댓글만", isOn: $filter.commentsOnly).toggleStyle(.checkbox).font(WL.meta)
+                if store.activityLoading { ProgressView().controlSize(.small) }
+                Spacer()
+                if store.activityTruncated { Text("최근 고친 일감 60건까지 봅니다").font(WL.caption).foregroundStyle(WL.quiet) }
+                Text("\(items.count)건").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
+            }
+            .padding(.horizontal, 20).frame(height: 42)
+            Rectangle().fill(WL.border).frame(height: 1)
+            if items.isEmpty {
+                VStack(spacing: 8) {
+                    if store.activityLoading { ProgressView() }
+                    Text(store.activityLoading ? "이력을 모으는 중" : "이 기간에 작업 내역이 없습니다").font(WL.meta).foregroundStyle(WL.muted)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                SlimScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(days.keys.sorted(by: >), id: \.self) { day in
+                            Text(WorkLogFormat.longDay(day)).font(WL.heading).padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 6)
+                            ForEach(days[day] ?? []) { item in row(item) }
+                        }
+                    }
+                    .padding(.bottom, 16)
+                }
+            }
+        }
+    }
+
+    private func row(_ item: Redmine.Activity) -> some View {
+        Button { store.selected = item.issue.id } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Initials(name: item.user)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(item.user).font(WL.meta.weight(.semibold))
+                        Text(item.date.formatted(date: .omitted, time: .shortened)).font(WL.caption).foregroundStyle(WL.quiet)
+                        TrackerTag(name: item.issue.tracker.name)
+                        Text(verbatim: "#\(item.issue.id)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
+                        Text(item.issue.subject).font(WL.meta).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(item.issue.project.name).font(WL.caption).foregroundStyle(WL.quiet).lineLimit(1)
+                    }
+                    if item.created { Text("새 일감을 만들었습니다").font(WL.meta).foregroundStyle(WL.muted) }
+                    ForEach(Array(item.details.enumerated()), id: \.offset) { _, detail in
+                        Text("• " + Redmine.describe(detail, statuses: store.statuses, trackers: store.trackers, priorities: store.priorities,
+                                                      people: store.people[item.issue.project.id] ?? []))
+                            .font(WL.caption).foregroundStyle(WL.muted)
+                    }
+                    if let notes = item.notes {
+                        Text(RedmineNote.plain(notes)).font(WL.meta).lineLimit(4).multilineTextAlignment(.leading)
+                            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.sidebar))
+                    }
+                }
+            }
+            .padding(.horizontal, 20).padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -1861,12 +1961,14 @@ struct TimeEntryForm: View {
                     Button(value) { draft.hours = value }.buttonStyle(ChipButtonStyle(selected: draft.hours == value))
                 }
             }
+            // 이 레드마인은 기본 활동이 없어 고르지 않으면 받지 않는다
             Picker("활동", selection: $draft.activityID) {
-                Text("기본값").tag(Int?.none)
+                Text("고르세요").tag(Int?.none)
                 ForEach(store.activities) { Text($0.name).tag(Int?.some($0.id)) }
             }
             TextField("메모 (선택)", text: $draft.comment).textFieldStyle(.roundedBorder)
             if let error = draft.error { Text(error).font(WL.caption).foregroundStyle(Palette.red).fixedSize(horizontal: false, vertical: true) }
+            Text("권한에 따라 기록한 시간은 지우지 못할 수 있습니다").font(WL.caption).foregroundStyle(WL.quiet)
             HStack {
                 Spacer()
                 Button("기록") {
@@ -1880,7 +1982,7 @@ struct TimeEntryForm: View {
                 }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
-                .disabled(hours == nil || draft.sending)
+                .disabled(hours == nil || draft.activityID == nil || draft.sending)
             }
         }
         .font(WL.meta)

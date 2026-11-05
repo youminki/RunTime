@@ -42,7 +42,7 @@ final class RedmineStore: ObservableObject {
 
     /// 목록을 보이는 방식. 트리와 일정은 상위·하위를 편 줄을 쓴다.
     enum Layout: String, CaseIterable {
-        case list = "목록", tree = "트리", timeline = "일정", board = "보드", calendar = "달력"
+        case list = "목록", tree = "트리", timeline = "일정", board = "보드", calendar = "달력", activity = "작업 내역"
     }
 
     /// 목록을 다시 거르는 칸.
@@ -72,8 +72,9 @@ final class RedmineStore: ObservableObject {
         didSet {
             UserDefaults.standard.set(layout.rawValue, forKey: "redmine.layout")
             // 보드·달력에는 고른 표시가 없어 무엇을 고치는지 안 보인다
-            if layout == .board || layout == .calendar { checked = [] }
+            if layout == .board || layout == .calendar || layout == .activity { checked = [] }
             if treeMode { loadAncestors() }
+            if layout == .activity { loadActivity() }
         }
     }
     var treeMode: Bool { layout == .tree || layout == .timeline }
@@ -120,6 +121,7 @@ final class RedmineStore: ObservableObject {
         total = 0
         collapsed = []
         load()
+        if layout == .activity { loadActivity() }
     }
 
     @Published var search = ""
@@ -162,6 +164,18 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var searching = false
     @Published private(set) var resultsTotal = 0
     private var searchToken = 0
+    /// 작업 내역을 만들 일감과 기간(일).
+    @Published private(set) var activityIssues: [Redmine.Issue] = []
+    @Published private(set) var activityLoading = false
+    /// 기간 안에 고친 일감이 받는 한도보다 많아 일부만 보인다.
+    @Published private(set) var activityTruncated = false
+    /// 작업 내역은 왼쪽의 프로젝트만 따른다. 내 일감·질의에서는 볼 수 있는 모든 프로젝트를 모은다.
+    var activityScope: String {
+        if case .project(let project) = scope { return project.name + "의 작업 내역" }
+        return "볼 수 있는 모든 프로젝트의 작업 내역"
+    }
+    @Published var activityDays = 7 { didSet { if activityDays != oldValue { loadActivity() } } }
+    private var activityToken = 0
     /// 본떠 만들 일감.
     var creatingFrom: Redmine.Issue?
     /// 받아 둔 그림 첨부.
@@ -246,6 +260,53 @@ final class RedmineStore: ObservableObject {
         refresh()
     }
 
+    /// 고른 프로젝트(아니면 볼 수 있는 모든 프로젝트)에서 최근에 고친 일감의 이력을 받아 작업 내역을 만든다.
+    /// 일감마다 한 번씩 받아야 해서 최근 60건까지 넷씩 받는다.
+    func loadActivity() {
+        guard let (base, key) = credentials else { return }
+        activityToken += 1
+        let token = activityToken
+        activityLoading = true
+        activityIssues = []
+        var project: Int?
+        if case .project(let chosen) = scope { project = chosen.id }
+        let since = Date().addingTimeInterval(-Double(activityDays) * 86_400)
+        fetch(Redmine.issuesRequest(base: base, key: key, filter: Redmine.Filter(projectID: project, status: "*"), offset: 0)) { [weak self] data, status, failure in
+            guard let self, token == self.activityToken else { return }
+            guard status == 200, let data, let result = try? Redmine.issues(data) else {
+                self.activityLoading = false
+                self.flash = "작업 내역을 받지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                return
+            }
+            let recent = result.issues.filter { ($0.updated ?? .distantPast) >= since }
+            self.activityTruncated = recent.count > 60
+            var left = recent.prefix(60).map(\.id)
+            var running = 0
+            func pump() {
+                guard token == self.activityToken else { return }
+                if left.isEmpty && running == 0 {
+                    self.activityLoading = false
+                    return
+                }
+                while running < 4, let id = left.first {
+                    left.removeFirst()
+                    running += 1
+                    self.fetch(Redmine.issueRequest(base: base, key: key, id: id)) { [weak self] data, status, _ in
+                        guard let self, token == self.activityToken else { return }
+                        running -= 1
+                        if status == 200, let data, let issue = try? Redmine.issue(data) {
+                            self.activityIssues.append(issue)
+                            // 담당자 변경을 번호가 아닌 이름으로 보인다
+                            self.loadPeople(project: issue.project.id)
+                        }
+                        pump()
+                    }
+                }
+            }
+            pump()
+        }
+    }
+
     /// 업무 일지에서 보낸 뒤. 표의 진척률과 상태를 맞춘다.
     func refreshAfterSend() {
         if started { refresh() }
@@ -270,6 +331,7 @@ final class RedmineStore: ObservableObject {
     }
 
     func refresh() {
+        if layout == .activity { loadActivity() }
         // 구성원 목록은 받지 못해 비어 있을 수 있어 다시 받는다
         people = [:]
         // 끼워 넣은 상위도 옛 값이 남지 않게 목록을 받은 뒤 새로 받는다
