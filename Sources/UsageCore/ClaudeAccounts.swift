@@ -88,11 +88,16 @@ public enum ClaudeLogin {
     public static func setLiveCredentials(_ data: Data) -> Bool {
         let link = ClaudePaths.configDirectory.appendingPathComponent(".credentials.json")
         if FileManager.default.fileExists(atPath: link.path) {
-            // 원자적 쓰기는 새 파일로 바꿔 넣어 링크가 끊기고 권한이 기본값(0644)이 된다. 토큰 파일이라 0600을 지킨다
+            // 새 파일로 바꿔 넣으면 링크가 끊기고 권한이 기본값(0644)이 되어, 링크를 따라가고 토큰 파일의 0600을 지킨다
             let file = link.resolvingSymlinksInPath()
             let permissions = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.posixPermissions] ?? 0o600
-            guard (try? data.write(to: file, options: .atomic)) != nil else { return false }
-            try? FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: file.path)
+            // 권한을 붙여 만든 새 파일로 바꿔 넣어, 바꾸는 사이에도 다른 사용자가 읽을 수 있는 틈이 없게 한다
+            let temp = file.deletingLastPathComponent().appendingPathComponent(".credentials.json.\(UUID().uuidString)")
+            guard FileManager.default.createFile(atPath: temp.path, contents: data, attributes: [.posixPermissions: permissions]) else { return false }
+            guard (try? FileManager.default.replaceItemAt(file, withItemAt: temp)) != nil else {
+                try? FileManager.default.removeItem(at: temp)
+                return false
+            }
             return OAuthUsageProvider.fileCredentials() == data
         }
         return writeKeychain(data, service: "Claude Code-credentials")
