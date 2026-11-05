@@ -2675,6 +2675,10 @@ private struct DesignEventDetail: View {
         .onAppear {
             if let version { images.load(fileKey: event.fileKey, nodeIDs: neighbours(frame, version: version, before: label == "이전"), version: version) }
         }
+        // 작업 중 변경이 합쳐져 이후 버전이 바뀌면 그 버전 그림을 다시 받는다
+        .onChange(of: version) { version in
+            if let version { images.load(fileKey: event.fileKey, nodeIDs: neighbours(frame, version: version, before: label == "이전"), version: version) }
+        }
     }
 
     /// 지금 프레임과, 같은 버전으로 그릴 가까운 변경의 프레임. 한 요청으로 받아 다음 변경은 기다리지 않고 열린다.

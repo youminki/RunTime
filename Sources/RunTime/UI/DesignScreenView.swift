@@ -302,6 +302,8 @@ struct DesignScreenDetail: View {
                 }
             }
             .onAppear { images.load(fileKey: fileKey, nodeIDs: neighbours, version: version) }
+            // 상세를 연 채 새로 가져와 버전이 바뀌면 그 버전 그림을 다시 받는다
+            .onChange(of: version) { version in images.load(fileKey: fileKey, nodeIDs: neighbours, version: version) }
         }
     }
 
