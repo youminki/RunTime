@@ -287,6 +287,11 @@ final class RedmineStore: ObservableObject {
         downloading = []
         fetchingAncestors = false
         ancestorsStale = false
+        searching = false
+        searchToken += 1
+        loading = false
+        // 옛 서버로 만들던 일감·시간 기록 창은 응답을 버려 보내는 중으로 남으니 닫는다
+        creating = false
         issues = []
         details = [:]
         total = 0
@@ -797,8 +802,12 @@ final class RedmineStore: ObservableObject {
                 self.noJournalAPI(journal, issue: issue)
             } else if status == 404, let (base, key) = self.credentials {
                 // 지워진 댓글도 404라, 댓글이 아직 있을 때만 이 서버에 댓글 API가 없다고 본다
-                self.fetch(Redmine.issueRequest(base: base, key: key, id: issue)) { [weak self] data, _, _ in
+                self.fetch(Redmine.issueRequest(base: base, key: key, id: issue)) { [weak self] data, again, failure in
                     guard let self else { return }
+                    guard again == 200 else {
+                        self.flash = "댓글을 고치지 못했습니다: " + Self.message(status: again, error: failure, data: data)
+                        return
+                    }
                     let still = data.flatMap { try? Redmine.issue($0) }?.journals?.contains { $0.id == journal } == true
                     if still { self.noJournalAPI(journal, issue: issue) } else { self.flash = "이미 지워진 댓글입니다" }
                     self.loadDetail(issue)

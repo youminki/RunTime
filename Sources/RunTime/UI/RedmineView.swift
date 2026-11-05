@@ -2027,15 +2027,7 @@ struct TimeEntryForm: View {
             Text("권한에 따라 기록한 시간은 지우지 못할 수 있습니다").font(WL.caption).foregroundStyle(WL.quiet)
             HStack {
                 Spacer()
-                Button("기록") {
-                    guard let hours else { return }
-                    draft.sending = true
-                    draft.error = nil
-                    store.logTime(issue, day: WorkDay.key(draft.day), hours: hours, activityID: draft.activityID, comment: draft.comment) { error in
-                        draft.sending = false
-                        if let error { draft.error = error } else { dismiss() }
-                    }
-                }
+                Button("기록") { TextInput.afterComposition { record() } }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
                 .disabled(hours == nil || draft.activityID == nil || draft.sending)
@@ -2044,6 +2036,16 @@ struct TimeEntryForm: View {
         .font(WL.meta)
         .padding(14)
         .frame(width: 320)
+    }
+
+    private func record() {
+        guard let hours, !draft.sending else { return }
+        draft.sending = true
+        draft.error = nil
+        store.logTime(issue, day: WorkDay.key(draft.day), hours: hours, activityID: draft.activityID, comment: draft.comment) { error in
+            draft.sending = false
+            if let error { draft.error = error } else { dismiss() }
+        }
     }
 }
 
