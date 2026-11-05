@@ -1,4 +1,5 @@
 import AppKit
+import DesignSyncCore
 import WorkLogCore
 
 /// 앱 창의 메뉴를 차례로 열어 보는 점검 (`RUNTIME_MENU_CHECK=<사진 폴더>`). 키보드와 마우스를 쓰지 않아 쓰던 일을 방해하지 않는다.
@@ -115,6 +116,13 @@ enum MenuCheck {
             let first = await timed { _ = design.menus }
             let again = await timed { _ = design.menus }
             check("디자인 메뉴 목록 (\(design.menus.count)개, 처음 \(first)ms, 다음 \(again)ms)", again <= max(first, 5))
+
+            var started = Date()
+            let loaded = try? DesignHistoryFile.load()
+            let readCost = Int(Date().timeIntervalSince(started) * 1000)
+            started = Date()
+            let written = loaded.flatMap { try? DesignHistoryFile.encode($0) }
+            print("디자인 기록 \((written?.count ?? 0) / 1_048_576)MB: 읽기 \(readCost)ms, 쓰기 \(Int(Date().timeIntervalSince(started) * 1000))ms")
 
             let start = memory()
             var worst = 0
