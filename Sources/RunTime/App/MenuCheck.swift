@@ -69,6 +69,47 @@ enum MenuCheck {
         await settle(0.4)
     }
 
+    /// 화면에서 가장 긴 스크롤 칸을 120pt씩 내리며, 한 번 내릴 때 다시 배치하고 그리는 데 메인 스레드가 쓴 시간(ms)을 잰다.
+    /// 60Hz에서 한 장은 16ms라 이보다 길면 스크롤이 버벅여 보인다.
+    private static func scrollCost(_ window: NSWindow) async -> [Int] {
+        func scrollViews(in view: NSView?) -> [NSScrollView] {
+            guard let view else { return [] }
+            return ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        // 한 번 들른 화면은 투명하게 숨겨 두어, 조상까지 올라가 보며 보이는 칸만 고른다
+        func shown(_ view: NSView) -> Bool {
+            sequence(first: view, next: \.superview).allSatisfy { !$0.isHidden && $0.alphaValue > 0 }
+        }
+        guard let scroll = scrollViews(in: window.contentView)
+            .filter(shown)
+            .max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }),
+              let document = scroll.documentView else { return [] }
+        let clip = scroll.contentView
+        let limit = max(0, document.frame.height - clip.bounds.height)
+        var costs: [Int] = []
+        var moved: CGFloat = 0
+        while moved < limit, costs.count < 60 {
+            moved = min(moved + 120, limit)
+            let y = document.isFlipped ? moved : limit - moved
+            let started = Date()
+            clip.scroll(to: NSPoint(x: 0, y: y))
+            scroll.reflectScrolledClipView(clip)
+            window.displayIfNeeded()
+            costs.append(Int(Date().timeIntervalSince(started) * 1000))
+            await Task.yield()
+        }
+        clip.scroll(to: NSPoint(x: 0, y: document.isFlipped ? 0 : limit))
+        scroll.reflectScrolledClipView(clip)
+        return costs
+    }
+
+    private static func report(scroll name: String, _ costs: [Int]) {
+        guard !costs.isEmpty else { print("스크롤 \(name): 내릴 것 없음"); return }
+        let slow = costs.filter { $0 > 16 }.count
+        print("스크롤 \(name): 가장 오래 \(costs.max()!)ms, 평균 \(costs.reduce(0, +) / costs.count)ms, 16ms 넘음 \(slow)/\(costs.count)번")
+        fflush(stdout)
+    }
+
     /// 화면에서 그 글을 보이는 고칠 수 있는 글 칸.
     private static func textField(showing text: String, in view: NSView?) -> NSTextField? {
         guard let view else { return nil }
@@ -98,6 +139,23 @@ enum MenuCheck {
                 await settle(target == .redmine ? 3 : 1.2)
                 check("\(target.title) 화면을 연다 (\(cost)ms)", navigator.page == target && cost < 1500)
                 capture(main, target.rawValue, into: folder)
+            }
+
+            // 화면마다 스크롤을 내리며 버벅임을 잰다 (`RUNTIME_SCROLL_CHECK`가 있으면 일지 주간·월간도)
+            for target in MainPage.allCases where target != .runners {
+                navigator.go(target)
+                await settle(target == .redmine || target == .design ? 2 : 1)
+                report(scroll: target.title, await scrollCost(main))
+            }
+            if ProcessInfo.processInfo.environment["RUNTIME_SCROLL_CHECK"] != nil {
+                navigator.go(.workLog)
+                for mode in [WorkLogPage.Mode.week, .month] {
+                    page.mode = mode
+                    await settle(1)
+                    report(scroll: "일지 \(mode.rawValue)", await scrollCost(main))
+                }
+                page.mode = .day
+                exit(0)
             }
 
             navigator.go(.workLog)
