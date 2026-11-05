@@ -9,6 +9,8 @@ public final class JSONLWatcher {
     public var maxFileAge: TimeInterval = 8 * 24 * 60 * 60
 
     private var offsets: [String: UInt64] = [:]   // 파일 경로 → 읽은 바이트 수
+    /// 한 번에 읽는 양. 기록 파일은 100MB를 넘기도 해, 통째로 읽으면 켤 때 그만큼 메모리를 잡았다 놓는다.
+    var chunkSize = 8 * 1024 * 1024
     /// 마지막 scan에서 새로 읽은 줄 가운데 한도에 막힌 기록. 켠 직후 첫 scan에는 지난 기록도 들어 있다.
     public private(set) var limitHits: [LimitHit] = []
     private let fileManager = FileManager.default
@@ -45,9 +47,18 @@ public final class JSONLWatcher {
             defer { try? handle.close() }
             do {
                 try handle.seek(toOffset: offset)
-                guard let data = try handle.readToEnd(), !data.isEmpty else { continue }
-                let consumed = parse(chunk: data, into: &events)
-                offsets[path] = offset + consumed
+                // 조각 끝에 걸친 줄은 다음 조각과 이어 읽는다. 조각마다 읽은 자리를 적어, 중간에 실패해도 같은 줄을 다시 세지 않는다
+                // 읽은 조각은 오토릴리스 풀에 남아 다 읽을 때까지 풀리지 않아, 조각마다 풀을 비운다
+                var pending = Data()
+                while try autoreleasepool(invoking: {
+                    guard let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty else { return false }
+                    pending.append(chunk)
+                    let consumed = parse(chunk: pending, into: &events)
+                    offset += consumed
+                    offsets[path] = offset
+                    if consumed > 0 { pending = pending.subdata(in: pending.startIndex + Int(consumed)..<pending.endIndex) }
+                    return true
+                }) {}
             } catch { continue }
         }
         return events
@@ -63,7 +74,8 @@ public final class JSONLWatcher {
         while index < chunk.endIndex {
             if chunk[index] == newline {
                 let line = chunk[lineStart..<index]
-                if !line.isEmpty {
+                // 사용량이나 한도 표시가 없는 줄(대화 글·이미지·도구 결과)은 JSON으로 풀지 않는다
+                if !line.isEmpty, JSONLParser.mayMatter(line) {
                     let data = Data(line)
                     if let event = JSONLParser.parse(line: data) {
                         events.append(event)

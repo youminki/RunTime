@@ -45,6 +45,13 @@ public enum JSONLParser {
     }
 
     private static let decoder = JSONDecoder()
+    private static let usageKey = Data(#""usage""#.utf8)
+
+    /// 사용량(`"usage"` 칸)이나 한도 표시가 있을 수 있는 줄인지. 없으면 `parse`·`parseLimitHit` 모두 nil이라 풀지 않아도 된다.
+    /// 기록 대부분은 대화 글과 도구 결과라, 1MB 넘는 줄을 JSON으로 푸는 일을 줄인다.
+    public static func mayMatter(_ line: Data) -> Bool {
+        line.range(of: usageKey) != nil || line.range(of: limitMarker) != nil
+    }
 
     public static func parse(line: Data) -> UsageEvent? {
         guard let record = try? decoder.decode(Record.self, from: line) else { return nil }

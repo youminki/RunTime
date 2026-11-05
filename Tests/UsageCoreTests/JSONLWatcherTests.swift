@@ -47,6 +47,26 @@ final class JSONLWatcherTests {
         #expect(second[0].inputTokens == 200)
     }
 
+    @Test func linesAcrossSmallChunksAreAllRead() throws {
+        let file = tempDir.appendingPathComponent("session.jsonl")
+        // 사용량이 없는 긴 줄과 조각보다 긴 줄이 섞여도 사용량 줄만 빠짐없이 센다
+        let noise = #"{"type":"user","message":{"content":"\#(String(repeating: "가", count: 300))"}}"#
+        try ([line(id: "1", tokens: 100), noise, line(id: "2", tokens: 200), line(id: "3", tokens: 300)].joined(separator: "\n") + "\n")
+            .write(to: file, atomically: true, encoding: .utf8)
+
+        let watcher = JSONLWatcher(rootDirectory: tempDir.deletingLastPathComponent())
+        watcher.maxFileAge = .infinity
+        watcher.chunkSize = 37
+        #expect(watcher.scan().map(\.inputTokens) == [100, 200, 300])
+        #expect(watcher.scan().isEmpty)
+    }
+
+    @Test func linesWithoutUsageAreSkippedBeforeDecoding() {
+        #expect(!JSONLParser.mayMatter(Data(#"{"type":"user","message":{"content":"안녕"}}"#.utf8)))
+        #expect(JSONLParser.mayMatter(Data(line(id: "1", tokens: 1).utf8)))
+        #expect(JSONLParser.mayMatter(Data(#"{"apiError":"usage_limit_reached"}"#.utf8)))
+    }
+
     @Test func partialLastLineNotConsumed() throws {
         let file = tempDir.appendingPathComponent("session.jsonl")
         let full = line(id: "1", tokens: 100) + "\n"
