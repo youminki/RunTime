@@ -105,6 +105,19 @@ private let tree: [Int: RedmineAPI.Issue] = [
         #expect(WorkLog.merge(mine: mine, base: base, disk: base).redmineProjects.isEmpty)
     }
 
+    @Test func removedProjectAndDismissalStayGoneAfterMerge() {
+        var base = WorkLog(projects: ["A", "C"], entries: [])
+        base.dismissed = ["x"]
+        var mine = base
+        mine.projects = ["B", "C"]   // A를 B로 바꿈
+        mine.dismissed = []          // 지운 줄을 되살림
+        var disk = base
+        disk.projects = ["A", "C", "D"]   // 그사이 바깥에서 D를 더함
+        let merged = WorkLog.merge(mine: mine, base: base, disk: disk)
+        #expect(merged.projects == ["B", "C", "D"])
+        #expect(merged.dismissed.isEmpty)
+    }
+
     @Test func mergeKeepsReorderAndSkipsDuplicateImport() {
         let a = WorkEntry(day: "2026-10-30", project: "p", title: "가"), b = WorkEntry(day: "2026-10-30", project: "p", title: "나")
         let base = WorkLog(projects: ["p"], entries: [a, b])

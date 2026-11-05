@@ -437,7 +437,8 @@ public struct WorkLog: Codable, Equatable {
             merged.entries = merged.entries.filter { rank[$0.id] != nil }.sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
                 + merged.entries.filter { rank[$0.id] == nil }
         }
-        merged.dismissed.formUnion(mine.dismissed)
+        // 이 창에서 풀거나 뺀 것은 파일 쪽 값에서도 뺀다 (지운 줄을 되살렸는데 지움 표시가 남지 않게)
+        merged.dismissed = merged.dismissed.subtracting(base.dismissed.subtracting(mine.dismissed)).union(mine.dismissed)
         if mine.recurring != base.recurring { merged.recurring = mine.recurring }
         // 장부는 나중에 받은 것이 맞다. 이 창에서 받은 것을 파일 것 위에 얹는다
         merged.issues.merge(mine.issues) { disk, mine in mine.fetchedAt >= disk.fetchedAt ? mine : disk }
@@ -458,7 +459,8 @@ public struct WorkLog: Codable, Equatable {
         }
         if mine.aliases != base.aliases { merged.aliases.merge(mine.aliases) { _, mine in mine } }
         if mine.projects != base.projects {
-            merged.projects = mine.projects + disk.projects.filter { !mine.projects.contains($0) }
+            let removed = Set(base.projects).subtracting(mine.projects)
+            merged.projects = mine.projects + disk.projects.filter { !mine.projects.contains($0) && !removed.contains($0) }
         }
         return merged
     }
