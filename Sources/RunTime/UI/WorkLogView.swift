@@ -438,7 +438,7 @@ struct WorkLogView: View {
                 guard !text.isEmpty else { return }
                 let parsed = WorkLogFormat.splitStatus(text)
                 store.add(day: page.day, project: project, title: parsed.title, status: parsed.status)
-                page.drafts[project] = ""
+                TextInput.clearAfterComposition { page.drafts[project] = "" }
             })
             .textFieldStyle(.plain)
             .font(.system(size: 14))

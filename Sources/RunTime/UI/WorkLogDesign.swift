@@ -213,6 +213,16 @@ struct IssueSlot: View {
     }
 }
 
+// MARK: - 글 입력
+
+enum TextInput {
+    /// 한글을 조합하는 칸을 Enter로 넣은 뒤 비울 때. 조합이 끝나며 글자가 칸에 다시 들어와, 조합을 닫고 다음 차례에 비운다.
+    @MainActor static func clearAfterComposition(_ clear: @escaping () -> Void) {
+        (NSApp.keyWindow?.firstResponder as? NSTextView)?.unmarkText()
+        DispatchQueue.main.async(execute: clear)
+    }
+}
+
 // MARK: - 단추
 
 /// 머리줄의 네모 아이콘 단추. 평소엔 테두리만, 누르면 옅게 채운다.

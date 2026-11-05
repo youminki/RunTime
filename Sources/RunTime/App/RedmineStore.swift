@@ -247,7 +247,8 @@ final class RedmineStore: ObservableObject {
         let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         if let method = request.httpMethod, method != "GET" {
             fixtureWrites.append("\(method) \(path)")
-            print("쓰기 \(method) \(path)")
+            print("쓰기 \(method) \(path) \(request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? "")")
+            fflush(stdout)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             if request.httpMethod == "PUT" || request.httpMethod == "DELETE" { return done(Data(), 204, nil) }
