@@ -832,9 +832,9 @@ final class WorkLogSync: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                if assigned { self.loadingIssues = false }
-                // 받는 사이 연결을 바꿨으면 옛 서버 일감이라 장부에 넣지 않는다
+                // 받는 사이 연결을 바꿨으면 옛 서버 일감이라 장부에 넣지 않는다. 받는 중 표시는 새 연결의 받기 것이라 그대로 둔다
                 guard self.serverGeneration == started else { completion?(); return }
+                if assigned { self.loadingIssues = false }
                 switch result {
                 case .success(let book):
                     self.store.updateIssues(book.infos, assignedIDs: book.assignedIDs)
@@ -927,10 +927,12 @@ final class WorkLogSync: ObservableObject {
 
     func loadStatuses() {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
+        let started = serverGeneration
         URLSession.shared.dataTask(with: RedmineAPI.statusesRequest(base: base, key: key)) { [weak self] data, response, _ in
             guard (try? Self.check(response)) != nil, let list = try? RedmineAPI.parseStatuses(data ?? Data()), !list.isEmpty else { return }
             DispatchQueue.main.async {
-                guard let self else { return }
+                // 받는 사이 연결을 바꿨으면 옛 서버 목록이라 버린다
+                guard let self, self.serverGeneration == started else { return }
                 self.statuses = list
                 self.defaults.set(try? JSONEncoder().encode(list), forKey: "workLog.statuses")
                 // 고른 적이 없거나 고른 상태가 사라졌을 때만 이름으로 어림한다.
@@ -939,7 +941,8 @@ final class WorkLogSync: ObservableObject {
                 // 다른 레드마인으로 바꿨으면 같은 번호라도 다른 상태라(새 서버의 5가 ‘거절’) 고른 것을 버리고 다시 어림한다.
                 // 서버를 적기 전부터 쓰던 설정은 지금 서버 것으로 본다
                 // 점검용으로 주소를 바꾼 실행(`RUNTIME_REDMINE_URL`)은 저장된 설정의 서버가 아니라 건드리지 않는다
-                let server = self.settings.redmineURL
+                // 끝 `/`나 빈칸만 다른 주소는 같은 서버다
+                let server = RedmineAPI.baseURL(self.settings.redmineURL)?.absoluteString ?? self.settings.redmineURL
                 let pinned = ProcessInfo.processInfo.environment["RUNTIME_REDMINE_URL"] == nil
                 let moved = pinned && self.defaults.string(forKey: "workLog.statusServer").map { $0 != server } ?? false
                 if pinned { self.defaults.set(server, forKey: "workLog.statusServer") }
@@ -1229,7 +1232,9 @@ final class WorkLogSync: ObservableObject {
     }
 
     /// 지금 연결. 설정을 떠날 때 바뀌었는지 본다.
-    private var credentialKey: String { settings.effectiveRedmineURL + "|" + (settings.redmineKey ?? "") }
+    private var credentialKey: String {
+        (RedmineAPI.baseURL(settings.effectiveRedmineURL)?.absoluteString ?? settings.effectiveRedmineURL) + "|" + (settings.redmineKey ?? "")
+    }
     /// 켤 때 적어 둔 연결. 처음 고르는 진행·완료 상태를 지우지 않게 상태는 여기서 다루지 않는다.
     private var loadedFrom: String?
     /// 연결을 바꿀 때마다 올려, 그 전에 시작한 받기 결과를 버린다.
@@ -1242,6 +1247,7 @@ final class WorkLogSync: ObservableObject {
         defer { loadedFrom = key }
         guard let previous = loadedFrom, previous != key else { return }
         serverGeneration += 1
+        loadingIssues = false
         members = [:]
         checkedNotes = [:]
         postedHints = [:]

@@ -371,9 +371,9 @@ public enum MRScreens {
         return "mr\(mr)-\(tag)\(index + 1)-\(kind.rawValue).\(ext.isEmpty ? "png" : ext)"
     }
 
-    /// 저장소 경로(`group/web`)의 끝 이름을 첨부 이름에 쓸 수 있는 글자로.
+    /// 저장소 경로(`group/web`)를 첨부 이름에 쓸 수 있는 글자로. 묶음이 달라도 끝 이름은 겹쳐서 경로 전체를 쓴다.
     static func repoTag(_ path: String) -> String {
-        String((path.split(separator: "/").last ?? "").lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
+        String(path.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
     }
 
     /// 앞서 보낸 댓글에 이 MR의 화면이 이미 붙었는지. 저장소 이름이 없는 옛 첨부(`mr12-1-after.png`)는 번호로만 가린다.
