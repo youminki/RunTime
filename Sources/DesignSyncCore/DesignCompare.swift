@@ -39,7 +39,7 @@ public struct VersionSnapshot: Codable, Equatable, Sendable {
     }
 
     public var allScreens: [ScreenSnapshot] { screens.values.flatMap { $0 } }
-    public var allChangelog: [ChangelogEntry] { changelog.values.flatMap { $0 } }
+    public var allChangelog: [ChangelogEntry] { SpecExtractor.numberedAcrossFrames(changelog.keys.sorted().flatMap { changelog[$0] ?? [] }) }
 
     /// 그 페이지의 뼈대를 받았는지.
     public func outlines(_ pageID: String) -> Bool {

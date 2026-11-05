@@ -98,6 +98,18 @@ import Testing
         #expect(SpecExtractor.stripNote("회원 관리 (9/9 등급 컬럼 추가, 상세 추가)") == "회원 관리")
         #expect(SpecExtractor.stripStatus("[작업 중/보류] 상품 > 옵션 관리") == "상품 > 옵션 관리")
     }
+
+    @Test func changelogRowsInTwoFramesOfOnePageGetDistinctKeys() {
+        let row = { (frame: String, text: String) in
+            ChangelogEntry(pageID: "p1", pageName: "주문", version: "1.0", date: "2026-10-01", text: text, frameID: frame)
+        }
+        // 프레임마다 0부터 센 줄이 페이지 전체에서 이어 세어지고, 겹치지 않던 줄의 순번은 그대로다
+        let numbered = SpecExtractor.numberedAcrossFrames([row("9:2", "나중 프레임"), row("1:5", "앞 프레임"),
+                                                           ChangelogEntry(pageID: "p1", pageName: "주문", version: "1.1", date: "2026-10-02", text: "혼자", frameID: "9:2")])
+        #expect(numbered.map(\.order) == [1, 0, 0])
+        #expect(Set(numbered.map(\.key)).count == 3)
+        #expect(SpecExtractor.numberedAcrossFrames(numbered) == numbered)
+    }
 }
 
 @Suite struct FigmaAPITests {
