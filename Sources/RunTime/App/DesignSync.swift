@@ -110,7 +110,7 @@ actor FigmaClient {
             do {
                 sent += 1
                 (data, response) = try await session.data(for: request)
-            } catch let error as URLError where [.timedOut, .networkConnectionLost].contains(error.code) && transient < 2 {
+            } catch let error as URLError where [.timedOut, .networkConnectionLost].contains(error.code) && transient < 2 && attempt < 2 {
                 // 잠깐 끊긴 것이면 몇 초 쉬고 다시 보낸다 (큰 파일을 받다 한 묶음이 끊겨 전부 버리지 않게)
                 transient += 1
                 try await Task.sleep(nanoseconds: UInt64(transient * 3) * 1_000_000_000)
@@ -130,8 +130,8 @@ actor FigmaClient {
             if case .rateLimited(let after) = failure {
                 blockedUntil = Date().addingTimeInterval(TimeInterval(after ?? 60))
             }
-            // 피그마 쪽 일시 오류(502·503·504)는 한 번 더 보낸다
-            if case .server(let status) = failure, [500, 502, 503, 504].contains(status), transient < 2 {
+            // 피그마 쪽 일시 오류(502·503·504)는 한 번 더 보낸다. 마지막 시도면 한도 오류로 바뀌지 않게 그대로 알린다
+            if case .server(let status) = failure, [500, 502, 503, 504].contains(status), transient < 2, attempt < 2 {
                 transient += 1
                 try await Task.sleep(nanoseconds: UInt64(transient * 3) * 1_000_000_000)
                 continue
@@ -217,8 +217,12 @@ final class DesignSync: ObservableObject {
     private var timer: Timer?
     /// 가져오는 동안 메뉴를 바꾼 파일. 끝난 뒤 다음에 새로 받도록 버전을 비운다.
     private var menusChanged = Set<String>()
-    /// 링크 범위를 프로젝트 전체로 넓히고 아직 받지 않은 파일.
-    private var widened = Set<String>()
+    /// 링크 범위를 프로젝트 전체로 넓히고 아직 받지 않은 파일. 받기가 실패하거나 앱을 다시 켜도
+    /// 링크하지 않았던 화면이 새 화면으로 쏟아지지 않게 남겨 둔다.
+    private var widened = Set(UserDefaults.standard.stringArray(forKey: DesignSync.widenedKey) ?? []) {
+        didSet { UserDefaults.standard.set(widened.sorted(), forKey: Self.widenedKey) }
+    }
+    private static let widenedKey = "designWidenedFiles"
     /// 받는 동안 전부 가져오기를 눌렀다.
     private var queuedAll = false
     /// 받는 동안 들어온 요청의 끝 알림. 그 요청이 고른 프로젝트(nil이면 전부)에서 찾은 건수를 넘긴다.
@@ -372,8 +376,9 @@ final class DesignSync: ObservableObject {
     }
 
     /// 메뉴만 받을 수 있는지. 링크로 고른 프로젝트는 이미 고른 화면만 받아 메뉴로 나눌 것이 없다.
+    /// 전체로 넓힌 뒤 처음 받기 전에는 메뉴만 받으면 링크하지 않았던 화면이 새 화면으로 기록되어, 전체를 먼저 받게 한다.
     func canFetchMenu(_ fileKey: String, _ path: String) -> Bool {
-        guard let source = source(fileKey), source.scope.isEmpty else { return false }
+        guard let source = source(fileKey), source.scope.isEmpty, !widened.contains(fileKey) else { return false }
         return history.files[fileKey]?.screens.values.contains { DesignStatus.covers(path, $0.menuPath) } == true
     }
 
@@ -461,8 +466,13 @@ final class DesignSync: ObservableObject {
         let frames = Array(history.files[fileKey]?.screens.keys ?? [:].keys)
         let folder = placeFolder
         // 앞서 미룬 자리 쓰기가 끝난 뒤에 읽어야 옛 자리를 붙였다가 다시 써 버리지 않는다
-        let places = await withCheckedContinuation { continuation in
+        var places = await withCheckedContinuation { continuation in
             saveQueue.async { continuation.resume(returning: DesignPlaceFile.readAll(fileKey, frames: frames, in: folder)) }
+        }
+        // 쓰지 못해 대기로 남은 화면은 캐시가 디스크보다 새것이다
+        for frame in frames {
+            let key = fileKey + "|" + frame
+            if pendingPlaces[key] != nil, let cached = placeCache[key] { places[frame] = cached }
         }
         DesignPlaceFile.attach(places, to: &history, fileKey: fileKey)
     }
@@ -478,19 +488,20 @@ final class DesignSync: ObservableObject {
         }
         let folder = placeFolder
         saveQueue.async {
-            var failed = 0
-            for item in moved {
-                do { try DesignPlaceFile.write(item.places, item.fileKey, item.frameID, in: folder) } catch { failed += 1 }
+            var written: [String] = []
+            for (key, item) in zip(keys, moved) {
+                if (try? DesignPlaceFile.write(item.places, item.fileKey, item.frameID, in: folder)) != nil { written.append(key) }
             }
+            // 못 쓴 화면은 캐시가 유일한 값이라 대기로 남겨 캐시를 비울 때 지키고, 다음 가져오기에서 다시 쓴다
             Task { @MainActor in
                 let sync = DesignSync.shared
-                for key in keys {
+                for key in written {
                     let left = (sync.pendingPlaces[key] ?? 1) - 1
                     sync.pendingPlaces[key] = left > 0 ? left : nil
                 }
             }
-            if failed > 0 {
-                ProblemReporter.screen("디자인", "화면 자리 파일을 쓰지 못함", detail: "파일: \(fileKey) · 못 쓴 화면 \(failed)/\(moved.count)개")
+            if written.count < moved.count {
+                ProblemReporter.screen("디자인", "화면 자리 파일을 쓰지 못함", detail: "파일: \(fileKey) · 못 쓴 화면 \(moved.count - written.count)/\(moved.count)개")
             }
         }
     }
@@ -745,11 +756,14 @@ final class DesignSync: ObservableObject {
         Task {
             var found: [DesignEvent] = []
             var counts: [String: Int] = [:]
-            for source in sources {
-                // 가져오는 사이 지운 파일은 기록하지 않는다 (지운 뒤 고아 기록이 생긴다)
-                guard settings.sources.contains(where: { $0.fileKey == source.fileKey }) else { continue }
+            for listed in sources {
+                // 가져오는 사이 지운 파일은 기록하지 않는다 (지운 뒤 고아 기록이 생긴다).
+                // 차례를 기다리는 사이 링크를 더하거나 넓혔을 수 있어 지금 설정으로 받는다
+                guard let source = settings.sources.first(where: { $0.fileKey == listed.fileKey }) else { continue }
                 fetching = source.fileKey
+                // 지금 설정으로 받으니 차례 전에 바꾼 것은 다시 받지 않아도 된다
                 queued.remove(source.fileKey)
+                menusChanged.remove(source.fileKey)
                 do {
                     let outcome = try await DesignSyncEngine.run(
                         source: source, token: token, known: history.files[source.fileKey],
@@ -1016,6 +1030,7 @@ final class DesignSync: ObservableObject {
                 }
                 settings.sources[current].scope.append(scope)
                 // 새 화면은 파일이 그대로여도 받아야 한다
+                changedWhileSyncing(key)
                 history.files[key]?.lastModified = nil
                 persist()
                 return .success(AddedLink(fileKey: key, nodeID: node, needsFetch: true, message: "‘\(scope.name)’ 화면을 더했습니다"))
@@ -1081,12 +1096,19 @@ final class DesignSync: ObservableObject {
         return failure.map { "\(prefix)가져오지 못했습니다: \($0)" } ?? "\(prefix)새 변경이 없습니다"
     }
 
+    /// 받는 중에 지켜볼 범위를 바꿨으면, 이미 옛 범위로 받고 있을 수 있어 이번 차례가 끝난 뒤 그 파일을 다시 받는다.
+    private func changedWhileSyncing(_ fileKey: String) {
+        guard syncing else { return }
+        menusChanged.insert(fileKey)
+        queued.insert(fileKey)
+    }
+
     /// 링크로 고른 화면만 보던 파일을 전체로 넓힌다. 다음에 가져올 때 모든 화면을 받는다.
     func widen(_ fileKey: String) {
         guard let index = settings.sources.firstIndex(where: { $0.fileKey == fileKey }), !settings.sources[index].scope.isEmpty else { return }
         settings.sources[index].scope = []
         widened.insert(fileKey)
-        if syncing { menusChanged.insert(fileKey) }
+        changedWhileSyncing(fileKey)
         history.files[fileKey]?.lastModified = nil
         persist()
     }
@@ -1106,6 +1128,7 @@ final class DesignSync: ObservableObject {
     func removeSource(_ fileKey: String) {
         settings.sources.removeAll { $0.fileKey == fileKey }
         history.forget(fileKey: fileKey)
+        widened.remove(fileKey)
         errors[fileKey] = nil
         persist()
     }
@@ -1119,7 +1142,7 @@ final class DesignSync: ObservableObject {
         settings.sources[index].menus = after.sorted()
         // 새로 고른 메뉴(전부로 넓힌 것 포함)의 화면은 받은 적이 없을 수 있어 파일이 그대로여도 다음에 받는다
         guard !after.subtracting(before).isEmpty || (after.isEmpty && !before.isEmpty) else { return }
-        if syncing { menusChanged.insert(fileKey) }
+        changedWhileSyncing(fileKey)
         history.files[fileKey]?.lastModified = nil
         persist()
     }
