@@ -605,8 +605,8 @@ private struct RedmineBoard: View {
     }
 
     private func card(_ issue: Redmine.Issue) -> some View {
-        Button { store.selected = issue.id } label: {
-            VStack(alignment: .leading, spacing: 6) {
+        // 단추로 감싸면 눌림이 끌기를 가로채 끌어 놓기가 시작되지 않는다
+        VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     TrackerTag(name: issue.tracker.name)
                     Text(verbatim: "#\(issue.id)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
@@ -620,14 +620,22 @@ private struct RedmineBoard: View {
                     Spacer(minLength: 0)
                     Text(issue.assignedTo?.name ?? "담당 없음").font(WL.caption).foregroundStyle(WL.quiet).lineLimit(1)
                 }
-            }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture { store.selected = issue.id }
         .draggable(String(issue.id))
+        .contextMenu {
+            Button("일감 열기") { store.selected = issue.id }
+            Menu("상태 바꾸기") {
+                ForEach(store.statuses) { status in
+                    Button(status.name) { store.update(issue.id, Redmine.Change(statusID: status.id)) }
+                        .disabled(status.id == issue.status.id)
+                }
+            }
+        }
     }
 }
 

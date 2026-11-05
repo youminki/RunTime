@@ -66,6 +66,8 @@ final class RedmineStore: ObservableObject {
     @Published var layout: Layout = Layout(rawValue: UserDefaults.standard.string(forKey: "redmine.layout") ?? "") ?? .list {
         didSet {
             UserDefaults.standard.set(layout.rawValue, forKey: "redmine.layout")
+            // 보드·달력에는 고른 표시가 없어 무엇을 고치는지 안 보인다
+            if layout == .board || layout == .calendar { checked = [] }
             if treeMode { loadAncestors() }
         }
     }
