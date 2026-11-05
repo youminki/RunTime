@@ -80,6 +80,12 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(WorkCapture.issueNumber(in: ["x"], branch: "feat/destination-api") == nil)
         #expect(WorkCapture.issueNumber(in: ["x"], branch: "fix/qa-1020-dataset-agent") == nil)
         #expect(WorkCapture.issueNumber(in: ["x"], branch: "fix/#1020") == 1020)
+        // 설명의 색 값은 번호가 아니고, 설명보다 브랜치 번호를 먼저 믿는다
+        #expect(WorkCapture.issueNumber(in: ["버튼 정리", "배경색 #333333 적용"], branch: "feature/37828-x") == 37828)
+        #expect(WorkCapture.issueNumber(in: ["버튼 정리", "color: #000000; 로 바꿈"]) == nil)
+        #expect(WorkCapture.issueNumber(in: ["버튼 정리", "[일감] #123456"]) == 123456)
+        #expect(RedmineComment.allIssueRefs(["[일감] #37828", "배경색 #333333 적용"]) == [37828])
+        #expect(RedmineComment.stripRefs("배경색 #333333 적용 (#37828)") == "배경색 #333333 적용")
         #expect(WorkCapture.isHousekeeping("chore: update Swagger API"))
         #expect(!WorkCapture.isHousekeeping("feat: 목록 연동"))
         #expect(WorkCapture.sharedBranches(["refs/remotes/origin/dev", "refs/remotes/origin/feat/x", "refs/remotes/origin/release/1.2", "refs/heads/main"])
@@ -109,6 +115,14 @@ private func at(_ text: String) -> Date { ISO8601DateFormatter().date(from: text
         #expect(log.entries[0].title == "데스티네이션 API 연동")
         #expect(log.entries[0].issue == 4512)
         #expect(log.entries[0].note == "[작업 내용]\n- 목록·상세 API\n\n[비고]\n- MR !14")   // 레드마인 댓글 꼴로
+    }
+
+    @Test func sameMROnTwoPagesMakesOneLine() {
+        var log = WorkLog()
+        let mr = WorkCapture.MergedMR(path: "velox/portal", iid: 21, title: "목록 연동", description: "", sourceBranch: "feat/list",
+                                      mergedAt: at("2026-10-20T05:00:00Z"))
+        WorkCapture.apply(mrs: [mr, mr], commits: [], to: &log)
+        #expect(log.entries.count == 1)
     }
 
     @Test func rereadsMRDescriptionEditedAfterImport() {

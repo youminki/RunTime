@@ -136,8 +136,19 @@ public enum RedmineComment {
         guard let regex = try? NSRegularExpression(pattern: #"#(\d{4,7})\b"#) else { return [] }
         let range = NSRange(text.startIndex..., in: text)
         return regex.matches(in: text, range: range).compactMap { match in
-            Range(match.range(at: 1), in: text).flatMap { Int(text[$0]) }
+            guard let whole = Range(match.range, in: text), !isColor(text, at: whole) else { return nil }
+            return Range(match.range(at: 1), in: text).flatMap { Int(text[$0]) }
         }
+    }
+
+    /// `#333333`처럼 숫자만 든 색 값. 바로 앞에 색을 가리키는 말이 있거나 CSS처럼 `;`가 뒤따를 때만 색으로 본다
+    /// (`#123456`도 일감 번호일 수 있다).
+    static func isColor(_ text: String, at range: Range<String.Index>) -> Bool {
+        let digits = text[range].dropFirst()
+        guard digits.count == 3 || digits.count == 6 else { return false }
+        if text[range.upperBound...].first == ";" { return true }
+        let before = text[..<range.lowerBound].suffix(16).lowercased()
+        return ["색", "color", "colour", "배경", "background", "border", "fill", "stroke", "rgb"].contains { before.contains($0) }
     }
 
     /// MR 글 전체에 나온 일감 번호 (나온 순서, 겹침 없이).
@@ -164,7 +175,18 @@ public enum RedmineComment {
     }
 
     static func stripRefs(_ line: String) -> String {
+        // 색 값은 번호가 아니라 글이라 지우지 않게 잠시 바꿔 둔다
+        var colors: [String] = []
         var text = line
+        var from = text.startIndex
+        while let range = text.range(of: #"#\d{6}\b|#\d{3}\b"#, options: .regularExpression, range: from..<text.endIndex) {
+            guard isColor(text, at: range) else { from = range.upperBound; continue }
+            let mark = "\u{1}\(colors.count)\u{2}"
+            colors.append(String(text[range]))
+            let offset = text.distance(from: text.startIndex, to: range.lowerBound) + mark.count
+            text.replaceSubrange(range, with: mark)
+            from = text.index(text.startIndex, offsetBy: offset)
+        }
         let patterns = [#"\s*\(\s*#\d{4,7}(\s*,\s*#\d{4,7})*\s*\)"#,   // (#37828), (#1, #2)
                         #"\s*,\s*#\d{4,7}\b"#,                            // (18.9, #37828) → (18.9)
                         #"#\d{4,7}\b\s*,?\s*"#]                           // 남은 #37828
@@ -172,6 +194,7 @@ public enum RedmineComment {
             text = text.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
         text = text.replacingOccurrences(of: "()", with: "")
+        for (index, color) in colors.enumerated() { text = text.replacingOccurrences(of: "\u{1}\(index)\u{2}", with: color) }
         return text.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
     }

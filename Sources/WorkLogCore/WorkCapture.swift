@@ -256,15 +256,21 @@ public enum WorkCapture {
 
     /// 제목·설명의 `#1234`, 브랜치의 `feature/12345-x`, `fix/#1234`.
     /// 브랜치의 맨숫자는 QA 시트 번호(`qa-1020`)와 헷갈려 다섯 자리 이상만 일감으로 본다.
+    /// 제목 다음에 브랜치를 보고 나머지(설명 등)를 본다. 설명에는 다른 일감이나 색 값(`#333333`)이 섞여 브랜치가 더 믿을 만하다.
     public static func issueNumber(in texts: [String], branch: String? = nil) -> Int? {
-        for text in texts {
-            if let range = text.range(of: #"#\d{3,7}"#, options: .regularExpression) {
-                return Int(text[range].dropFirst())
+        func ref(in text: String) -> Int? {
+            var from = text.startIndex
+            while let range = text.range(of: #"#\d{3,7}"#, options: .regularExpression, range: from..<text.endIndex) {
+                if !RedmineComment.isColor(text, at: range) { return Int(text[range].dropFirst()) }
+                from = range.upperBound
             }
+            return nil
         }
-        guard let branch,
-              let range = branch.range(of: #"#\d{3,7}|(^|[/_-])\d{5,7}([/_-]|$)"#, options: .regularExpression) else { return nil }
-        return Int(branch[range].filter(\.isNumber))
+        if let first = texts.first, let found = ref(in: first) { return found }
+        if let branch, let range = branch.range(of: #"#\d{3,7}|(^|[/_-])\d{5,7}([/_-]|$)"#, options: .regularExpression) {
+            return Int(branch[range].filter(\.isNumber))
+        }
+        return texts.dropFirst().lazy.compactMap(ref).first
     }
 
     /// GitLab 묶음 이름으로 보고서 프로젝트를 정한다. 이름을 바꿔 둔 게 있으면 그것을, 대소문자만 다른 프로젝트가 있으면 그것을 쓴다.
@@ -286,7 +292,8 @@ public enum WorkCapture {
     @discardableResult
     public static func apply(mrs: [MergedMR], commits: [Commit], to log: inout WorkLog, now: Date = Date()) -> Int {
         var changed = 0
-        let known = Set(log.entries.compactMap(\.source))
+        // 여러 쪽으로 나눠 받는 사이 새 MR이 생기면 같은 MR이 앞뒤 쪽에 함께 와서, 넣은 MR도 바로 더한다
+        var known = Set(log.entries.compactMap(\.source))
 
         for mr in mrs.sorted(by: { $0.mergedAt < $1.mergedAt }) {
             if known.contains(mr.source) {
@@ -323,6 +330,7 @@ public enum WorkCapture {
                 log.entries.append(WorkEntry(day: day, project: project, title: title, status: .done, issue: issue,
                                              note: raw, updatedAt: now, source: mr.source, mrBody: raw))
             }
+            known.insert(mr.source)
             changed += 1
         }
 
