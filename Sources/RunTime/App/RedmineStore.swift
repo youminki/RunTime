@@ -74,7 +74,7 @@ final class RedmineStore: ObservableObject {
             // 보드·달력에는 고른 표시가 없어 무엇을 고치는지 안 보인다
             if layout == .board || layout == .calendar || layout == .activity { checked = [] }
             if treeMode { loadAncestors() }
-            if layout == .activity { loadActivity() }
+            if layout == .activity { loadActivity() } else { stopActivity() }
         }
     }
     var treeMode: Bool { layout == .tree || layout == .timeline }
@@ -170,6 +170,11 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var activityProgress = (done: 0, total: 0)
     /// 이력을 받지 못한 일감 수.
     @Published private(set) var activityFailed = 0
+    /// 받지 못한 까닭. 보던 내역 위에 다시 받기와 함께 보인다.
+    @Published private(set) var activityError: String?
+    /// 지금 보이는 내역의 범위와 기간. 다를 때만 비우고 받는다.
+    private var activityShown: String?
+    private var activityPeopleAsked: Set<Int> = []
     /// 받은 이력. 고친 시각이 같으면 다시 받지 않는다.
     private var activityCache: [Int: Redmine.Issue] = [:]
     /// 작업 내역은 왼쪽의 프로젝트만 따른다. 내 일감·질의에서는 볼 수 있는 모든 프로젝트를 모은다.
@@ -228,6 +233,8 @@ final class RedmineStore: ObservableObject {
         loadedFrom = credentialKey
         loadMeta()
         load()
+        // 작업 내역을 보던 채로 앱을 다시 켜도 받는다
+        if layout == .activity { loadActivity() }
     }
 
     /// 지금 연결을 가리는 값. 설정이 바뀌었는지 볼 때 쓴다.
@@ -250,8 +257,12 @@ final class RedmineStore: ObservableObject {
         journalAPI = true
         activityToken += 1
         activityCache = [:]
+        activityShown = nil
+        activityPeopleAsked = []
+        activityError = nil
         activityItems = []
         activityLoading = false
+        if layout == .activity { loadActivity() }
         issues = []
         details = [:]
         total = 0
@@ -273,28 +284,38 @@ final class RedmineStore: ObservableObject {
         guard let (base, key) = credentials else { return }
         activityToken += 1
         let token = activityToken
-        activityLoading = true
-        activityItems = []
-        activityProgress = (0, 0)
-        activityFailed = 0
         var project: Int?
         if case .project(let chosen) = scope { project = chosen.id }
+        // 같은 범위를 다시 받을 때는 새 결과가 올 때까지 보던 내역을 둔다 (끊긴 채 돌아와도 비지 않게)
+        let shown = "\(project ?? 0)-\(activityDays)"
+        if shown != activityShown { activityItems = [] }
+        activityShown = shown
+        activityLoading = true
+        activityError = nil
+        activityProgress = (0, 0)
+        activityFailed = 0
         let since = Date().addingTimeInterval(-Double(activityDays) * 86_400)
         let from = WorkDay.key(since)
-        var found: [Redmine.Issue] = [], loaded: [Redmine.Issue] = [], times: [Redmine.TimeLog] = []
+        var found: [Redmine.Issue] = [], times: [Redmine.TimeLog] = []
+        var seen: Set<Int> = []
+        // 일감마다 한 번만 내역 줄로 바꿔 두고, 보일 때는 합쳐 정렬만 한다
+        var parts: [[Redmine.Activity]] = []
+        var done = 0, failed = 0
 
-        func publish() { activityItems = Redmine.activity(loaded, times: times, since: since) }
+        func publish() {
+            activityItems = (parts.joined() + Redmine.activity([], times: times, since: since)).sorted { $0.date > $1.date }
+            activityProgress = (done, found.count)
+            activityFailed = failed
+        }
         func finish() {
             publish()
             activityLoading = false
         }
         func history() {
             var left = found[...]
-            var running = 0, sincePublish = 0
-            activityProgress = (0, found.count)
+            var running = 0, sincePublish = 0, stopped = false
             func pump() {
-                guard token == activityToken else { return }
-                if left.isEmpty && running == 0 { return finish() }
+                guard token == activityToken, !stopped else { return }
                 while running < 6, let summary = left.first {
                     left.removeFirst()
                     if let kept = activityCache[summary.id], kept.updated == summary.updated {
@@ -302,14 +323,25 @@ final class RedmineStore: ObservableObject {
                         continue
                     }
                     running += 1
-                    fetch(Redmine.issueRequest(base: base, key: key, id: summary.id)) { [weak self] data, status, _ in
-                        guard let self, token == self.activityToken else { return }
+                    fetch(Redmine.issueRequest(base: base, key: key, id: summary.id)) { [weak self] data, status, failure in
+                        guard let self, token == self.activityToken, !stopped else { return }
                         running -= 1
                         if status == 200, let data, let issue = try? Redmine.issue(data) {
                             self.activityCache[issue.id] = issue
                             arrived(issue)
+                            sincePublish += 1
+                            if sincePublish >= 24 {
+                                sincePublish = 0
+                                publish()
+                            }
+                        } else if status == 0 || status == 401 {
+                            // 연결이 끊기거나 키가 막히면 남은 일감도 모두 실패하니 기다리지 않고 멈춘다
+                            stopped = true
+                            self.activityError = "이력을 받다 멈췄습니다: " + Self.message(status: status, error: failure, data: data)
+                            return finish()
                         } else {
-                            self.activityFailed += 1
+                            done += 1
+                            failed += 1
                         }
                         pump()
                     }
@@ -317,16 +349,12 @@ final class RedmineStore: ObservableObject {
                 if left.isEmpty && running == 0 { finish() }
             }
             func arrived(_ issue: Redmine.Issue) {
-                loaded.append(issue)
-                activityProgress.done += 1
-                // 담당자 변경을 번호가 아닌 이름으로 보인다
-                loadPeople(project: issue.project.id)
-                sincePublish += 1
-                if sincePublish >= 24 {
-                    sincePublish = 0
-                    publish()
-                }
+                parts.append(Redmine.activity([issue], since: since))
+                done += 1
+                // 담당자 변경을 번호가 아닌 이름으로 보인다. 못 받는 프로젝트를 일감마다 다시 묻지 않는다
+                if activityPeopleAsked.insert(issue.project.id).inserted { loadPeople(project: issue.project.id) }
             }
+            activityProgress = (0, found.count)
             pump()
         }
         // 소요시간을 볼 권한이 없어도 일감 이력은 보인다
@@ -345,14 +373,25 @@ final class RedmineStore: ObservableObject {
                 guard let self, token == self.activityToken else { return }
                 guard status == 200, let data, let page = try? Redmine.issues(data) else {
                     self.activityLoading = false
-                    self.flash = "작업 내역을 받지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                    self.activityError = "작업 내역을 받지 못했습니다: " + Self.message(status: status, error: failure, data: data)
                     return
                 }
-                found += page.issues
-                if !page.issues.isEmpty, found.count < page.total { issuePage(found.count) } else { timePage(0) }
+                // 받는 사이 고쳐진 일감은 다음 쪽에 또 나온다
+                let fresh = page.issues.filter { seen.insert($0.id).inserted }
+                found += fresh
+                let next = offset + page.issues.count
+                if !fresh.isEmpty, next < page.total { issuePage(next) } else { timePage(0) }
             }
         }
         issuePage(0)
+    }
+
+    /// 다른 보기로 옮기면 받던 작업 내역을 그만 받는다.
+    private func stopActivity() {
+        guard activityLoading else { return }
+        activityToken += 1
+        activityLoading = false
+        activityShown = nil
     }
 
     /// 업무 일지에서 보낸 뒤. 표의 진척률과 상태를 맞춘다.

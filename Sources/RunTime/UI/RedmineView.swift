@@ -316,14 +316,17 @@ private struct RedmineIssueTable: View {
             }
             HStack(spacing: 8) {
                 if store.layout == .activity {
-                    Text(store.activityScope).font(WL.caption).foregroundStyle(WL.quiet)
+                    Text(store.activityScope).font(WL.caption).foregroundStyle(WL.quiet).fixedSize()
                 } else if case .query = store.scope {
                     Text("질의 조건으로 봅니다").font(WL.caption).foregroundStyle(WL.quiet)
                 } else {
-                    Picker("", selection: $store.statusFilter) {
-                        ForEach(RedmineStore.StatusFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    // 보기가 늘어도 빠른 거르기 칩이 잘리지 않게 메뉴로 둔다
+                    Menu(store.statusFilter.rawValue) {
+                        ForEach(RedmineStore.StatusFilter.allCases, id: \.self) { filter in
+                            Button(filter.rawValue) { store.statusFilter = filter }
+                        }
                     }
-                    .labelsHidden().pickerStyle(.segmented).fixedSize()
+                    .menuStyle(.borderlessButton).fixedSize()
                     Rectangle().fill(WL.border).frame(width: 1, height: 16)
                 }
                 // 칩이 늘어도 머리가 표보다 넓어지지 않게 남는 폭 안에서 옆으로 넘긴다
@@ -607,7 +610,12 @@ private struct RedmineActivity: View {
 
     var body: some View {
         let all = store.activityItems
-        let items = all.filter { (filter.person == nil || $0.user == filter.person) && filter.kind.matches($0) }
+        let word = store.search.trimmingCharacters(in: .whitespaces)
+        let items = all.filter { item in
+            (filter.person == nil || item.user == filter.person) && filter.kind.matches(item)
+                && (word.isEmpty || item.user.localizedCaseInsensitiveContains(word) || (item.issue?.subject ?? "").localizedCaseInsensitiveContains(word)
+                    || (item.notes ?? "").localizedCaseInsensitiveContains(word) || item.issueID.map { "#\($0)" } == word)
+        }
         let days = Dictionary(grouping: items) { WorkDay.key($0.date) }
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -638,7 +646,10 @@ private struct RedmineActivity: View {
                     }
                 }
                 Spacer()
-                if store.activityFailed > 0 {
+                if let error = store.activityError {
+                    Text(error).font(WL.caption).foregroundStyle(Palette.red).lineLimit(1)
+                    Button("다시 받기") { store.loadActivity() }.buttonStyle(TextLinkButtonStyle())
+                } else if store.activityFailed > 0 {
                     Text("일감 \(store.activityFailed)건의 이력을 받지 못했습니다").font(WL.caption).foregroundStyle(WL.waiting)
                 }
                 Text("\(items.count)건").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
@@ -648,7 +659,9 @@ private struct RedmineActivity: View {
             if items.isEmpty {
                 VStack(spacing: 8) {
                     if store.activityLoading { ProgressView() }
-                    Text(store.activityLoading ? "이력을 모으는 중" : "이 기간에 작업 내역이 없습니다").font(WL.meta).foregroundStyle(WL.muted)
+                    Text(store.activityLoading ? "이력을 모으는 중" : store.activityError != nil && all.isEmpty ? "작업 내역을 받지 못했습니다"
+                         : all.isEmpty ? "이 기간에 작업 내역이 없습니다" : "조건에 맞는 작업 내역이 없습니다")
+                        .font(WL.meta).foregroundStyle(WL.muted)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
