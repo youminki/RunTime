@@ -99,16 +99,16 @@ import Testing
         #expect(SpecExtractor.stripStatus("[작업 중/보류] 상품 > 옵션 관리") == "상품 > 옵션 관리")
     }
 
-    @Test func changelogRowsInTwoFramesOfOnePageGetDistinctKeys() {
-        let row = { (frame: String, text: String) in
+    @Test func changelogRowsSharingAKeyAcrossFramesAreTold() {
+        let row = { (frame: String?, text: String) in
             ChangelogEntry(pageID: "p1", pageName: "주문", version: "1.0", date: "2026-10-01", text: text, frameID: frame)
         }
-        // 프레임마다 0부터 센 줄이 페이지 전체에서 이어 세어지고, 겹치지 않던 줄의 순번은 그대로다
-        let numbered = SpecExtractor.numberedAcrossFrames([row("9:2", "나중 프레임"), row("1:5", "앞 프레임"),
-                                                           ChangelogEntry(pageID: "p1", pageName: "주문", version: "1.1", date: "2026-10-02", text: "혼자", frameID: "9:2")])
-        #expect(numbered.map(\.order) == [1, 0, 0])
-        #expect(Set(numbered.map(\.key)).count == 3)
-        #expect(SpecExtractor.numberedAcrossFrames(numbered) == numbered)
+        // 프레임마다 0부터 세어 두 표의 줄이 같은 키를 갖는다
+        let known = Dictionary(grouping: [row("1:5", "앞 표"), row("9:2", "뒤 표")], by: \.key)
+        #expect(row("9:2", "뒤 표").previous(in: known)?.frameID == "9:2")          // 그대로면 바뀐 게 없다
+        #expect(row("9:2", "뒤 표 고침").previous(in: known)?.text == "뒤 표")     // 고치면 같은 프레임 줄과 견준다
+        #expect(row("5:5", "새 표").previous(in: known) == nil)                    // 다른 프레임의 새 줄
+        #expect(row("5:5", "새 표").previous(in: Dictionary(grouping: [row(nil, "옛 기록")], by: \.key))?.text == "옛 기록")
     }
 }
 

@@ -407,12 +407,12 @@ public struct DesignHistory: Codable, Equatable, Sendable {
         }
 
         if let entries = capture.changelog {
-            let known = Dictionary(file.changelog.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+            let known = Dictionary(grouping: file.changelog, by: \.key)
             let watchedScreens = Set(file.screens.values.filter { capture.watches($0.menuPath) }.map(\.screenID))
             let watchedPages = Set(file.screens.values.filter { capture.watches($0.menuPath) }.map(\.pageID))
             let allPaths = Set(file.screens.values.map(\.menuPath))
             // 페이지 이름은 `(10/19 수정)`처럼 자주 바뀌어서 내용이 같으면 같은 줄로 본다
-            for entry in entries where !capture.baselineOnly && known[entry.key]?.text != entry.text {
+            for entry in entries where !capture.baselineOnly && entry.previous(in: known)?.text != entry.text {
                 // 메뉴를 골랐으면 그 화면을 적은 줄, 화면 ID가 없으면 그 화면이 있는 페이지의 줄만
                 let ids = entry.screenIDs
                 let named = entry.menus(in: allPaths)
@@ -420,7 +420,7 @@ public struct DesignHistory: Codable, Equatable, Sendable {
                 guard capture.watchesAll || !watchedScreens.isDisjoint(with: ids) || watchesNamed
                         || (ids.isEmpty && named.isEmpty && watchedPages.contains(entry.pageID))
                 else { continue }
-                let before = known[entry.key]
+                let before = entry.previous(in: known)
                 let title = [entry.version.map { "v\($0)" }, entry.date].compactMap { $0 }.joined(separator: " ")
                 let changes = before.map { [SpecChange(layer: .header, op: .modified, label: "이력", before: $0.text, after: entry.text)] } ?? []
                 // 디자이너가 이력에 적었다는 것 자체가 손본 시안이라는 뜻이라 중요한 변경으로 둔다

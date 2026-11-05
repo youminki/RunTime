@@ -243,7 +243,7 @@ public enum DesignSyncEngine {
                 }
             }
         }
-        return (screens, SpecExtractor.numberedAcrossFrames(changelog), received)
+        return (screens, changelog, received)
     }
 
     /// 링크로 고른 노드 → 그 노드가 있는 페이지. 후보이거나 후보를 감싸거나 후보 바로 안에 있으면 찾은 것이다.

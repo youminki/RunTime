@@ -39,7 +39,7 @@ public struct VersionSnapshot: Codable, Equatable, Sendable {
     }
 
     public var allScreens: [ScreenSnapshot] { screens.values.flatMap { $0 } }
-    public var allChangelog: [ChangelogEntry] { SpecExtractor.numberedAcrossFrames(changelog.keys.sorted().flatMap { changelog[$0] ?? [] }) }
+    public var allChangelog: [ChangelogEntry] { changelog.values.flatMap { $0 } }
 
     /// 그 페이지의 뼈대를 받았는지.
     public func outlines(_ pageID: String) -> Bool {
@@ -188,13 +188,13 @@ public enum DesignCompare {
         format.calendar = Calendar(identifier: .gregorian)
         format.dateFormat = "yyyy-MM-dd"
         let start = format.string(from: beforeDate), end = format.string(from: afterDate)
-        let known = Set(before.allChangelog.map(\.key))
+        let known = Dictionary(grouping: before.allChangelog, by: \.key)
         // 메뉴 하나만 받았으면 다른 메뉴 이름을 몰라 그 메뉴 이력을 페이지 이력으로 잘못 넣는다. 아는 경로를 모두 쓴다
         let paths = Set(after.allScreens.map(\.menuPath)).union(knownPaths)
         let watched = Set(new.map(\.menuPath))
         let watchedIDs = Set(new.map(\.screenID))
         for entry in after.allChangelog.sorted(by: { ($0.date, $0.order) < ($1.date, $1.order) })
-        where entry.date >= start && entry.date <= end && !known.contains(entry.key) {
+        where entry.date >= start && entry.date <= end && entry.previous(in: known) == nil {
             let named = entry.menus(in: paths)
             let ids = entry.screenIDs
             // 메뉴나 화면 ID를 적은 줄은 그것으로, 아무것도 적지 않은 줄은 보는 화면이 있는 페이지의 줄이면 넣는다

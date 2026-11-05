@@ -137,6 +137,13 @@ public struct ChangelogEntry: Codable, Equatable, Hashable, Sendable {
 
     var key: String { "\(pageID)|\(version ?? "")|\(date)|\(order)" }
 
+    /// 앞서 받은 줄 가운데 이 줄과 같은 줄. 한 페이지에 이력 표 프레임이 여럿이면 순번을 프레임마다 0부터 세어
+    /// 다른 줄이 같은 키를 갖는다. 글이 같은 줄을 먼저, 없으면 같은 프레임의 줄을 고른다 (프레임을 모르는 옛 기록은 같은 프레임으로 본다).
+    func previous(in known: [String: [ChangelogEntry]]) -> ChangelogEntry? {
+        guard let list = known[key] else { return nil }
+        return list.first { $0.text == text } ?? list.first { $0.frameID == nil || frameID == nil || $0.frameID == frameID }
+    }
+
     /// 이름이 같은 마디 → 한쪽이 다른 쪽을 품는 마디 → 비슷한 마디 순으로, 앞 단계에서 찾으면 뒤는 보지 않는다.
     /// 찾은 마디까지 자른 경로들.
     static func match(_ name: String, in paths: Set<String>, squeeze: (String) -> String) -> Set<String> {
@@ -370,21 +377,6 @@ public enum SpecExtractor {
                                           text: body, frameID: node.id))
         }
         return entries
-    }
-
-    /// 한 페이지에 이력 표 프레임이 여럿이면 프레임마다 0부터 센 순번이 겹쳐, 다른 줄을 같은 줄로 본다.
-    /// 페이지 안에서 같은 버전·날짜 줄을 프레임 ID 순으로 이어 센다. 받기와 날짜 비교가 같은 키를 쓰게 순서를 정해 둔다.
-    public static func numberedAcrossFrames(_ entries: [ChangelogEntry]) -> [ChangelogEntry] {
-        var numbered = entries
-        var seen: [String: Int] = [:]
-        // 같은 프레임 안 순서는 그대로 두고 프레임만 줄 세운다
-        for index in entries.indices.sorted(by: { (entries[$0].frameID ?? "", $0) < (entries[$1].frameID ?? "", $1) }) {
-            let entry = entries[index]
-            let group = "\(entry.pageID)|\(entry.version ?? "")|\(entry.date)"
-            numbered[index].order = seen[group, default: 0]
-            seen[group, default: 0] += 1
-        }
-        return numbered
     }
 
     private static func isDate(_ text: String) -> Bool {
