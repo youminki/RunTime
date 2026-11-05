@@ -136,8 +136,8 @@ public struct CrashReport: Equatable {
         var tail: [String] = []
         let addresses = frames.filter(\.inApp).prefix(8).compactMap { frame in base.map { "0x" + String($0 + frame.offset, radix: 16) } }
         if let base, !addresses.isEmpty {
-            // -g는 기계어를 바꾸지 않아 주소가 같고, 붙여야 atos가 파일·줄까지 찾는다
-            tail = ["", "코드 줄 찾기 (그 커밋에서 swift build -c release -Xswiftc -g --scratch-path .build/symbols):",
+            // 배포 빌드(scripts/build-app.sh)와 같은 방식으로 빌드해야 주소가 같다. -g는 기계어를 바꾸지 않고, 붙여야 atos가 파일·줄까지 찾는다
+            tail = ["", "코드 줄 찾기 (그 커밋에서 swift build -c release --build-system native -Xswiftc -no-whole-module-optimization -Xswiftc -g --scratch-path .build/symbols):",
                     "atos -o .build/symbols/release/RunTime -arch \(arch) -l 0x\(String(base, radix: 16)) \(addresses.joined(separator: " "))"]
             if !uuid.isEmpty { tail.append("실행 파일 UUID: \(uuid)") }
         }

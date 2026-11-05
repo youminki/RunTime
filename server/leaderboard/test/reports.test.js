@@ -119,6 +119,12 @@ const hang = () => cleanReport({
   log: "[멈추기 전 기록]\n2026-11-05 19:46:02 [업데이트] 설치 완료",
 });
 
+test("symbol command builds the way that app version wrote", () => {
+  const build = "swift build -c release --build-system native -Xswiftc -no-whole-module-optimization -Xswiftc -g --scratch-path .build/symbols";
+  const report = cleanReport({ ...hang(), detail: hang().detail.replace("atos -o", `코드 줄 찾기 (그 커밋에서 ${build}):\natos -o`) });
+  assert.equal(symbolCommand(report), `${build} && atos -o .build/symbols/release/RunTime -arch arm64 -l 0x1007c8000 0x1007cb464`);
+});
+
 test("hang prompt carries the commands and the load check", () => {
   const report = hang();
   assert.equal(checkoutCommand(report), `git worktree add ../RunTime-df0f5fa ${sha}`);

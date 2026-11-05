@@ -105,9 +105,13 @@ export function checkoutCommand(report) {
 }
 
 /// 상황 안의 `atos …` 명령 (충돌·멈춤 보고). 앱이 만든 줄이라 모양이 맞을 때만 쓴다.
+/// 빌드 명령은 그 버전 앱이 적어 둔 것을 쓴다. 버전마다 배포 빌드 방식이 달라 다른 명령으로 빌드하면 주소가 어긋난다.
 export function symbolCommand(report) {
-  const line = report.detail.split("\n").find((text) => text.startsWith("atos -o .build/symbols/release/RunTime "));
-  return line && /^[\w ./-]+$/.test(line) ? `swift build -c release -Xswiftc -g --scratch-path .build/symbols && ${line}` : "";
+  const lines = report.detail.split("\n");
+  const line = lines.find((text) => text.startsWith("atos -o .build/symbols/release/RunTime "));
+  const build = lines.map((text) => text.match(/^코드 줄 찾기 \(그 커밋에서 (swift build [\w ./-]+)\):$/)?.[1]).find(Boolean)
+    ?? "swift build -c release -Xswiftc -g --scratch-path .build/symbols";
+  return line && /^[\w ./-]+$/.test(line) ? `${build} && ${line}` : "";
 }
 
 /// 붙여 넣을 글의 상황. 앱이 붙인 코드 줄 찾기 안내는 할 일에 명령으로 옮겨 여기서 뺀다.
