@@ -114,7 +114,7 @@ final class HostsStore: ObservableObject {
         let editing = draft.text
         let target = Self.url
         let system = isSystem
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let failure = system ? Self.writeAsAdmin(text, expecting: current) : Self.writeDirect(text, to: target)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }

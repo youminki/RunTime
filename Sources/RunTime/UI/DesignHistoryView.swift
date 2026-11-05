@@ -205,8 +205,8 @@ final class DesignHistoryPage: ObservableObject {
                     open(link, sync: sync)
                     return
                 }
-                sync.sync(only: link.fileKey) { [weak self] _ in
-                    guard let self else { return }
+                // 이 Task가 이미 self를 잡고 있어 약하게 잡아도 소용없다 (화면 상태는 창과 함께 산다)
+                sync.sync(only: link.fileKey) { _ in
                     self.addingLink = false
                     if let error = sync.errors[link.fileKey] { self.flash(error) }
                     self.open(link, sync: sync)
@@ -597,7 +597,7 @@ struct DesignHistoryView: View {
         } else if let id = page.selected,
                   let event = sync.history.events.first(where: { $0.id == id }) ?? compare.currentResult?.events.first(where: { $0.id == id }),
                   // 다른 프로젝트를 보는 동안, 날짜 비교에서는 지금 결과 밖의 변경이 상세에 남지 않게 한다
-                  page.scope == .compare ? compare.shownEvents.contains { $0.id == id } : (page.project == nil || event.fileKey == page.project) {
+                  page.scope == .compare ? compare.shownEvents.contains(where: { $0.id == id }) : (page.project == nil || event.fileKey == page.project) {
             DesignEventDetail(event: event, seen: sync.history.isSeen(event), sync: sync, page: page,
                               toggleSeen: {
                                   if sync.history.isSeen(event) { sync.markUnseen(event.id) } else { sync.markSeen([event.id]) }

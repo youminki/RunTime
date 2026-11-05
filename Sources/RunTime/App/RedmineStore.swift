@@ -855,7 +855,7 @@ final class RedmineStore: ObservableObject {
         fetch(request) { [weak self] data, status, _ in
             guard let self else { return }
             guard status == 200, let data else { return self.imageFailed(file.id) }
-            DispatchQueue.global(qos: .userInitiated).async {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let image = Self.scaled(data)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
@@ -978,7 +978,7 @@ final class RedmineStore: ObservableObject {
             // macOS 파일 이름은 자모가 풀려 있어 웹에서 글자가 갈라져 보인다
             let name = file.lastPathComponent.precomposedStringWithCanonicalMapping
             // 큰 파일을 읽는 동안 화면이 멈추지 않게 뒤에서 읽는다
-            DispatchQueue.global(qos: .userInitiated).async {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
                 let data = size > Self.uploadLimit ? nil : try? Data(contentsOf: file)
                 DispatchQueue.main.async { [weak self] in

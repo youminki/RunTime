@@ -57,7 +57,7 @@ public enum MRScreens {
             for screen in found { groups[screen.title, default: []].append(screen) }
             fromNotes = order.flatMap { groups[$0] ?? [] }
         }
-        var result = parse(description) + fromNotes
+        let result = parse(description) + fromNotes
         // 같은 그림이 본문과 댓글에 함께 있으면 한 번만
         var seen = Set<String>()
         return result.compactMap { screen in

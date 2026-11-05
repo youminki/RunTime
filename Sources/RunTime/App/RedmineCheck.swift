@@ -1,5 +1,6 @@
 import Foundation
-import WorkLogCore
+// 점검 코드만 일감 값을 다른 큐로 넘긴다. 값 타입이라 안전하지만 Core가 Sendable을 밝히지 않았다
+@preconcurrency import WorkLogCore
 
 /// `--redmine-check <일감>`: 실제 레드마인에 앱 코드 그대로 시험 댓글을 보내고 되돌린다.
 @MainActor
