@@ -171,6 +171,17 @@ private let swiftFrames = #"""
         #expect(try JSONDecoder().decode(HangReport.self, from: data) == report)
     }
 
+    @Test func contextLinesGoUnderTheHeadAndOldSavesStillLoad() throws {
+        let report = HangReport(seconds: 5, ended: true, frames: frames, base: nil, uuid: "", arch: "arm64", app: "", commit: "", at: "t",
+                                context: ["앱: 메모리 820MB · 켠 뒤 43초", "시스템: 메모리 압박 경고 · 스왑 8.1GB"])
+        #expect(report.detail().hasPrefix("멈춘 시각: t\n메인 스레드가 5.0초 넘게 응답하지 않다가 돌아옴\n앱: 메모리 820MB · 켠 뒤 43초\n시스템:"))
+        // 이 칸을 더하기 전 버전이 저장해 둔 보고도 그대로 읽혀 다음 실행에 보낸다
+        var old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as! [String: Any]
+        old["context"] = nil
+        let loaded = try JSONDecoder().decode(HangReport.self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(loaded.context == nil && loaded.at == "t")
+    }
+
     @Test func watcherSamplesOnceAndReportsWhenMainAnswers() {
         #expect(HangReport.step(waited: 1, answered: nil, sampled: false, threshold: 5) == .wait)
         #expect(HangReport.step(waited: 5, answered: nil, sampled: false, threshold: 5) == .sample)

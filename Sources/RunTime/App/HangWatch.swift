@@ -21,11 +21,22 @@ enum HangWatch {
     private static var started = false
     /// 앱을 켠 동안 서버가 받은 자리. 같은 곳에서 되풀이해 멈추면 한 번만 보낸다.
     private static var sentPlaces: Set<String> = []
+    /// 감시를 시작한 때(uptime 나노초). 켜자마자 멈췄는지 보려고 보고에 켠 뒤 지난 시간을 적는다.
+    private static var launchedAt: UInt64 = 0
+    /// 앱 창에 마지막으로 띄운 화면. `screenLock`으로 지킨다.
+    private static var screen = "-"
+    private static let screenLock = NSLock()
+
+    /// 앱 창 화면이 바뀔 때 메인 스레드에서 부른다.
+    static func note(screen name: String) {
+        screenLock.lock(); screen = name; screenLock.unlock()
+    }
 
     /// 메인 스레드에서 부른다.
     static func start() {
         guard Bundle.main.infoDictionary?["RunTimeCommitSHA"] != nil, !started else { return }
         started = true
+        launchedAt = now()
         // mach_thread_self()와 달리 포트 참조를 늘리지 않는다
         mainThread = pthread_mach_thread_np(pthread_self())
         sendPending()
@@ -172,7 +183,38 @@ enum HangWatch {
         let info = Bundle.main.infoDictionary ?? [:]
         return HangReport(seconds: seconds, ended: false, frames: frames, base: Int(bitPattern: image.base), uuid: image.uuid,
                           arch: AppImage.arch, app: info["CFBundleShortVersionString"] as? String ?? "",
-                          commit: info["RunTimeCommitSHA"] as? String ?? "", at: AppImage.stamp())
+                          commit: info["RunTimeCommitSHA"] as? String ?? "", at: AppImage.stamp(), context: snapshot())
+    }
+
+    /// 멈춘 순간의 앱·시스템 상태. 메인 스레드를 다시 돌린 뒤에 부른다 (메모리를 잡아도 된다).
+    /// 호출 순서에 앱 코드가 없으면 이 값으로 앱이 메모리를 많이 쥐었는지, 시스템이 바빴는지 가린다.
+    private static func snapshot() -> [String] {
+        var vm = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let read = withUnsafeMutablePointer(to: &vm) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        let footprint = read == KERN_SUCCESS ? "\(vm.phys_footprint >> 20)MB" : "-"
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let pressure = sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0
+            ? [1: "정상", 2: "경고", 4: "위험"][Int(level)] ?? "\(level)" : "-"
+        var swap = xsw_usage()
+        size = MemoryLayout<xsw_usage>.size
+        let swapped = sysctlbyname("vm.swapusage", &swap, &size, nil, 0) == 0 ? String(format: "%.1fGB", Double(swap.xsu_used) / 1e9) : "-"
+        var loads = [Double](repeating: 0, count: 3)
+        let load = getloadavg(&loads, 3) > 0 ? String(format: "%.1f", loads[0]) : "-"
+        let process = ProcessInfo.processInfo
+        let thermal = [.nominal: "정상", .fair: "조금 높음", .serious: "높음", .critical: "위험"][process.thermalState] ?? "-"
+        let uptime = Int(Double(now() - launchedAt) / 1e9)
+        // 메인 스레드가 이 잠금을 쥔 채 멈췄을 수도 있어 기다리지 않는다
+        var shown = "-"
+        if screenLock.try() { shown = screen; screenLock.unlock() }
+        return [
+            "앱: 메모리 \(footprint) · 켠 뒤 \(uptime < 120 ? "\(uptime)초" : "\(uptime / 60)분") · 앱 창 화면 \(shown)",
+            "시스템: 메모리 압박 \(pressure) · 스왑 \(swapped) · 실메모리 \(process.physicalMemory >> 30)GB · "
+                + "CPU 부하 \(load) (\(process.activeProcessorCount)코어) · 발열 \(thermal)",
+        ]
     }
 
     /// 포인터 인증 비트를 뗀 주소. 사용자 주소는 47비트 안에 있다.
@@ -241,6 +283,7 @@ enum HangWatch {
     /// 메인 스레드를 일부러 붙잡고 호출 순서를 떠 본다 (`--report-preview hang`).
     static func preview() -> HangReport? {
         mainThread = pthread_mach_thread_np(pthread_self())
+        if launchedAt == 0 { launchedAt = now() }
         var result: HangReport?
         let done = DispatchSemaphore(value: 0)
         Thread {

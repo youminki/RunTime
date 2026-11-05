@@ -63,7 +63,9 @@ enum MainPage: String, CaseIterable {
 
 /// 창 안의 이동 기록. Finder·시스템 설정처럼 뒤로·앞으로를 쓴다.
 final class MainNavigator: ObservableObject {
-    @Published private(set) var page: MainPage = .usage
+    @Published private(set) var page: MainPage = .usage {
+        didSet { HangWatch.note(screen: page.title) }
+    }
     @Published private(set) var back: [MainPage] = []
     @Published private(set) var forward: [MainPage] = []
     /// 창을 연 뒤 한 번이라도 들른 화면. 업무 일지는 들른 뒤로 떠나도 버리지 않고 숨겨 두어 다시 올 때 바로 보인다.

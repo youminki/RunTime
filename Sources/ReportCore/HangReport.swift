@@ -17,12 +17,15 @@ public struct HangReport: Equatable, Codable {
     public var commit: String
     /// `yyyy-MM-dd HH:mm:ss`. 이때까지의 진단 기록을 붙인다.
     public var at: String
+    /// 멈춘 순간의 앱·시스템 상태 (`앱 메모리 820MB`, `시스템 메모리 압박: 경고` 등). 호출 순서에 앱 코드가 없을 때
+    /// 앱 탓인지 시스템 부하 탓인지 가린다. 옛 버전이 저장해 둔 보고에는 없다.
+    public var context: [String]?
 
     public init(id: String = UUID().uuidString, seconds: Double, ended: Bool, frames: [CrashReport.Frame], base: Int?, uuid: String, arch: String,
-                app: String, commit: String, at: String) {
+                app: String, commit: String, at: String, context: [String]? = nil) {
         self.id = id
         (self.seconds, self.ended, self.frames, self.base, self.uuid, self.arch) = (seconds, ended, frames, base, uuid, arch)
-        (self.app, self.commit, self.at) = (app, commit, at)
+        (self.app, self.commit, self.at, self.context) = (app, commit, at, context)
     }
 
     /// 메일 제목·묶음 열쇠. 서버가 "앱 멈춤"을 앞에 붙이므로 멈춘 자리만 둔다. 멈춘 시간은 매번 달라서 넣지 않는다.
@@ -32,8 +35,9 @@ public struct HangReport: Equatable, Codable {
 
     public func detail(limit: Int = 2000) -> String {
         let length = String(format: "%.1f초", seconds)
-        let head = ["버전: \(app.isEmpty ? "-" : app) · 멈춘 시각: \(at)",
+        let head = ["멈춘 시각: \(at)",
                     ended ? "메인 스레드가 \(length) 넘게 응답하지 않다가 돌아옴" : "메인 스레드가 \(length) 넘게 응답하지 않은 채 앱이 꺼짐"]
+            + (context ?? [])
         return CrashReport.stack(head: head, title: "멈춘 메인 스레드", frames: frames, base: base, uuid: uuid, arch: arch, limit: limit)
     }
 
