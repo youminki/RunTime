@@ -146,7 +146,7 @@ final class AccountSwitcher: ObservableObject {
     private func resync(then: @escaping () -> Void) {
         queue.async { [weak self] in
             guard let self else { return }
-            if let info = ClaudeLogin.currentAccount() { self.saveSnapshot(info) }
+            if !self.keychainOff, let info = ClaudeLogin.currentAccount() { self.saveSnapshot(info) }
             DispatchQueue.main.async {
                 // 저장하지 못해도(토큰 주인 불일치 등) 계정 표시만은 설정 파일을 따른다
                 if let current = ClaudeLogin.currentAccount()?.uuid, self.accounts.contains(where: { $0.id == current }) {
