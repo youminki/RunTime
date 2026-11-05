@@ -165,8 +165,15 @@ final class DesignCompareModel: ObservableObject {
                 // 링크한 화면만 지켜보면 기록에 나머지 화면이 없어, 전체 버전과 견주면 모두 삭제로 나온다
                 let wholeFile = (sync.source(fileKey)?.scope.isEmpty ?? true) && !sync.isWidening(fileKey)
                 let todayRecord = calendar.isDateInToday(to) && wholeFile ? sync.history.files[fileKey] : nil
+                let placeFolder = DesignPlaceFile.folder()
                 let recordSnapshot = await Task.detached(priority: .userInitiated) {
-                    todayRecord.flatMap { VersionSnapshot(record: $0, fileKey: fileKey) }
+                    todayRecord.flatMap { record -> VersionSnapshot? in
+                        // 기록의 화면은 자리를 떼어 두어, 붙이지 않으면 더한 문구의 위치가 빠진다
+                        var record = record
+                        let places = DesignPlaceFile.readAll(fileKey, frames: Array(record.screens.keys), in: placeFolder)
+                        for (frame, value) in places where record.screens[frame]?.places == nil { record.screens[frame]?.places = value }
+                        return VersionSnapshot(record: record, fileKey: fileKey)
+                    }
                 }.value
                 if let record = todayRecord, let snapshot = recordSnapshot {
                     let at = record.lastModified.flatMap { ISO8601DateFormatter().date(from: $0) } ?? record.syncedAt
