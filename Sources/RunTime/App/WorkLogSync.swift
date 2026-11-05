@@ -422,6 +422,7 @@ final class WorkLogSync: ObservableObject {
     private let defaults = UserDefaults.standard
 
     func start() {
+        loadedFrom = credentialKey
         // 예전 항목이 남아 있으면 켤 때 한꺼번에 옮긴다. 보낼 때 따로따로 다시 묻지 않게
         if !WorkLogSettings.keychainOff {
             DispatchQueue.global(qos: .utility).async {
@@ -785,6 +786,7 @@ final class WorkLogSync: ObservableObject {
             guard !loadingIssues else { completion?(); return }
             loadingIssues = true
         }
+        let started = serverGeneration
         queue.async { [weak self] in
             // 받기를 시작한 때를 장부에 적어, 그 뒤에 앱에서 보낸 진척률을 덮지 않게 한다
             let startedAt = Date()
@@ -831,6 +833,8 @@ final class WorkLogSync: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if assigned { self.loadingIssues = false }
+                // 받는 사이 연결을 바꿨으면 옛 서버 일감이라 장부에 넣지 않는다
+                guard self.serverGeneration == started else { completion?(); return }
                 switch result {
                 case .success(let book):
                     self.store.updateIssues(book.infos, assignedIDs: book.assignedIDs)
@@ -932,8 +936,15 @@ final class WorkLogSync: ObservableObject {
                 // 고른 적이 없거나 고른 상태가 사라졌을 때만 이름으로 어림한다.
                 // ‘바꾸지 않음’(nil, 0으로 저장)을 고른 것은 그대로 둔다 (어림하면 완료로 바뀌어 일감이 닫힌다)
                 let guess = WorkReport.defaultStatuses(list)
+                // 다른 레드마인으로 바꿨으면 같은 번호라도 다른 상태라(새 서버의 5가 ‘거절’) 고른 것을 버리고 다시 어림한다.
+                // 서버를 적기 전부터 쓰던 설정은 지금 서버 것으로 본다
+                // 점검용으로 주소를 바꾼 실행(`RUNTIME_REDMINE_URL`)은 저장된 설정의 서버가 아니라 건드리지 않는다
+                let server = self.settings.redmineURL
+                let pinned = ProcessInfo.processInfo.environment["RUNTIME_REDMINE_URL"] == nil
+                let moved = pinned && self.defaults.string(forKey: "workLog.statusServer").map { $0 != server } ?? false
+                if pinned { self.defaults.set(server, forKey: "workLog.statusServer") }
                 func lost(_ id: Int?, _ key: String) -> Bool {
-                    self.defaults.object(forKey: key) == nil || (id != nil && !list.contains { $0.id == id })
+                    moved || self.defaults.object(forKey: key) == nil || (id != nil && !list.contains { $0.id == id })
                 }
                 if lost(self.settings.progressStatusID, "workLog.progressStatus") { self.settings.progressStatusID = guess.progress }
                 if lost(self.settings.doneStatusID, "workLog.doneStatus") { self.settings.doneStatusID = guess.done }
@@ -1183,7 +1194,7 @@ final class WorkLogSync: ObservableObject {
             for update in updates {
                 let screens = attach[update.issue].flatMap { plan -> ScreenAttachment? in
                     let refs = MRScreenStore.shared.refsForSending(plan.origins, host: host)
-                        .filter { !plan.previous.contains("mr\($0.iid)-") }
+                        .filter { !MRScreens.alreadyAttached(mr: $0.iid, repo: $0.path, in: plan.previous) }
                     return refs.isEmpty ? nil : Self.attachScreens(refs, issue: update.issue, splits: splits, picks: screenPicks,
                                                                    base: base, key: key, host: host, html: html)
                 }
@@ -1215,6 +1226,27 @@ final class WorkLogSync: ObservableObject {
     func prepared(_ update: WorkReport.RedmineUpdate, edit: WorkReport.IssueEdit?) -> WorkReport.RedmineUpdate {
         let base = update.withInProgressRatio(settings.inProgressRatio)
         return edit?.applied(to: base) ?? base
+    }
+
+    /// 지금 연결. 설정을 떠날 때 바뀌었는지 본다.
+    private var credentialKey: String { settings.effectiveRedmineURL + "|" + (settings.redmineKey ?? "") }
+    /// 켤 때 적어 둔 연결. 처음 고르는 진행·완료 상태를 지우지 않게 상태는 여기서 다루지 않는다.
+    private var loadedFrom: String?
+    /// 연결을 바꿀 때마다 올려, 그 전에 시작한 받기 결과를 버린다.
+    private var serverGeneration = 0
+
+    /// 설정을 떠날 때. 주소나 키가 바뀌었으면 옛 서버에서 받은 담당자·막힌 전환·댓글 판정을 버린다.
+    /// 진행·완료 상태는 상태 목록을 다시 받을 때 서버를 보고 맞춘다 (`loadStatuses`).
+    func serverChanged() {
+        let key = credentialKey
+        defer { loadedFrom = key }
+        guard let previous = loadedFrom, previous != key else { return }
+        serverGeneration += 1
+        members = [:]
+        checkedNotes = [:]
+        postedHints = [:]
+        clearBlockedTransitions()
+        loadStatuses()
     }
 
     /// 설정에서 막힌 전환 기억을 지운다 (레드마인 워크플로를 고친 뒤).
@@ -1377,7 +1409,7 @@ final class WorkLogSync: ObservableObject {
             var missing = 0
             for (index, screen) in screens.enumerated() {
                 for (kind, path) in screen.images {
-                    let name = MRScreens.filename(mr: ref.iid, index: index, kind: kind, path: path)
+                    let name = MRScreens.filename(mr: ref.iid, repo: ref.path, index: index, kind: kind, path: path)
                     guard let bytes = MRScreenStore.shared.image(path, ref: ref, host: host) else { missing += 1; continue }
                     let response = perform(RedmineAPI.uploadRequest(base: base, key: key, filename: name, data: bytes))
                     guard response.ok, let token = response.data.flatMap(RedmineAPI.parseUploadToken) else {
@@ -1533,7 +1565,9 @@ final class WorkLogSync: ObservableObject {
                         }
                     }
                 } else {
-                    problems.append("보낸 댓글을 찾지 못했습니다. 이미 지웠거나 고친 것 같습니다")
+                    // 누가 고쳐서 못 찾은 것이면 남아 있는 댓글이라, 다시 보낼 목록에 돌리면 댓글이 둘이 된다
+                    problems.append("보낸 댓글을 찾지 못했습니다. 이미 지웠거나 고친 것 같습니다. 댓글이 없으면 줄을 고쳐 다시 보낼 목록에 올리세요")
+                    keepPosted = true
                 }
             }
             // 예전 판이 남긴 작업 시간

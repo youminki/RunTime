@@ -364,9 +364,23 @@ public enum MRScreens {
     // MARK: - 레드마인 댓글
 
     /// 레드마인에 올릴 첨부 이름. 같은 일감에 여러 번 올려도 겹치지 않게 MR 번호와 순서를 넣는다.
-    public static func filename(mr: Int, index: Int, kind: Kind, path: String) -> String {
+    /// 저장소가 달라도 MR 번호는 겹쳐서 저장소 이름도 넣는다.
+    public static func filename(mr: Int, repo: String? = nil, index: Int, kind: Kind, path: String) -> String {
         let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
-        return "mr\(mr)-\(index + 1)-\(kind.rawValue).\(ext.isEmpty ? "png" : ext)"
+        let tag = repo.map(repoTag).map { $0.isEmpty ? "" : $0 + "-" } ?? ""
+        return "mr\(mr)-\(tag)\(index + 1)-\(kind.rawValue).\(ext.isEmpty ? "png" : ext)"
+    }
+
+    /// 저장소 경로(`group/web`)의 끝 이름을 첨부 이름에 쓸 수 있는 글자로.
+    static func repoTag(_ path: String) -> String {
+        String((path.split(separator: "/").last ?? "").lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
+    }
+
+    /// 앞서 보낸 댓글에 이 MR의 화면이 이미 붙었는지. 저장소 이름이 없는 옛 첨부(`mr12-1-after.png`)는 번호로만 가린다.
+    public static func alreadyAttached(mr: Int, repo: String, in previous: String) -> Bool {
+        let tag = repoTag(repo)
+        if !tag.isEmpty, previous.contains("mr\(mr)-\(tag)-") { return true }
+        return previous.range(of: "mr\(mr)-\\d+-(before|after)\\.", options: .regularExpression) != nil
     }
 
     /// 댓글 끝에 붙일 화면 부분. `files`는 (항목 순서, 종류) → 올린 첨부 이름.

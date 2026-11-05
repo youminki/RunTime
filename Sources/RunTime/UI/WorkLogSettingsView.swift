@@ -57,6 +57,7 @@ struct WorkLogSettingsView: View {
         }
         settings.normalizeRedmineURL()
         if settings.captureEnabled { sync.capture() }
+        sync.serverChanged()
         if settings.redmineReady { sync.loadMyIssues(force: true) }
         RedmineStore.shared.settingsChanged()
         GlobalHotKey.shared.setQuickAdd(settings.quickAddEnabled)

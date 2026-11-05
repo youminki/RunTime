@@ -76,6 +76,17 @@ struct MRScreensTests {
         #expect(plain.contains("수정 후\n!mr12-1-after.png!"))
         #expect(MRScreens.noteSection(screens, files: [:], html: true).isEmpty)
         #expect(MRScreens.filename(mr: 12, index: 0, kind: .after, path: "/uploads/a/x.PNG") == "mr12-1-after.png")
+        #expect(MRScreens.filename(mr: 12, repo: "front/web-app", index: 0, kind: .after, path: "/uploads/a/x.PNG") == "mr12-webapp-1-after.png")
+    }
+
+    @Test func sameMRNumberInAnotherRepoIsNotTakenAsSent() {
+        let sent = "수정 후\n!mr14-web-1-after.png!"
+        #expect(MRScreens.alreadyAttached(mr: 14, repo: "group/web", in: sent))
+        #expect(!MRScreens.alreadyAttached(mr: 14, repo: "group/api", in: sent))
+        #expect(!MRScreens.alreadyAttached(mr: 1, repo: "group/web", in: "!mr14-web-1-after.png!"))
+        // 저장소 이름이 없던 옛 첨부는 번호로만 가린다
+        #expect(MRScreens.alreadyAttached(mr: 14, repo: "group/api", in: "!mr14-1-after.png!"))
+        #expect(!MRScreens.alreadyAttached(mr: 1, repo: "group/api", in: "!mr14-1-after.png!"))
     }
 
     @Test func capsImageCount() {
