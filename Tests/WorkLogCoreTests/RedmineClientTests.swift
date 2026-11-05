@@ -94,6 +94,15 @@ private let issueJSON = #"""
         #expect(Redmine.Change(description: "a").fields["description"] as? String == "<p>a</p>")
     }
 
+    @Test func bodyImagesMatchAttachments() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let list = try decoder.decode([Redmine.Attachment].self, from: Data(#"[{"id":1,"filename":"a b.png","filesize":1,"content_type":"image/png"},{"id":2,"filename":"c.pdf","filesize":1,"content_type":"application/pdf"}]"#.utf8))
+        let html = #"<p><img alt="x" src="a%20b.png" /><img src='https://h/attachments/download/2/c.pdf'><img src="없음.png"></p>"#
+        #expect(RedmineNote.imageSources(html).count == 3)
+        #expect(Redmine.images(in: html, attachments: list).map(\.id) == [1])
+    }
+
     @Test func commentAndIssueExtras() throws {
         let base = URL(string: "https://example.com")!
         let change = Redmine.Change(notes: "a", privateNotes: true, trackerID: 3, estimatedHours: 2.5)

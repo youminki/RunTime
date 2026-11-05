@@ -37,7 +37,19 @@ final class RedmineStore: ObservableObject {
 
     /// 목록을 보이는 방식. 트리와 일정은 상위·하위를 편 줄을 쓴다.
     enum Layout: String, CaseIterable {
-        case list = "목록", tree = "트리", timeline = "일정"
+        case list = "목록", tree = "트리", timeline = "일정", board = "보드", calendar = "달력"
+    }
+
+    /// 목록을 다시 거르는 칸.
+    enum RefineField: String, CaseIterable {
+        case status = "상태", tracker = "트래커", assignee = "담당자", priority = "우선순위", project = "프로젝트"
+    }
+
+    /// 목록을 묶는 기준.
+    enum Grouping: String, CaseIterable {
+        case none = "묶지 않음", status = "상태", tracker = "트래커", assignee = "담당자", priority = "우선순위", project = "프로젝트"
+
+        var field: RefineField? { RefineField(rawValue: rawValue) }
     }
 
     /// 목록 칸. 머리를 누르면 그 칸으로 정렬한다.
@@ -57,7 +69,21 @@ final class RedmineStore: ObservableObject {
             if treeMode { loadAncestors() }
         }
     }
-    var treeMode: Bool { layout != .list }
+    var treeMode: Bool { layout == .tree || layout == .timeline }
+    /// 칸 값으로 다시 거른 조건.
+    @Published var refine: [RefineField: String] = [:]
+    @Published var grouping = Grouping(rawValue: UserDefaults.standard.string(forKey: "redmine.grouping") ?? "") ?? .none {
+        didSet { UserDefaults.standard.set(grouping.rawValue, forKey: "redmine.grouping") }
+    }
+    /// 고를 수 있는 칸 가운데 보이는 것.
+    @Published var shownColumns = Set((UserDefaults.standard.stringArray(forKey: "redmine.columns")
+        ?? [Column.status, .assignee, .ratio, .due, .updated].map(\.rawValue)).compactMap(Column.init(rawValue:))) {
+        didSet { UserDefaults.standard.set(shownColumns.map(\.rawValue), forKey: "redmine.columns") }
+    }
+    /// ⌘클릭으로 고른 일감. 한 번에 고칠 때 쓴다.
+    @Published var checked: Set<Int> = []
+    /// 달력 보기를 이번 달에서 옮긴 달 수.
+    @Published var monthShift = 0
     /// 일정 창을 오늘 자리에서 옮긴 주 수.
     @Published var timelineShift = 0
     static let timelineDays = 91
@@ -81,6 +107,8 @@ final class RedmineStore: ObservableObject {
 
     /// 범위나 상태 거르기가 바뀌면 받는 동안 옛 목록이 새 제목 아래 보이지 않게 비우고 다시 받는다.
     private func reset() {
+        refine = [:]
+        checked = []
         issues = []
         total = 0
         collapsed = []
@@ -797,11 +825,60 @@ final class RedmineStore: ObservableObject {
     private var filtered: [Redmine.Issue] {
         let words = search.lowercased().split(separator: " ")
         return issues.filter { issue in
-            guard matches(issue, quick) else { return false }
+            guard matches(issue, quick), refine.allSatisfy({ value(of: $0.key, in: issue) == $0.value }) else { return false }
             guard !words.isEmpty else { return true }
             let text = "#\(issue.id) \(issue.subject) \(issue.project.name) \(issue.tracker.name) \(issue.status.name) \(issue.assignedTo?.name ?? "")".lowercased()
             return words.allSatisfy { text.contains($0) }
         }
+    }
+
+    func value(of field: RefineField, in issue: Redmine.Issue) -> String {
+        switch field {
+        case .status: return issue.status.name
+        case .tracker: return issue.tracker.name
+        case .assignee: return issue.assignedTo?.name ?? "담당 없음"
+        case .priority: return issue.priority.name
+        case .project: return issue.project.name
+        }
+    }
+
+    /// 받은 목록에 있는 값. 거르기 메뉴에 쓴다.
+    func values(of field: RefineField) -> [String] {
+        Array(Set(issues.map { value(of: field, in: $0) })).sorted()
+    }
+
+    /// 묶어 보이는 줄. 트리·일정은 상위·하위로 펴서 묶지 않는다.
+    var groups: [(title: String, rows: [Redmine.TreeRow])] {
+        let rows = rows
+        guard !treeMode, let field = grouping.field else { return [("", rows)] }
+        var order: [String] = []
+        var table: [String: [Redmine.TreeRow]] = [:]
+        for row in rows {
+            let key = value(of: field, in: row.issue)
+            if table[key] == nil { order.append(key) }
+            table[key, default: []].append(row)
+        }
+        return order.sorted().map { ($0, table[$0] ?? []) }
+    }
+
+    /// 고른 일감을 차례로 고친다. 한 건씩 보내 막힌 일감이 있어도 나머지는 나간다.
+    func updateChecked(_ change: Redmine.Change) {
+        var left = checked.sorted()
+        var failed = 0, done = 0
+        func next() {
+            guard let id = left.first else {
+                flash = failed == 0 ? "\(done)건을 고쳤습니다" : "\(done)건 고침 · \(failed)건 실패"
+                checked = []
+                loadMyCounts()
+                return
+            }
+            left.removeFirst()
+            update(id, change) { ok in
+                if ok { done += 1 } else { failed += 1 }
+                next()
+            }
+        }
+        next()
     }
 
     /// 머리에 쓸 건수. 트리를 접거나 상위를 끼워 넣어도 조건에 맞는 일감 수는 그대로다.

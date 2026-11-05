@@ -164,6 +164,17 @@ enum RedmineFlowCheck {
         store.update(10, Redmine.Change(trackerID: 1, estimatedHours: 8))
         await settle()
         check("트래커와 추정 시간을 고친다", writes() == ["PUT issues/10.json"] && !store.isBusy(10))
+        store.selected = nil
+        store.refine[.tracker] = "없는 트래커"
+        check("칸 값으로 거른다", store.rows.isEmpty)
+        store.refine = [:]
+        store.grouping = .assignee
+        check("담당자로 묶는다", store.groups.count == 1 && store.groups[0].rows.count == 2)
+        store.grouping = .none
+        store.checked = [10, 11]
+        store.updateChecked(Redmine.Change(doneRatio: 50))
+        await settle(0.8)
+        check("고른 일감을 차례로 고친다", writes() == ["PUT issues/10.json", "PUT issues/11.json"] && store.checked.isEmpty)
         store.deleteIssue(10)
         await settle()
         check("일감을 지우면 창을 닫는다", writes() == ["DELETE issues/10.json"] && store.selected == nil)

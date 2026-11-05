@@ -69,6 +69,14 @@ public enum RedmineNote {
         return result
     }
 
+    /// 본문의 `<img>`가 가리키는 주소나 파일 이름.
+    public static func imageSources(_ html: String) -> [String] {
+        guard let pattern = try? NSRegularExpression(pattern: #"<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']"#, options: .caseInsensitive) else { return [] }
+        return pattern.matches(in: html, range: NSRange(html.startIndex..., in: html)).compactMap {
+            Range($0.range(at: 1), in: html).map { String(html[$0]) }
+        }
+    }
+
     /// 평문으로 고쳐도 잃는 것이 없는 HTML의 평문. 문단·줄바꿈 말고 다른 서식(목록·표·링크·그림)이 있거나
     /// `html`로 되돌렸을 때 보이는 글이 달라지면 nil이다. 그때는 HTML 그대로 고쳐야 내용이 상하지 않는다.
     public static func editable(_ html: String) -> String? {

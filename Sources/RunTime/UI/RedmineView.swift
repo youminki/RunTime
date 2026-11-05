@@ -201,7 +201,8 @@ private struct RedmineIssueTable: View {
             GeometryReader { geo in
                 let timeline = store.layout == .timeline
                 let subjectWidth: CGFloat = geo.size.width < 900 ? 240 : 340
-                let columns: [(RedmineStore.Column, CGFloat?)] = timeline ? [(.id, 60), (.subject, subjectWidth)] : Self.columns(for: geo.size.width)
+                let columns: [(RedmineStore.Column, CGFloat?)] = timeline ? [(.id, 60), (.subject, subjectWidth)]
+                    : Self.columns(for: geo.size.width, shown: store.shownColumns)
                 VStack(spacing: 0) {
                     if let error = store.error {
                         columnHeader(columns, timeline: timeline)
@@ -232,11 +233,27 @@ private struct RedmineIssueTable: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                     } else {
+                        if store.layout == .board {
+                            RedmineBoard(store: store, rows: rows)
+                        } else if store.layout == .calendar {
+                            RedmineMonth(store: store, rows: rows)
+                        } else {
                         SlimScrollView {
                             // 머리를 스크롤 칸 안에 고정해야 스크롤 막대 폭만큼 칸이 어긋나지 않는다
                             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                                 Section {
-                                    ForEach(rows) { row in TableRow(row: row, columns: columns, timeline: timeline, store: store) }
+                                    ForEach(store.groups, id: \.title) { group in
+                                        if !group.title.isEmpty {
+                                            HStack(spacing: 8) {
+                                                Text(group.title).font(WL.heading)
+                                                Text("\(group.rows.count)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
+                                                Spacer()
+                                            }
+                                            .padding(.horizontal, 20).frame(height: 30)
+                                            .background(WL.hover)
+                                        }
+                                        ForEach(group.rows) { row in TableRow(row: row, columns: columns, timeline: timeline, store: store) }
+                                    }
                                     if store.total > store.issues.count {
                                         Text("레드마인에는 \(store.total)건이 있고 앞의 \(store.issues.count)건만 보입니다. 거르기를 좁혀 보세요")
                                             .font(WL.caption).foregroundStyle(WL.quiet).padding(14)
@@ -246,10 +263,12 @@ private struct RedmineIssueTable: View {
                                 }
                             }
                         }
+                        }
                     }
                 }
             }
         }
+        .overlay(alignment: .bottom) { if !store.checked.isEmpty { checkedBar } }
     }
 
     private var emptyText: String {
@@ -327,16 +346,111 @@ private struct RedmineIssueTable: View {
                     Button { store.timelineShift += 4 } label: { Image(systemName: "chevron.right") }
                         .buttonStyle(GhostIconButtonStyle()).tip("다음 4주")
                 }
+                refineMenu
+                viewMenu
                 Picker("", selection: $store.layout) {
                     ForEach(RedmineStore.Layout.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .labelsHidden().pickerStyle(.segmented).fixedSize()
-                .tip("트리는 상위 아래에 하위를, 일정은 기간을 막대로 보입니다")
+                .tip("트리는 상위 아래에 하위를, 일정은 기간을 막대로, 보드는 상태별 칸으로, 달력은 기한 날에 보입니다")
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 12)
+    }
+
+    /// 칸 값으로 다시 거르기. 조건이 있으면 그 수를 보인다.
+    private var refineMenu: some View {
+        Menu {
+            ForEach(RedmineStore.RefineField.allCases, id: \.self) { field in
+                Menu(store.refine[field].map { "\(field.rawValue): \($0)" } ?? field.rawValue) {
+                    Button("모두") { store.refine[field] = nil }
+                    Divider()
+                    ForEach(store.values(of: field), id: \.self) { value in
+                        Button(value) { store.refine[field] = value }
+                    }
+                }
+            }
+            Divider()
+            Button("조건 지우기") { store.refine = [:] }.disabled(store.refine.isEmpty)
+        } label: {
+            Label(store.refine.isEmpty ? "거르기" : "거르기 \(store.refine.count)", systemImage: "line.3.horizontal.decrease")
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .tip("상태·트래커·담당자·우선순위·프로젝트로 거릅니다")
+    }
+
+    /// 보일 칸과 묶는 기준.
+    private var viewMenu: some View {
+        Menu {
+            Section("칸") {
+                ForEach([RedmineStore.Column.status, .tracker, .priority, .assignee, .ratio, .due, .updated], id: \.self) { column in
+                    Toggle(column.rawValue, isOn: Binding(get: { store.shownColumns.contains(column) }, set: { on in
+                        if on { store.shownColumns.insert(column) } else { store.shownColumns.remove(column) }
+                    }))
+                }
+            }
+            Section("묶기") {
+                Picker("묶기", selection: $store.grouping) {
+                    ForEach(RedmineStore.Grouping.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.inline).labelsHidden()
+            }
+        } label: { Image(systemName: "slider.horizontal.3") }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .tip("보일 칸과 묶는 기준")
+    }
+
+    /// 고른 일감을 한 번에 고치는 막대.
+    private var checkedBar: some View {
+        let ids = store.checked
+        let projects = Set(store.issues.filter { ids.contains($0.id) }.map(\.project.id))
+        let people = projects.count == 1 ? projects.first.flatMap { store.people[$0] } ?? [] : []
+        return HStack(spacing: 10) {
+            Text("\(ids.count)건 고름").font(WL.meta.weight(.semibold))
+            Menu("상태") {
+                ForEach(store.statuses) { status in
+                    Button(status.name) { confirm("상태를 \(status.name)(으)로", Redmine.Change(statusID: status.id)) }
+                }
+            }
+            Menu("진척률") {
+                ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { ratio in
+                    Button("\(ratio)%") { confirm("진척률을 \(ratio)%로", Redmine.Change(doneRatio: ratio)) }
+                }
+            }
+            Menu("우선순위") {
+                ForEach(store.priorities) { priority in
+                    Button(priority.name) { confirm("우선순위를 \(priority.name)(으)로", Redmine.Change(priorityID: priority.id)) }
+                }
+            }
+            Menu("담당자") {
+                if let me = store.me { Button("나에게") { confirm("담당자를 나로", Redmine.Change(assignedToID: me.id)) } }
+                ForEach(people.filter { $0.id != store.me?.id }) { person in
+                    Button(person.name) { confirm("담당자를 \(person.name)(으)로", Redmine.Change(assignedToID: person.id)) }
+                }
+                Divider()
+                Button("비우기") { confirm("담당자를 비우게", Redmine.Change(assignedToID: 0)) }
+            }
+            Button("풀기") { store.checked = [] }.buttonStyle(TextLinkButtonStyle())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Capsule().fill(WL.surface))
+        .overlay(Capsule().strokeBorder(WL.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        .padding(.bottom, 16)
+        .onAppear { if projects.count == 1, let id = projects.first { store.loadPeople(project: id) } }
+    }
+
+    /// 동료에게 알림이 가는 일을 여러 건 하니 한 번 묻는다.
+    private func confirm(_ what: String, _ change: Redmine.Change) {
+        let alert = NSAlert()
+        alert.messageText = "\(store.checked.count)건의 \(what) 바꿀까요?"
+        alert.addButton(withTitle: "바꾸기")
+        alert.addButton(withTitle: "취소")
+        if alert.runModal() == .alertFirstButtonReturn { store.updateChecked(change) }
     }
 
     /// 일정 막대의 색 뜻.
@@ -404,9 +518,11 @@ private struct RedmineIssueTable: View {
     // MARK: 칸
 
     /// 보일 칸과 너비. 제목은 남는 너비를 모두 쓴다.
-    static func columns(for width: CGFloat) -> [(RedmineStore.Column, CGFloat?)] {
+    static func columns(for width: CGFloat, shown: Set<RedmineStore.Column>) -> [(RedmineStore.Column, CGFloat?)] {
         // 트래커는 제목 앞 태그로, 높은 우선순위는 제목 뒤 표시로 보여 칸을 따로 두지 않는다 (제목이 넓어야 읽힌다)
-        var columns: [(RedmineStore.Column, CGFloat?)] = [(.id, 60), (.status, 72), (.subject, nil), (.assignee, 72), (.ratio, 92), (.due, 84), (.updated, 86)]
+        var columns: [(RedmineStore.Column, CGFloat?)] = [(.id, 60), (.status, 72), (.tracker, 64), (.priority, 64), (.subject, nil),
+                                                          (.assignee, 72), (.ratio, 92), (.due, 84), (.updated, 86)]
+        columns.removeAll { $0.0 != .id && $0.0 != .subject && !shown.contains($0.0) }
         if width < 1100 { columns.removeAll { $0.0 == .updated } }
         if width < 780 { columns.removeAll { $0.0 == .ratio } }
         return columns
@@ -445,6 +561,151 @@ private struct RedmineIssueTable: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// 보드: 상태별 칸에 일감 카드를 둔다. 끌어 놓으면 상태가 바뀐다.
+private struct RedmineBoard: View {
+    @ObservedObject var store: RedmineStore
+    let rows: [Redmine.TreeRow]
+
+    var body: some View {
+        // 일감이 있는 상태와 열린 상태만 칸으로 둔다 (닫힌 상태가 여럿이라 빈 칸이 많아진다)
+        let columns = store.statuses.filter { status in status.isClosed != true || rows.contains { $0.issue.status.id == status.id } }
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(columns) { status in column(status, rows.filter { $0.issue.status.id == status.id }) }
+            }
+            .padding(16)
+        }
+    }
+
+    private func column(_ status: Redmine.Status, _ cards: [Redmine.TreeRow]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                StatusLabel(name: status.name, closed: status.isClosed == true)
+                Text("\(cards.count)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
+            }
+            .padding(.horizontal, 4)
+            SlimScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(cards) { row in card(row.issue) }
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 250)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(WL.sidebar))
+        .dropDestination(for: String.self) { items, _ in
+            guard let id = items.first.flatMap(Int.init), store.issues.first(where: { $0.id == id })?.status.id != status.id else { return false }
+            store.update(id, Redmine.Change(statusID: status.id))
+            return true
+        }
+    }
+
+    private func card(_ issue: Redmine.Issue) -> some View {
+        Button { store.selected = issue.id } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    TrackerTag(name: issue.tracker.name)
+                    Text(verbatim: "#\(issue.id)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet)
+                    Spacer(minLength: 0)
+                    if let due = issue.dueDate { DueText(due: due, finished: issue.doneRatio >= 100) }
+                }
+                Text(issue.subject).font(WL.meta).lineLimit(3).multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    RatioBar(ratio: issue.doneRatio).frame(width: 60)
+                    Spacer(minLength: 0)
+                    Text(issue.assignedTo?.name ?? "담당 없음").font(WL.caption).foregroundStyle(WL.quiet).lineLimit(1)
+                }
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.surface))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .draggable(String(issue.id))
+    }
+}
+
+/// 달력: 기한 날에 일감을 둔다. 기한이 없으면 시작일에 둔다.
+private struct RedmineMonth: View {
+    @ObservedObject var store: RedmineStore
+    let rows: [Redmine.TreeRow]
+
+    private static let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.firstWeekday = 2
+        return calendar
+    }()
+
+    private var month: Date {
+        let today = Self.calendar.date(from: Self.calendar.dateComponents([.year, .month], from: Date())) ?? Date()
+        return Self.calendar.date(byAdding: .month, value: store.monthShift, to: today) ?? today
+    }
+
+    /// 달력에 보일 날 (앞뒤 달을 채워 주 단위로).
+    private var days: [Date] {
+        let lead = (Self.calendar.component(.weekday, from: month) + 5) % 7
+        let start = Self.calendar.date(byAdding: .day, value: -lead, to: month) ?? month
+        let count = Self.calendar.range(of: .day, in: .month, for: month)?.count ?? 30
+        let weeks = (lead + count + 6) / 7
+        return (0..<(weeks * 7)).compactMap { Self.calendar.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    var body: some View {
+        let byDay = Dictionary(grouping: rows.map(\.issue).filter { ($0.dueDate ?? $0.startDate) != nil }) { $0.dueDate ?? $0.startDate ?? "" }
+        let parts = Self.calendar.dateComponents([.year, .month], from: month)
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text("\(String(parts.year ?? 0))년 \(parts.month ?? 0)월").font(WL.section)
+                Spacer()
+                Button { store.monthShift -= 1 } label: { Image(systemName: "chevron.left") }.buttonStyle(GhostIconButtonStyle())
+                Button("오늘") { store.monthShift = 0 }.buttonStyle(TextLinkButtonStyle()).disabled(store.monthShift == 0)
+                Button { store.monthShift += 1 } label: { Image(systemName: "chevron.right") }.buttonStyle(GhostIconButtonStyle())
+            }
+            .padding(.horizontal, 20).frame(height: 40)
+            HStack(spacing: 0) {
+                ForEach(["월", "화", "수", "목", "금", "토", "일"], id: \.self) { name in
+                    Text(name).font(WL.caption).foregroundStyle(WL.quiet).frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 22)
+            Rectangle().fill(WL.border).frame(height: 1)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
+                ForEach(days, id: \.self) { day in cell(day, byDay[WorkDay.key(day)] ?? []) }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func cell(_ day: Date, _ issues: [Redmine.Issue]) -> some View {
+        let inMonth = Self.calendar.isDate(day, equalTo: month, toGranularity: .month)
+        let today = Self.calendar.isDateInToday(day)
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("\(Self.calendar.component(.day, from: day))")
+                .font(WL.caption.monospacedDigit().weight(today ? .bold : .regular))
+                .foregroundStyle(today ? Palette.red : inMonth ? WL.muted : WL.faint)
+            ForEach(issues.prefix(3)) { issue in
+                Button { store.selected = issue.id } label: {
+                    Text(issue.subject).font(.system(size: 11.5)).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4).frame(height: 18)
+                        .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(WL.selected))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("#\(issue.id) \(issue.subject)")
+            }
+            if issues.count > 3 { Text("+\(issues.count - 3)건").font(WL.caption).foregroundStyle(WL.quiet) }
+            Spacer(minLength: 0)
+        }
+        .padding(4)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .overlay(Rectangle().stroke(WL.border, lineWidth: 0.5))
     }
 }
 
@@ -512,7 +773,14 @@ private struct TableRow: View {
 
     var body: some View {
         let issue = row.issue
-        Button { store.selected = issue.id } label: {
+        Button {
+            // ⌘클릭이나 이미 고르는 중이면 열지 않고 고른다 (Finder 목록처럼)
+            if NSEvent.modifierFlags.contains(.command) || !store.checked.isEmpty {
+                if store.checked.remove(issue.id) == nil { store.checked.insert(issue.id) }
+            } else {
+                store.selected = issue.id
+            }
+        } label: {
             HStack(spacing: 10) {
                 ForEach(columns, id: \.0) { column, width in
                     cell(column, issue)
@@ -523,7 +791,7 @@ private struct TableRow: View {
             }
             .padding(.horizontal, 20)
             .frame(height: 34)
-            .background(store.selected == issue.id ? WL.selected : hover.on ? WL.hover : .clear)
+            .background(store.selected == issue.id || store.checked.contains(issue.id) ? WL.selected : hover.on ? WL.hover : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -531,6 +799,9 @@ private struct TableRow: View {
         .overlay(alignment: .bottom) { Rectangle().fill(WL.border).frame(height: 0.5) }
         .contextMenu {
             Button("일감 열기") { store.selected = issue.id }
+            Button(store.checked.contains(issue.id) ? "고르기 풀기" : "고르기 (⌘클릭)") {
+                if store.checked.remove(issue.id) == nil { store.checked.insert(issue.id) }
+            }
             if let base = RedmineAPI.baseURL(WorkLogSettings.shared.effectiveRedmineURL) {
                 Button("웹에서 열기") { NSWorkspace.shared.open(Redmine.webURL(base: base, issue: issue.id)) }
             }
@@ -935,8 +1206,18 @@ struct RedmineIssueSheet: View {
                 Text("설명이 없습니다").font(WL.meta).foregroundStyle(WL.quiet)
             } else {
                 HTMLText(html: html, rendered: HTMLCache.shared.cached(html))
+                let inline = Redmine.images(in: html, attachments: issue.attachments ?? [])
+                if !inline.isEmpty {
+                    FlowLayout(spacing: 8) { ForEach(unique(inline)) { imageTile($0, issue: issue.id, size: 150) } }
+                }
             }
         }
+    }
+
+    /// 같은 그림을 본문에 두 번 넣어도 한 번만 보인다.
+    private func unique(_ files: [Redmine.Attachment]) -> [Redmine.Attachment] {
+        var seen = Set<Int>()
+        return files.filter { seen.insert($0.id).inserted }
     }
 
     // MARK: 칸 (레드마인 일감 화면처럼 두 줄로)
@@ -1302,8 +1583,10 @@ struct RedmineIssueSheet: View {
                                 .padding(.leading, 30)
                         }
                     }
-                    let added = (issue.attachments ?? []).filter { journal.attachmentIDs.contains($0.id) && $0.isImage }
-                    if !added.isEmpty && state.history != .changes {
+                    // 본문이 넣은 그림과 그 기록에서 더한 그림 (본문 글에는 그림 자리만 남는다)
+                    let added = unique(Redmine.images(in: journal.notes ?? "", attachments: issue.attachments ?? [])
+                                       + (issue.attachments ?? []).filter { journal.attachmentIDs.contains($0.id) && $0.isImage })
+                    if !added.isEmpty {
                         FlowLayout(spacing: 8) {
                             ForEach(added) { file in imageTile(file, issue: issue.id, size: 120) }
                         }

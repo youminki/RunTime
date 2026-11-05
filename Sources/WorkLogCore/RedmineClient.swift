@@ -363,6 +363,15 @@ public enum Redmine {
         return request
     }
 
+    /// 본문이 넣은 그림에 맞는 첨부. 레드마인은 `<img src="파일 이름">`을 그 일감의 첨부로 푼다.
+    public static func images(in html: String, attachments: [Attachment]) -> [Attachment] {
+        let names = RedmineNote.imageSources(html).map { source -> String in
+            let last = source.components(separatedBy: "/").last ?? source
+            return (last.removingPercentEncoding ?? last).components(separatedBy: "?")[0]
+        }
+        return names.compactMap { name in attachments.last { $0.filename == name && $0.isImage } }
+    }
+
     /// 관계 종류. 레드마인 값과 웹의 이름.
     public static let relationTypes: [(value: String, label: String)] = [
         ("relates", "관련"), ("blocks", "막음"), ("precedes", "앞섬"), ("duplicates", "중복"), ("copied_to", "복사함"),
