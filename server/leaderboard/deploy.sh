@@ -21,7 +21,7 @@ sed -i '' -E "s/\"database_id\": \"[^\"]*\"/\"database_id\": \"$ID\"/" wrangler.
 
 "${WRANGLER[@]}" d1 execute "$NAME" --remote --file=schema.sql --yes
 # 먼저 만든 표에는 나중에 더한 칸이 없다. 이미 있으면 오류가 나서 무시한다
-for COLUMN in screen source detail; do
+for COLUMN in screen source detail token; do
   "${WRANGLER[@]}" d1 execute "$NAME" --remote --command "ALTER TABLE reports ADD COLUMN $COLUMN TEXT" --yes >/dev/null 2>&1 || true
 done
 "${WRANGLER[@]}" deploy

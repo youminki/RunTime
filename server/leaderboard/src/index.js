@@ -8,9 +8,10 @@
 //   PUT    /v1/players/:id          닉네임 바꾸기
 //   DELETE /v1/players/:id          내 기록 지우기
 //   POST   /v1/reports              앱의 문제 보고 (업데이트 실패 등). 만든 사람에게 메일로 알린다 (reports.js)
+//   GET    /v1/reports/:key?t=      메일의 복사 단추가 여는 페이지 (보고마다 무작위 토큰)
 // 매일 한 번(예약 작업) 주간 순위에 쓰지 않는 오래된 판과 제출 횟수 기록을 지운다.
 import { checkRun, cleanGhost, cleanNickname, isPlayerID, MAX_GHOST_INPUTS, SUBMIT_INTERVAL_MS, SUBMITS_PER_MINUTE } from "./rules.js";
-import { submitReport } from "./reports.js";
+import { submitReport, viewReport } from "./reports.js";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_BODY = 2048;
@@ -25,6 +26,8 @@ export default {
       if (request.method === "POST" && url.pathname === "/v1/ghosts") return await submitGhost(request, env);
       if (request.method === "GET" && url.pathname === "/v1/ghosts/top") return await topGhost(url, env);
       if (request.method === "POST" && url.pathname === "/v1/reports") return await submitReport(request, env, { readJSON, json, overIPLimit });
+      const reportKey = url.pathname.match(/^\/v1\/reports\/([^/]+)$/)?.[1];
+      if (reportKey && request.method === "GET") return await viewReport(reportKey, url.searchParams.get("t"), env);
       const player = url.pathname.match(/^\/v1\/players\/([^/]+)$/)?.[1];
       if (player && request.method === "PUT") return await rename(player, request, env);
       if (player && request.method === "DELETE") return await forget(player, env);

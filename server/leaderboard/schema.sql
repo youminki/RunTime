@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS reports (
   source TEXT,
   detail TEXT,
   mail_key TEXT NOT NULL,
+  -- 메일의 복사 페이지를 여는 무작위 토큰
+  token TEXT,
   mailed INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
