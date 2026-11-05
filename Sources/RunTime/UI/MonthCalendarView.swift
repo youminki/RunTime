@@ -188,7 +188,8 @@ struct MonthCalendarView: View {
         GeometryReader { geo in
             SevenColumns {
                 ForEach(month.days, id: \.self) { day in
-                    cell(day, entries: month.entries[day] ?? [], due: month.due[day] ?? [], inMonth: month.range.contains(day))
+                    cell(day, entries: month.entries[day] ?? [], due: month.due[day] ?? [], inMonth: month.range.contains(day),
+                         compact: geo.size.width / 7 < compactWidth)
                 }
             }
             // 칸이 정수 너비라 남는 몇 pt만큼 테두리를 좁혀 마지막 칸과 겹치게 한다 (요일 머리와 같은 자리)
@@ -200,7 +201,41 @@ struct MonthCalendarView: View {
         .frame(height: cellHeight * CGFloat(month.days.count / 7))
     }
 
-    private func cell(_ day: String, entries: [WorkEntry], due: [IssueInfo], inMonth: Bool) -> some View {
+    /// 칸이 이보다 좁으면 제목이 두세 글자만 남아 읽을 수 없어, 프로젝트별 건수로 보인다.
+    private let compactWidth: CGFloat = 96
+
+    /// 좁은 칸. 마감은 한 줄로 묶고 적은 일은 프로젝트마다 건수를 센다. 제목은 칸에 올리면 나온다.
+    @ViewBuilder
+    private func compactRows(_ day: String, entries: [WorkEntry], due: [IssueInfo]) -> some View {
+        if !due.isEmpty {
+            HStack(spacing: 4) {
+                Image(systemName: "flag.fill").font(.system(size: 8.5)).foregroundStyle(Palette.red).frame(width: 6)
+                Text("마감 \(due.count)").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(day <= WorkDay.today() ? Palette.red : WL.text).lineLimit(1)
+            }
+            .frame(height: 15)
+        }
+        let counts = Dictionary(grouping: entries, by: \.project).map { (project: $0.key, count: $0.value.count) }
+            .sorted { ($1.count, $0.project) < ($0.count, $1.project) }
+        ForEach(counts, id: \.project) { item in
+            // 이름이 다 들어갈 때만 쓴다. 잘린 이름보다 위 프로젝트 칩과 같은 색 점이 알아보기 쉽다
+            ViewThatFits(in: .horizontal) {
+                compactRow(item.project, count: item.count, named: true)
+                compactRow(item.project, count: item.count, named: false)
+            }
+            .frame(height: 15)
+        }
+    }
+
+    private func compactRow(_ project: String, count: Int, named: Bool) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(WL.projectColor(project)).frame(width: 6, height: 6)
+            if named { Text(project).font(.system(size: 12)).foregroundStyle(WL.muted).fixedSize() }
+            Text("\(count)").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(WL.text).fixedSize()
+        }
+    }
+
+    private func cell(_ day: String, entries: [WorkEntry], due: [IssueInfo], inMonth: Bool, compact: Bool) -> some View {
         let today = WorkDay.today()
         let isToday = day == today
         let holiday = KoreanHolidays.name(on: day)
@@ -235,6 +270,9 @@ struct MonthCalendarView: View {
                     .background { if isToday { Circle().fill(Palette.red) } }
             }
             .frame(height: 24)
+            if compact {
+                compactRows(day, entries: entries, due: due)
+            } else {
             ForEach(due.prefix(shownDue)) { issue in
                 HStack(spacing: 4) {
                     Image(systemName: "flag.fill").font(.system(size: 8.5)).foregroundStyle(Palette.red)
@@ -261,6 +299,7 @@ struct MonthCalendarView: View {
             if total > room {
                 Text("+\(total - room)개 더").font(.system(size: 11.5, weight: .medium)).foregroundStyle(WL.muted)
                     .frame(height: 15)
+            }
             }
             Spacer(minLength: 0)
         }
