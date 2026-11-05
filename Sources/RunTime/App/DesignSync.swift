@@ -234,6 +234,10 @@ final class DesignSync: ObservableObject {
     private var placeCache: [String: DesignPlaceFile.Places] = [:]
     /// 자리 파일을 아직 쓰지 않은 화면(키마다 남은 쓰기 수). 그동안은 캐시가 디스크보다 새것이라 비울 때 남긴다.
     private var pendingPlaces: [String: Int] = [:]
+    /// 자리 파일을 쓰지 못한 화면. 다시 써질 때까지 캐시가 유일한 값이다.
+    private var unwrittenPlaces = Set<String>()
+    /// 캐시가 디스크보다 새것인 화면.
+    private func placesAhead(_ key: String) -> Bool { pendingPlaces[key] != nil || unwrittenPlaces.contains(key) }
 
     private init() {
         history = DesignHistory()
@@ -472,7 +476,7 @@ final class DesignSync: ObservableObject {
         // 쓰지 못해 대기로 남은 화면은 캐시가 디스크보다 새것이다
         for frame in frames {
             let key = fileKey + "|" + frame
-            if pendingPlaces[key] != nil, let cached = placeCache[key] { places[frame] = cached }
+            if placesAhead(key), let cached = placeCache[key] { places[frame] = cached }
         }
         DesignPlaceFile.attach(places, to: &history, fileKey: fileKey)
     }
@@ -492,12 +496,14 @@ final class DesignSync: ObservableObject {
             for (key, item) in zip(keys, moved) {
                 if (try? DesignPlaceFile.write(item.places, item.fileKey, item.frameID, in: folder)) != nil { written.append(key) }
             }
-            // 못 쓴 화면은 캐시가 유일한 값이라 대기로 남겨 캐시를 비울 때 지키고, 다음 가져오기에서 다시 쓴다
+            // 못 쓴 화면은 캐시가 유일한 값이라 캐시를 비울 때 지키고, 다음 가져오기에서 다시 쓴다
+            let done = written
             Task { @MainActor in
                 let sync = DesignSync.shared
-                for key in written {
+                for key in keys {
                     let left = (sync.pendingPlaces[key] ?? 1) - 1
                     sync.pendingPlaces[key] = left > 0 ? left : nil
+                    if done.contains(key) { sync.unwrittenPlaces.remove(key) } else { sync.unwrittenPlaces.insert(key) }
                 }
             }
             if written.count < moved.count {
@@ -512,7 +518,7 @@ final class DesignSync: ObservableObject {
         let key = fileKey + "|" + screen.frameID
         if placeCache[key] == nil {
             // 상세를 여러 개 오가도 몇 MB를 넘지 않게 오래 둔 것부터 비운다
-            if placeCache.count > 40 { placeCache = placeCache.filter { pendingPlaces[$0.key] != nil } }
+            if placeCache.count > 40 { placeCache = placeCache.filter { placesAhead($0.key) } }
             // 못 읽은 화면은 넣지 않아, 파일이 생긴 뒤 다시 열면 읽는다
             placeCache[key] = DesignPlaceFile.read(fileKey, screen.frameID, in: placeFolder)
         }
