@@ -275,7 +275,9 @@ struct DesignHistoryView: View {
                                            allScreens: scoped?.all ?? [])
                         }
                     }
-                    .frame(width: timeline)
+                    // 내용이 칸보다 넓어도 가운데로 밀려 옆 칸을 덮지 않게 왼쪽에 붙이고 넘친 것은 자른다
+                    .frame(width: timeline, alignment: .leading)
+                    .clipped()
                     ColumnDivider(width: $page.timelineWidth, range: Self.timelineRange, standard: Self.timelineWidth)
                     detail.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -1711,16 +1713,12 @@ struct DesignTimeline: View {
                 if let screenFile { workbench(screenFile) }
                 // 이 범위에 기록이 하나도 없으면 고를 것이 없어 거르기 단추를 흐리게 둔다
                 let unrecorded = !sync.history.events.contains { page.project == nil || $0.fileKey == page.project }
-                HStack(spacing: 8) {
-                    if page.showsChanges { phasePicker.disabled(unrecorded) }
-                    if workspace && hasScreens { tabPicker }
-                    if workspace && hasScreens && tab == .screens {
-                        Toggle("끝난 화면 숨기기", isOn: $page.hidesBuiltScreens)
-                            .toggleStyle(.checkbox).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1).fixedSize()
-                            .tip("기능 명세를 모두 구현 체크했고 반영할 변경도 없는 화면을 목록에서 뺍니다")
-                    }
-                    Spacer(minLength: 0)
-                    if tab == .changes { layerMenu.disabled(unrecorded) }
+                // 고정 너비 단추가 칸보다 넓으면 칸 내용 전체가 밀리므로, 들어갈 때까지 종류 이름부터 줄인다
+                let working = workingCount
+                ViewThatFits(in: .horizontal) {
+                    filterRow(working: working, unrecorded: unrecorded, shortLayer: false, shortPhase: false)
+                    filterRow(working: working, unrecorded: unrecorded, shortLayer: true, shortPhase: false)
+                    filterRow(working: working, unrecorded: unrecorded, shortLayer: true, shortPhase: true)
                 }
             }
             .padding(.horizontal, WL.gutter)
@@ -2063,14 +2061,30 @@ struct DesignTimeline: View {
     }
 
     /// 완료 후 변경이 처음 보이는 목록이고, 작업 중 변경과 전체는 여기서 고른다.
-    private var phasePicker: some View {
-        let open = sync.history.events.filter { event in
-            !sync.history.isApplied(event) && (page.project == nil || event.fileKey == page.project) && sync.follows(event)
+    private var workingCount: Int {
+        sync.history.events.filter { event in
+            !sync.history.isApplied(event) && (page.project == nil || event.fileKey == page.project) && sync.follows(event) && !event.isImportant
+        }.count
+    }
+
+    private func filterRow(working: Int, unrecorded: Bool, shortLayer: Bool, shortPhase: Bool) -> some View {
+        HStack(spacing: 8) {
+            if page.showsChanges { phasePicker(working: working, short: shortPhase).disabled(unrecorded) }
+            if workspace && hasScreens { tabPicker }
+            if workspace && hasScreens && tab == .screens {
+                Toggle("끝난 화면 숨기기", isOn: $page.hidesBuiltScreens)
+                    .toggleStyle(.checkbox).font(WL.meta).foregroundStyle(WL.muted).lineLimit(1).fixedSize()
+                    .tip("기능 명세를 모두 구현 체크했고 반영할 변경도 없는 화면을 목록에서 뺍니다")
+            }
+            Spacer(minLength: 0)
+            if tab == .changes { layerMenu(short: shortLayer).disabled(unrecorded) }
         }
-        let working = open.filter { !$0.isImportant }.count
-        return Picker("", selection: $page.scope) {
-            Text(hasAlerts ? "알림 메뉴" : "확인할 변경").tag(DesignHistoryPage.Scope.important)
-            Text(working > 0 ? "작업 중 \(working)" : "작업 중").tag(DesignHistoryPage.Scope.working)
+    }
+
+    private func phasePicker(working: Int, short: Bool) -> some View {
+        Picker("", selection: $page.scope) {
+            Text(short ? "확인" : hasAlerts ? "알림 메뉴" : "확인할 변경").tag(DesignHistoryPage.Scope.important)
+            Text(working > 0 ? (short ? "작업 \(working)" : "작업 중 \(working)") : short ? "작업" : "작업 중").tag(DesignHistoryPage.Scope.working)
             Text("전체").tag(DesignHistoryPage.Scope.all)
         }
         .pickerStyle(.segmented)
@@ -2085,7 +2099,7 @@ struct DesignTimeline: View {
     }
 
     /// 변경 종류로 거른다. 칩 다섯 개 대신 메뉴 하나로 두고, 고르면 이름이 강조색으로 바뀐다.
-    private var layerMenu: some View {
+    private func layerMenu(short: Bool) -> some View {
         Menu {
             Button((page.layer == nil ? "✓ " : "") + "모든 종류") { page.layer = nil }
             Divider()
@@ -2095,7 +2109,10 @@ struct DesignTimeline: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "line.3.horizontal.decrease").font(.system(size: 11.5, weight: .semibold))
-                Text(page.layer.map(DesignHistoryView.layerName) ?? "모든 종류").font(.system(size: 13, weight: page.layer == nil ? .regular : .semibold))
+                // 좁으면 아이콘만 두되, 고른 종류는 무엇으로 걸렀는지 보이게 이름을 남긴다
+                if !short || page.layer != nil {
+                    Text(page.layer.map(DesignHistoryView.layerName) ?? "모든 종류").font(.system(size: 13, weight: page.layer == nil ? .regular : .semibold))
+                }
             }
             .foregroundStyle(page.layer == nil ? WL.muted : WL.accent)
         }
