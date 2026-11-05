@@ -9,7 +9,7 @@ struct EntryRow: View {
     @ObservedObject var page: WorkLogPage
     let entry: WorkEntry
     var reservesIssue = true
-    /// 같은 경로 묶음 안이면 그 경로. 글 칸에는 끝 이름만 두고, 고친 이름 앞에 경로를 다시 붙여 저장한다.
+    /// 경로 묶음 안이면 가장 가까운 묶음의 경로. 글 칸에는 그 아래 이름만 두고, 고친 이름 앞에 경로를 다시 붙여 저장한다.
     var path: String? = nil
     @StateObject private var hover = HoverFlag()
     @StateObject private var drop = HoverFlag()
@@ -29,20 +29,22 @@ struct EntryRow: View {
             // 다른 일지 보기처럼 한 줄로 두고 넘치면 …로 줄인다. 고치지 않을 때는 글 칸 글자를 감추고 같은 자리에
             // 잘린 글을 덮어 보이며, 누르면 아래 글 칸이 초점을 받아 전체 글을 고친다
             TextField("내용", text: Binding(
-                get: { leaf(store.entry(entry.id)?.title ?? entry.title) },
+                get: { WorkLogFormat.relative(store.entry(entry.id)?.title ?? entry.title, to: path) },
                 set: { value in
                     let text = value.replacingOccurrences(of: "\n", with: " ")
                     // 글 칸이 끝 이름만 보이고 있었을 때만 경로를 다시 붙인다 (보이던 그대로 저장해 경로가 두 번 붙지 않게).
                     // 끝 이름을 다 지우면 경로만 남기지 않고 빈 줄로 둔다 (Return이면 줄이 지워진다)
                     let current = store.entry(entry.id)?.title ?? entry.title
                     store.update(entry.id) {
-                        $0.title = text.isEmpty ? "" : showsLeaf(current) ? path! + " > " + text : text
+                        $0.title = text.isEmpty ? "" : path.map { WorkLogFormat.isUnder(current, $0) ? $0 + " > " + text : text } ?? text
                     }
                 }
             ))
             .focused($editing)
             // 고치는 동안은 지금 묶음에 붙잡아 둔다. 치다가 다른 경로와 같아져도 줄이 옮겨 가지 않는다
             .onChange(of: editing) { on in page.pinnedPaths[entry.id] = on ? (path ?? "") : nil }
+            // 고치던 줄이 묶음 접기·지우기로 사라지면 초점 해제 소식이 오지 않아, 고정이 남아 옛 묶음에 붙지 않게 푼다
+            .onDisappear { page.pinnedPaths[entry.id] = nil }
             .onSubmit { store.commitTitle(entry.id) }
             .lineLimit(1)
             .textFieldStyle(.plain)
@@ -50,12 +52,11 @@ struct EntryRow: View {
             .foregroundStyle(editing ? WL.text : .clear)
             .overlay(alignment: .leading) {
                 if !editing {
-                    // 묶음 밖 줄은 경로가 길어 끝 이름이 잘리므로 마지막 두 단계만 보인다 (전체는 말풍선에)
-                    let shown = WorkLogFormat.shortPath(leaf(store.entry(entry.id)?.title ?? entry.title))
+                    // 묶음 밖 줄은 이름을 먼저, 경로를 뒤에 옅게 둬 좁아도 이름이 잘리지 않는다 (전체는 말풍선에)
+                    let shown = WorkLogFormat.relative(store.entry(entry.id)?.title ?? entry.title, to: path)
                     // 글 칸 글자를 감추면 비어 있을 때의 자리표시자도 함께 사라져 여기서 대신 쓴다
-                    Text(shown.isEmpty ? "내용" : shown)
+                    (shown.isEmpty ? Text("내용").foregroundColor(WL.faint) : WorkLogFormat.titleText(shown))
                         .font(.system(size: 14))
-                        .foregroundStyle(shown.isEmpty ? WL.faint : WL.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .allowsHitTesting(false)
@@ -122,18 +123,6 @@ struct EntryRow: View {
             Divider()
             Button("지우기", role: .destructive) { store.delete(entry.id) }
         }
-    }
-
-    /// 묶음 안이면 경로를 뗀 끝 이름. 경로 앞뒤 빈칸이 달라도 같은 경로면 뗀다.
-    private func leaf(_ title: String) -> String {
-        guard let path, showsLeaf(title) else { return title }
-        if title.hasPrefix(path + " > ") { return String(title.dropFirst(path.count + 3)) }
-        return WorkLogFormat.breadcrumb(title).leaf
-    }
-
-    private func showsLeaf(_ title: String) -> Bool {
-        guard let path else { return false }
-        return title.hasPrefix(path + " > ") || WorkLogFormat.breadcrumb(title).path == path
     }
 
     private func flag(_ key: ReferenceWritableKeyPath<WorkLogPage, UUID?>) -> Binding<Bool> {
@@ -389,7 +378,7 @@ struct MergedRow: View {
     let entry: WorkEntry
     let entries: [WorkEntry]
     var reservesIssue = true
-    /// 같은 경로 묶음 안이면 그 경로 (이름만 보인다). 혼자인 줄은 경로를 옅게 앞에 붙인다.
+    /// 경로 묶음 안이면 가장 가까운 묶음의 경로. 그 아래 이름만 보이고, 남은 경로는 이름 뒤에 옅게 붙인다.
     var path: String? = nil
     /// 적은 날 칸을 보일지. 하루씩 나눈 묶음 안에서는 같은 날이라 뺀다.
     var showsDays = true
@@ -398,7 +387,6 @@ struct MergedRow: View {
     var body: some View {
         let steps = WorkReport.progression(of: entry, in: entries)
         let days = Array(Set(entries.filter { $0.project == entry.project && WorkLogFormat.same($0.title, entry.title) }.map(\.day))).sorted()
-        let crumb = WorkLogFormat.breadcrumb(entry.title)
         Button {
             page.search = ""
             page.day = entry.day
@@ -406,11 +394,9 @@ struct MergedRow: View {
         } label: {
             HStack(spacing: 10) {
                 StatusGlyph(status: entry.status)
-                title(crumb)
+                WorkLogFormat.titleText(WorkLogFormat.relative(entry.title, to: path))
                     .font(.system(size: 14))
                     .lineLimit(1)
-                    // 경로가 앞에 붙어 길어지면 끝의 일감 이름이 남게 앞을 자른다
-                    .truncationMode(.head)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .tip(tip(days: days, steps: steps))
                 if steps.count > 1 {
@@ -435,11 +421,6 @@ struct MergedRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hover.on = $0 }
-    }
-
-    private func title(_ crumb: (path: String?, leaf: String)) -> Text {
-        guard path == nil, let prefix = crumb.path else { return Text(crumb.leaf).foregroundColor(WL.text) }
-        return Text(prefix + " > ").foregroundColor(WL.faint) + Text(crumb.leaf).foregroundColor(WL.text)
     }
 
     private func tip(days: [String], steps: [WorkStatus]) -> String {

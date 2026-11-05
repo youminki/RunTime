@@ -780,55 +780,120 @@ private struct TipLabel: View {
     }
 }
 
-/// 같은 메뉴 경로로 묶은 줄들의 작은 제목 (내 일감의 메뉴·화면 제목과 같은 꼴).
+/// 경로 묶음 머리. 디자인 메뉴 트리처럼 꺾쇠, 이름(마지막 단계를 진하게), 아래 줄 수를 둔다.
 struct PathHeading: View {
+    /// 전체 경로 (말풍선에 보인다).
     let path: String
+    /// 위 묶음을 뺀 이름.
+    let title: String
+    var count = 0
+    var folded = false
+    var toggle: (() -> Void)?
+    @StateObject private var hover = HoverFlag()
 
     var body: some View {
-        Text(path)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(WL.muted)
-            .lineLimit(1)
-            .truncationMode(.middle)
+        Button { toggle?() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(WL.muted)
+                    .rotationEffect(.degrees(folded ? 0 : 90))
+                    .frame(width: PathTree.chevron)
+                    .opacity(toggle == nil ? 0 : 1)
+                WorkLogFormat.pathText(title)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                if count > 0 {
+                    Text("\(count)").font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(WL.muted)
+                        .padding(.horizontal, 6).frame(height: 17)
+                        .background(Capsule().fill(WL.hover))
+                        .fixedSize()
+                }
+                Spacer(minLength: 0)
+            }
             .padding(.horizontal, 6)
-            .padding(.top, 6)
-            .padding(.bottom, 1)
-            .tip(path)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(hover.on && toggle != nil ? WL.hover : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(toggle == nil)
+        .onHover { hover.on = $0 }
+        .tip(toggle == nil ? path : (folded ? "펼치기" : "접기") + " · " + path)
     }
 }
 
-/// 경로 묶음마다 제목을 달고 줄을 늘어놓는다. `row`는 줄과, 묶음 안이면 그 경로를 받는다.
-/// 줄은 묶음에 들어가고 나와도 같은 id로 두어, 고치던 글 칸이 새로 만들어지지 않게 한다.
+/// 경로 트리의 치수. 안내선은 단계마다 머리 꺾쇠 가운데에서 내려온다.
+enum PathTree {
+    static let chevron: CGFloat = 14
+    /// 한 단계 들이는 너비 (줄 안쪽 여백 6 + 꺾쇠 14).
+    static let indent: CGFloat = 20
+    static let guide: CGFloat = 6 + chevron / 2
+}
+
+extension View {
+    /// 경로 트리 `depth` 단계만큼 들이고, 위 단계마다 세로 안내선을 긋는다. 줄마다 그어 묶음 끝까지 한 줄처럼 이어진다.
+    func pathTreeDepth(_ depth: Int) -> some View {
+        padding(.leading, CGFloat(depth) * PathTree.indent)
+            .background(alignment: .leading) {
+                ZStack(alignment: .leading) {
+                    ForEach(0..<depth, id: \.self) { level in
+                        Rectangle().fill(WL.border).frame(width: 1)
+                            .padding(.leading, CGFloat(level) * PathTree.indent + PathTree.guide)
+                    }
+                }
+                .padding(.vertical, -1)
+            }
+    }
+}
+
+/// 경로 묶음을 접는 곳. 묶음마다 `scope + 경로`로 접힘을 적어 "모든 묶음 접기·펼치기"도 함께 따른다.
+struct PathFolds {
+    let page: WorkLogPage
+    let scope: String
+
+    func key(_ path: String) -> String { "path:" + scope + "|" + path }
+    func isFolded(_ path: String) -> Bool { page.isCollapsed(key(path)) }
+    func toggle(_ path: String) { withAnimation(.easeOut(duration: 0.15)) { page.toggle(key(path)) } }
+}
+
+/// 줄을 경로 트리로 늘어놓는다 (`WorkLogFormat.pathTree`). `row`는 줄과, 묶음 안이면 가장 가까운 묶음의 경로를 받는다.
+/// 들이기와 안내선은 줄 바깥에 덧붙이고 줄은 묶음에 들고 나도 같은 id로 두어, 고치던 글 칸이 새로 만들어지지 않게 한다.
 struct PathGroupedRows<Row: View>: View {
     let entries: [WorkEntry]
     var pinned: [UUID: String] = [:]
+    /// 주면 묶음 머리를 눌러 접고 편다.
+    var folds: PathFolds?
     @ViewBuilder let row: (WorkEntry, String?) -> Row
 
-    private enum Item: Identifiable {
-        case heading(String)
-        case row(WorkEntry, String?)
-
-        var id: String {
-            switch self {
-            case .heading(let path): return "path:" + path
-            case .row(let entry, _): return entry.id.uuidString
+    var body: some View {
+        ForEach(items, id: \.id) { item in
+            switch item.content {
+            case .heading(let path, let title, let depth, let count):
+                PathHeading(path: path, title: title, count: count, folded: folds?.isFolded(path) ?? false,
+                            toggle: folds.map { folds in { folds.toggle(path) } })
+                    .pathTreeDepth(depth)
+            case .row(let entry, let path, let depth):
+                row(entry, path)
+                    .pathTreeDepth(depth)
             }
         }
     }
 
-    var body: some View {
-        ForEach(items) { item in
-            switch item {
-            case .heading(let path): PathHeading(path: path)
-            case .row(let entry, let path): row(entry, path)
+    private struct Item {
+        let content: WorkPathTree.Item
+
+        var id: String {
+            switch content {
+            case .heading(let path, _, _, _): return "path:" + path
+            case .row(let entry, _, _): return entry.id.uuidString
             }
         }
     }
 
     private var items: [Item] {
-        WorkLogFormat.pathGroups(entries, pinned: pinned).flatMap { group -> [Item] in
-            (group.path.map { [Item.heading($0)] } ?? []) + group.entries.map { Item.row($0, group.path) }
-        }
+        WorkLogFormat.pathTree(entries, pinned: pinned, isFolded: { folds?.isFolded($0) ?? false }).map(Item.init)
     }
 }
 

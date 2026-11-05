@@ -313,7 +313,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         add(WorkLogSettings.shared.quickAddEnabled ? "업무 한 줄 적기 (\(GlobalHotKey.quickCombo.label))" : "업무 한 줄 적기") {
             QuickAddPanel.shared.show()
         }
-        add("캘린더") { [weak self] in self?.showMain(.calendar) }
         add("레드마인") { [weak self] in self?.showMain(.redmine) }
         menu.addItem(.separator())
         let unseenDesign = MainActor.assumeIsolated { DesignSync.shared.unseenCount }

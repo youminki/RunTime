@@ -11,6 +11,8 @@ struct WorkLogView: View {
     @ObservedObject var settings: WorkLogSettings = .shared
     /// 앱 창이 다른 화면을 띄운 동안 숨겨 둔 업무 일지인지. 다시 보일 때 처음 열 때처럼 받아 온다.
     var isActive = true
+    /// 월간 달력의 "마감이 지난 내 일감"을 눌렀을 때 레드마인 화면으로 간다.
+    var openOverdue: (() -> Void)?
     /// 할 일 추가 칸 가운데 글을 쓰고 있는 프로젝트 (⌘N으로 옮긴다).
     @FocusState private var focusedDraft: String?
 
@@ -104,8 +106,11 @@ struct WorkLogView: View {
                     Button("보고서 붙여넣기…") { page.importText = ""; page.importing = true }
                     Divider()
                 }
-                Button("모든 묶음 펼치기") { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(false) } }
-                Button("모든 묶음 접기") { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(true) } }
+                Group {
+                    Button("모든 묶음 펼치기") { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(false) } }
+                    Button("모든 묶음 접기") { withAnimation(.easeOut(duration: 0.15)) { page.setAllCollapsed(true) } }
+                }
+                .disabled(page.mode == .month && page.monthCalendar)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -384,7 +389,7 @@ struct WorkLogView: View {
             if !collapsed {
                 VStack(alignment: .leading, spacing: 1) {
                     let reserve = entries.contains { $0.issue != nil }
-                    PathGroupedRows(entries: entries, pinned: page.pinnedPaths) { entry, path in
+                    PathGroupedRows(entries: entries, pinned: page.pinnedPaths, folds: PathFolds(page: page, scope: "day|" + project)) { entry, path in
                         EntryRow(store: store, page: page, entry: entry, reservesIssue: reserve, path: path)
                     }
                     addField(project)
@@ -490,22 +495,33 @@ struct WorkLogView: View {
 
     @ViewBuilder
     private func periodPage(_ entries: [WorkEntry], span: String) -> some View {
-        let merged = WorkReport.merged(entries)
+        // 달력에서 프로젝트로 걸렀으면 요약 숫자도 그 프로젝트만 센다 (레드마인 보내기는 오른쪽 탭과 맞춰 달 전체로 둔다)
+        let scope = page.mode == .month && page.monthCalendar ? page.calendarProject : nil
+        let counted = scope.map { project in entries.filter { $0.project == project } } ?? entries
+        let merged = WorkReport.merged(counted)
         PageHeading(page.mode == .week ? WorkLogFormat.weekTitle(page.day) : WorkLogFormat.monthTitle(page.day)) {
             Tally(title: "한 일", value: merged.count)
             let done = merged.filter(\.status.isFinished).count
             if done > 0 { Tally(title: "완료", value: done, tint: WL.done) }
             let open = merged.filter { !$0.status.isFinished && $0.status != .ongoing }.count
             if open > 0 { Tally(title: "진행", value: open, tint: WL.accent) }
-            Text("\(Set(entries.map(\.day)).count)일 기록").monospacedDigit()
+            Text("\(Set(counted.map(\.day)).count)일 기록").monospacedDigit()
         } accessory: {
-            let pending = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
-            if pending > 0 {
-                HeadingAction(title: "레드마인 \(pending)건 보내기", icon: "paperplane", tint: WL.waiting) { page.preview = .redmine }
-                    .tip("\(span) 아직 보내지 않은 일감을 오른쪽 레드마인 탭에서 확인합니다")
+            HStack(spacing: 12) {
+                if page.mode == .month {
+                    PageTabs(items: [(false, "목록"), (true, "달력")], selection: $page.monthCalendar)
+                        .tip("한 달을 프로젝트별 목록이나 달력으로 봅니다")
+                }
+                let pending = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
+                if pending > 0 {
+                    HeadingAction(title: "레드마인 \(pending)건 보내기", icon: "paperplane", tint: WL.waiting) { page.preview = .redmine }
+                        .tip("\(span) 아직 보내지 않은 일감을 오른쪽 레드마인 탭에서 확인합니다")
+                }
             }
         }
-        if merged.isEmpty {
+        if page.mode == .month && page.monthCalendar {
+            MonthCalendarView(store: store, page: page, openOverdue: openOverdue)
+        } else if merged.isEmpty {
             Callout {
                 Text("\(span)는 기록이 없습니다. 왼쪽 달력에서 점이 찍힌 날을 고르세요.")
                     .font(.system(size: 13)).foregroundStyle(WL.muted)
@@ -535,7 +551,7 @@ struct WorkLogView: View {
             if !collapsed {
                 VStack(alignment: .leading, spacing: 1) {
                     let reserve = merged.contains { $0.issue != nil }
-                    PathGroupedRows(entries: merged) { entry, path in
+                    PathGroupedRows(entries: merged, folds: PathFolds(page: page, scope: "period|" + project)) { entry, path in
                         MergedRow(page: page, entry: entry, entries: entries, reservesIssue: reserve, path: path)
                     }
                 }
@@ -573,7 +589,7 @@ struct WorkLogView: View {
             }
             if !open.isEmpty {
                 section(key: "project-open", title: "진행 중인 일") {
-                    PathGroupedRows(entries: open) { entry, path in
+                    PathGroupedRows(entries: open, folds: PathFolds(page: page, scope: "project-open|" + project)) { entry, path in
                         MergedRow(page: page, entry: entry, entries: entries, reservesIssue: open.contains { $0.issue != nil },
                                   path: path)
                     }
@@ -582,7 +598,7 @@ struct WorkLogView: View {
             ForEach(days, id: \.self) { day in
                 section(key: "project:" + day, title: WorkLogFormat.dayTitle(day), jump: day) {
                     let dayRows = entries.filter { $0.day == day }
-                    PathGroupedRows(entries: dayRows) { entry, path in
+                    PathGroupedRows(entries: dayRows, folds: PathFolds(page: page, scope: "project|" + project + "|" + day)) { entry, path in
                         MergedRow(page: page, entry: entry, entries: dayRows,
                                   reservesIssue: entries.contains { $0.issue != nil }, path: path, showsDays: false)
                     }

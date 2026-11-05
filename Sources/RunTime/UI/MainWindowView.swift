@@ -3,11 +3,12 @@ import SwiftUI
 
 /// 한 창 안에서 오가는 화면. 메뉴바·팝오버·알림의 단추도 새 창을 띄우지 않고 이 창의 화면을 바꾼다.
 enum MainPage: String, CaseIterable {
-    case usage, runners, workLog, calendar, redmine, design, hosts, settings
+    case usage, runners, workLog, redmine, design, hosts, settings
 
-    /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 게임은 러너).
+    /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 게임은 러너, 캘린더는 업무 일지).
     init?(windowName: String) {
-        let legacy: [String: MainPage] = ["daily": .usage, "dailyDetail": .usage, "leaderboard": .runners, "game": .runners]
+        let legacy: [String: MainPage] = ["daily": .usage, "dailyDetail": .usage, "leaderboard": .runners, "game": .runners,
+                                          "calendar": .workLog]
         guard let page = MainPage(rawValue: windowName) ?? legacy[windowName] else { return nil }
         self = page
     }
@@ -17,7 +18,6 @@ enum MainPage: String, CaseIterable {
         case .usage: return "사용량"
         case .runners: return "러너"
         case .workLog: return "업무 일지"
-        case .calendar: return "캘린더"
         case .design: return "디자인"
         case .hosts: return "호스트"
         case .redmine: return "레드마인"
@@ -30,7 +30,6 @@ enum MainPage: String, CaseIterable {
         case .usage: return "gauge.medium"
         case .runners: return "hare"
         case .workLog: return "checklist"
-        case .calendar: return "calendar"
         case .design: return "paintpalette"
         case .hosts: return "network"
         case .redmine: return "list.bullet.rectangle.portrait"
@@ -43,7 +42,6 @@ enum MainPage: String, CaseIterable {
         case .usage: return "세션·주간 사용률, 최근 30분, 날짜별 토큰과 비용"
         case .runners: return "게임, 러너 고르기, 꾸미기"
         case .workLog: return "업무 일지와 일일·주간 보고, 레드마인 보내기"
-        case .calendar: return "업무 일지를 한 달 달력으로 크게, 공휴일과 함께"
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
         case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 백업"
         case .redmine: return "레드마인 일감 보기·고치기·댓글, 저장한 질의"
@@ -52,7 +50,7 @@ enum MainPage: String, CaseIterable {
     }
 
     /// 들른 뒤로 숨겨 두고 다시 쓰는 화면 (MainWindowView.content 참고).
-    static let kept: [MainPage] = [.workLog, .calendar, .design, .redmine]
+    static let kept: [MainPage] = [.workLog, .design, .redmine]
 
     /// 게임 화면처럼 늘 어둡게 그리는 화면. 이 화면에서는 창 전체를 어둡게 한다. 나머지는 시스템 모습을 따른다.
     var isDark: Bool { self == .runners }
@@ -60,7 +58,7 @@ enum MainPage: String, CaseIterable {
     var hasStage: Bool { self == .runners }
 
     /// 아이콘 막대의 묶음: Claude 사용량, 업무 기록, 개발 도구. 묶음 사이에 줄을 긋는다.
-    static let groups: [[MainPage]] = [[.usage, .runners], [.workLog, .calendar, .redmine], [.design, .hosts]]
+    static let groups: [[MainPage]] = [[.usage, .runners], [.workLog, .redmine], [.design, .hosts]]
 }
 
 /// 창 안의 이동 기록. Finder·시스템 설정처럼 뒤로·앞으로를 쓴다.
@@ -190,7 +188,7 @@ struct MainWindowView: View {
 
     // MARK: 화면
 
-    /// 업무 일지와 캘린더는 만드는 데 오래 걸려(달력·보고서·레드마인 목록) 한 번 들른 뒤로는 숨겨 두고 다시 쓴다.
+    /// 업무 일지는 만드는 데 오래 걸려(달력·보고서·레드마인 목록) 한 번 들른 뒤로는 숨겨 두고 다시 쓴다.
     /// 숨긴 동안은 단축키와 클릭을 받지 않게 끈다. 무대가 있는 화면은 숨겨도 애니메이션이 돌고,
     /// 설정은 떠날 때 연동을 다시 받아야 해서 매번 새로 만든다.
     private var content: some View {
@@ -200,7 +198,7 @@ struct MainWindowView: View {
                 let shown = page == kept
                 Group {
                     if kept == .workLog {
-                        WorkLogView(store: .shared, page: workLogPage, isActive: shown)
+                        WorkLogView(store: .shared, page: workLogPage, isActive: shown, openOverdue: openOverdue)
                     } else if kept == .design {
                         DesignHistoryView(sync: .shared, settings: .shared, page: designPage, isActive: shown)
                     } else {
@@ -216,6 +214,14 @@ struct MainWindowView: View {
         }
         // 화면을 떠나며 숨긴 화면의 글 칸에 초점이 남으면 치는 글이 보이지 않는 곳으로 간다
         .onChange(of: page) { _ in NSApp.keyWindow?.makeFirstResponder(nil) }
+    }
+
+    /// 업무 일지 달력의 "마감이 지난 내 일감"에서 레드마인 화면을 기한 지남으로 걸러 연다.
+    private var openOverdue: () -> Void {
+        { [navigator] in
+            RedmineStore.shared.showOverdue()
+            navigator.go(.redmine)
+        }
     }
 
     @ViewBuilder
@@ -236,14 +242,7 @@ struct MainWindowView: View {
                 popover.id(page)
             }
         case .workLog:
-            WorkLogView(store: .shared, page: workLogPage)
-        case .calendar:
-            CalendarPageView(store: .shared, page: workLogPage) { [navigator, workLogPage] day in
-                workLogPage.search = ""
-                workLogPage.day = day
-                workLogPage.mode = .day
-                navigator.go(.workLog)
-            }
+            WorkLogView(store: .shared, page: workLogPage, openOverdue: openOverdue)
         case .design:
             DesignHistoryView(sync: .shared, settings: .shared, page: designPage)
         case .hosts:

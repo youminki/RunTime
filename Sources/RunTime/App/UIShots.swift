@@ -102,11 +102,14 @@ enum UIShots {
     }
 
     /// 앱 창을 기본 크기로, 고른 화면을 띄운 채 찍는다 (사용량에서 들어온 것처럼 뒤로 단추가 켜진다).
-    private static func mainPage(_ page: MainPage, engine: UsageEngine, workLog: WorkLogPage.Mode = .day) -> AnyView {
+    private static func mainPage(_ page: MainPage, engine: UsageEngine, workLog: WorkLogPage.Mode = .day,
+                                 monthCalendar: Bool = false) -> AnyView {
         let navigator = MainNavigator()
         navigator.start(at: page)
+        let workLogPage = workLogPage(workLog)
+        workLogPage.monthCalendar = monthCalendar
         return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
-                                      workLogPage: workLogPage(workLog), settingsTab: SettingsTabState(.general))
+                                      workLogPage: workLogPage, settingsTab: SettingsTabState(.general))
             .frame(width: mainSize.width, height: mainSize.height))
     }
 
@@ -298,7 +301,7 @@ enum UIShots {
             ("main-runners-decor", .darkAqua, nil, runnersTab(.decor, engine: engine)),
             ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),
             ("main-worklog-dark", .darkAqua, nil, mainPage(.workLog, engine: engine)),
-            ("main-calendar", .aqua, nil, mainPage(.calendar, engine: engine)),
+            ("main-calendar", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .month, monthCalendar: true)),
             // 레드마인은 RUNTIME_REDMINE_URL·KEY로 실제 레드마인을 읽는다 (보내지 않음). RUNTIME_SHOT_ISSUE면 그 일감 상세까지
             ("main-redmine", .aqua, nil, {
                 if let id = ProcessInfo.processInfo.environment["RUNTIME_SHOT_ISSUE"].flatMap(Int.init) { RedmineStore.shared.selected = id }
@@ -323,7 +326,7 @@ enum UIShots {
                 RedmineStore.shared.layout = ["timeline": .timeline, "board": .board, "calendar": .calendar, "activity": .activity][wanted ?? ""] ?? (wanted != nil ? .tree : .list)
                 return mainPage(.redmine, engine: engine)
             }()),
-            ("main-calendar-dark", .darkAqua, nil, mainPage(.calendar, engine: engine)),
+            ("main-calendar-dark", .darkAqua, nil, mainPage(.workLog, engine: engine, workLog: .month, monthCalendar: true)),
             ("main-worklog-week", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .week)),
             ("main-hosts", .aqua, nil, mainPage(.hosts, engine: engine)),
             ("main-hosts-dark", .darkAqua, nil, mainPage(.hosts, engine: engine)),

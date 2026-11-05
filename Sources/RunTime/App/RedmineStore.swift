@@ -37,7 +37,7 @@ final class RedmineStore: ObservableObject {
 
     /// 받은 목록을 한 번 더 걸러 보는 빠른 거르기 (다시 받지 않는다).
     enum Quick: String, CaseIterable {
-        case all = "전체", recent = "최근 변경", stabilization = "안정화", qa = "QA·결함", dueSoon = "기한 임박", unassigned = "담당 없음"
+        case all = "전체", recent = "최근 변경", stabilization = "안정화", qa = "QA·결함", dueSoon = "기한 임박", overdue = "기한 지남", unassigned = "담당 없음"
     }
 
     /// 목록을 보이는 방식. 트리와 일정은 상위·하위를 편 줄을 쓴다.
@@ -1124,7 +1124,21 @@ final class RedmineStore: ObservableObject {
             let soon = WorkDay.adding(3, to: WorkDay.today())
             let closed = Set(statuses.filter { $0.isClosed == true }.map(\.id))
             return (issue.dueDate ?? "9999") <= soon && issue.doneRatio < 100 && !closed.contains(issue.status.id)
+        case .overdue:
+            let closed = Set(statuses.filter { $0.isClosed == true }.map(\.id))
+            return (issue.dueDate ?? "9999") < WorkDay.today() && issue.doneRatio < 100 && !closed.contains(issue.status.id)
         }
+    }
+
+    /// 업무 일지 달력의 "마감이 지난 내 일감"에서 넘어올 때: 내 열린 일감 가운데 기한 지난 것만 보인다.
+    func showOverdue() {
+        scope = .mine
+        statusFilter = .open
+        search = ""
+        refine = [:]
+        quick = .overdue
+        // 작업 내역 보기에는 빠른 거르기가 없다
+        if layout == .activity { layout = .list }
     }
 
     /// 빠른 거르기마다 건수 (칩 옆에 보인다).

@@ -33,15 +33,12 @@ final class WorkLogPage: ObservableObject {
     }
     /// 직접 켜고 끈 댓글. 자동 판정이 풀려도 사용자가 고른 대로 둔다.
     var noteChosen: Set<Int> = []
-    /// 캘린더에서 고른 날. 구경만 해도 일지의 날이 바뀌면 다른 날에 적게 되어 따로 둔다.
-    @Published var calendarDay = WorkDay.today()
     /// Claude로 다듬는 중인 날.
     @Published var polishingDay: String?
     /// 고른 날. 바꾸면 왼쪽 달력도 그 달로 간다.
     @Published var day = WorkDay.today() {
         didSet {
             calendarMonth = WorkDay.month(of: day).lowerBound
-            calendarDay = day
             if day != oldValue { dayReport = Self.defaultReport(for: day) }
         }
     }
@@ -61,8 +58,12 @@ final class WorkLogPage: ObservableObject {
     /// 왼쪽 달력에 보이는 달의 1일. 달력 화살표로는 고른 날을 두고 달력만 넘긴다.
     @Published var calendarMonth = WorkDay.month(of: WorkDay.today()).lowerBound
     @Published var search = ""
-    /// 달력에서 이 프로젝트만 보인다. nil이면 모두.
+    /// 월간 달력에서 이 프로젝트만 보인다. nil이면 모두.
     @Published var calendarProject: String?
+    /// 월간을 목록 대신 달력으로 본다.
+    @Published var monthCalendar = UserDefaults.standard.bool(forKey: "workLog.monthCalendar") {
+        didSet { UserDefaults.standard.set(monthCalendar, forKey: "workLog.monthCalendar") }
+    }
     /// 사이드바에서 끌고 있는 프로젝트.
     @Published var draggingProject: String?
     /// 끌어서 정한 칸 너비. nil이면 창 너비에 맞춘 자동 너비를 쓴다.
@@ -71,9 +72,6 @@ final class WorkLogPage: ObservableObject {
     }
     @Published var previewWidth: CGFloat? = WorkLogPage.stored("workLog.previewWidth") {
         didSet { WorkLogPage.store(previewWidth, "workLog.previewWidth") }
-    }
-    @Published var calendarDetailWidth: CGFloat? = WorkLogPage.stored("calendar.detailWidth") {
-        didSet { WorkLogPage.store(calendarDetailWidth, "calendar.detailWidth") }
     }
 
     private static func stored(_ key: String) -> CGFloat? {
@@ -222,7 +220,6 @@ final class WorkLogPage: ObservableObject {
     func resetToToday() {
         _ = dayChange
         day = WorkDay.today()
-        calendarDay = day
         dayReport = Self.defaultReport(for: day)
         editing = nil
         statusPicking = nil
@@ -248,10 +245,20 @@ enum WorkLogFormat {
         return (String(text[..<open]).trimmingCharacters(in: .whitespaces), status)
     }
 
-    /// `A > B > C > 이름`의 마지막 두 단계만. 단계가 둘 이하면 그대로.
-    static func shortPath(_ title: String) -> String {
-        let parts = title.components(separatedBy: " > ")
-        return parts.count > 2 ? parts.suffix(2).joined(separator: " > ") : title
+    /// 묶음 머리 이름: 앞 단계는 옅게, 마지막 단계는 진하게, 사이는 `›`로.
+    static func pathText(_ path: String) -> Text {
+        let parts = path.components(separatedBy: " > ")
+        let head = parts.dropLast().map { Text($0 + "  ›  ").foregroundColor(WL.muted) }
+        let last = Text(parts.last ?? path).fontWeight(.semibold).foregroundColor(WL.text)
+        return (head.reduce(Text(""), +) + last).font(.system(size: 13.5))
+    }
+
+    /// 줄 제목: 끝 이름을 먼저 쓰고 남은 경로는 뒤에 옅게 둬, 좁아도 이름이 잘리지 않게 한다.
+    static func titleText(_ title: String) -> Text {
+        let crumb = breadcrumb(title)
+        guard let path = crumb.path else { return Text(title).foregroundColor(WL.text) }
+        return Text(crumb.leaf).foregroundColor(WL.text)
+            + Text("   " + path.replacingOccurrences(of: " > ", with: " › ")).font(.system(size: 12.5)).foregroundColor(WL.quiet)
     }
 
     /// `화면 > 기능 > 할 일`을 앞 경로와 마지막 이름으로 나눈다. 읽기 전용 줄에서 이름만 크게 보이고 경로는 아래 작은 글로 둔다.
@@ -262,41 +269,27 @@ enum WorkLogFormat {
         return leaf.isEmpty || path.isEmpty ? (nil, title) : (path, leaf)
     }
 
-    /// 같은 메뉴 경로를 쓰는 줄 묶음. 둘 이상이 같은 경로면 경로를 묶음 제목으로 올리고(`path`), 혼자면 경로 없이 둔다.
-    struct PathGroup: Identifiable {
-        let id: String
-        let path: String?
-        let entries: [WorkEntry]
+    /// 제목이 그 묶음 경로 아래인지. 경로 앞뒤 빈칸이 달라도 같은 경로면 아래로 본다.
+    static func isUnder(_ title: String, _ path: String) -> Bool {
+        title.hasPrefix(path + " > ") || breadcrumb(title).path == path
     }
 
-    /// 보고서의 "같은 메뉴는 묶어 쓰기"와 같은 규칙으로 화면 줄도 묶는다. 묶음은 첫 줄이 있던 자리에 둔다.
-    /// `pinned`는 글을 고치고 있는 줄의 묶음 경로("" = 묶음 없음). 치는 도중 다른 묶음으로 옮겨 가 초점이 풀리지 않게 고정한다.
-    static func pathGroups(_ entries: [WorkEntry], pinned: [UUID: String] = [:]) -> [PathGroup] {
-        func pathOf(_ entry: WorkEntry) -> String? {
+    /// 줄 제목에서 위 묶음 경로를 뗀 나머지 (`쿼리 목록 > 삭제`). 묶음 밖이거나 그 묶음 아래가 아니면 그대로.
+    static func relative(_ title: String, to path: String?) -> String {
+        guard let path, isUnder(title, path) else { return title }
+        if title.hasPrefix(path + " > ") { return String(title.dropFirst(path.count + 3)) }
+        return breadcrumb(title).leaf
+    }
+
+    /// 화면 줄을 경로 트리로 늘어놓는다 (`WorkPathTree`). 보고서는 지금처럼 같은 경로끼리만 묶어 쓴다.
+    /// `pinned`는 글을 고치는 줄의 묶음 경로("" = 묶음 없음). 치는 도중 다른 묶음으로 옮겨 가거나 묶음이 풀려
+    /// 초점이 풀리지 않게 그 자리에 고정한다.
+    static func pathTree(_ entries: [WorkEntry], pinned: [UUID: String] = [:],
+                         isFolded: (String) -> Bool = { _ in false }) -> [WorkPathTree.Item] {
+        WorkPathTree.items(entries, placement: { entry in
             if let fixed = pinned[entry.id] { return fixed.isEmpty ? nil : fixed }
             return breadcrumb(entry.title).path
-        }
-        var counts: [String: Int] = [:]
-        for entry in entries { if let path = pathOf(entry) { counts[path, default: 0] += 1 } }
-        // 고친 줄이 묶음을 떠나 혼자 남은 경로도 고치는 동안은 묶음 제목을 지킨다
-        // 지운 줄의 고정은 세지 않는다 (고치다 지우면 초점 해제 소식이 오지 않을 수 있다)
-        let present = Set(entries.map(\.id))
-        for (id, path) in pinned where !path.isEmpty && present.contains(id) { counts[path, default: 0] += 1 }
-        var groups: [PathGroup] = []
-        var index: [String: Int] = [:]
-        for entry in entries {
-            guard let path = pathOf(entry), counts[path, default: 0] > 1 else {
-                groups.append(PathGroup(id: entry.id.uuidString, path: nil, entries: [entry]))
-                continue
-            }
-            if let at = index[path] {
-                groups[at] = PathGroup(id: groups[at].id, path: path, entries: groups[at].entries + [entry])
-            } else {
-                index[path] = groups.count
-                groups.append(PathGroup(id: "path:" + path, path: path, entries: [entry]))
-            }
-        }
-        return groups
+        }, keeps: { pinned[$0.id]?.isEmpty == false }, isFolded: isFolded)
     }
 
     /// 레드마인에서 함께 바뀔 칸을 짧은 말로: `할일 → 완료`, `시작 10.21`, `담당 홍길동`.

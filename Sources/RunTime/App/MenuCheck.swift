@@ -73,13 +73,15 @@ enum MenuCheck {
             if let entry { store.delete(entry.id) }
             check("넣은 줄을 지운다", store.log.entries.count == lines)
 
-            navigator.go(.calendar)
-            await settle()
-            let day = page.day
-            page.calendarDay = WorkDay.adding(-3, to: day)
-            await settle()
-            check("캘린더에서 날을 골라도 일지의 날은 그대로다", page.day == day)
-            capture(main, "calendar-pick", into: folder)
+            // 목록·달력 선택은 저장되어, 점검이 끝나면 쓰던 값으로 돌려 둔다
+            let monthCalendar = page.monthCalendar
+            page.mode = .month
+            page.monthCalendar = true
+            await settle(0.8)
+            check("월간을 달력으로 본다", page.mode == .month && page.monthCalendar)
+            capture(main, "worklog-month-calendar", into: folder)
+            page.monthCalendar = monthCalendar
+            page.mode = .day
 
             navigator.go(.hosts)
             await settle()
