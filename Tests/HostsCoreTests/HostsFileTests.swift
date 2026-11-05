@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import HostsCore
 
@@ -295,5 +296,63 @@ private let sample = """
     @Test func exportsEnabledItemsAligned() {
         let file = HostsFile("## Dev\n203.0.113.1 a.example.com\n#203.0.113.2 off.example.com\n198.51.100.10 b.example.com\n")
         #expect(HostsFile.exportText(title: "Dev", items: file.items) == "## Dev\n203.0.113.1   a.example.com\n198.51.100.10 b.example.com\n")
+    }
+}
+
+@Suite struct HostProbeTests {
+    private let now = Date(timeIntervalSince1970: 1_790_000_000)
+
+    private func probe(ip: String = "192.168.0.5", resolved: [String]? = nil, https: HostProbe.Port = .open, http: HostProbe.Port = .open,
+                       status: Int? = 200, expiry: Date? = nil, trusted: Bool? = true) -> HostProbe {
+        HostProbe(name: "a.test", ip: ip, resolved: resolved ?? [ip], https: https, http: http, status: status,
+                  certificateExpiry: expiry, certificateTrusted: trusted)
+    }
+
+    @Test func serverThatAnswersIsOK() {
+        #expect(probe().verdict(now: now).level == .ok)
+        // 닿기는 한 것이라 401·404도 접속 문제가 아니다
+        #expect(probe(status: 404).verdict(now: now) == .init(level: .ok, label: "응답 404", detail: "서버가 응답합니다"))
+    }
+
+    @Test func resolvingElsewhereComesFirst() {
+        let verdict = probe(resolved: ["10.0.0.1"], https: .silent, http: .silent, status: nil).verdict(now: now)
+        #expect(verdict.level == .problem)
+        #expect(verdict.label == "다른 주소로 풀림")
+    }
+
+    @Test func silenceAndClosedPortsDiffer() {
+        let silent = probe(https: .silent, http: .silent, status: nil).verdict(now: now)
+        #expect(silent.level == .problem)
+        #expect(silent.detail.contains("VPN"))
+        // 공인 주소처럼 보이는 오타 주소는 VPN 탓으로 돌리지 않는다
+        #expect(!probe(ip: "191.168.10.40", https: .silent, http: .silent, status: nil).verdict(now: now).detail.contains("VPN"))
+        #expect(probe(https: .refused, http: .refused, status: nil).verdict(now: now).level == .warning)
+        #expect(probe(ip: "127.0.0.1", https: .refused, http: .refused, status: nil).verdict(now: now).level == .ok)
+        #expect(probe(status: nil).verdict(now: now).label == "웹 응답 없음")
+    }
+
+    @Test func serverErrorAndCertificates() {
+        #expect(probe(status: 502).verdict(now: now).label == "서버 오류 502")
+        #expect(probe(expiry: now.addingTimeInterval(-60)).verdict(now: now).label == "인증서 만료")
+        #expect(probe(expiry: now.addingTimeInterval(5.5 * 86_400)).verdict(now: now).label == "인증서 5일 남음")
+        #expect(probe(expiry: now.addingTimeInterval(90 * 86_400)).verdict(now: now).level == .ok)
+        #expect(probe(trusted: false).verdict(now: now).label == "인증서 미신뢰")
+    }
+
+    @Test func allLocalSilentMeansTheConnection() {
+        let silent = ["192.168.0.5", "10.1.1.1"].map { probe(ip: $0, https: .silent, http: .silent, status: nil) }
+        #expect(HostProbe.overview(silent)?.contains("VPN") == true)
+        #expect(HostProbe.overview(silent + [probe(ip: "10.1.1.2")]) == nil)
+        #expect(HostProbe.overview(Array(silent.prefix(1))) == nil)
+    }
+
+    @Test func readsStatusLine() {
+        #expect(HostProbe.status(fromHead: "HTTP/1.1 301 Moved\r\nServer: x") == 301)
+        #expect(HostProbe.status(fromHead: "SSH-2.0-OpenSSH") == nil)
+    }
+
+    @Test func hiddenIssueSurvivesLineMoves() {
+        let first = HostsIssue(kind: .mdns, line: 3, message: "m"), moved = HostsIssue(kind: .mdns, line: 9, message: "m")
+        #expect(first.hideKey == moved.hideKey)
     }
 }

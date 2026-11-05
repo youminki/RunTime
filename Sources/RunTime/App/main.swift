@@ -1,4 +1,5 @@
 import AppKit
+import HostsCore
 import ReportCore
 import UsageCore
 import WorkLogCore
@@ -385,6 +386,25 @@ if let index = CommandLine.arguments.firstIndex(of: "--redmine-check"),
 
 // 화면 점검: 주요 창을 실제 데이터로 찍어 PNG로 저장하고 종료.
 // 터미널이나 원격 접속으로 다른 Mac의 상태를 볼 때
+if CommandLine.arguments.contains("--hosts-check") {
+    MainActor.assumeIsolated {
+        var seen = Set<String>()
+        let targets = HostsStore.shared.sections.flatMap(\.items)
+            .filter { $0.enabled && seen.insert(HostsPage.probeKey($0.name, $0.ip)).inserted }.map { (name: $0.name, ip: $0.ip) }
+        Task {
+            var results: [HostProbe] = []
+            await HostsProber.probeAll(targets) { result in await MainActor.run { results.append(result) } }
+            for result in results.sorted(by: { $0.name < $1.name }) {
+                let verdict = result.verdict()
+                print("\(verdict.level)\t\(result.name)\t\(result.ip)\t\(verdict.label)")
+            }
+            if let overview = HostProbe.overview(results) { print(overview) }
+            exit(0)
+        }
+    }
+    RunLoop.main.run()
+}
+
 if CommandLine.arguments.contains("--diagnose") {
     _ = NSApplication.shared
     print(Diagnostics.report())

@@ -15,6 +15,8 @@ final class HostsPage: ObservableObject {
         case backups
         /// 묶음의 주소를 한 번에 바꾼다.
         case switchIP(HostsFile.Section)
+        /// 파일 전체를 터미널처럼 그대로 본다.
+        case raw
 
         var id: String {
             switch self {
@@ -23,6 +25,7 @@ final class HostsPage: ObservableObject {
             case .preview(let title, _, _): return "preview-\(title)"
             case .backups: return "backups"
             case .switchIP(let section): return "switch-\(section.id)"
+            case .raw: return "raw"
             }
         }
     }
@@ -47,9 +50,48 @@ final class HostsPage: ObservableObject {
     @Published var toast: String?
     /// 이름 → 맥이 실제로 푸는 주소. 확인을 누른 이름만.
     @Published var resolved: [String: [String]] = [:]
+    /// 접속 확인 결과. 열쇠는 `probeKey`.
+    @Published var probes: [String: HostProbe] = [:]
+    /// 접속 확인 중이면 끝난 수와 전체 수.
+    @Published var probing: (done: Int, total: Int)?
+    private var probeRun = 0
+    /// 사람이 보고 넘긴 경고. 고쳐서 사라졌다가 다시 잡혀도 또 뜨지 않게 저장한다.
+    @Published var hiddenIssues = Set(UserDefaults.standard.stringArray(forKey: "hosts.hiddenIssues") ?? []) {
+        didSet { UserDefaults.standard.set(hiddenIssues.sorted(), forKey: "hosts.hiddenIssues") }
+    }
     /// 살펴볼 곳이 많으면 3개만 보이고 접어 둔다. 목록이 화면 아래로 밀리지 않게.
     @Published var showAllIssues = false
     private var toastWork: DispatchWorkItem?
+
+    static func probeKey(_ name: String, _ ip: String) -> String { name + "|" + ip }
+
+    /// 켜진 줄을 모두 찔러 본다. 파일이 바뀌면 `clearProbes`가 이어지던 결과를 버린다.
+    func probe(_ items: [HostsFile.Item]) {
+        guard probing == nil else { return }
+        var seen = Set<String>()
+        let targets = items.filter { $0.enabled && seen.insert(Self.probeKey($0.name, $0.ip)).inserted }.map { (name: $0.name, ip: $0.ip) }
+        guard !targets.isEmpty else { return }
+        probes = [:]
+        probeRun += 1
+        let run = probeRun
+        probing = (0, targets.count)
+        Task {
+            await HostsProber.probeAll(targets) { result in
+                await MainActor.run {
+                    guard self.probeRun == run else { return }
+                    self.probes[Self.probeKey(result.name, result.ip)] = result
+                    self.probing = (self.probes.count, targets.count)
+                }
+            }
+            if probeRun == run { probing = nil }
+        }
+    }
+
+    func clearProbes() {
+        probeRun += 1
+        probes = [:]
+        probing = nil
+    }
 
     func flash(_ message: String) {
         withAnimation(.easeOut(duration: 0.15)) { toast = message }
@@ -75,7 +117,13 @@ struct HostsView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 heading
                 notices
+                probeSummary
                 if !issues.isEmpty { issueList }
+                if hiddenIssueCount > 0 {
+                    Button("숨긴 경고 \(hiddenIssueCount)개 다시 보기") { page.hiddenIssues.subtract(store.issues.map(\.hideKey)) }
+                        .buttonStyle(TextLinkButtonStyle())
+                        .padding(.bottom, 10)
+                }
                 searchField.id("hosts-search")
                 if !store.sections.isEmpty { filterBar }
                 if sections.isEmpty {
@@ -128,10 +176,14 @@ struct HostsView: View {
             case .preview(let title, let text, let base): HostsPreviewSheet(store: store, page: page, title: title, text: text, base: base)
             case .backups: HostsBackupSheet(store: store, page: page)
             case .switchIP(let section): HostsSwitchSheet(store: store, page: page, section: section)
+            case .raw: HostsRawSheet(store: store, page: page)
             }
         }
         // 파일이 바뀌면 맥의 이름 풀이도 바뀌었을 수 있어 지난 확인 결과를 지운다
-        .onChange(of: store.saved.text) { _ in page.resolved = [:] }
+        .onChange(of: store.saved.text) { _ in
+            page.resolved = [:]
+            page.clearProbes()
+        }
         .onAppear { store.setWatching(true) }
         .onDisappear { store.setWatching(false) }
     }
@@ -139,8 +191,12 @@ struct HostsView: View {
     /// 직접 볼 경고, 정리하면 고쳐지는 것, 참고 순. 접어 둘 때 중요한 것이 먼저 보이게.
     private var issues: [HostsIssue] {
         let rank: (HostsIssue) -> Int = { $0.isNotice ? 2 : $0.fixable ? 1 : 0 }
-        return store.issues.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
+        return store.issues.filter { !page.hiddenIssues.contains($0.hideKey) }
+            .enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
     }
+
+    /// 지금 파일에서 숨겨 둔 경고 수. 고쳐서 없어진 경고는 세지 않는다.
+    private var hiddenIssueCount: Int { store.issues.filter { page.hiddenIssues.contains($0.hideKey) }.count }
 
     private var sections: [HostsFile.Section] {
         let query = page.search.trimmingCharacters(in: .whitespaces).lowercased()
@@ -182,6 +238,16 @@ struct HostsView: View {
                     }
                     .tip("겹친 줄을 지우고 묶음별로 한 이름에 한 줄씩 다시 씁니다. 저장하기 전에 바뀌는 줄을 보여 줍니다")
                 }
+                Button { page.probe(store.sections.flatMap(\.items)) } label: {
+                    Label(page.probing.map { "확인 중 \($0.done)/\($0.total)" } ?? "접속 확인", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .buttonStyle(NotionButtonStyle())
+                .disabled(page.probing != nil || !items.contains(where: \.enabled))
+                .tip("켜진 이름마다 주소 풀이, 443·80 포트, 웹 응답, 인증서를 한 번에 봅니다. 암호를 묻지 않고 파일도 고치지 않습니다")
+                Button { page.sheet = .raw } label: { Image(systemName: "terminal") }
+                    .accessibilityLabel("원본 파일 보기")
+                    .buttonStyle(SquareIconButtonStyle(size: 28))
+                    .tip("/etc/hosts 전체를 터미널처럼 그대로 봅니다")
                 Button { page.sheet = .backups } label: { Image(systemName: "clock.arrow.circlepath") }
                     .accessibilityLabel("백업에서 되돌리기")
                     .buttonStyle(SquareIconButtonStyle(size: 28))
@@ -227,6 +293,34 @@ struct HostsView: View {
         }
     }
 
+    /// 접속 확인을 마친 뒤 몇 개가 어떤지와, 서버마다가 아니라 연결 문제인지를 위에 모은다.
+    @ViewBuilder private var probeSummary: some View {
+        if page.probing == nil, !page.probes.isEmpty {
+            let probes = Array(page.probes.values)
+            let levels = probes.map { $0.verdict().level }
+            let bad = probes.filter { $0.verdict().level == .problem }.map(\.name).sorted()
+            Callout {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 14) {
+                        Text("접속 확인").font(WL.heading)
+                        Tally(title: "정상", value: levels.filter { $0 == .ok }.count, tint: WL.done)
+                        Tally(title: "살펴볼 곳", value: levels.filter { $0 == .warning }.count, tint: WL.waiting)
+                        Tally(title: "문제", value: bad.count, tint: Color.red)
+                        Spacer()
+                        Button("지우기") { page.clearProbes() }.buttonStyle(TextLinkButtonStyle())
+                    }
+                    if let overview = HostProbe.overview(probes) {
+                        Text(overview).font(.system(size: 12.5)).foregroundStyle(WL.waiting)
+                    } else if !bad.isEmpty {
+                        Text(bad.prefix(3).joined(separator: ", ") + (bad.count > 3 ? " 외 \(bad.count - 3)개" : ""))
+                            .font(.system(size: 12.5)).foregroundStyle(WL.muted).lineLimit(1).truncationMode(.middle)
+                    }
+                }
+            }
+            .padding(.bottom, 14)
+        }
+    }
+
     private var issueList: some View {
         Callout {
             VStack(alignment: .leading, spacing: 6) {
@@ -248,7 +342,11 @@ struct HostsView: View {
                         Text("\(issue.line + 1)번째 줄").font(WL.number).foregroundStyle(WL.muted)
                         Text(issue.message).font(.system(size: 12.5))
                             .fixedSize(horizontal: false, vertical: true)
-
+                        Spacer(minLength: 8)
+                        Button { page.hiddenIssues.insert(issue.hideKey) } label: { Image(systemName: "xmark") }
+                            .buttonStyle(GhostIconButtonStyle())
+                            .accessibilityLabel("이 경고 숨기기")
+                            .tip("이 경고를 숨깁니다. 맞는 줄인데 경고가 뜰 때 씁니다")
                     }
                 }
             }
@@ -462,7 +560,11 @@ private struct HostRow: View {
                     .tip("\(expiry)까지만 켜 둡니다. 지나면 알려 드립니다")
             }
             Spacer(minLength: 8)
-            if let addresses = page.resolved[item.name] { resolution(addresses) }
+            if let probe = page.probes[HostsPage.probeKey(item.name, item.ip)] {
+                let verdict = probe.verdict()
+                DayBadge(text: verdict.label, tint: verdict.level == .ok ? WL.done : verdict.level == .warning ? WL.waiting : Color.red)
+                    .tip(verdict.detail)
+            } else if let addresses = page.resolved[item.name] { resolution(addresses) }
             Text(item.ip).font(.system(size: 12, design: .monospaced)).foregroundStyle(item.enabled ? WL.muted : WL.faint)
                 .lineLimit(1)
                 .frame(width: 130, alignment: .leading)
@@ -526,6 +628,85 @@ private struct HostRow: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("\(item.ip) \(item.name)", forType: .string)
         page.flash("복사했습니다")
+    }
+}
+
+// MARK: - 원본
+
+/// 파일 전체를 터미널처럼 본다. 읽기만 하고, 고치는 것은 목록이나 실제 터미널에서 한다.
+private struct HostsRawSheet: View {
+    @ObservedObject var store: HostsStore
+    @ObservedObject var page: HostsPage
+
+    private static let ink = Color(red: 0.86, green: 0.87, blue: 0.84)
+    private static let dim = Color(red: 0.47, green: 0.49, blue: 0.47)
+    private static let font = Font.system(size: 12.5, design: .monospaced)
+
+    private var lines: [String] {
+        var lines = store.saved.text.components(separatedBy: "\n")
+        if lines.last == "" { lines.removeLast() }
+        return lines
+    }
+
+    /// 주석은 흐리게 두어 살아 있는 줄이 먼저 보이게 한다.
+    private var content: AttributedString {
+        var text = AttributedString()
+        for (index, line) in lines.enumerated() {
+            var part = AttributedString(line + (index + 1 < lines.count ? "\n" : ""))
+            part.foregroundColor = line.trimmingCharacters(in: .whitespaces).hasPrefix("#") ? Self.dim : Self.ink
+            text += part
+        }
+        return text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("원본 파일").font(WL.heading)
+                Text("\(lines.count)줄").font(WL.caption).foregroundStyle(WL.muted)
+                Spacer()
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("$ cat \(HostsStore.url.path)").font(Self.font).foregroundStyle(Color(red: 0.45, green: 0.8, blue: 0.55))
+                ScrollView([.vertical, .horizontal]) {
+                    HStack(alignment: .top, spacing: 14) {
+                        Text(lines.indices.map { String($0 + 1) }.joined(separator: "\n"))
+                            .font(Self.font).foregroundStyle(Self.dim).multilineTextAlignment(.trailing)
+                        Text(content).font(Self.font).textSelection(.enabled)
+                    }
+                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(red: 0.07, green: 0.07, blue: 0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            HStack {
+                Button("전체 복사") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(store.saved.text, forType: .string)
+                    page.flash("복사했습니다")
+                }
+                .buttonStyle(NotionButtonStyle())
+                Button("터미널에서 열기") { HostsRawSheet.openInTerminal() }
+                    .buttonStyle(NotionButtonStyle())
+                    .tip("터미널 앱을 열어 파일 내용을 보여 줍니다. 이어서 그 창에서 sudo로 고칠 수 있습니다")
+                Spacer()
+                Button("닫기") { page.sheet = nil }.buttonStyle(NotionButtonStyle(kind: .primary)).keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 760, height: 560)
+    }
+
+    /// `.command` 파일은 자동화 권한을 묻지 않고 터미널로 열린다.
+    private static func openInTerminal() {
+        let path = "'" + HostsStore.url.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-hosts.command")
+        let text = "#!/bin/zsh\ncat -n \(path)\nexec \"$SHELL\" -l\n"
+        guard (try? text.write(to: script, atomically: true, encoding: .utf8)) != nil else { return }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        NSWorkspace.shared.open(script)
     }
 }
 

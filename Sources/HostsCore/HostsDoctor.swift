@@ -5,6 +5,8 @@ public struct HostsIssue: Identifiable, Equatable {
     public enum Kind: Equatable { case duplicate, conflict, invalid, brokenMarker, suspiciousIP, mdns }
 
     public var id: String { "\(line)-\(kind)-\(message)" }
+    /// 숨긴 경고를 기억할 열쇠. 위에 줄을 더해도 숨긴 채로 남게 줄 번호는 넣지 않는다.
+    public var hideKey: String { "\(kind)|\(message)" }
     public let kind: Kind
     /// 0부터 센 줄 번호. 화면에는 1을 더해 보인다.
     public let line: Int
