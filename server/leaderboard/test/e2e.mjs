@@ -114,4 +114,10 @@ assert.notEqual(r.body.ghost?.key, keyA, "기록을 지우면 고스트도 지�
 r = await call("GET", "/v1/leaderboard?limit=100", undefined, a);
 assert.equal(r.body.you, null, "지운 기록은 순위표에서 빠진다");
 
+// 문제 보고는 진짜 D1 질의를 거친다 (가짜 DB로 도는 단위 시험은 SQL 예약어 오류를 놓쳤다)
+r = await call("POST", "/v1/reports", { install: randomUUID(), kind: "app-hang", message: "e2e", app: "e2e", log: "x" });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+const page = await fetch(`${BASE}/v1/reports/${"0".repeat(32)}?t=${randomUUID()}`);
+assert.equal(page.status, 404, "없는 보고는 404 (질의가 깨지면 500)");
+
 console.log("e2e ok");

@@ -9,13 +9,15 @@ enum RedmineFlowCheck {
     static func prepare() -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-redmine-flow-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        func issue(_ id: Int, parent: Int? = nil, assigned: Bool = true) -> String {
+        func issue(_ id: Int, parent: Int? = nil, assigned: Bool = true, due: String? = nil) -> String {
             let parentText = parent.map { #""parent":{"id":\#($0)},"# } ?? ""
             let assignee = assigned ? #""assigned_to":{"id":7,"name":"나"},"# : ""
-            return #"{"id":\#(id),"project":{"id":1,"name":"시험"},"tracker":{"id":1,"name":"작업"},"status":{"id":1,"name":"할일"},"priority":{"id":2,"name":"보통"},\#(parentText)\#(assignee)"subject":"일감 \#(id)","done_ratio":0,"updated_on":"2026-11-01T00:00:00Z"}"#
+            let dueText = due.map { #""due_date":"\#($0)","# } ?? ""
+            return #"{"id":\#(id),"project":{"id":1,"name":"시험"},"tracker":{"id":1,"name":"작업"},"status":{"id":1,"name":"할일"},"priority":{"id":2,"name":"보통"},\#(parentText)\#(assignee)\#(dueText)"subject":"일감 \#(id)","done_ratio":0,"updated_on":"2026-11-01T00:00:00Z"}"#
         }
         let files: [String: String] = [
-            "issues.json": #"{"issues":[\#(issue(10, parent: 2)),\#(issue(11, parent: 2))],"total_count":2,"offset":0,"limit":100}"#,
+            // 11은 마감이 지난 일감 (업무 일지 달력의 "마감이 지난 내 일감"이 거르는 것)
+            "issues.json": #"{"issues":[\#(issue(10, parent: 2)),\#(issue(11, parent: 2, due: "2026-01-02"))],"total_count":2,"offset":0,"limit":100}"#,
             "issues_10.json": #"{"issue":\#(issue(10, parent: 2).dropLast()),"description":"<ul><li>a</li></ul>","watchers":[],"journals":[]}}"#,
             "issues_123.json": #"{"issue":\#(issue(123))}"#,
             "created.json": #"{"issue":\#(issue(99))}"#,
@@ -85,7 +87,7 @@ enum RedmineFlowCheck {
     static func sheets() {
         Task {
             let store = RedmineStore.shared
-            func sheet() -> NSWindow? { NSApp.windows.compactMap(\.attachedSheet).first }
+            @MainActor func sheet() -> NSWindow? { NSApp.windows.compactMap { $0.attachedSheet }.first }
             await settle(3)
             let id = store.issues[2].id
             store.selected = id
@@ -129,6 +131,15 @@ enum RedmineFlowCheck {
         await settle()
         check("없는 상위는 받아 보고 못 찾은 번호는 다시 묻지 않는다", store.rows.count == 2)
         store.layout = .list
+
+        store.search = "남은 찾는 말"
+        store.layout = .activity
+        store.showOverdue()
+        await settle()
+        check("기한 지남 칩이 마감 지난 일감만 센다", store.count(.overdue) == 1)
+        check("달력에서 넘어오면 기한 지남만 보인다",
+              store.quick == .overdue && store.search.isEmpty && store.layout == .list && store.rows.map(\.issue.id) == [11])
+        store.quick = .all
 
         store.selected = 10
         await settle()

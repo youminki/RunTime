@@ -10,6 +10,8 @@ enum MenuCheck {
 
     private static func check(_ name: String, _ ok: Bool) {
         print((ok ? "통과  " : "실패  ") + name)
+        // 출력을 파일로 받으면 끝날 때 한꺼번에 써져, 오래 걸리는 단계가 멈춘 것처럼 보인다
+        fflush(stdout)
         if !ok { failures += 1 }
     }
 
@@ -32,6 +34,46 @@ enum MenuCheck {
         process.arguments = ["-x", "-o", "-l", String(window.windowNumber), folder + "/" + name + ".png"]
         try? process.run()
         process.waitUntilExit()
+    }
+
+    /// 묶음 안 줄을 실제 글 칸으로 고친다. 초점을 주면 그 묶음에 고정되고, 글자를 넣으면 경로가 다시 붙고,
+    /// 고치는 동안 묶음이 풀리지 않고, 고치는 중에 묶음을 접으면 고정이 풀리는지 본다.
+    private static func editInsidePathGroup(_ window: NSWindow, page: WorkLogPage, store: WorkLogStore) async {
+        let (today, path) = (WorkDay.today(), "점검 > 묶음")
+        (page.search, page.mode, page.day) = ("", .day, today)
+        let added = ["첫째 줄", "둘째 줄"].compactMap { store.add(day: today, project: "점검", title: path + " > " + $0) }
+        await settle(0.8)
+        let field = textField(showing: "첫째 줄", in: window.contentView)
+        check("묶음 안 줄은 글 칸에 끝 이름만 보인다", added.count == 2 && field != nil)
+        if let field, let id = added.first?.id {
+            window.makeFirstResponder(field)
+            await settle(0.4)
+            check("글 칸에 초점을 주면 그 묶음에 고정된다", page.pinnedPaths[id] == path)
+            if let editor = window.firstResponder as? NSTextView {
+                editor.moveToEndOfDocument(nil)
+                editor.insertText(" 고침", replacementRange: NSRange(location: NSNotFound, length: 0))
+            }
+            await settle(0.4)
+            check("고친 이름 앞에 경로가 다시 붙는다", store.entry(id)?.title == path + " > 첫째 줄 고침")
+            check("고치는 동안 초점이 글 칸에 남는다", (window.firstResponder as? NSTextView)?.delegate === field)
+            let shown = WorkLogFormat.pathTree(store.log.entries(on: today).filter { $0.project == "점검" }, pinned: page.pinnedPaths)
+            check("고치는 동안 묶음 머리가 그대로다", shown.contains { if case .heading(path, _, _, 2) = $0 { true } else { false } })
+            let folds = PathFolds(page: page, scope: "day|점검")
+            folds.toggle(path)
+            await settle(0.6)
+            check("고치는 중에 묶음을 접으면 고정이 풀린다", page.pinnedPaths[id] == nil)
+            folds.toggle(path)
+        }
+        window.makeFirstResponder(nil)
+        for entry in added { store.delete(entry.id) }
+        await settle(0.4)
+    }
+
+    /// 화면에서 그 글을 보이는 고칠 수 있는 글 칸.
+    private static func textField(showing text: String, in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.isEditable, field.stringValue == text { return field }
+        return view.subviews.lazy.compactMap { textField(showing: text, in: $0) }.first
     }
 
     /// 다음 화면을 그릴 때까지 메인 스레드가 얼마나 막히는지 잰다.
@@ -72,6 +114,8 @@ enum MenuCheck {
             }
             if let entry { store.delete(entry.id) }
             check("넣은 줄을 지운다", store.log.entries.count == lines)
+
+            await editInsidePathGroup(main, page: page, store: store)
 
             // 목록·달력 선택은 저장되어, 점검이 끝나면 쓰던 값으로 돌려 둔다
             let monthCalendar = page.monthCalendar
