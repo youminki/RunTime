@@ -258,7 +258,8 @@ struct MainWindowView: View {
                             navigator.go(.workLog)
                         })
         case .settings:
-            SettingsView(settings: settings, engine: engine, tab: settingsTab, workLog: workLogPage)
+            SettingsView(settings: settings, engine: engine, tab: settingsTab, workLog: workLogPage,
+                         openRunners: { [navigator] in navigator.go(.runners) })
         }
     }
 }

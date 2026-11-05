@@ -10,13 +10,16 @@ struct SettingsView: View {
     @ObservedObject var tab: SettingsTabState
     /// 업무 일지 연동 칸(GitLab·레드마인…)은 업무 일지 화면과 같은 상태를 쓴다. 고른 칸도 거기 둔다.
     @ObservedObject var workLog: WorkLogPage
+    /// 러너 고르기는 무대가 있는 러너 화면에서 한다.
+    var openRunners: () -> Void = {}
     @ObservedObject private var workLogSettings = WorkLogSettings.shared
     @ObservedObject private var workLogSync = WorkLogSync.shared
     @StateObject private var hotKeyRecorder = HotKeyRecorder()
 
     enum Tab: Hashable { case general, runner, usage, workLog, design, designAlerts }
 
-    init(settings: AppSettings, engine: UsageEngine, tab: SettingsTabState, workLog: WorkLogPage) {
+    init(settings: AppSettings, engine: UsageEngine, tab: SettingsTabState, workLog: WorkLogPage, openRunners: @escaping () -> Void = {}) {
+        self.openRunners = openRunners
         self.settings = settings
         self.engine = engine
         self.tab = tab
@@ -223,8 +226,9 @@ struct SettingsView: View {
             }
 
             GroupedSection("러너 고르기", footer: "직접 만들었거나 쓸 권리가 있는 그림만 불러오세요. 불러온 그림은 이 Mac에만 저장되고 어디로도 보내지 않습니다.") {
-                RunnerPicker(settings: settings)
-                    .padding(12)
+                GroupedRow("러너와 꾸미기", icon: "hare.fill", tint: Palette.orange) {
+                    Button("러너 화면 열기", action: openRunners)
+                }
             }
         }
     }

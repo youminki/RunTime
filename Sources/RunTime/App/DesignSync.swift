@@ -210,6 +210,8 @@ final class DesignSync: ObservableObject {
     private var menuCompletions: [(job: MenuJob, done: (Int) -> Void)] = []
     /// 기록 파일을 읽지 못했으면 덮어쓰지 않게 저장을 막는다.
     private(set) var loadError: String?
+    /// 기록 파일을 뒤에서 읽는 중. 이 동안 가져오면 모든 화면이 새 화면으로 잡혀 받지 않는다.
+    private(set) var loading = false
 
     let settings = DesignSyncSettings.shared
     private var timer: Timer?
@@ -224,10 +226,25 @@ final class DesignSync: ObservableObject {
     private let saveQueue = DispatchQueue(label: "dev.runtime.RunTime.design-history", qos: .utility)
 
     private init() {
+        history = DesignHistory()
+        // 점검 명령은 읽은 값을 바로 쓴다
+        guard CommandLine.arguments.count == 1 else {
+            finishLoading(Result { try DesignHistoryFile.load() })
+            return
+        }
+        // 기록이 수십 MB라 메인에서 읽으면 앱을 켤 때 1초쯤 멈춘다
+        loading = true
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = Result { try DesignHistoryFile.load() }
+            await self?.finishLoading(result)
+        }
+    }
+
+    private func finishLoading(_ result: Result<DesignHistory, Error>) {
+        loading = false
         do {
-            history = try DesignHistoryFile.load()
+            history = try result.get()
         } catch {
-            history = DesignHistory()
             loadError = "디자인 기록 파일을 읽지 못해 새 기록을 저장하지 않습니다: \(error.localizedDescription)"
             ProblemReporter.screen("디자인", loadError ?? "", detail: "오류: \(error)")
             // 체크가 저장되지 않으니 처음부터 화면에 알린다
@@ -302,7 +319,7 @@ final class DesignSync: ObservableObject {
 
     /// 주기를 정한 프로젝트 가운데 때가 된 것만 받는다. 누를 때만 받는 프로젝트는 건드리지 않는다.
     private func tick() {
-        guard !syncing, settings.hasToken else { return }
+        guard !syncing, !loading, settings.hasToken else { return }
         let due = dueKeys(now: Date())
         guard !due.isEmpty else { return }
         sync(keys: due)
@@ -529,6 +546,10 @@ final class DesignSync: ObservableObject {
 
     /// `keys`가 없으면 숨기지 않은 프로젝트 전부, 있으면 그 프로젝트만 (숨겼어도 지금 가져오기로 고른 것은 받는다).
     func sync(keys: Set<String>?, completion: ((Int) -> Void)? = nil) {
+        guard !loading else {
+            completion?(0)
+            return
+        }
         guard !syncing else {
             // 받는 중에 누른 프로젝트는 이번 차례가 끝나면 그 프로젝트만 받는다
             if let keys { queued.formUnion(keys.subtracting(fetching.map { [$0] } ?? [])) } else { queuedAll = true }
@@ -541,6 +562,10 @@ final class DesignSync: ObservableObject {
     /// 메뉴(묶음이면 그 아래 전부)만 받는다. 받는 중이면 줄을 세워 두었다가 이어서 받는다.
     func syncMenu(_ path: String, in fileKey: String, completion: ((Int) -> Void)? = nil) {
         let job = MenuJob(fileKey: fileKey, paths: [path])
+        guard !loading else {
+            completion?(0)
+            return
+        }
         guard !syncing else {
             if fetchingMenu != job && !queuedMenus.contains(job) { queuedMenus.append(job) }
             if let completion { menuCompletions.append((job, completion)) }
@@ -856,7 +881,8 @@ final class DesignSync: ObservableObject {
     }
 
     private func persist() {
-        guard loadError == nil else { return }
+        // 읽기 전에 저장하면 빈 기록이 파일을 덮는다
+        guard loadError == nil, !loading else { return }
         let snapshot = history
         saveQueue.async {
             do {
@@ -889,6 +915,7 @@ final class DesignSync: ObservableObject {
     /// 피그마 링크를 더한다. `node-id`가 있으면 그 화면(프레임·섹션·페이지)만, 없으면 파일 전체를 지켜본다.
     /// 같은 파일의 다른 화면 링크는 그 파일의 화면 목록에 더한다.
     func addLink(_ input: String) async -> Result<AddedLink, LinkProblem> {
+        guard !loading else { return .failure(LinkProblem(message: "기록을 읽는 중입니다. 잠시 뒤 다시 넣으세요")) }
         guard let key = FigmaFileURL.fileKey(from: input) else { return .failure(LinkProblem(message: "피그마 디자인 파일 주소가 아닙니다")) }
         let node = FigmaFileURL.nodeID(from: input)
         guard let token = settings.token else { return .failure(LinkProblem(message: "피그마 토큰을 먼저 넣으세요")) }
