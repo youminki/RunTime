@@ -228,6 +228,8 @@ final class DesignSync: ObservableObject {
     private let placeFolder = DesignPlaceFile.folder()
     /// 최근에 연 화면의 자리. 화면 상세는 마우스만 지나가도 다시 그려져 파일을 매번 읽지 않는다.
     private var placeCache: [String: DesignPlaceFile.Places] = [:]
+    /// 자리 파일을 아직 쓰지 않은 화면(키마다 남은 쓰기 수). 그동안은 캐시가 디스크보다 새것이라 비울 때 남긴다.
+    private var pendingPlaces: [String: Int] = [:]
 
     private init() {
         history = DesignHistory()
@@ -458,7 +460,10 @@ final class DesignSync: ObservableObject {
     private func attachPlaces(_ fileKey: String) async {
         let frames = Array(history.files[fileKey]?.screens.keys ?? [:].keys)
         let folder = placeFolder
-        let places = await Task.detached(priority: .userInitiated) { DesignPlaceFile.readAll(fileKey, frames: frames, in: folder) }.value
+        // 앞서 미룬 자리 쓰기가 끝난 뒤에 읽어야 옛 자리를 붙였다가 다시 써 버리지 않는다
+        let places = await withCheckedContinuation { continuation in
+            saveQueue.async { continuation.resume(returning: DesignPlaceFile.readAll(fileKey, frames: frames, in: folder)) }
+        }
         DesignPlaceFile.attach(places, to: &history, fileKey: fileKey)
     }
 
@@ -466,12 +471,23 @@ final class DesignSync: ObservableObject {
     private func detachPlaces(_ fileKey: String) {
         let moved = DesignPlaceFile.detach(&history, fileKey: fileKey)
         guard !moved.isEmpty else { return }
-        for item in moved { placeCache[fileKey + "|" + item.frameID] = item.places }
+        let keys = moved.map { fileKey + "|" + $0.frameID }
+        for (key, item) in zip(keys, moved) {
+            placeCache[key] = item.places
+            pendingPlaces[key, default: 0] += 1
+        }
         let folder = placeFolder
         saveQueue.async {
             var failed = 0
             for item in moved {
                 do { try DesignPlaceFile.write(item.places, item.fileKey, item.frameID, in: folder) } catch { failed += 1 }
+            }
+            Task { @MainActor in
+                let sync = DesignSync.shared
+                for key in keys {
+                    let left = (sync.pendingPlaces[key] ?? 1) - 1
+                    sync.pendingPlaces[key] = left > 0 ? left : nil
+                }
             }
             if failed > 0 {
                 ProblemReporter.screen("디자인", "화면 자리 파일을 쓰지 못함", detail: "파일: \(fileKey) · 못 쓴 화면 \(failed)/\(moved.count)개")
@@ -485,11 +501,12 @@ final class DesignSync: ObservableObject {
         let key = fileKey + "|" + screen.frameID
         if placeCache[key] == nil {
             // 상세를 여러 개 오가도 몇 MB를 넘지 않게 오래 둔 것부터 비운다
-            if placeCache.count > 40 { placeCache.removeAll() }
-            placeCache[key] = DesignPlaceFile.read(fileKey, screen.frameID, in: placeFolder) ?? [:]
+            if placeCache.count > 40 { placeCache = placeCache.filter { pendingPlaces[$0.key] != nil } }
+            // 못 읽은 화면은 넣지 않아, 파일이 생긴 뒤 다시 열면 읽는다
+            placeCache[key] = DesignPlaceFile.read(fileKey, screen.frameID, in: placeFolder)
         }
         var filled = screen
-        filled.places = placeCache[key]
+        filled.places = placeCache[key] ?? [:]
         return filled
     }
 
