@@ -121,6 +121,11 @@ struct ColumnDivider: View {
                         state.hovering = inside
                         if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
                     }
+                    // 올린 채 칸이 사라지면(화면 전환, 상세 닫기) 떠났다는 소식이 오지 않아 화살표 커서가 남는다
+                    .onDisappear {
+                        if state.hovering { NSCursor.pop() }
+                        state.hovering = false
+                    }
                     .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                         .onChanged { value in
                             let start = state.start ?? width

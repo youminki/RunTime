@@ -733,7 +733,7 @@ final class TipWindow {
     func show(_ text: String, below rect: NSRect, appearance: NSAppearance) {
         // 긴 설명은 280pt에서 줄을 바꾼다. 짧은 이름표는 글 너비만큼만 쓴다
         let natural = text.components(separatedBy: "\n").map {
-            ($0 as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11.5, weight: .medium)]).width
+            ($0 as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12.5, weight: .medium)]).width
         }.max() ?? 0
         host.rootView = TipLabel(text: text, width: min(ceil(natural) + 1, 280))
         panel.appearance = appearance
