@@ -24,7 +24,12 @@ source scripts/toolchain.sh
 pick_toolchain
 
 echo "▸ release 빌드"
-swift build -c release
+# 기본 빌드 시스템의 release는 모듈 전체 최적화라 파일 하나만 바뀌어도 앱 모듈을 통째로 다시 컴파일해 업데이트마다 2분 넘게 걸린다.
+# 예전 빌드 시스템에서 이를 끄면 바뀐 파일만 다시 컴파일해 20초 안팎으로 끝난다. 이 방식이 없는 Swift면 기본 빌드로 한다
+if ! swift build -c release --build-system native -Xswiftc -no-whole-module-optimization; then
+  echo "▸ release 빌드 (기본 빌드 시스템으로 다시)"
+  swift build -c release
+fi
 
 APP=dist/RunTime.app
 rm -rf dist
@@ -73,15 +78,20 @@ cp assets/AppIcon.icns "$APP/Contents/Resources/"
 echo "▸ 서명: $CODESIGN_IDENTITY"
 codesign --force --deep -s "$CODESIGN_IDENTITY" "$APP"
 
-echo "▸ dmg 생성"
-hdiutil create -volname RunTime -srcfolder "$APP" -ov -format UDZO dist/RunTime.dmg > /dev/null
+# install.sh(자동 업데이트 포함)는 앱만 쓰고 dmg는 나눠 줄 때만 쓴다. 업데이트마다 만들 까닭이 없다
+if [ -n "${RUNTIME_APP_ONLY:-}" ] && [ -z "${NOTARY_PROFILE:-}" ]; then
+  echo "✓ 완료: $APP"
+else
+  echo "▸ dmg 생성"
+  hdiutil create -volname RunTime -srcfolder "$APP" -ov -format UDZO dist/RunTime.dmg > /dev/null
 
-if [ -n "${NOTARY_PROFILE:-}" ]; then
-  echo "▸ notarize 제출"
-  xcrun notarytool submit dist/RunTime.dmg --keychain-profile "$NOTARY_PROFILE" --wait
-  xcrun stapler staple "$APP"
-  xcrun stapler staple dist/RunTime.dmg
+  if [ -n "${NOTARY_PROFILE:-}" ]; then
+    echo "▸ notarize 제출"
+    xcrun notarytool submit dist/RunTime.dmg --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$APP"
+    xcrun stapler staple dist/RunTime.dmg
+  fi
+
+  echo "✓ 완료: $APP, dist/RunTime.dmg"
 fi
-
-echo "✓ 완료: $APP, dist/RunTime.dmg"
 codesign -dv "$APP" 2>&1 | grep -E "Identifier=|Authority" || true

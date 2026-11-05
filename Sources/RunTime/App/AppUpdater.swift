@@ -680,7 +680,7 @@ final class AppUpdater: ObservableObject {
         var remaining: TimeInterval?
     }
 
-    /// install.sh·build-app.sh가 남기는 줄로 단계를 나눈다. swift build의 `[12 / 56]`은 빌드 안의 진행이다.
+    /// install.sh·build-app.sh가 남기는 줄로 단계를 나눈다. swift build의 `[12 / 56]`(예전 빌드 시스템은 `[12/56]`)은 빌드 안의 진행이다.
     /// 분모가 빌드 계획이 늘며 커지므로 값이 잠깐 줄 수 있어, 쓰는 쪽에서 큰 값만 받는다.
     static func progress(inLog text: String) -> (fraction: Double, step: String) {
         var result = (fraction: 0.02, step: "준비하는 중")
@@ -700,7 +700,7 @@ final class AppUpdater: ObservableObject {
                 result = (0.92, "마무리하는 중")
             } else if line.hasPrefix("✓ 완료: dist/") {  // setup-signing.sh도 "✓ 완료:"를 찍는다
                 result = (0.97, "새 버전으로 다시 켜는 중")
-            } else if let match = line.firstMatch(of: #/^\[(\d+) / (\d+)\]/#),
+            } else if let match = line.firstMatch(of: #/^\[(\d+) ?/ ?(\d+)\]/#),
                       let done = Double(match.1), let total = Double(match.2), total > 0 {
                 result = (0.1 + 0.75 * min(done / total, 1), "빌드하는 중")
             }

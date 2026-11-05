@@ -46,7 +46,7 @@ ORIGIN=$(git remote get-url origin 2>/dev/null || true)
 RENAMED=$(printf '%s' "$ORIGIN" | sed -E 's#(github\.com[:/]youminki/)ClaudeTokenCat(\.git)?/?$#\1RunTime\2#')
 [ "$RENAMED" = "$ORIGIN" ] || git remote set-url origin "$RENAMED"
 [ ! -d Sources/TokenCat ] || find Sources/TokenCat -depth -type d -empty -delete
-scripts/build-app.sh
+RUNTIME_APP_ONLY=1 scripts/build-app.sh
 
 # 4) 응용 프로그램 폴더로 설치 (/Applications 불가 시 ~/Applications)
 TARGET="/Applications"
