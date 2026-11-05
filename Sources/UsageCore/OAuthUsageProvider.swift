@@ -82,6 +82,9 @@ public final class OAuthUsageProvider {
     private var liveRefreshedToken: String?
     /// credentialQueue 전용. 토큰 서버가 거절한 리프레시 토큰. 저장소 값이 이대로면 다시 보내지 않는다.
     private var rejectedRefreshToken: String?
+    /// credentialQueue 전용. 새로 받았더니 `~/.claude.json`과 다른 계정 것이던 액세스 토큰과 그 주인.
+    /// 저장소를 다시 읽어도 이 토큰이 나오므로, 그 계정으로 바뀌기 전에는 이 토큰으로 사용률을 받지 않는다.
+    private var foreignToken: (token: String, owner: String)?
     /// 새로 받은 토큰도 401이면 토큰 문제가 아니다. 그동안은 401만으로 리프레시 토큰을 다시 돌리지 않는다.
     static let refreshOn401Cooldown: TimeInterval = 30 * 60
 
@@ -139,10 +142,15 @@ public final class OAuthUsageProvider {
 
     private func fetchOnce(userAgent: String, clientVersion: String?) async throws -> OfficialUsage {
         guard let loaded = await accessToken() else { throw ProviderError.tokenNotFound }
+        // 401로 끝내면 위에서 이 토큰을 또 새로 받으려 해서 토큰 없음으로 끝낸다
+        if await onCredentialQueue({ self.isForeign(loaded.token) }) { throw ProviderError.tokenNotFound }
         var token = loaded.token
         // 이미 만료된 토큰이면 보내 봐야 401이다. Claude Code를 한동안 안 쓰면 이렇게 된다
-        if loaded.expiresAt <= Date(),
-           let fresh = await refreshLiveToken(rejectedToken: loaded.token, clientVersion: clientVersion) {
+        if loaded.expiresAt <= Date() {
+            // 새로 받지 못했으면(실패 쉬는 중, Claude Code가 받는 중) 보내지 않아 사용량 요청 한도를 아낀다
+            guard let fresh = await refreshLiveToken(rejectedToken: loaded.token, clientVersion: clientVersion) else {
+                throw ProviderError.http(401)
+            }
             token = fresh
         }
         return try await send(token, userAgent)
@@ -168,6 +176,12 @@ public final class OAuthUsageProvider {
 
     private func accessToken() async -> CachedToken? {
         await onCredentialQueue { self.loadAccessToken(now: Date()) }
+    }
+
+    /// credentialQueue 전용.
+    private func isForeign(_ token: String) -> Bool {
+        guard let foreign = foreignToken, foreign.token == token else { return false }
+        return currentAccountID() != foreign.owner
     }
 
     private func onCredentialQueue<T>(_ work: @escaping () -> T) async -> T {
@@ -252,7 +266,10 @@ public final class OAuthUsageProvider {
                     self.loginRequired = false
                     self.cachedToken = CachedToken(token: parsed.token, expiresAt: parsed.expiresAt)
                     // 키체인 토큰이 `~/.claude.json`과 다른 계정 것이면 그 값을 이 계정 사용률로 보이지 않는다
-                    if let owner, let current = self.currentAccountID(), owner != current { return nil }
+                    if let owner, let current = self.currentAccountID(), owner != current {
+                        self.foreignToken = (parsed.token, owner)
+                        return nil
+                    }
                     return parsed.token
                 case .rejected:
                     self.rejectedRefreshToken = ClaudeLogin.refreshToken(in: part)

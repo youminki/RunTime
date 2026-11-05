@@ -181,6 +181,13 @@ struct LiveTokenRefreshTests {
         #expect(provider.lockPaths().allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     }
 
+    @Test func expiredTokenIsNotSentWhenRefreshFails() async throws {
+        let box = Box(Self.credentials(token: "old", expiresIn: -60))
+        let provider = try provider(box, accepts: [], refresh: .unknown)
+        await #expect(throws: OAuthUsageProvider.ProviderError.self) { try await provider.fetch() }
+        #expect(box.sent.isEmpty)   // 401이 뻔한 요청으로 사용량 한도를 쓰지 않는다
+    }
+
     @Test func rejectedRefreshAsksForLoginOnce() async throws {
         let box = Box(Self.credentials(token: "old", expiresIn: -60))
         let provider = try provider(box, accepts: [], refresh: .rejected)
@@ -203,7 +210,11 @@ struct LiveTokenRefreshTests {
         _ = try? await provider.fetch()
         // 서버가 이미 돌린 리프레시 토큰이라 저장은 하되, 이 계정 사용률로 보내지 않는다
         #expect(box.written.count == 1)
-        #expect(box.sent.first == "old")
+        #expect(!box.sent.contains("new"))
+        // 저장소를 다시 읽어 그 토큰이 나와도 보내지 않는다
+        _ = try? await provider.fetch()
+        #expect(!box.sent.contains("new"))
+        #expect(box.refreshCalls == 1)
     }
 
     @Test func revokedAgainAfterRefreshDoesNotRotateEveryPoll() async throws {
