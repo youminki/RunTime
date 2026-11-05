@@ -153,7 +153,7 @@ enum RedmineFlowCheck {
               && writes().sorted() == ["DELETE relations/5.json", "POST issues/10/relations.json", "POST issues/10/watchers.json"])
 
         var edited: Bool?
-        store.editJournal(5, number: 1, issue: 10, notes: "고침") { edited = $0 }
+        store.editJournal(5, issue: 10, notes: "고침") { edited = $0 }
         store.deleteAttachment(9, issue: 10)
         await settle()
         check("댓글 고치기와 첨부 지우기 요청", edited == true && writes().sorted() == ["DELETE attachments/9.json", "PUT journals/5.json"])
@@ -171,6 +171,13 @@ enum RedmineFlowCheck {
         store.grouping = .assignee
         check("담당자로 묶는다", store.groups.count == 1 && store.groups[0].rows.count == 2)
         store.grouping = .none
+        store.checked = [10, 11]
+        store.search = "일감 11"
+        check("찾기로 가린 일감은 고칠 대상에서 빠진다", store.checkedVisible == [11])
+        store.updateChecked(Redmine.Change(doneRatio: 40))
+        await settle(0.8)
+        check("가린 일감은 고치지 않는다", writes() == ["PUT issues/11.json"])
+        store.search = ""
         store.checked = [10, 11]
         store.updateChecked(Redmine.Change(doneRatio: 50))
         await settle(0.8)

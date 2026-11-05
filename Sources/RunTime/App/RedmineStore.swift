@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 import WorkLogCore
 
@@ -7,6 +8,10 @@ import WorkLogCore
 /// 메인 스레드에서만 쓴다.
 final class RedmineStore: ObservableObject {
     static let shared = RedmineStore()
+
+    init() {
+        rowsWatcher = objectWillChange.sink { [weak self] _ in self?.cachedRows = nil }
+    }
 
     /// 왼쪽에서 고르는 범위: 내 일감, 내가 등록한 일감, 프로젝트 전체, 저장한 질의.
     enum Scope: Hashable {
@@ -79,7 +84,7 @@ final class RedmineStore: ObservableObject {
     }
     /// 고를 수 있는 칸 가운데 보이는 것.
     @Published var shownColumns = Set((UserDefaults.standard.stringArray(forKey: "redmine.columns")
-        ?? [Column.status, .assignee, .ratio, .due, .updated].map(\.rawValue)).compactMap(Column.init(rawValue:))) {
+        ?? [Column.status, .assignee, .ratio, .due].map(\.rawValue)).compactMap(Column.init(rawValue:))) {
         didSet { UserDefaults.standard.set(shownColumns.map(\.rawValue), forKey: "redmine.columns") }
     }
     /// ⌘클릭으로 고른 일감. 한 번에 고칠 때 쓴다.
@@ -162,6 +167,16 @@ final class RedmineStore: ObservableObject {
     /// 받아 둔 그림 첨부.
     @Published private(set) var images: [Int: NSImage] = [:]
     private var requestedImages: Set<Int> = []
+    /// 받지 못한 그림. 미리보기가 까닭과 다시 받기를 보인다.
+    @Published private(set) var failedImages: Set<Int> = []
+    @Published private(set) var downloading: Set<Int> = []
+    @Published private(set) var editingJournals: Set<Int> = []
+    /// 일괄 고치기가 도는 중.
+    @Published private(set) var bulkRunning = false
+    /// 댓글 고치기 API가 있는지. 5.0 아래 레드마인은 첫 시도에서 알게 되어 기억한다.
+    @Published var journalAPI = UserDefaults.standard.object(forKey: "redmine.journalAPI") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(journalAPI, forKey: "redmine.journalAPI") }
+    }
     /// 하위로 만들 때의 상위 일감.
     var creatingUnder: Redmine.Issue?
     private var addingRelation = false
@@ -172,6 +187,9 @@ final class RedmineStore: ObservableObject {
 
     private var settings: WorkLogSettings { .shared }
     private var started = false
+    /// 그릴 때마다 정렬하지 않게 값이 바뀔 때만 다시 만든다 (일감 창에서 글자를 칠 때도 불린다).
+    private var cachedRows: [Redmine.TreeRow]?
+    private var rowsWatcher: AnyCancellable?
     private var loadedFrom = ""
     /// 연결이 바뀔 때마다 오른다. 화면은 일감 번호로 묶인 초안을 비운다.
     @Published private(set) var generation = 0
@@ -207,6 +225,12 @@ final class RedmineStore: ObservableObject {
         scope = .mine
         detailTokens = detailTokens.mapValues { $0 + 1 }
         generation += 1
+        checked = []
+        refine = [:]
+        images = [:]
+        requestedImages = []
+        failedImages = []
+        journalAPI = true
         issues = []
         details = [:]
         total = 0
@@ -267,7 +291,7 @@ final class RedmineStore: ObservableObject {
         var request = request
         // 첨부는 올리는 데 오래 걸려 끊기지 않게 길게 둔다
         request.timeoutInterval = (request.httpBody?.count ?? 0) > 1_000_000 ? 300 : 20
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        Self.session.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             DispatchQueue.main.async { done(data, status, error) }
         }.resume()
@@ -275,6 +299,18 @@ final class RedmineStore: ObservableObject {
 
     /// 점검용: 레드마인 대신 폴더의 응답 파일로 답한다 (`issues/101.json` → `issues_101.json`, 없으면 끝 이름).
     /// 고치기(PUT)는 받은 것으로 친다. 사내망 밖에서도 화면과 고치기 흐름을 볼 수 있다.
+    /// 첨부가 다른 저장소로 넘어가도 API 키가 따라가지 않게 넘어갈 때 키를 뗀다.
+    private final class KeepKey: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            var next = request
+            if request.url?.host != task.originalRequest?.url?.host { next.setValue(nil, forHTTPHeaderField: "X-Redmine-API-Key") }
+            completionHandler(next)
+        }
+    }
+
+    private static let session = URLSession(configuration: .default, delegate: KeepKey(), delegateQueue: nil)
+
     /// 점검용: 가짜 응답으로 답한 쓰기 요청.
     static var fixtureWrites: [String] = []
 
@@ -474,7 +510,7 @@ final class RedmineStore: ObservableObject {
 
     /// 칸을 고친다. 화면 값을 먼저 바꾸고 보내고, 레드마인이 받지 않으면 원래 값으로 되돌리고 까닭을 알린다.
     /// 끝나면 기록(누가 무엇을 바꿨는지)이 붙은 상세를 다시 받는다.
-    func update(_ id: Int, _ change: Redmine.Change, done: ((Bool) -> Void)? = nil) {
+    func update(_ id: Int, _ change: Redmine.Change, batch: Bool = false, done: ((Bool) -> Void)? = nil) {
         // 보내는 중에 또 보내면 같은 댓글이 두 번 올라가고, 되돌릴 값도 틀어진다
         guard !saving.contains(id) else {
             flash = "#\(id)을 저장하는 중입니다. 끝난 뒤 다시 누르세요"
@@ -512,9 +548,12 @@ final class RedmineStore: ObservableObject {
                 done?(false)
                 return
             }
-            self.loadDetail(id)
-            // 상태·담당자가 바뀌면 왼쪽 수도 바뀐다
-            if change.statusID != nil || change.assignedToID != nil { self.loadMyCounts() }
+            // 여러 건을 고칠 때는 건마다 다시 받지 않고 끝에 한 번 받는다
+            if !batch {
+                self.loadDetail(id)
+                // 상태·담당자가 바뀌면 왼쪽 수도 바뀐다
+                if change.statusID != nil || change.assignedToID != nil { self.loadMyCounts() }
+            }
             done?(true)
         }
     }
@@ -534,8 +573,10 @@ final class RedmineStore: ObservableObject {
                 self.flash = "#\(id)을 지우지 못했습니다: " + Self.message(status: status, error: failure, data: data)
                 return
             }
-            self.selected = nil
+            if self.selected == id { self.selected = nil }
             self.details[id] = nil
+            self.ancestors[id] = nil
+            self.checked.remove(id)
             self.load()
             self.loadMyCounts()
         }
@@ -547,21 +588,23 @@ final class RedmineStore: ObservableObject {
     }
 
     /// 댓글을 고치거나 비운다. 이 API가 없는 레드마인(5.0 아래)이면 웹의 그 댓글을 연다.
-    func editJournal(_ journal: Int, number: Int, issue: Int, notes: String, done: @escaping (Bool) -> Void) {
+    func editJournal(_ journal: Int, issue: Int, notes: String, done: @escaping (Bool) -> Void) {
         guard let (base, key) = credentials, let request = try? Redmine.editJournalRequest(base: base, key: key, journal: journal, notes: notes) else {
             return done(false)
         }
+        guard editingJournals.insert(journal).inserted else { return done(false) }
         fetch(request) { [weak self] data, status, failure in
             guard let self else { return }
+            self.editingJournals.remove(journal)
             if (200..<300).contains(status) {
                 self.loadDetail(issue)
                 return done(true)
             }
-            if [403, 404, 405].contains(status) {
+            if [404, 405, 406].contains(status) {
+                // 다음부터는 메뉴에서 바로 웹으로 보낸다
+                self.journalAPI = false
                 self.flash = "이 레드마인은 앱에서 댓글을 고칠 수 없어 웹에서 엽니다"
-                var parts = URLComponents(url: Redmine.webURL(base: base, issue: issue), resolvingAgainstBaseURL: false)
-                parts?.fragment = "note-\(number)"
-                if let url = parts?.url { NSWorkspace.shared.open(url) }
+                self.openJournal(journal, issue: issue)
             } else {
                 self.flash = "댓글을 고치지 못했습니다: " + Self.message(status: status, error: failure, data: data)
             }
@@ -569,50 +612,96 @@ final class RedmineStore: ObservableObject {
         }
     }
 
-    /// 첨부 받기 요청. 키는 이 레드마인에만 보내고, 응답이 http 주소를 주어도 설정한 주소의 방식으로 받는다.
+    /// 웹의 그 댓글을 연다. 번호는 숨긴 기록까지 세어 어긋나 바뀌지 않는 기록 번호로 찾아간다.
+    func openJournal(_ journal: Int, issue: Int) {
+        guard let (base, _) = credentials else { return }
+        var parts = URLComponents(url: Redmine.webURL(base: base, issue: issue), resolvingAgainstBaseURL: false)
+        parts?.fragment = "change-\(journal)"
+        if let url = parts?.url { NSWorkspace.shared.open(url) }
+    }
+
+    /// 첨부 받기 요청. 응답의 주소는 http이거나 프록시 뒤 이름일 수 있어 설정한 주소로 만든다. 키는 그 주소에만 보낸다.
     private func attachmentRequest(_ file: Redmine.Attachment) -> URLRequest? {
-        guard let (base, key) = credentials, let text = file.contentUrl,
-              var parts = URLComponents(string: text), parts.host == base.host else { return nil }
-        parts.scheme = base.scheme
-        guard let url = parts.url else { return nil }
-        var request = URLRequest(url: url)
+        guard let (base, key) = credentials else { return nil }
+        var request = URLRequest(url: base.appendingPathComponent("attachments/download/\(file.id)/\(file.filename)"))
         request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
         return request
     }
 
-    /// 그림 첨부를 받아 둔다. 웹 로그인 없이 키로 받아 일감 창에 바로 보인다.
+    /// 그림 첨부를 받아 둔다. 웹 로그인 없이 키로 받아 일감 창에 바로 보인다. 큰 그림은 줄여 둔다.
     func loadImage(_ file: Redmine.Attachment) {
-        guard images[file.id] == nil, requestedImages.insert(file.id).inserted, file.filesize < Self.uploadLimit,
-              let request = attachmentRequest(file) else { return }
+        guard images[file.id] == nil, !requestedImages.contains(file.id), let request = attachmentRequest(file) else { return }
+        guard file.filesize < Self.uploadLimit else {
+            failedImages.insert(file.id)
+            return
+        }
+        requestedImages.insert(file.id)
+        failedImages.remove(file.id)
         fetch(request) { [weak self] data, status, _ in
             guard let self else { return }
-            guard status == 200, let data, let image = NSImage(data: data) else {
-                self.requestedImages.remove(file.id)
-                return
+            guard status == 200, let data else { return self.imageFailed(file.id) }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let image = Self.scaled(data)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    guard let image else { return self.imageFailed(file.id) }
+                    // 일감을 오래 넘겨 봐도 메모리가 쌓이지 않게 한다
+                    if self.images.count >= 80 {
+                        self.images = [:]
+                        self.requestedImages = []
+                    }
+                    self.images[file.id] = image
+                }
             }
-            self.images[file.id] = image
         }
     }
 
-    /// 첨부를 내려받기 폴더에 받고 연다.
+    private func imageFailed(_ id: Int) {
+        requestedImages.remove(id)
+        failedImages.insert(id)
+    }
+
+    /// 화면에 보일 크기로 줄여 읽는다. 그림이 아니면 (로그인 화면 등) nil.
+    private nonisolated static func scaled(_ data: Data) -> NSImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 1800,
+              ] as CFDictionary) else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
+
+    /// 첨부를 내려받기 폴더에 받아 Finder에 보인다. 동료가 올린 실행 파일이 눌러서 바로 열리지 않게 열지 않고 격리 표시도 붙인다.
     func download(_ file: Redmine.Attachment) {
-        guard let request = attachmentRequest(file) else { return }
+        guard downloading.insert(file.id).inserted else { return }
+        guard let request = attachmentRequest(file) else {
+            downloading.remove(file.id)
+            flash = "\(file.filename)을 받지 못했습니다: 레드마인 주소와 키를 확인하세요"
+            return
+        }
         fetch(request) { [weak self] data, status, failure in
             guard let self else { return }
-            guard status == 200, let data, let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+            self.downloading.remove(file.id)
+            let name = URL(fileURLWithPath: file.filename).lastPathComponent
+            guard status == 200, let data, !name.isEmpty, name != "..", name != "/",
+                  let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
                 self.flash = "\(file.filename)을 받지 못했습니다: " + Self.message(status: status, error: failure, data: data)
                 return
             }
-            var target = folder.appendingPathComponent(file.filename)
+            var target = folder.appendingPathComponent(name)
             var number = 1
+            let stem = (name as NSString).deletingPathExtension, suffix = (name as NSString).pathExtension
             while FileManager.default.fileExists(atPath: target.path) {
-                let url = URL(fileURLWithPath: file.filename)
-                target = folder.appendingPathComponent(url.deletingPathExtension().lastPathComponent + " \(number)." + url.pathExtension)
+                target = folder.appendingPathComponent(suffix.isEmpty ? "\(stem) \(number)" : "\(stem) \(number).\(suffix)")
                 number += 1
             }
             do {
                 try data.write(to: target)
-                NSWorkspace.shared.open(target)
+                var values = URLResourceValues()
+                values.quarantineProperties = [kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String]
+                try? target.setResourceValues(values)
+                NSWorkspace.shared.activateFileViewerSelecting([target])
+                self.flash = "\(target.lastPathComponent)을 내려받았습니다"
             } catch {
                 self.flash = "\(file.filename)을 저장하지 못했습니다: \(error.localizedDescription)"
             }
@@ -815,6 +904,13 @@ final class RedmineStore: ObservableObject {
 
     /// 지금 보일 줄: 빠른 거르기 → 찾는 말 → 정렬 → (트리면) 상위·하위로 편다.
     var rows: [Redmine.TreeRow] {
+        if let cachedRows { return cachedRows }
+        let made = makeRows()
+        cachedRows = made
+        return made
+    }
+
+    private func makeRows() -> [Redmine.TreeRow] {
         let sorted = filtered.sorted { a, b in
             let order = compare(a, b)
             return order == .orderedSame ? a.id > b.id : (order == .orderedAscending) == ascending
@@ -865,29 +961,39 @@ final class RedmineStore: ObservableObject {
 
     /// 고른 일감을 차례로 고친다. 한 건씩 보내 막힌 일감이 있어도 나머지는 나간다.
     func updateChecked(_ change: Redmine.Change) {
-        var left = checked.sorted()
-        var failed = 0, done = 0
+        guard !bulkRunning else { return }
+        bulkRunning = true
+        var left = checkedVisible.sorted()
+        var failed: [Int] = []
+        var done = 0
         func next() {
             guard let id = left.first else {
-                flash = failed == 0 ? "\(done)건을 고쳤습니다" : "\(done)건 고침 · \(failed)건 실패"
-                checked = []
+                // 실패한 일감은 고른 채 남겨 무엇이 안 됐는지 보이고 다시 할 수 있게 한다
+                let reason = flash
+                checked = Set(failed)
+                bulkRunning = false
+                flash = failed.isEmpty ? "\(done)건을 고쳤습니다" : "\(done)건 고침 · \(failed.count)건 실패" + (reason.map { ": " + $0 } ?? "")
+                load()
                 loadMyCounts()
                 return
             }
             left.removeFirst()
-            update(id, change) { ok in
-                if ok { done += 1 } else { failed += 1 }
+            update(id, change, batch: true) { ok in
+                if ok { done += 1 } else { failed.append(id) }
                 next()
             }
         }
         next()
     }
 
+    /// 고른 일감 가운데 지금 보이는 것. 찾기나 거르기로 가려진 일감이 모르게 고쳐지지 않게 이것만 고친다.
+    var checkedVisible: Set<Int> { checked.intersection(rows.lazy.filter { !$0.isContext }.map(\.id)) }
+
     /// 머리에 쓸 건수. 트리를 접거나 상위를 끼워 넣어도 조건에 맞는 일감 수는 그대로다.
     var visibleCount: Int { filtered.count }
 
     /// 일감 창에서 앞뒤로 옮겨 다닐 번호. 끼워 넣은 상위는 목록 일감이 아니라서 뺀다.
-    var navigableIDs: [Int] { rows.filter { !$0.isContext }.map(\.id) }
+    var navigableIDs: [Int] { groups.flatMap(\.rows).filter { !$0.isContext }.map(\.id) }
 
     private func compare(_ a: Redmine.Issue, _ b: Redmine.Issue) -> ComparisonResult {
         func order<T: Comparable>(_ x: T, _ y: T) -> ComparisonResult { x == y ? .orderedSame : x < y ? .orderedAscending : .orderedDescending }

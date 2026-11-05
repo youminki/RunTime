@@ -216,6 +216,12 @@ struct IssueSlot: View {
 // MARK: - 글 입력
 
 enum TextInput {
+    /// 한글 조합을 끝낸 뒤 칸의 글을 읽는다. 저장을 눌렀을 때 마지막 글자가 빠지지 않게 한다.
+    @MainActor static func afterComposition(_ body: @escaping () -> Void) {
+        (NSApp.keyWindow?.firstResponder as? NSTextView)?.unmarkText()
+        DispatchQueue.main.async(execute: body)
+    }
+
     /// 한글을 조합하는 칸을 Enter로 넣은 뒤 비울 때. 조합이 끝나며 글자가 칸에 다시 들어와, 조합을 닫고 다음 차례에 비운다.
     @MainActor static func clearAfterComposition(_ clear: @escaping () -> Void) {
         (NSApp.keyWindow?.firstResponder as? NSTextView)?.unmarkText()

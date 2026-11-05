@@ -36,6 +36,8 @@ struct RedmineView: View {
                     state.descriptionDrafts = [:]
                     state.relationTargets = [:]
                     state.journalDrafts = [:]
+                    state.privateNotes = []
+                    state.preview = nil
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in store.refreshIfStale() }
                 // 앞뒤 일감으로 옮길 때 창이 닫혔다 열리지 않게 번호가 아니라 있고 없음으로 띄운다
@@ -164,7 +166,7 @@ private struct RedmineFlash: View {
                 .font(WL.meta).foregroundStyle(Color.white)
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .background(Capsule().fill(Color.black.opacity(0.78)))
-                .padding(atTop ? .top : .bottom, atTop ? 56 : 18)
+                .padding(atTop ? .top : .bottom, atTop ? 56 : store.checked.isEmpty ? 18 : 70)
                 .onTapGesture { store.flash = nil }
                 .task(id: message) {
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
@@ -222,10 +224,11 @@ private struct RedmineIssueTable: View {
                         } else {
                             VStack(spacing: 10) {
                                 message(emptyText, icon: "tray").frame(height: 90)
-                                if store.quick != .all || !store.search.isEmpty {
+                                if store.quick != .all || !store.search.isEmpty || !store.refine.isEmpty {
                                     Button("거르기 지우기") {
                                         store.quick = .all
                                         store.search = ""
+                                        store.refine = [:]
                                     }
                                     .buttonStyle(NotionButtonStyle())
                                 }
@@ -273,6 +276,7 @@ private struct RedmineIssueTable: View {
 
     private var emptyText: String {
         if !store.search.isEmpty { return "‘\(store.search)’에 맞는 일감이 없습니다" }
+        if !store.refine.isEmpty { return "거르기 조건에 맞는 일감이 없습니다" }
         if store.quick != .all { return "\(store.quick.rawValue) 일감이 없습니다" }
         if case .query = store.scope { return "이 질의에 맞는 일감이 없습니다" }
         return "이 범위에 \(store.statusFilter.rawValue)이 없습니다"
@@ -404,33 +408,37 @@ private struct RedmineIssueTable: View {
 
     /// 고른 일감을 한 번에 고치는 막대.
     private var checkedBar: some View {
-        let ids = store.checked
+        let ids = store.checkedVisible
         let projects = Set(store.issues.filter { ids.contains($0.id) }.map(\.project.id))
         let people = projects.count == 1 ? projects.first.flatMap { store.people[$0] } ?? [] : []
         return HStack(spacing: 10) {
-            Text("\(ids.count)건 고름").font(WL.meta.weight(.semibold))
+            Text(store.bulkRunning ? "고치는 중…" : "\(ids.count)건 고름").font(WL.meta.weight(.semibold))
+            if store.checked.count > ids.count {
+                Text("\(store.checked.count - ids.count)건은 가려져 빠짐").font(WL.caption).foregroundStyle(WL.waiting)
+            }
             Menu("상태") {
                 ForEach(store.statuses) { status in
-                    Button(status.name) { confirm("상태를 \(status.name)(으)로", Redmine.Change(statusID: status.id)) }
+                    Button(status.name) { confirm("상태를 \(status.name)(으)로 바꿀까요?", Redmine.Change(statusID: status.id)) }
                 }
             }
             Menu("진척률") {
                 ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { ratio in
-                    Button("\(ratio)%") { confirm("진척률을 \(ratio)%로", Redmine.Change(doneRatio: ratio)) }
+                    Button("\(ratio)%") { confirm("진척률을 \(ratio)%로 바꿀까요?", Redmine.Change(doneRatio: ratio)) }
                 }
             }
             Menu("우선순위") {
                 ForEach(store.priorities) { priority in
-                    Button(priority.name) { confirm("우선순위를 \(priority.name)(으)로", Redmine.Change(priorityID: priority.id)) }
+                    Button(priority.name) { confirm("우선순위를 \(priority.name)(으)로 바꿀까요?", Redmine.Change(priorityID: priority.id)) }
                 }
             }
             Menu("담당자") {
-                if let me = store.me { Button("나에게") { confirm("담당자를 나로", Redmine.Change(assignedToID: me.id)) } }
+                if let me = store.me { Button("나에게") { confirm("담당자를 나로 바꿀까요?", Redmine.Change(assignedToID: me.id)) } }
                 ForEach(people.filter { $0.id != store.me?.id }) { person in
-                    Button(person.name) { confirm("담당자를 \(person.name)(으)로", Redmine.Change(assignedToID: person.id)) }
+                    Button(person.name) { confirm("담당자를 \(person.name)(으)로 바꿀까요?", Redmine.Change(assignedToID: person.id)) }
                 }
                 Divider()
-                Button("비우기") { confirm("담당자를 비우게", Redmine.Change(assignedToID: 0)) }
+                if projects.count > 1 { Text("프로젝트가 여럿이라 구성원을 고를 수 없습니다") }
+                Button("비우기") { confirm("담당자를 비울까요?", Redmine.Change(assignedToID: 0)) }
             }
             Button("풀기") { store.checked = [] }.buttonStyle(TextLinkButtonStyle())
         }
@@ -441,13 +449,16 @@ private struct RedmineIssueTable: View {
         .overlay(Capsule().strokeBorder(WL.border, lineWidth: 1))
         .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
         .padding(.bottom, 16)
-        .onAppear { if projects.count == 1, let id = projects.first { store.loadPeople(project: id) } }
+        .disabled(store.bulkRunning)
+        .task(id: projects) { if projects.count == 1, let id = projects.first { store.loadPeople(project: id) } }
     }
 
     /// 동료에게 알림이 가는 일을 여러 건 하니 한 번 묻는다.
     private func confirm(_ what: String, _ change: Redmine.Change) {
         let alert = NSAlert()
-        alert.messageText = "\(store.checked.count)건의 \(what) 바꿀까요?"
+        let ids = store.checkedVisible.sorted()
+        alert.messageText = "\(ids.count)건의 \(what)"
+        alert.informativeText = ids.prefix(12).map { "#\($0)" }.joined(separator: " ") + (ids.count > 12 ? " 외 \(ids.count - 12)건" : "")
         alert.addButton(withTitle: "바꾸기")
         alert.addButton(withTitle: "취소")
         if alert.runModal() == .alertFirstButtonReturn { store.updateChecked(change) }
@@ -523,7 +534,6 @@ private struct RedmineIssueTable: View {
         var columns: [(RedmineStore.Column, CGFloat?)] = [(.id, 60), (.status, 72), (.tracker, 64), (.priority, 64), (.subject, nil),
                                                           (.assignee, 72), (.ratio, 92), (.due, 84), (.updated, 86)]
         columns.removeAll { $0.0 != .id && $0.0 != .subject && !shown.contains($0.0) }
-        if width < 1100 { columns.removeAll { $0.0 == .updated } }
         if width < 780 { columns.removeAll { $0.0 == .ratio } }
         return columns
     }
@@ -568,13 +578,13 @@ private struct RedmineIssueTable: View {
 private struct RedmineBoard: View {
     @ObservedObject var store: RedmineStore
     let rows: [Redmine.TreeRow]
+    @StateObject private var target = HoveredKey()
 
     var body: some View {
-        // 일감이 있는 상태와 열린 상태만 칸으로 둔다 (닫힌 상태가 여럿이라 빈 칸이 많아진다)
-        let columns = store.statuses.filter { status in status.isClosed != true || rows.contains { $0.issue.status.id == status.id } }
+        // 열린 일감만 볼 때도 끌어서 닫을 수 있게 닫힌 상태까지 모두 칸으로 둔다
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(columns) { status in column(status, rows.filter { $0.issue.status.id == status.id }) }
+                ForEach(store.statuses) { status in column(status, rows.filter { $0.issue.status.id == status.id }) }
             }
             .padding(16)
         }
@@ -596,12 +606,18 @@ private struct RedmineBoard: View {
         .padding(10)
         .frame(width: 250)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(WL.sidebar))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(target.key == status.name ? WL.selected : WL.sidebar))
         .dropDestination(for: String.self) { items, _ in
-            guard let id = items.first.flatMap(Int.init), store.issues.first(where: { $0.id == id })?.status.id != status.id else { return false }
+            // 다른 앱에서 끌어 온 글자가 일감을 고치지 않게 목록의 일감만 받는다
+            guard let id = items.first.flatMap(Int.init), let issue = store.issues.first(where: { $0.id == id }),
+                  issue.status.id != status.id else { return false }
+            if store.isBlocked(from: issue.status.id, to: status.id) {
+                store.flash = "\(issue.status.name)에서 \(status.name)(으)로 옮기는 것은 전에 막혔습니다"
+                return false
+            }
             store.update(id, Redmine.Change(statusID: status.id))
             return true
-        }
+        } isTargeted: { target.update(status.name, $0) }
     }
 
     private func card(_ issue: Redmine.Issue) -> some View {
@@ -667,9 +683,12 @@ private struct RedmineMonth: View {
     var body: some View {
         let byDay = Dictionary(grouping: rows.map(\.issue).filter { ($0.dueDate ?? $0.startDate) != nil }) { $0.dueDate ?? $0.startDate ?? "" }
         let parts = Self.calendar.dateComponents([.year, .month], from: month)
+        let undated = rows.filter { ($0.issue.dueDate ?? $0.issue.startDate) == nil }.count
+        SlimScrollView {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text("\(String(parts.year ?? 0))년 \(parts.month ?? 0)월").font(WL.section)
+                if undated > 0 { Text("날짜 없는 \(undated)건은 달력에 없습니다").font(WL.caption).foregroundStyle(WL.quiet) }
                 Spacer()
                 Button { store.monthShift -= 1 } label: { Image(systemName: "chevron.left") }.buttonStyle(GhostIconButtonStyle())
                 Button("오늘") { store.monthShift = 0 }.buttonStyle(TextLinkButtonStyle()).disabled(store.monthShift == 0)
@@ -686,9 +705,11 @@ private struct RedmineMonth: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 0) {
                 ForEach(days, id: \.self) { day in cell(day, byDay[WorkDay.key(day)] ?? []) }
             }
-            Spacer(minLength: 0)
+        }
         }
     }
+
+    private func verbatim(_ issue: Redmine.Issue) -> String { "#\(issue.id) \(issue.subject)" }
 
     private func cell(_ day: Date, _ issues: [Redmine.Issue]) -> some View {
         let inMonth = Self.calendar.isDate(day, equalTo: month, toGranularity: .month)
@@ -708,7 +729,14 @@ private struct RedmineMonth: View {
                 .buttonStyle(.plain)
                 .help("#\(issue.id) \(issue.subject)")
             }
-            if issues.count > 3 { Text("+\(issues.count - 3)건").font(WL.caption).foregroundStyle(WL.quiet) }
+            if issues.count > 3 {
+                Menu("+\(issues.count - 3)건") {
+                    ForEach(issues.dropFirst(3)) { issue in
+                        Button(verbatim(issue)) { store.selected = issue.id }
+                    }
+                }
+                .font(WL.caption).menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }
             Spacer(minLength: 0)
         }
         .padding(4)
@@ -783,7 +811,8 @@ private struct TableRow: View {
         let issue = row.issue
         Button {
             // ⌘클릭이나 이미 고르는 중이면 열지 않고 고른다 (Finder 목록처럼)
-            if NSEvent.modifierFlags.contains(.command) || !store.checked.isEmpty {
+            // 끼워 넣은 상위는 남의 일감이라 고르지 않는다
+            if !row.isContext, NSEvent.modifierFlags.contains(.command) || !store.checked.isEmpty {
                 if store.checked.remove(issue.id) == nil { store.checked.insert(issue.id) }
             } else {
                 store.selected = issue.id
@@ -807,8 +836,10 @@ private struct TableRow: View {
         .overlay(alignment: .bottom) { Rectangle().fill(WL.border).frame(height: 0.5) }
         .contextMenu {
             Button("일감 열기") { store.selected = issue.id }
-            Button(store.checked.contains(issue.id) ? "고르기 풀기" : "고르기 (⌘클릭)") {
-                if store.checked.remove(issue.id) == nil { store.checked.insert(issue.id) }
+            if !row.isContext {
+                Button(store.checked.contains(issue.id) ? "고르기 풀기" : "고르기 (⌘클릭)") {
+                    if store.checked.remove(issue.id) == nil { store.checked.insert(issue.id) }
+                }
             }
             if let base = RedmineAPI.baseURL(WorkLogSettings.shared.effectiveRedmineURL) {
                 Button("웹에서 열기") { NSWorkspace.shared.open(Redmine.webURL(base: base, issue: issue.id)) }
@@ -1005,7 +1036,7 @@ struct RedmineIssueSheet: View {
                 HStack {
                     Text(file.filename).font(WL.heading).lineLimit(1).truncationMode(.middle)
                     Spacer()
-                    Button("내려받기") { store.download(file) }.buttonStyle(NotionButtonStyle())
+                    Button("내려받기") { store.download(file) }.buttonStyle(NotionButtonStyle()).disabled(store.downloading.contains(file.id))
                     Button("닫기") { state.preview = nil }.buttonStyle(NotionButtonStyle()).keyboardShortcut(.cancelAction)
                 }
                 .padding(12)
@@ -1013,12 +1044,20 @@ struct RedmineIssueSheet: View {
                 if let image = store.images[file.id] {
                     Image(nsImage: image).resizable().scaledToFit().padding(12)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if store.failedImages.contains(file.id) {
+                    VStack(spacing: 10) {
+                        Text("그림을 받지 못했습니다").font(WL.meta).foregroundStyle(WL.muted)
+                        Button("다시 받기") { store.loadImage(file) }.buttonStyle(NotionButtonStyle())
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(minWidth: 760, idealWidth: 1000, minHeight: 520, idealHeight: 720)
             .background(WL.canvas)
+            .overlay(alignment: .top) { RedmineFlash(store: store, atTop: true) }
+            .onAppear { store.loadImage(file) }
         }
     }
 
@@ -1161,6 +1200,10 @@ struct RedmineIssueSheet: View {
     }
 
     private func saveSubject(_ issue: Redmine.Issue) {
+        TextInput.afterComposition { commitSubject(issue) }
+    }
+
+    private func commitSubject(_ issue: Redmine.Issue) {
         let id = issue.id, text = (state.subjectDrafts[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         // 저장 중 Enter를 또 치면 먼저 바꿔 둔 값과 같아져 초안이 지워진다
         guard !store.isBusy(id) else { return }
@@ -1173,6 +1216,10 @@ struct RedmineIssueSheet: View {
     }
 
     private func saveDescription(_ issue: Redmine.Issue) {
+        TextInput.afterComposition { commitDescription(issue) }
+    }
+
+    private func commitDescription(_ issue: Redmine.Issue) {
         let id = issue.id, html = issue.description ?? "", editable = RedmineNote.editable(html)
         guard let text = state.descriptionDrafts[id], text != editable ?? html else {
             state.descriptionDrafts[id] = nil
@@ -1293,6 +1340,7 @@ struct RedmineIssueSheet: View {
                     menu(issue.estimatedHours.flatMap { $0 > 0 ? "추정 \(hours($0))" : nil } ?? "추정 없음") {
                         ForEach([1.0, 2, 4, 8, 16, 24, 40], id: \.self) { value in
                             Button(hours(value)) { store.update(issue.id, Redmine.Change(estimatedHours: value)) }
+                                .disabled(issue.estimatedHours == value)
                         }
                         Divider()
                         Button("비우기") { store.update(issue.id, Redmine.Change(estimatedHours: 0)) }.disabled(issue.estimatedHours == nil)
@@ -1496,7 +1544,7 @@ struct RedmineIssueSheet: View {
                 }
                 .buttonStyle(.plain)
                 .contextMenu { attachmentMenu(file, issue: issue) }
-                .tip("내려받아 엽니다")
+                .tip("내려받기 폴더에 받아 Finder에서 보입니다")
             }
         }
     }
@@ -1569,7 +1617,7 @@ struct RedmineIssueSheet: View {
                         }
                         Spacer()
                         Text(verbatim: "#\(number + 1)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.faint)
-                        if !(journal.notes ?? "").isEmpty { journalMenu(journal, number: number + 1, issue: issue) }
+                        if !(journal.notes ?? "").isEmpty { journalMenu(journal, issue: issue) }
                     }
                     if state.history != .comments, let details = journal.details, !details.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1583,7 +1631,7 @@ struct RedmineIssueSheet: View {
                     }
                     if state.history != .changes, let notes = journal.notes, !notes.isEmpty {
                         if state.journalDrafts[journal.id] != nil {
-                            journalEditor(journal, number: number + 1, issue: issue.id, notes: notes).padding(.leading, 30)
+                            journalEditor(journal, issue: issue.id, notes: notes).padding(.leading, 30)
                         } else {
                             HTMLText(html: notes, rendered: HTMLCache.shared.cached(notes))
                                 .padding(12)
@@ -1606,18 +1654,23 @@ struct RedmineIssueSheet: View {
     }
 
     /// 댓글 하나의 일. 레드마인 웹의 인용·고치기·지우기와 같다.
-    private func journalMenu(_ journal: Redmine.Journal, number: Int, issue: Redmine.Issue) -> some View {
+    private func journalMenu(_ journal: Redmine.Journal, issue: Redmine.Issue) -> some View {
         Menu {
             Button("인용") { quote(journal, issue: issue.id) }
-            if journal.user?.id == store.me?.id {
-                Button("고치기") { state.journalDrafts[journal.id] = RedmineNote.editable(journal.notes ?? "") ?? journal.notes ?? "" }
+            if !store.journalAPI {
+                Button("웹에서 고치기") { store.openJournal(journal.id, issue: issue.id) }
+            } else if let me = store.me, journal.user?.id == me.id {
+                Button("고치기") {
+                    if state.history == .changes { state.history = .all }
+                    state.journalDrafts[journal.id] = RedmineNote.editable(journal.notes ?? "") ?? journal.notes ?? ""
+                }
                 Button("지우기…", role: .destructive) {
                     let alert = NSAlert()
                     alert.messageText = "이 댓글을 지울까요?"
                     alert.addButton(withTitle: "지우기")
                     alert.addButton(withTitle: "취소")
                     guard alert.runModal() == .alertFirstButtonReturn else { return }
-                    store.editJournal(journal.id, number: number, issue: issue.id, notes: "") { _ in }
+                    store.editJournal(journal.id, issue: issue.id, notes: "") { _ in }
                 }
             }
         } label: { Image(systemName: "ellipsis") }
@@ -1627,11 +1680,13 @@ struct RedmineIssueSheet: View {
 
     private func quote(_ journal: Redmine.Journal, issue: Int) {
         let lines = RedmineNote.plain(journal.notes ?? "").components(separatedBy: .newlines).map { "> " + $0 }
-        let text = "\(journal.user?.name ?? "")의 덧글:\n" + lines.joined(separator: "\n") + "\n\n"
+        let text = "\(journal.user?.name ?? "이전 사람")의 덧글:\n" + lines.joined(separator: "\n") + "\n\n"
         state.comments[issue] = (state.comments[issue] ?? "") + text
+        // 비공개 댓글을 인용한 글이 공개로 나가지 않게 한다
+        if journal.privateNotes == true { state.privateNotes.insert(issue) }
     }
 
-    private func journalEditor(_ journal: Redmine.Journal, number: Int, issue: Int, notes: String) -> some View {
+    private func journalEditor(_ journal: Redmine.Journal, issue: Int, notes: String) -> some View {
         let plain = RedmineNote.editable(notes)
         return VStack(alignment: .leading, spacing: 8) {
             TextEditor(text: Binding(get: { state.journalDrafts[journal.id] ?? "" }, set: { state.journalDrafts[journal.id] = $0 }))
@@ -1644,14 +1699,19 @@ struct RedmineIssueSheet: View {
                 Spacer()
                 Button("취소") { state.journalDrafts[journal.id] = nil }.buttonStyle(NotionButtonStyle())
                 Button("저장") {
-                    let text = state.journalDrafts[journal.id] ?? ""
-                    let html = plain != nil && WorkLogSettings.shared.redmineHTML ? RedmineNote.html(text) : text
-                    store.editJournal(journal.id, number: number, issue: issue, notes: html) { ok in
-                        if ok { state.journalDrafts[journal.id] = nil }
+                    TextInput.afterComposition {
+                        let text = state.journalDrafts[journal.id] ?? ""
+                        let html = plain != nil && WorkLogSettings.shared.redmineHTML ? RedmineNote.html(text) : text
+                        guard !html.isEmpty else { return }
+                        store.editJournal(journal.id, issue: issue, notes: html) { ok in
+                            if ok { state.journalDrafts[journal.id] = nil }
+                        }
                     }
                 }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
-                .disabled(store.isBusy(issue))
+                // 비워서 저장하면 확인 없이 지워져, 지우기는 메뉴로만 한다
+                .disabled(store.isBusy(issue) || store.editingJournals.contains(journal.id)
+                          || (state.journalDrafts[journal.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }
@@ -1659,7 +1719,8 @@ struct RedmineIssueSheet: View {
     private func confirmDelete(_ issue: Redmine.Issue) {
         let alert = NSAlert()
         alert.messageText = "#\(issue.id)을 지울까요?"
-        alert.informativeText = "하위 일감과 이력이 함께 지워지고 되돌릴 수 없습니다."
+        let spent = (issue.spentHours ?? 0) > 0 ? "기록한 소요 시간도 함께 지워질 수 있습니다. " : ""
+        alert.informativeText = spent + "하위 일감과 이력이 함께 지워지고 되돌릴 수 없습니다."
         alert.addButton(withTitle: "지우기")
         alert.addButton(withTitle: "취소")
         if alert.runModal() == .alertFirstButtonReturn { store.deleteIssue(issue.id) }
@@ -1716,6 +1777,7 @@ struct RedmineIssueSheet: View {
                             // 보내는 사이 고쳐 쓴 글과 더 붙인 파일은 지우지 않는다
                             guard ok else { return }
                             if state.comments[id] == text { state.comments[id] = nil }
+                            state.privateNotes.remove(id)
                             state.files[id]?.removeAll { sending.contains($0) }
                         }
                     }
@@ -1838,6 +1900,8 @@ private final class NewIssueDraft: ObservableObject {
     @Published var parent = ""
     /// 취소하면 돌아갈 상위 일감.
     var returnTo: Int?
+    /// 복사한 설명이 HTML 그대로라 다시 변환하지 않는다.
+    var rawDescription = false
     @Published var hasStart = false
     @Published var start = Date()
     @Published var hasDue = false
@@ -1928,9 +1992,15 @@ struct RedmineNewIssueSheet: View {
                 store.creatingFrom = nil
                 draft.projectID = source.project.id
                 draft.subject = source.subject
-                draft.description = RedmineNote.plain(source.description ?? "")
+                // 서식이 있는 설명은 잃지 않게 HTML 그대로 옮긴다
+                let html = source.description ?? ""
+                draft.description = RedmineNote.editable(html) ?? html
+                draft.rawDescription = RedmineNote.editable(html) == nil
                 draft.priorityID = source.priority.id
                 draft.trackerID = source.tracker.id
+                draft.assigneeID = source.assignedTo?.id
+                if let start = source.startDate.flatMap(WorkDay.date) { (draft.hasStart, draft.start) = (true, start) }
+                if let due = source.dueDate.flatMap(WorkDay.date) { (draft.hasDue, draft.due) = (true, due) }
                 draft.returnTo = source.id
             } else if let parent = store.creatingUnder {
                 draft.projectID = parent.project.id
@@ -1975,7 +2045,7 @@ struct RedmineNewIssueSheet: View {
         guard let projectID = draft.projectID, let trackerID = draft.trackerID else { return }
         var issue = Redmine.NewIssue(projectID: projectID, trackerID: trackerID, subject: draft.subject)
         issue.description = draft.description
-        issue.descriptionRaw = !WorkLogSettings.shared.redmineHTML
+        issue.descriptionRaw = draft.rawDescription || !WorkLogSettings.shared.redmineHTML
         issue.priorityID = draft.priorityID
         issue.assignedToID = draft.assigneeID
         issue.parentID = parentID
