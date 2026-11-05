@@ -196,9 +196,11 @@ private struct RedmineIssueTable: View {
     @ObservedObject var store: RedmineStore
 
     var body: some View {
-        let rows = store.rows
+        // 작업 내역에서는 일감 목록을 그리지 않아 정렬·거르기를 건너뛴다 (내역이 쌓일 때마다 다시 그려진다)
+        let activity = store.layout == .activity
+        let rows = activity ? [] : store.rows
         VStack(alignment: .leading, spacing: 0) {
-            header(count: store.visibleCount)
+            header(count: activity ? nil : store.visibleCount)
             Rectangle().fill(WL.border).frame(height: 1)
             GeometryReader { geo in
                 let timeline = store.layout == .timeline
@@ -286,11 +288,11 @@ private struct RedmineIssueTable: View {
 
     // MARK: 머리
 
-    private func header(count: Int) -> some View {
+    private func header(count: Int?) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(store.scope.title).font(WL.title).lineLimit(1)
-                if !store.loading || count > 0 { Text("\(count)건").font(WL.number).foregroundStyle(WL.quiet) }
+                if let count, !store.loading || count > 0 { Text("\(count)건").font(WL.number).foregroundStyle(WL.quiet) }
                 if store.loading && !store.issues.isEmpty { ProgressView().controlSize(.small) }
                 if case .project(let project) = store.scope { ReportNameMenu(project: project.name) }
                 Spacer()
@@ -332,7 +334,7 @@ private struct RedmineIssueTable: View {
                 // 칩이 늘어도 머리가 표보다 넓어지지 않게 남는 폭 안에서 옆으로 넘긴다
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(RedmineStore.Quick.allCases.filter { $0 != .all }, id: \.self) { quick in
+                        ForEach(store.layout == .activity ? [] : RedmineStore.Quick.allCases.filter { $0 != .all }, id: \.self) { quick in
                             let count = store.count(quick)
                             if count > 0 || store.quick == quick {
                                 Button { store.quick = store.quick == quick ? .all : quick } label: {

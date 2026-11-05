@@ -214,6 +214,7 @@ final class RedmineStore: ObservableObject {
     private var started = false
     /// 그릴 때마다 정렬하지 않게 값이 바뀔 때만 다시 만든다 (일감 창에서 글자를 칠 때도 불린다).
     private var cachedRows: [Redmine.TreeRow]?
+    private var cachedDay = ""
     private var rowsWatcher: AnyCancellable?
     private var loadedFrom = ""
     /// 연결이 바뀔 때마다 오른다. 화면은 일감 번호로 묶인 초안을 비운다.
@@ -1131,9 +1132,12 @@ final class RedmineStore: ObservableObject {
 
     /// 지금 보일 줄: 빠른 거르기 → 찾는 말 → 정렬 → (트리면) 상위·하위로 편다.
     var rows: [Redmine.TreeRow] {
-        if let cachedRows { return cachedRows }
+        // 최근 변경·기한 임박은 오늘에 기대어, 날이 바뀌면 다시 만든다
+        let today = WorkDay.today()
+        if let cachedRows, cachedDay == today { return cachedRows }
         let made = makeRows()
         cachedRows = made
+        cachedDay = today
         return made
     }
 
