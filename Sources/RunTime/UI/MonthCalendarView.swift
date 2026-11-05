@@ -65,9 +65,11 @@ struct MonthCalendarView: View {
             issue.assigned && issue.dueDate != nil && (referenced?.contains(issue.id) ?? true)
         }
         let due = mine.filter { shown.contains($0.dueDate!) }
-        // 지난달에 넘긴 마감은 이번 달 칸에 보이지 않아, 오늘이 든 달을 볼 때 위에 모은다
+        // 지난달에 넘긴 마감은 이번 달 칸에 보이지 않아, 오늘이 든 달을 볼 때 위에 모은다.
+        // 눌러 여는 레드마인 "기한 지남"과 건수가 같게, 끝냈거나 닫힌 일감은 뺀다
         let today = WorkDay.today()
-        let overdue = range.contains(today) ? mine.filter { $0.dueDate! < today } : []
+        let closed = WorkLogSync.shared.closedStatusIDs
+        let overdue = range.contains(today) ? mine.filter { $0.dueDate! < today && $0.isOpen(closed: closed) } : []
         return Month(range: range, days: days, entries: entries,
                      due: Dictionary(grouping: due.sorted { $0.id < $1.id }, by: { $0.dueDate ?? "" }),
                      overdue: overdue.sorted { ($0.dueDate!, $0.id) < ($1.dueDate!, $1.id) })
