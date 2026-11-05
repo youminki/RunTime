@@ -35,6 +35,7 @@ public enum Redmine {
         public var children: [Child]?
         public var relations: [Relation]?
         public var watchers: [Ref]?
+        public var changesets: [Changeset]?
 
         public struct Parent: Codable, Equatable { public let id: Int }
 
@@ -48,8 +49,23 @@ public enum Redmine {
         public let notes: String?
         public let createdOn: String
         public let details: [Detail]?
+        public let privateNotes: Bool?
 
         public var created: Date? { Redmine.date(createdOn) }
+        /// 이 기록에서 더한 첨부 번호.
+        public var attachmentIDs: [Int] {
+            (details ?? []).filter { $0.property == "attachment" && $0.newValue != nil }.compactMap { Int($0.name) }
+        }
+    }
+
+    /// 일감에 연결된 저장소 변경.
+    public struct Changeset: Codable, Equatable, Identifiable {
+        public let revision: String
+        public let user: Ref?
+        public let comments: String?
+        public let committedOn: String?
+
+        public var id: String { revision }
     }
 
     /// 기록 한 줄의 칸 변경. `property`는 `attr`(일감 칸)·`attachment`·`relation`·`cf`(사용자 정의 칸).
@@ -240,7 +256,7 @@ public enum Redmine {
 
     public static func issueRequest(base: URL, key: String, id: Int) -> URLRequest {
         request(base, "issues/\(id).json", key: key,
-                query: [URLQueryItem(name: "include", value: "journals,attachments,children,relations,watchers")])
+                query: [URLQueryItem(name: "include", value: "journals,attachments,children,relations,watchers,changesets")])
     }
 
     public static func projectsRequest(base: URL, key: String) -> URLRequest {
@@ -282,13 +298,19 @@ public enum Redmine {
         public var uploads: [RedmineAPI.Upload] = []
         /// 평문을 쓰는 레드마인이면 쓴 그대로 넘긴다.
         public var notesRaw = false
+        public var privateNotes = false
+        public var trackerID: Int?
+        /// 0이면 비운다.
+        public var estimatedHours: Double?
 
         public init(statusID: Int? = nil, doneRatio: Int? = nil, priorityID: Int? = nil, assignedToID: Int? = nil,
                     startDate: String? = nil, dueDate: String? = nil, subject: String? = nil, description: String? = nil,
-                    descriptionRaw: Bool = false, notes: String? = nil, notesRaw: Bool = false, uploads: [RedmineAPI.Upload] = []) {
+                    descriptionRaw: Bool = false, notes: String? = nil, notesRaw: Bool = false, privateNotes: Bool = false,
+                    trackerID: Int? = nil, estimatedHours: Double? = nil, uploads: [RedmineAPI.Upload] = []) {
             (self.statusID, self.doneRatio, self.priorityID, self.assignedToID) = (statusID, doneRatio, priorityID, assignedToID)
             (self.startDate, self.dueDate, self.subject, self.description, self.notes) = (startDate, dueDate, subject, description, notes)
             (self.descriptionRaw, self.notesRaw, self.uploads) = (descriptionRaw, notesRaw, uploads)
+            (self.privateNotes, self.trackerID, self.estimatedHours) = (privateNotes, trackerID, estimatedHours)
         }
 
         private var descriptionValue: String? {
@@ -307,6 +329,9 @@ public enum Redmine {
             if let dueDate { fields["due_date"] = dueDate }
             if let subject { fields["subject"] = subject }
             if let descriptionValue { fields["description"] = descriptionValue }
+            if let trackerID { fields["tracker_id"] = trackerID }
+            if let estimatedHours { fields["estimated_hours"] = estimatedHours > 0 ? String(estimatedHours) : "" }
+            if privateNotes { fields["private_notes"] = true }
             if !uploads.isEmpty {
                 fields["uploads"] = uploads.map { ["token": $0.token, "filename": $0.filename, "content_type": $0.contentType] }
             }
@@ -325,6 +350,7 @@ public enum Redmine {
             if let dueDate { copy.dueDate = dueDate.isEmpty ? nil : dueDate }
             if let subject { copy.subject = subject }
             if let descriptionValue { copy.description = descriptionValue.isEmpty ? nil : descriptionValue }
+            if let estimatedHours { copy.estimatedHours = estimatedHours > 0 ? estimatedHours : nil }
             return copy
         }
     }
@@ -355,6 +381,19 @@ public enum Redmine {
     public static func addRelationRequest(base: URL, key: String, issue: Int, to: Int, type: String) throws -> URLRequest {
         try json(request(base, "issues/\(issue)/relations.json", key: key), method: "POST",
                  body: ["relation": ["issue_to_id": to, "relation_type": type]])
+    }
+
+    public static func deleteIssueRequest(base: URL, key: String, id: Int) throws -> URLRequest {
+        try json(request(base, "issues/\(id).json", key: key), method: "DELETE", body: nil)
+    }
+
+    public static func deleteAttachmentRequest(base: URL, key: String, id: Int) throws -> URLRequest {
+        try json(request(base, "attachments/\(id).json", key: key), method: "DELETE", body: nil)
+    }
+
+    /// 댓글 고치기. 빈 글이면 지운다. 레드마인 5.0 아래는 이 API가 없어 404가 온다.
+    public static func editJournalRequest(base: URL, key: String, journal: Int, notes: String) throws -> URLRequest {
+        try json(request(base, "journals/\(journal).json", key: key), method: "PUT", body: ["journal": ["notes": notes]])
     }
 
     public static func removeRelationRequest(base: URL, key: String, relation: Int) throws -> URLRequest {

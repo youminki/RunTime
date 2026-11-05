@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import UniformTypeIdentifiers
 import WorkLogCore
 
@@ -127,6 +127,11 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var searching = false
     @Published private(set) var resultsTotal = 0
     private var searchToken = 0
+    /// 본떠 만들 일감.
+    var creatingFrom: Redmine.Issue?
+    /// 받아 둔 그림 첨부.
+    @Published private(set) var images: [Int: NSImage] = [:]
+    private var requestedImages: Set<Int> = []
     /// 하위로 만들 때의 상위 일감.
     var creatingUnder: Redmine.Issue?
     private var addingRelation = false
@@ -484,6 +489,106 @@ final class RedmineStore: ObservableObject {
         }
     }
 
+    /// 일감 창을 닫고 그 일감을 본뜬 새 일감 창을 연다.
+    func copyIssue(_ issue: Redmine.Issue) {
+        creatingFrom = issue
+        selected = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in self?.creating = true }
+    }
+
+    func deleteIssue(_ id: Int) {
+        guard let (base, key) = credentials, let request = try? Redmine.deleteIssueRequest(base: base, key: key, id: id) else { return }
+        fetch(request) { [weak self] data, status, failure in
+            guard let self else { return }
+            guard (200..<300).contains(status) else {
+                self.flash = "#\(id)을 지우지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                return
+            }
+            self.selected = nil
+            self.details[id] = nil
+            self.load()
+            self.loadMyCounts()
+        }
+    }
+
+    func deleteAttachment(_ id: Int, issue: Int) {
+        guard let (base, key) = credentials else { return }
+        send(try? Redmine.deleteAttachmentRequest(base: base, key: key, id: id), id: issue, what: "첨부를 지우지")
+    }
+
+    /// 댓글을 고치거나 비운다. 이 API가 없는 레드마인(5.0 아래)이면 웹의 그 댓글을 연다.
+    func editJournal(_ journal: Int, number: Int, issue: Int, notes: String, done: @escaping (Bool) -> Void) {
+        guard let (base, key) = credentials, let request = try? Redmine.editJournalRequest(base: base, key: key, journal: journal, notes: notes) else {
+            return done(false)
+        }
+        fetch(request) { [weak self] data, status, failure in
+            guard let self else { return }
+            if (200..<300).contains(status) {
+                self.loadDetail(issue)
+                return done(true)
+            }
+            if [403, 404, 405].contains(status) {
+                self.flash = "이 레드마인은 앱에서 댓글을 고칠 수 없어 웹에서 엽니다"
+                var parts = URLComponents(url: Redmine.webURL(base: base, issue: issue), resolvingAgainstBaseURL: false)
+                parts?.fragment = "note-\(number)"
+                if let url = parts?.url { NSWorkspace.shared.open(url) }
+            } else {
+                self.flash = "댓글을 고치지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+            }
+            done(false)
+        }
+    }
+
+    /// 첨부 받기 요청. 키는 이 레드마인에만 보내고, 응답이 http 주소를 주어도 설정한 주소의 방식으로 받는다.
+    private func attachmentRequest(_ file: Redmine.Attachment) -> URLRequest? {
+        guard let (base, key) = credentials, let text = file.contentUrl,
+              var parts = URLComponents(string: text), parts.host == base.host else { return nil }
+        parts.scheme = base.scheme
+        guard let url = parts.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
+        return request
+    }
+
+    /// 그림 첨부를 받아 둔다. 웹 로그인 없이 키로 받아 일감 창에 바로 보인다.
+    func loadImage(_ file: Redmine.Attachment) {
+        guard images[file.id] == nil, requestedImages.insert(file.id).inserted, file.filesize < Self.uploadLimit,
+              let request = attachmentRequest(file) else { return }
+        fetch(request) { [weak self] data, status, _ in
+            guard let self else { return }
+            guard status == 200, let data, let image = NSImage(data: data) else {
+                self.requestedImages.remove(file.id)
+                return
+            }
+            self.images[file.id] = image
+        }
+    }
+
+    /// 첨부를 내려받기 폴더에 받고 연다.
+    func download(_ file: Redmine.Attachment) {
+        guard let request = attachmentRequest(file) else { return }
+        fetch(request) { [weak self] data, status, failure in
+            guard let self else { return }
+            guard status == 200, let data, let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first else {
+                self.flash = "\(file.filename)을 받지 못했습니다: " + Self.message(status: status, error: failure, data: data)
+                return
+            }
+            var target = folder.appendingPathComponent(file.filename)
+            var number = 1
+            while FileManager.default.fileExists(atPath: target.path) {
+                let url = URL(fileURLWithPath: file.filename)
+                target = folder.appendingPathComponent(url.deletingPathExtension().lastPathComponent + " \(number)." + url.pathExtension)
+                number += 1
+            }
+            do {
+                try data.write(to: target)
+                NSWorkspace.shared.open(target)
+            } catch {
+                self.flash = "\(file.filename)을 저장하지 못했습니다: \(error.localizedDescription)"
+            }
+        }
+    }
+
     /// 일감 창을 닫고 그 일감의 하위로 새 일감 창을 연다. 시트 위에 시트를 띄울 수 없어 닫힌 뒤에 연다.
     func createChild(of issue: Redmine.Issue) {
         creatingUnder = issue
@@ -511,7 +616,7 @@ final class RedmineStore: ObservableObject {
     }
 
     /// 파일을 올리고 댓글과 함께 일감에 붙인다. 하나라도 못 올리면 아무것도 붙이지 않고 까닭을 돌려준다.
-    func comment(_ id: Int, text: String, files: [URL], done: @escaping (Bool) -> Void) {
+    func comment(_ id: Int, text: String, files: [URL], isPrivate: Bool = false, done: @escaping (Bool) -> Void) {
         // 올리는 동안 또 누르면 같은 댓글과 파일이 두 번 올라간다
         guard let (base, key) = credentials, sending.insert(id).inserted else { return done(false) }
         func finish(_ ok: Bool) {
@@ -521,7 +626,7 @@ final class RedmineStore: ObservableObject {
         var uploads: [RedmineAPI.Upload] = []
         func next(_ rest: [URL]) {
             guard let file = rest.first else {
-                return update(id, Redmine.Change(notes: text, notesRaw: !settings.redmineHTML, uploads: uploads), done: finish)
+                return update(id, Redmine.Change(notes: text, notesRaw: !settings.redmineHTML, privateNotes: isPrivate, uploads: uploads), done: finish)
             }
             // macOS 파일 이름은 자모가 풀려 있어 웹에서 글자가 갈라져 보인다
             let name = file.lastPathComponent.precomposedStringWithCanonicalMapping

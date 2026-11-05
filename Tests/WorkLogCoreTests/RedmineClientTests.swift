@@ -94,6 +94,23 @@ private let issueJSON = #"""
         #expect(Redmine.Change(description: "a").fields["description"] as? String == "<p>a</p>")
     }
 
+    @Test func commentAndIssueExtras() throws {
+        let base = URL(string: "https://example.com")!
+        let change = Redmine.Change(notes: "a", privateNotes: true, trackerID: 3, estimatedHours: 2.5)
+        #expect(change.fields["private_notes"] as? Bool == true && change.fields["tracker_id"] as? Int == 3)
+        #expect(change.fields["estimated_hours"] as? String == "2.5")
+        #expect(Redmine.Change(estimatedHours: 0).fields["estimated_hours"] as? String == "")
+        #expect(try Redmine.deleteIssueRequest(base: base, key: "k", id: 9).httpMethod == "DELETE")
+        #expect(try Redmine.deleteAttachmentRequest(base: base, key: "k", id: 9).url?.path == "/attachments/9.json")
+        let edit = try Redmine.editJournalRequest(base: base, key: "k", journal: 5, notes: "")
+        #expect(edit.httpMethod == "PUT" && edit.url?.path == "/journals/5.json")
+        let journal = #"{"id":1,"created_on":"2026-11-01T00:00:00Z","private_notes":true,"details":[{"property":"attachment","name":"77","new_value":"a.png"},{"property":"attachment","name":"78","old_value":"b.png"},{"property":"attr","name":"status_id"}]}"#
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let parsed = try decoder.decode(Redmine.Journal.self, from: Data(journal.utf8))
+        #expect(parsed.attachmentIDs == [77] && parsed.privateNotes == true)
+    }
+
     @Test func requestsForRelationsWatchersAndSearch() throws {
         let base = URL(string: "https://example.com")!
         let add = try Redmine.addRelationRequest(base: base, key: "k", issue: 1, to: 2, type: "blocks")

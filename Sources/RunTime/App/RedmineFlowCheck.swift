@@ -152,6 +152,22 @@ enum RedmineFlowCheck {
         check("관계·지켜보기 요청", related == true
               && writes().sorted() == ["DELETE relations/5.json", "POST issues/10/relations.json", "POST issues/10/watchers.json"])
 
+        var edited: Bool?
+        store.editJournal(5, number: 1, issue: 10, notes: "고침") { edited = $0 }
+        store.deleteAttachment(9, issue: 10)
+        await settle()
+        check("댓글 고치기와 첨부 지우기 요청", edited == true && writes().sorted() == ["DELETE attachments/9.json", "PUT journals/5.json"])
+        var hidden: Bool?
+        store.comment(10, text: "비밀", files: [], isPrivate: true) { hidden = $0 }
+        await settle()
+        check("비공개 댓글을 보낸다", hidden == true && writes() == ["PUT issues/10.json"])
+        store.update(10, Redmine.Change(trackerID: 1, estimatedHours: 8))
+        await settle()
+        check("트래커와 추정 시간을 고친다", writes() == ["PUT issues/10.json"] && !store.isBusy(10))
+        store.deleteIssue(10)
+        await settle()
+        check("일감을 지우면 창을 닫는다", writes() == ["DELETE issues/10.json"] && store.selected == nil)
+
         store.selected = nil
         store.search = "#123"
         store.submitSearch()
