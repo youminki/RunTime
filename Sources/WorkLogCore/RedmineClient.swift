@@ -406,11 +406,16 @@ public enum Redmine {
         public let id: String
         public let date: Date
         public let user: String
+        /// 같은 이름이 둘이어도 사람별로 거르게 번호를 둔다.
+        public let userID: Int?
         public let project: String
         public let issueID: Int?
         /// 소요시간의 일감이 받은 목록에 없으면 비어 있다.
         public let issue: Issue?
         public let notes: String?
+        /// 그리고 찾을 때 쓰는 글. HTML을 그릴 때마다 풀지 않게 만들 때 한 번 푼다.
+        public let text: String?
+        public let isPrivate: Bool
         public let details: [Detail]
         public let kind: Kind
     }
@@ -418,31 +423,36 @@ public enum Redmine {
     /// 일감 이력과 소요시간을 시간순으로 모은다. 웹의 작업 내역은 API 키로 읽을 수 없어 여기서 만든다.
     public static func activity(_ issues: [Issue], times: [TimeLog] = [], since: Date) -> [Activity] {
         var items: [Activity] = []
-        func add(_ id: String, _ date: Date, _ user: String?, _ issue: Issue, notes: String? = nil, details: [Detail] = [], kind: Activity.Kind) {
-            items.append(Activity(id: id, date: date, user: user ?? "알 수 없음", project: issue.project.name, issueID: issue.id, issue: issue,
-                                  notes: notes, details: details, kind: kind))
+        func add(_ id: String, _ date: Date, _ user: Ref?, _ issue: Issue, notes: String? = nil, isPrivate: Bool = false,
+                 details: [Detail] = [], kind: Activity.Kind) {
+            items.append(Activity(id: id, date: date, user: user?.name ?? "알 수 없음", userID: user?.id, project: issue.project.name,
+                                  issueID: issue.id, issue: issue, notes: notes, text: notes.map(RedmineNote.plain), isPrivate: isPrivate,
+                                  details: details, kind: kind))
         }
         for issue in issues {
             if let text = issue.createdOn, let date = Redmine.date(text), date >= since {
-                add("\(issue.id)-new", date, issue.author?.name, issue, kind: .created)
+                add("\(issue.id)-new", date, issue.author, issue, kind: .created)
             }
             for journal in issue.journals ?? [] {
                 guard let date = journal.created, date >= since else { continue }
                 let notes = journal.notes.flatMap { $0.isEmpty ? nil : $0 }
                 guard notes != nil || !(journal.details ?? []).isEmpty else { continue }
-                add("\(issue.id)-\(journal.id)", date, journal.user?.name, issue, notes: notes, details: journal.details ?? [], kind: .change)
+                add("\(issue.id)-\(journal.id)", date, journal.user, issue, notes: notes, isPrivate: journal.privateNotes == true,
+                    details: journal.details ?? [], kind: .change)
             }
-            for commit in issue.changesets ?? [] {
+            // 같은 수정 번호가 저장소 둘에서 이어질 수 있어 순번을 붙인다
+            for (index, commit) in (issue.changesets ?? []).enumerated() {
                 guard let date = commit.committedOn.flatMap(Redmine.date), date >= since else { continue }
-                add("\(issue.id)-r\(commit.revision)", date, commit.user?.name, issue, notes: commit.comments, kind: .commit(revision: commit.revision))
+                add("\(issue.id)-r\(commit.revision)-\(index)", date, commit.user, issue, notes: commit.comments, kind: .commit(revision: commit.revision))
             }
         }
         let byID = Dictionary(issues.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for log in times {
             guard let date = log.createdOn.flatMap(Redmine.date), date >= since else { continue }
             let notes = log.comments.flatMap { $0.isEmpty ? nil : $0 }
-            items.append(Activity(id: "time-\(log.id)", date: date, user: log.user.name, project: log.project.name, issueID: log.issue?.id,
-                                  issue: log.issue.flatMap { byID[$0.id] }, notes: notes, details: [],
+            items.append(Activity(id: "time-\(log.id)", date: date, user: log.user.name, userID: log.user.id, project: log.project.name,
+                                  issueID: log.issue?.id, issue: log.issue.flatMap { byID[$0.id] }, notes: notes, text: notes,
+                                  isPrivate: false, details: [],
                                   kind: .time(hours: log.hours, activity: log.activity?.name)))
         }
         return items.sorted { $0.date > $1.date }

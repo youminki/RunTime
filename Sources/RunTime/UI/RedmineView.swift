@@ -191,7 +191,7 @@ private extension View {
 // MARK: - 일감 표
 
 /// 레드마인 일감 목록처럼 칸이 맞춰진 표. 머리를 누르면 정렬하고, 트리 보기면 하위 일감을 들여 쓴다.
-/// 창이 좁으면 우선순위·고친 날·트래커 칸부터 숨긴다.
+/// 창이 좁으면 우선순위·트래커 칸부터 숨긴다.
 private struct RedmineIssueTable: View {
     @ObservedObject var store: RedmineStore
 
@@ -423,10 +423,11 @@ private struct RedmineIssueTable: View {
         let projects = Set(store.issues.filter { ids.contains($0.id) }.map(\.project.id))
         let people = projects.count == 1 ? projects.first.flatMap { store.people[$0] } ?? [] : []
         return HStack(spacing: 10) {
-            Text(store.bulkRunning ? "고치는 중…" : "\(ids.count)건 고름").font(WL.meta.weight(.semibold))
+            Text(store.bulkRunning ? "고치는 중…" : ids.isEmpty ? "고른 일감이 모두 가려졌습니다" : "\(ids.count)건 고름").font(WL.meta.weight(.semibold))
             if store.checked.count > ids.count {
                 Text("\(store.checked.count - ids.count)건은 가려져 빠짐").font(WL.caption).foregroundStyle(WL.waiting)
             }
+            Group {
             Menu("상태") {
                 ForEach(store.statuses) { status in
                     Button(status.name) { confirm("상태를 \(status.name)(으)로 바꿀까요?", Redmine.Change(statusID: status.id)) }
@@ -451,6 +452,8 @@ private struct RedmineIssueTable: View {
                 if projects.count > 1 { Text("프로젝트가 여럿이라 구성원을 고를 수 없습니다") }
                 Button("비우기") { confirm("담당자를 비울까요?", Redmine.Change(assignedToID: 0)) }
             }
+            }
+            .disabled(ids.isEmpty)
             Button("풀기") { store.checked = [] }.buttonStyle(TextLinkButtonStyle())
         }
         .menuStyle(.borderlessButton)
@@ -599,7 +602,7 @@ private final class ActivityFilter: ObservableObject {
         }
     }
 
-    @Published var person: String?
+    @Published var person: Int?
     @Published var kind = Kind.all
 }
 
@@ -611,11 +614,14 @@ private struct RedmineActivity: View {
     var body: some View {
         let all = store.activityItems
         let word = store.search.trimmingCharacters(in: .whitespaces)
+        // 범위를 바꿔 고른 사람이 없어지면 모든 사람으로 본다
+        let person = filter.person.flatMap { id in all.contains { $0.userID == id } ? id : nil }
         let items = all.filter { item in
-            (filter.person == nil || item.user == filter.person) && filter.kind.matches(item)
+            (person == nil || item.userID == person) && filter.kind.matches(item)
                 && (word.isEmpty || item.user.localizedCaseInsensitiveContains(word) || (item.issue?.subject ?? "").localizedCaseInsensitiveContains(word)
-                    || (item.notes ?? "").localizedCaseInsensitiveContains(word) || item.issueID.map { "#\($0)" } == word)
+                    || (item.text ?? "").localizedCaseInsensitiveContains(word) || item.issueID.map { "#\($0)" } == word)
         }
+        let people = Dictionary(all.compactMap { item in item.userID.map { ($0, item.user) } }, uniquingKeysWith: { first, _ in first })
         let days = Dictionary(grouping: items) { WorkDay.key($0.date) }
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -624,11 +630,11 @@ private struct RedmineActivity: View {
                     Text("30일").tag(30)
                 }
                 .labelsHidden().pickerStyle(.segmented).fixedSize()
-                Menu(filter.person ?? "모든 사람") {
+                Menu(person.flatMap { people[$0] } ?? "모든 사람") {
                     Button("모든 사람") { filter.person = nil }
                     Divider()
-                    ForEach(Array(Set(all.map(\.user))).sorted(), id: \.self) { name in
-                        Button(name) { filter.person = name }
+                    ForEach(people.sorted { $0.value < $1.value }, id: \.key) { id, name in
+                        Button(name) { filter.person = id }
                     }
                 }
                 .menuStyle(.borderlessButton).fixedSize()
@@ -696,6 +702,7 @@ private struct RedmineActivity: View {
                     HStack(spacing: 6) {
                         Text(item.user).font(WL.meta.weight(.semibold))
                         Text(item.date.formatted(date: .omitted, time: .shortened)).font(WL.caption).foregroundStyle(WL.quiet)
+                        if item.isPrivate { Text("비공개").font(WL.caption).foregroundStyle(WL.waiting) }
                         if let issue = item.issue { TrackerTag(name: issue.tracker.name) }
                         if let id = item.issueID { Text(verbatim: "#\(id)").font(WL.caption.monospacedDigit()).foregroundStyle(WL.quiet) }
                         if let issue = item.issue { Text(issue.subject).font(WL.meta).lineLimit(1) }
@@ -708,8 +715,8 @@ private struct RedmineActivity: View {
                                                       people: item.issue.flatMap { store.people[$0.project.id] } ?? []))
                             .font(WL.caption).foregroundStyle(WL.muted)
                     }
-                    if let notes = item.notes {
-                        Text(RedmineNote.plain(notes)).font(WL.meta).lineLimit(4).multilineTextAlignment(.leading)
+                    if let notes = item.text {
+                        Text(notes).font(WL.meta).lineLimit(4).multilineTextAlignment(.leading)
                             .padding(8).frame(maxWidth: .infinity, alignment: .leading)
                             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.sidebar))
                     }
@@ -1205,7 +1212,7 @@ struct RedmineIssueSheet: View {
             .frame(minWidth: 760, idealWidth: 1000, minHeight: 520, idealHeight: 720)
             .background(WL.canvas)
             .overlay(alignment: .top) { RedmineFlash(store: store, atTop: true) }
-            .onAppear { store.loadImage(file) }
+            .task(id: store.images[file.id] == nil) { store.loadImage(file) }
         }
     }
 
@@ -1713,7 +1720,8 @@ struct RedmineIssueSheet: View {
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .onAppear { store.loadImage(file) }
+        // 메모리를 비우려 지운 그림도 보이는 동안 다시 받는다
+        .task(id: store.images[file.id] == nil) { store.loadImage(file) }
         .contextMenu { attachmentMenu(file, issue: issue) }
         .tip(file.filename)
     }
@@ -2052,6 +2060,8 @@ private final class NewIssueDraft: ObservableObject {
     var returnTo: Int?
     /// 복사한 설명이 HTML 그대로라 다시 변환하지 않는다.
     var rawDescription = false
+    /// 이 프로젝트로 정해질 때는 복사한 담당자를 둔다.
+    var keepAssigneeIn: Int?
     @Published var hasStart = false
     @Published var start = Date()
     @Published var hasDue = false
@@ -2127,7 +2137,7 @@ struct RedmineNewIssueSheet: View {
                     }
                 }
                 .buttonStyle(NotionButtonStyle()).keyboardShortcut(.cancelAction)
-                Button("만들기") { submit() }
+                Button("만들기") { TextInput.afterComposition { submit() } }
                     .buttonStyle(NotionButtonStyle(kind: .primary))
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!ready || draft.sending)
@@ -2149,6 +2159,7 @@ struct RedmineNewIssueSheet: View {
                 draft.priorityID = source.priority.id
                 draft.trackerID = source.tracker.id
                 draft.assigneeID = source.assignedTo?.id
+                draft.keepAssigneeIn = source.project.id
                 if let start = source.startDate.flatMap(WorkDay.date) { (draft.hasStart, draft.start) = (true, start) }
                 if let due = source.dueDate.flatMap(WorkDay.date) { (draft.hasDue, draft.due) = (true, due) }
                 draft.returnTo = source.id
@@ -2167,7 +2178,9 @@ struct RedmineNewIssueSheet: View {
         }
         .onChange(of: draft.projectID) { id in
             pickTracker()
-            draft.assigneeID = nil
+            // 복사해 넣은 담당자는 처음 프로젝트를 정할 때 지우지 않는다
+            if id != draft.keepAssigneeIn { draft.assigneeID = nil }
+            draft.keepAssigneeIn = nil
             if let id { store.loadPeople(project: id) }
         }
     }

@@ -102,7 +102,7 @@ private let issueJSON = #"""
         let since = try #require(Redmine.date("2026-11-01T00:00:00Z"))
         let log = try Redmine.timeLogs(Data(#"{"time_entries":[{"id":9,"project":{"id":1,"name":"p"},"issue":{"id":7},"user":{"id":3,"name":"다"},"activity":{"id":1,"name":"구현"},"hours":1.5,"comments":"","created_on":"2026-11-05T00:00:00Z"}],"total_count":1}"#.utf8))
         let items = Redmine.activity([issue], times: log.logs, since: since)
-        #expect(items.map(\.id) == ["time-9", "7-3", "7-rabc", "7-2", "7-new"])
+        #expect(items.map(\.id) == ["time-9", "7-3", "7-rabc-0", "7-2", "7-new"])
         #expect(items[0].kind == .time(hours: 1.5, activity: "구현") && items[0].notes == nil && items[0].issue?.id == 7)
         #expect(items[1].user == "다" && items[1].notes == "새 댓글" && items[4].kind == .created)
     }

@@ -199,6 +199,11 @@ enum RedmineFlowCheck {
         store.updateChecked(Redmine.Change(doneRatio: 40))
         await settle(0.8)
         check("가린 일감은 고치지 않는다", writes() == ["PUT issues/11.json"])
+        check("가려 둔 선택은 고친 뒤에도 남긴다", store.checked == [10])
+        store.search = "아무 일감에도 없는 말"
+        store.updateChecked(Redmine.Change(doneRatio: 60))
+        await settle(0.5)
+        check("고른 일감이 모두 가려지면 아무것도 고치지 않는다", writes().isEmpty && store.checked == [10] && !store.bulkRunning)
         store.search = ""
         store.checked = [10, 11]
         store.updateChecked(Redmine.Change(doneRatio: 50))

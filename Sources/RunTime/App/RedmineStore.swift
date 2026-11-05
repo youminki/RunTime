@@ -121,7 +121,8 @@ final class RedmineStore: ObservableObject {
         total = 0
         collapsed = []
         load()
-        if layout == .activity { loadActivity() }
+        // 내 일감·등록한 일감·질의는 작업 내역 범위가 같아 다시 받지 않는다
+        if layout == .activity, activityShown != activityKey { loadActivity() }
     }
 
     @Published var search = ""
@@ -189,6 +190,8 @@ final class RedmineStore: ObservableObject {
     /// 받아 둔 그림 첨부.
     @Published private(set) var images: [Int: NSImage] = [:]
     private var requestedImages: Set<Int> = []
+    /// 받은 차례. 메모리가 차면 앞에서부터 지운다.
+    private var imageOrder: [Int] = []
     /// 받지 못한 그림. 미리보기가 까닭과 다시 받기를 보인다.
     @Published private(set) var failedImages: Set<Int> = []
     @Published private(set) var downloading: Set<Int> = []
@@ -253,6 +256,7 @@ final class RedmineStore: ObservableObject {
         refine = [:]
         images = [:]
         requestedImages = []
+        imageOrder = []
         failedImages = []
         journalAPI = true
         activityToken += 1
@@ -262,7 +266,27 @@ final class RedmineStore: ObservableObject {
         activityError = nil
         activityItems = []
         activityLoading = false
-        if layout == .activity { loadActivity() }
+        // 옛 서버의 메타·진행 중 표시가 남으면 "나에게"가 엉뚱한 사람을 고르거나 버튼이 막힌 채 남는다
+        me = nil
+        projects = []
+        queries = []
+        statuses = []
+        trackers = []
+        priorities = []
+        activities = []
+        results = []
+        showsResults = false
+        collapsed = []
+        detailErrors = [:]
+        saving = []
+        sending = []
+        bulkRunning = false
+        addingRelation = false
+        removingRelations = []
+        editingJournals = []
+        downloading = []
+        fetchingAncestors = false
+        ancestorsStale = false
         issues = []
         details = [:]
         total = 0
@@ -287,7 +311,7 @@ final class RedmineStore: ObservableObject {
         var project: Int?
         if case .project(let chosen) = scope { project = chosen.id }
         // 같은 범위를 다시 받을 때는 새 결과가 올 때까지 보던 내역을 둔다 (끊긴 채 돌아와도 비지 않게)
-        let shown = "\(project ?? 0)-\(activityDays)"
+        let shown = activityKey
         if shown != activityShown { activityItems = [] }
         activityShown = shown
         activityLoading = true
@@ -295,9 +319,10 @@ final class RedmineStore: ObservableObject {
         activityProgress = (0, 0)
         activityFailed = 0
         let since = Date().addingTimeInterval(-Double(activityDays) * 86_400)
-        let from = WorkDay.key(since)
+        // 서버가 날짜를 다른 시간대로 읽어도 첫날이 빠지지 않게 하루 앞부터 받고 since로 자른다
+        let from = WorkDay.key(since.addingTimeInterval(-86_400))
         var found: [Redmine.Issue] = [], times: [Redmine.TimeLog] = []
-        var seen: Set<Int> = []
+        var seen: Set<Int> = [], seenTimes: Set<Int> = []
         // 일감마다 한 번만 내역 줄로 바꿔 두고, 보일 때는 합쳐 정렬만 한다
         var parts: [[Redmine.Activity]] = []
         var done = 0, failed = 0
@@ -310,6 +335,8 @@ final class RedmineStore: ObservableObject {
         func finish() {
             publish()
             activityLoading = false
+            // 이번 범위에 없는 일감의 이력은 버려 며칠 켜 두어도 쌓이지 않게 한다
+            activityCache = activityCache.filter { seen.contains($0.key) }
         }
         func history() {
             var left = found[...]
@@ -362,8 +389,10 @@ final class RedmineStore: ObservableObject {
             fetch(Redmine.timeLogsRequest(base: base, key: key, projectID: project, from: from, offset: offset)) { [weak self] data, status, _ in
                 guard let self, token == self.activityToken else { return }
                 guard status == 200, let data, let page = try? Redmine.timeLogs(data) else { return history() }
-                times += page.logs
-                if !page.logs.isEmpty, times.count < page.total { timePage(times.count) } else { history() }
+                let fresh = page.logs.filter { seenTimes.insert($0.id).inserted }
+                times += fresh
+                let next = offset + page.logs.count
+                if !fresh.isEmpty, next < page.total { timePage(next) } else { history() }
             }
         }
         func issuePage(_ offset: Int) {
@@ -384,6 +413,12 @@ final class RedmineStore: ObservableObject {
             }
         }
         issuePage(0)
+    }
+
+    private var activityKey: String {
+        var project = 0
+        if case .project(let chosen) = scope { project = chosen.id }
+        return "\(project)-\(activityDays)"
     }
 
     /// 다른 보기로 옮기면 받던 작업 내역을 그만 받는다.
@@ -431,7 +466,13 @@ final class RedmineStore: ObservableObject {
 
     // MARK: 받기
 
-    private func fetch(_ request: URLRequest, done: @escaping (Data?, Int, Error?) -> Void) {
+    private func fetch(_ request: URLRequest, done finish: @escaping (Data?, Int, Error?) -> Void) {
+        // 연결을 바꾼 뒤 온 옛 서버 응답은 버린다. 그래야 이어지던 일괄 고치기·댓글이 새 서버의 같은 번호 일감으로 넘어가지 않는다
+        let started = generation
+        let done: (Data?, Int, Error?) -> Void = { [weak self] data, status, error in
+            guard let self, self.generation == started else { return }
+            finish(data, status, error)
+        }
         if let folder = ProcessInfo.processInfo.environment["RUNTIME_REDMINE_FIXTURES"], !folder.isEmpty {
             Self.serveFixture(request, folder: folder, done: done)
             return
@@ -446,14 +487,15 @@ final class RedmineStore: ObservableObject {
         }.resume()
     }
 
-    /// 점검용: 레드마인 대신 폴더의 응답 파일로 답한다 (`issues/101.json` → `issues_101.json`, 없으면 끝 이름).
-    /// 고치기(PUT)는 받은 것으로 친다. 사내망 밖에서도 화면과 고치기 흐름을 볼 수 있다.
-    /// 첨부가 다른 저장소로 넘어가도 API 키가 따라가지 않게 넘어갈 때 키를 뗀다.
+    /// 첨부가 다른 저장소나 http로 넘어가도 API 키가 따라가지 않게 넘어갈 때 키를 뗀다.
     private final class KeepKey: NSObject, URLSessionTaskDelegate {
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
             var next = request
-            if request.url?.host != task.originalRequest?.url?.host { next.setValue(nil, forHTTPHeaderField: "X-Redmine-API-Key") }
+            let from = task.originalRequest?.url, to = request.url
+            if to?.scheme != from?.scheme || to?.host != from?.host || to?.port != from?.port {
+                next.setValue(nil, forHTTPHeaderField: "X-Redmine-API-Key")
+            }
             completionHandler(next)
         }
     }
@@ -463,6 +505,8 @@ final class RedmineStore: ObservableObject {
     /// 점검용: 가짜 응답으로 답한 쓰기 요청.
     static var fixtureWrites: [String] = []
 
+    /// 점검용: 레드마인 대신 폴더의 응답 파일로 답한다 (`issues/101.json` → `issues_101.json`, 없으면 끝 이름).
+    /// 고치기(PUT)는 받은 것으로 친다. 사내망 밖에서도 화면과 고치기 흐름을 볼 수 있다.
     private static func serveFixture(_ request: URLRequest, folder: String, done: @escaping (Data?, Int, Error?) -> Void) {
         let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         if let method = request.httpMethod, method != "GET" {
@@ -749,16 +793,28 @@ final class RedmineStore: ObservableObject {
                 self.loadDetail(issue)
                 return done(true)
             }
-            if [404, 405, 406].contains(status) {
-                // 다음부터는 메뉴에서 바로 웹으로 보낸다
-                self.journalAPI = false
-                self.flash = "이 레드마인은 앱에서 댓글을 고칠 수 없어 웹에서 엽니다"
-                self.openJournal(journal, issue: issue)
+            if [405, 406].contains(status) {
+                self.noJournalAPI(journal, issue: issue)
+            } else if status == 404, let (base, key) = self.credentials {
+                // 지워진 댓글도 404라, 댓글이 아직 있을 때만 이 서버에 댓글 API가 없다고 본다
+                self.fetch(Redmine.issueRequest(base: base, key: key, id: issue)) { [weak self] data, _, _ in
+                    guard let self else { return }
+                    let still = data.flatMap { try? Redmine.issue($0) }?.journals?.contains { $0.id == journal } == true
+                    if still { self.noJournalAPI(journal, issue: issue) } else { self.flash = "이미 지워진 댓글입니다" }
+                    self.loadDetail(issue)
+                }
             } else {
                 self.flash = "댓글을 고치지 못했습니다: " + Self.message(status: status, error: failure, data: data)
             }
             done(false)
         }
+    }
+
+    private func noJournalAPI(_ journal: Int, issue: Int) {
+        // 다음부터는 메뉴에서 바로 웹으로 보낸다
+        journalAPI = false
+        flash = "이 레드마인은 앱에서 댓글을 고칠 수 없어 웹에서 엽니다"
+        openJournal(journal, issue: issue)
     }
 
     /// 웹의 그 댓글을 연다. 번호는 숨긴 기록까지 세어 어긋나 바뀌지 않는 기록 번호로 찾아간다.
@@ -794,14 +850,27 @@ final class RedmineStore: ObservableObject {
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     guard let image else { return self.imageFailed(file.id) }
-                    // 일감을 오래 넘겨 봐도 메모리가 쌓이지 않게 한다
-                    if self.images.count >= 80 {
-                        self.images = [:]
-                        self.requestedImages = []
-                    }
                     self.images[file.id] = image
+                    self.imageOrder.append(file.id)
+                    self.trimImages()
                 }
             }
+        }
+    }
+
+    /// 일감을 오래 넘겨 봐도 메모리가 쌓이지 않게 오래된 그림부터 지운다. 열린 일감의 그림은 남긴다.
+    private func trimImages() {
+        func bytes(_ image: NSImage) -> Int { image.representations.first.map { $0.pixelsWide * $0.pixelsHigh * 4 } ?? 0 }
+        var total = images.values.reduce(0) { $0 + bytes($1) }
+        let keep = Set(selected.flatMap { details[$0] }?.attachments?.map(\.id) ?? [])
+        var index = 0
+        while total > 300_000_000, index < imageOrder.count {
+            let id = imageOrder[index]
+            guard !keep.contains(id), let image = images[id] else { index += 1; continue }
+            total -= bytes(image)
+            images[id] = nil
+            requestedImages.remove(id)
+            imageOrder.remove(at: index)
         }
     }
 
@@ -1110,16 +1179,17 @@ final class RedmineStore: ObservableObject {
 
     /// 고른 일감을 차례로 고친다. 한 건씩 보내 막힌 일감이 있어도 나머지는 나간다.
     func updateChecked(_ change: Redmine.Change) {
-        guard !bulkRunning else { return }
+        guard !bulkRunning, !checkedVisible.isEmpty else { return }
         bulkRunning = true
-        var left = checkedVisible.sorted()
+        let targets = checkedVisible.sorted()
+        var left = targets
         var failed: [Int] = []
         var done = 0
+        var reason: String?
         func next() {
             guard let id = left.first else {
-                // 실패한 일감은 고른 채 남겨 무엇이 안 됐는지 보이고 다시 할 수 있게 한다
-                let reason = flash
-                checked = Set(failed)
+                // 실패한 일감과 가려 두었던 일감은 고른 채 남긴다
+                checked.subtract(Set(targets).subtracting(failed))
                 bulkRunning = false
                 flash = failed.isEmpty ? "\(done)건을 고쳤습니다" : "\(done)건 고침 · \(failed.count)건 실패" + (reason.map { ": " + $0 } ?? "")
                 load()
@@ -1127,8 +1197,12 @@ final class RedmineStore: ObservableObject {
                 return
             }
             left.removeFirst()
+            flash = nil
             update(id, change, batch: true) { ok in
-                if ok { done += 1 } else { failed.append(id) }
+                if ok { done += 1 } else {
+                    failed.append(id)
+                    if reason == nil { reason = self.flash }
+                }
                 next()
             }
         }
