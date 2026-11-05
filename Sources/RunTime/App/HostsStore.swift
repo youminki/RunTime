@@ -8,7 +8,9 @@ final class HostsStore: ObservableObject {
     static let shared = HostsStore()
 
     static let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["RUNTIME_HOSTS"] ?? "/etc/hosts")
-    static let backups = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    /// `RUNTIME_HOSTS`로 사본을 쓰는 점검은 백업도 사본 옆에 둔다. 진짜 폴더에 쌓으면 개수 한도로 진짜 백업이 지워진다.
+    static let backups = ProcessInfo.processInfo.environment["RUNTIME_HOSTS"].map { URL(fileURLWithPath: $0 + "-backups") }
+        ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("RunTime/hosts-backups")
     private static let keptBackups = 20
 
