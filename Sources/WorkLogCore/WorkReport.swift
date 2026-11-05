@@ -806,7 +806,10 @@ public enum WorkReport {
 
     /// 직접 쓴 댓글이 있으면 그대로 쓰고, 없으면 제목으로 [작업 내용]을 만든다.
     public static func comment(_ entries: [WorkEntry]) -> String {
-        let written = entries.map { $0.note.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        // 이어 쓴 줄은 보내지 않은 댓글을 그대로 옮겨, 주간으로 보내면 같은 댓글이 둘 모인다
+        var noted = Set<String>()
+        let written = entries.map { $0.note.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && noted.insert(normalized($0)).inserted }
         let untitled = entries.filter { $0.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         var parts = written
         if !untitled.isEmpty {

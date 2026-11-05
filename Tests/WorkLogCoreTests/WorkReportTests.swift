@@ -12,6 +12,15 @@ private let sample = """
 """
 
 @Suite struct WorkReportTests {
+    @Test func carriedNoteIsWrittenOnce() {
+        var log = WorkLog()
+        log.entries = [WorkEntry(day: "2026-10-26", project: "p", title: "로그인 화면", status: .inProgress, issue: 37828, note: "N")]
+        log.carryOver(from: "2026-10-26", to: "2026-10-27")
+        // 이어 쓴 줄과 원래 줄을 주간으로 함께 보내도 같은 댓글은 한 번만 들어간다
+        #expect(log.entries.count == 2)
+        #expect(WorkReport.comment(log.entries) == "N")
+    }
+
     @Test func redmineSkipsBlankTitlesAndDroppedNotes() {
         let rows = [WorkEntry(day: "2026-10-30", project: "p", title: "  ", issue: 1),
                     WorkEntry(day: "2026-10-30", project: "p", title: "한 일", issue: 2)]
