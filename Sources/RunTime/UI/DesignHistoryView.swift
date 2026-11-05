@@ -285,10 +285,13 @@ struct DesignHistoryView: View {
         .foregroundStyle(WL.text)
         .overlay(alignment: .bottom) {
             // 상세 아래 막대와 겹치지 않게 그 위에 띄운다
-            // 아래 막대는 칸마다 두지 않고 화면 가운데 하나만 띄워, 칸이 막혀 보이지 않게 한다
+            // 아래 막대는 칸마다 두지 않고 하나만 띄운다. 평소에는 상세의 일이라 상세 칸 가운데에 두어 목록 끝 줄을 가리지 않고,
+            // 체크한 변경을 처리할 때만 목록과 함께 보이게 화면 가운데에 둔다
             // 토스트는 막대 위에 겹쳐 띄워, 뜰 때 막대 단추가 밀려 잘못 누르지 않게 한다
             ZStack(alignment: .bottom) {
-                if !(settings.sources.isEmpty && sync.history.files.isEmpty) { floatingBar }
+                if !(settings.sources.isEmpty && sync.history.files.isEmpty) {
+                    floatingBar.padding(.leading, checkedEvents.isEmpty ? page.sidebarWidth + page.timelineWidth : 0)
+                }
                 if let toast = page.toast { Toast(message: toast).padding(.bottom, 56).transition(.opacity) }
             }
             .padding(.bottom, 18)
