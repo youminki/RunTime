@@ -230,7 +230,7 @@ struct WorkLogView: View {
             page.showsSettings = true
             return
         }
-        if settings.redmineReady { sync.loadMyIssues() }
+        if settings.redmineReady { sync.loadMyIssues(force: true) }
         if settings.captureEnabled {
             sync.capture {
                 // 실패를 "새로 가져온 줄이 없습니다"로 보이면 VPN이 끊긴 것을 모른다

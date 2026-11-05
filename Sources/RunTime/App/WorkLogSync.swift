@@ -397,6 +397,9 @@ final class WorkLogSync: ObservableObject {
     @Published private(set) var loadingIssues = false
     @Published private(set) var issuesLoadedAt: Date?
     private var requestedInfo: Set<Int> = []
+    /// 레드마인이 응답하지 않으면 이때까지 저절로 묻지 않는다. 사내망 밖에서 화면·타이머가 번갈아 부르면 30초씩 걸리는
+    /// 실패가 분마다 쌓인다. 사용자가 직접 누른 요청과 잠에서 깬 뒤는 막지 않는다.
+    private var quietUntil = Date.distantPast
     @Published private(set) var sending = false
     /// 일감 상태 목록. 레드마인이 닿지 않을 때도 보낼 내용을 미리 보이게 마지막으로 받은 목록을 둔다.
     @Published var statuses: [RedmineAPI.Status] = {
@@ -443,8 +446,10 @@ final class WorkLogSync: ObservableObject {
             wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil,
                                                                              queue: .main) { [weak self] _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-                    guard let self, self.settings.captureEnabled else { return }
-                    self.capture()
+                    guard let self else { return }
+                    // 자는 동안 망이 바뀌었을 수 있어 레드마인 쉬기를 푼다
+                    self.quietUntil = .distantPast
+                    if self.settings.captureEnabled { self.capture() }
                 }
             }
         }
@@ -746,9 +751,10 @@ final class WorkLogSync: ObservableObject {
 
     /// 나에게 배정된 열린 일감 전부와, 일지가 가리키는 일감, 그 조상 일감을 받아 장부에 넣는다.
     /// 조상 이름으로 보고서 이름(`데이터 수집 > 공유 파일 관리 API 연동`)을 만들고 QA 건을 가린다.
-    func loadMyIssues(completion: (() -> Void)? = nil) {
+    /// `force`는 사용자가 직접 부른 때 (응답이 없어 쉬는 중이어도 묻는다).
+    func loadMyIssues(force: Bool = false, completion: (() -> Void)? = nil) {
         let referenced = store.log.entries.filter { $0.day >= WorkDay.adding(-40, to: WorkDay.today()) }.compactMap(\.issue)
-        fetchBook(assigned: true, extra: referenced, completion: completion)
+        fetchBook(assigned: true, extra: referenced, force: force, completion: completion)
     }
 
     /// 장부에 없는 일감만 받아 넣는다 (일감 번호를 새로 적었을 때).
@@ -768,12 +774,13 @@ final class WorkLogSync: ObservableObject {
         }
     }
 
-    private func fetchBook(assigned: Bool, extra: [Int], completion: (() -> Void)? = nil) {
+    private func fetchBook(assigned: Bool, extra: [Int], force: Bool = false, completion: (() -> Void)? = nil) {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
             issuesError = "레드마인 주소(https)와 API 키를 설정하세요"
             completion?()
             return
         }
+        guard force || Date() >= quietUntil else { completion?(); return }
         if assigned {
             guard !loadingIssues else { completion?(); return }
             loadingIssues = true
@@ -829,9 +836,11 @@ final class WorkLogSync: ObservableObject {
                     self.store.updateIssues(book.infos, assignedIDs: book.assignedIDs)
                     if assigned { self.issuesLoadedAt = Date() }
                     self.issuesError = nil
+                    self.quietUntil = .distantPast
                     self.detectNoteFormat()
                 case .failure(let error):
                     self.issuesError = error.localizedDescription
+                    if Self.unreachable(error) { self.quietUntil = Date().addingTimeInterval(300) }
                 }
                 completion?()
             }
@@ -1187,7 +1196,7 @@ final class WorkLogSync: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.sending = false
-                self.loadMyIssues()
+                self.loadMyIssues(force: true)
                 done(sent, failures)
             }
         }
@@ -1416,6 +1425,13 @@ final class WorkLogSync: ObservableObject {
         return output
     }
 
+    /// 서버에 닿지 못한 실패 (사내망 밖, 망 끊김, 시간 초과). 키·권한 오류는 다시 물어도 같아 여기 넣지 않는다.
+    private static func unreachable(_ error: Error) -> Bool {
+        guard let error = error as? URLError else { return false }
+        return [.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet,
+                .dnsLookupFailed, .internationalRoamingOff, .dataNotAllowed].contains(error.code)
+    }
+
     /// 실패한 레드마인 요청을 기록에 남기고, 만든 사람이 고칠 실패면 알린다.
     /// 키가 틀림(401)·권한 없음(403)·없는 일감(404)·댓글 수정 API 없음(405)과 망 끊김은 사용자 쪽 일이라 기록만 한다.
     /// 일지 내용이 담기는 notes는 보내지 않고 칸 이름과 값만 보낸다. 주소의 물음표 뒤도 뺀다.
@@ -1423,7 +1439,10 @@ final class WorkLogSync: ObservableObject {
                                file: String, line: Int, function: String) {
         let method = request.httpMethod ?? "GET", path = request.url?.path ?? "-"
         let body = data.map { String(decoding: $0.prefix(500), as: UTF8.self) } ?? ""
-        Diagnostics.record("레드마인 요청", "\(method) \(path) → \(status.map(String.init) ?? "응답 없음") \(body.prefix(200))")
+        // 같은 주소라도 내 일감 받기와 번호로 찾기를 가리게 물음표 뒤 칸 이름과 부른 함수를 남긴다 (값은 남기지 않는다)
+        let names = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems?.map(\.name) } ?? []
+        let query = names.isEmpty ? "" : "?" + names.joined(separator: ",")
+        Diagnostics.record("레드마인 요청", "\(method) \(path)\(query) → \(status.map(String.init) ?? "응답 없음") · \(function) \(body.prefix(200))")
         if let error, !ProblemReporter.shouldReport(error) { return }
         if let status, [401, 403, 404, 405].contains(status) { return }
         var fields = "-"
@@ -1532,7 +1551,7 @@ final class WorkLogSync: ObservableObject {
                     self.store.markCommentCleared(record)
                 }
                 self.sending = false
-                self.loadMyIssues()
+                self.loadMyIssues(force: true)
                 done(problems, manual)
             }
         }

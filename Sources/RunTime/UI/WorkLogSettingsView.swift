@@ -57,7 +57,7 @@ struct WorkLogSettingsView: View {
         }
         settings.normalizeRedmineURL()
         if settings.captureEnabled { sync.capture() }
-        if settings.redmineReady { sync.loadMyIssues() }
+        if settings.redmineReady { sync.loadMyIssues(force: true) }
         RedmineStore.shared.settingsChanged()
         GlobalHotKey.shared.setQuickAdd(settings.quickAddEnabled)
     }
@@ -176,7 +176,7 @@ struct WorkLogSettingsView: View {
                 Button("Claude 설정에서 가져오기") {
                     if settings.importFromClaude() {
                         page.flash("redmine MCP의 주소와 키를 가져왔습니다")
-                        sync.loadMyIssues()
+                        sync.loadMyIssues(force: true)
                         sync.loadStatuses()
                     } else {
                         page.flash("redmine MCP 설정을 찾지 못했거나 키체인에 저장하지 못했습니다")
@@ -206,7 +206,7 @@ struct WorkLogSettingsView: View {
                 }
             }
             SettingRow("연결", redmineStatus, detailTint: sync.issuesError == nil ? nil : WL.waiting) {
-                Button("연결 확인") { settings.retryKeychain(); sync.loadMyIssues(); sync.loadStatuses() }
+                Button("연결 확인") { settings.retryKeychain(); sync.loadMyIssues(force: true); sync.loadStatuses() }
                     .buttonStyle(NotionButtonStyle())
                     .disabled(!settings.redmineReady)
             }
@@ -299,7 +299,7 @@ struct WorkLogSettingsView: View {
         }
         guard settings.setRedmineKey(key) else { return "키체인에 저장하지 못했습니다." }
         settings.normalizeRedmineURL()
-        sync.loadMyIssues()
+        sync.loadMyIssues(force: true)
         page.flash("API 키를 저장했습니다")
         return nil
     }
