@@ -969,6 +969,8 @@ struct WorkLogPreview: View {
 
     private func undo(_ record: RedmineSent) {
         sync.undo(record) { problems, manual in
+            // 레드마인 화면의 표·상세도 되돌린 값으로 맞춘다
+            RedmineStore.shared.refreshAfterSend()
             if let manual, let base = RedmineAPI.baseURL(settings.effectiveRedmineURL) {
                 // 이 레드마인은 API로 댓글을 지우게 두지 않아, 그 댓글 자리를 열어 연필 > 지우기로 지우게 한다
                 NSWorkspace.shared.open(URL(string: base.appendingPathComponent("issues/\(record.issue)").absoluteString + "#change-\(manual)")!)

@@ -775,6 +775,14 @@ final class WorkLogSync: ObservableObject {
         }
     }
 
+    /// 앱의 레드마인 화면에서 고친 일감을 장부에 다시 받는다 (보고서 진척률·상태가 바로 따라오게). 장부에 있는 일감만.
+    func refreshInfo(_ ids: [Int]) {
+        guard settings.redmineReady else { return }
+        let known = ids.filter { store.log.issue($0) != nil }
+        guard !known.isEmpty else { return }
+        fetchBook(assigned: false, extra: known, force: true)
+    }
+
     private func fetchBook(assigned: Bool, extra: [Int], force: Bool = false, completion: (() -> Void)? = nil) {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else {
             issuesError = "레드마인 주소(https)와 API 키를 설정하세요"

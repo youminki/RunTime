@@ -33,6 +33,8 @@ enum RedmineFlowCheck {
         ]
         for (name, text) in files { try? Data(text.utf8).write(to: folder.appendingPathComponent(name)) }
         setenv("RUNTIME_REDMINE_FIXTURES", folder.path, 1)
+        // 고친 일감을 장부에 다시 받는 길이 실제 일지를 보고 서버로 나가지 않게 한다
+        setenv("RUNTIME_WORKLOG", folder.appendingPathComponent("worklog.json").path, 1)
         setenv("RUNTIME_REDMINE_URL", "https://example.com", 1)
         setenv("RUNTIME_REDMINE_KEY", "flow", 1)
         setenv("RUNTIME_NO_KEYCHAIN", "1", 1)
@@ -152,6 +154,23 @@ enum RedmineFlowCheck {
         check("저장 중에 또 보내면 거절한다", second == false)
         await settle()
         check("상태 변경이 한 번 나간다", writes() == ["PUT issues/10.json"])
+
+        // 고친 일감이 서버 거르기에서 빠지는 경우: 상세만 받으면 목록과 왼쪽 수에 남는다
+        let listFile = folder.appendingPathComponent("issues.json")
+        let fullList = (try? Data(contentsOf: listFile)) ?? Data()
+        if var object = (try? JSONSerialization.jsonObject(with: fullList)) as? [String: Any], let list = object["issues"] as? [Any] {
+            object["issues"] = Array(list.prefix(1))
+            object["total_count"] = 1
+            try? JSONSerialization.data(withJSONObject: object).write(to: listFile)
+        }
+        store.update(10, Redmine.Change(doneRatio: 50))
+        await settle()
+        check("반영되면 목록과 왼쪽 수를 새로 받는다", store.issues.map(\.id) == [10] && store.myOpenCounts[1] == 1)
+        _ = writes()
+        try? fullList.write(to: listFile)
+        store.load()
+        store.loadMyCounts()
+        await settle()
 
         var sent: Bool?
         store.comment(10, text: "댓글", files: []) { sent = $0 }
