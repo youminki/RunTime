@@ -15,6 +15,17 @@ final class WorkLogPage: ObservableObject {
     @Published var planEdits: [String: (text: String, base: String)] = WorkLogPage.savedEdits("workLog.planEdits").mapValues { ($0[0], $0[1]) } {
         didSet { Self.saveEdits(planEdits.mapValues { [$0.text, $0.base] }, "workLog.planEdits") }
     }
+    /// 마지막으로 고쳐 쓴 진행 예정 사항과 그날. 사내 계획은 날마다 거의 같아, 그 뒤 날은 따로 고친 글이 없으면 이 글을 쓴다.
+    /// 2주가 지나도 남게 날짜별 글과 따로 둔다. 처음에는 날짜별 글 가운데 가장 늦은 것을 쓴다.
+    @Published var planTemplate: (day: String, text: String)? = WorkLogPage.savedPlanTemplate() {
+        didSet { UserDefaults.standard.set(planTemplate.map { [$0.day, $0.text] }, forKey: "workLog.planTemplate") }
+    }
+
+    private static func savedPlanTemplate() -> (day: String, text: String)? {
+        if let saved = UserDefaults.standard.stringArray(forKey: "workLog.planTemplate"), saved.count == 2 { return (saved[0], saved[1]) }
+        return savedEdits("workLog.planEdits").max { $0.key < $1.key }.map { ($0.key, $0.value[0]) }
+    }
+
     /// 날짜별로 Claude로 다듬은 진행 사항: 지금 글, 다듬을 때 일지에서 만든 글, Claude가 돌려준 글.
     /// 고쳐 쓰지 않은 채 일지가 바뀌면 낡은 초안이라 버린다 (`polished`와 같은지로 가린다).
     @Published var progressEdits: [String: (text: String, base: String, polished: String)] = WorkLogPage.savedEdits("workLog.progressEdits", fields: 3).mapValues { ($0[0], $0[1], $0[2]) } {

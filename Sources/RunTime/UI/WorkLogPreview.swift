@@ -105,6 +105,16 @@ struct WorkLogPreview: View {
         WorkReport.plan(day: page.day, in: store.log, closed: sync.closedStatusIDs)
     }
 
+    /// 앞선 날 저장해 둔 계획이 이 날에도 쓰이는지 (그 뒤 날에만 쓴다).
+    private var templateApplies: Bool {
+        page.planTemplate.map { $0.day <= page.day } ?? false
+    }
+
+    /// 그날 고쳐 쓴 계획, 없으면 앞선 날 저장해 둔 계획. 머리줄은 날짜에서 만들어 날짜만 바뀐다.
+    private var savedPlan: String? {
+        page.planEdits[page.day]?.text ?? (templateApplies ? page.planTemplate?.text : nil)
+    }
+
     /// 하루 보고서 머리줄 `[10/27 진행 사항]`. 팀즈에는 늘 이 줄을 제목으로 올린다.
     private var dayHeader: String { WorkReport.dayHeader(page.day, plan: isPlan) }
 
@@ -141,7 +151,7 @@ struct WorkLogPreview: View {
     private var reportBody: String {
         switch page.mode {
         case .day:
-            if isPlan { return page.planEdits[page.day]?.text ?? generatedPlan }
+            if isPlan { return savedPlan ?? generatedPlan }
             return progressDraft?.text ?? generatedProgress
         default:
             // 주간·월간은 첫 줄이 머리줄이다
@@ -337,7 +347,8 @@ struct WorkLogPreview: View {
     private var planEditor: some View {
         let generated = generatedPlan
         let edit = page.planEdits[page.day]
-        // 고친 뒤 일지에 프로젝트가 더해지거나 빠졌으면 알린다
+        let carried = edit == nil && templateApplies
+        // 고친 뒤 일지에 프로젝트가 더해지거나 빠졌으면 알린다 (앞선 날 계획을 이어 쓰는 날은 일부러 고정한 글이라 알리지 않는다)
         let stale = edit.map { $0.base != generated } ?? false
         return VStack(alignment: .trailing, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
@@ -345,9 +356,13 @@ struct WorkLogPreview: View {
                 Text(dayHeader).font(.system(size: 13.5)).foregroundStyle(WL.text)
                     .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
                     .textSelection(.enabled)
-                ReportText(text: page.planEdits[page.day]?.text ?? generated, placeholder: false) { text in
+                ReportText(text: savedPlan ?? generated, placeholder: false) { text in
                     let base = page.planEdits[page.day]?.base ?? generated
                     page.planEdits[page.day] = text == generated ? nil : (text, base)
+                    // 지난날을 고쳐도 그 뒤에 저장한 계획은 그대로 둔다
+                    if page.planTemplate.map({ $0.day <= page.day }) ?? true {
+                        page.planTemplate = text == generated ? nil : (page.day, text)
+                    }
                 }
                 .frame(minHeight: 140)
             }
@@ -361,11 +376,16 @@ struct WorkLogPreview: View {
                 }
             }
             HStack(spacing: 10) {
-                Text(stale ? "고친 뒤 일지가 바뀌었습니다" : edit != nil ? "고쳐 쓴 계획" : "일지에서 만든 계획 · 바로 고쳐 쓸 수 있습니다")
+                Text(stale ? "고친 뒤 일지가 바뀌었습니다" : edit != nil ? "고쳐 쓴 계획 · 다음 날에도 날짜만 바꿔 씁니다"
+                     : carried ? "저장해 둔 계획 · 날짜만 바꿔 씁니다" : "일지에서 만든 계획 · 바로 고쳐 쓸 수 있습니다")
                     .font(WL.caption).foregroundStyle(stale ? WL.waiting : .secondary)
                 Spacer()
-                if edit != nil {
-                    Button("일지로 다시 만들기") { page.planEdits[page.day] = nil }.buttonStyle(TextLinkButtonStyle())
+                if edit != nil || carried {
+                    Button("일지로 다시 만들기") {
+                        page.planEdits[page.day] = nil
+                        if templateApplies { page.planTemplate = nil }
+                    }
+                    .buttonStyle(TextLinkButtonStyle())
                 }
             }
             // 기간을 정한 프로젝트는 줄이 없어도 늘 들어간다. 무엇이 왜 들어갔는지 보이고, 정하는 곳을 알린다
