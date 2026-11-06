@@ -18,12 +18,17 @@ final class WorkLogPage: ObservableObject {
     /// 마지막으로 고쳐 쓴 진행 예정 사항과 그날. 사내 계획은 날마다 거의 같아, 그 뒤 날은 따로 고친 글이 없으면 이 글을 쓴다.
     /// 2주가 지나도 남게 날짜별 글과 따로 둔다. 처음에는 날짜별 글 가운데 가장 늦은 것을 쓴다.
     @Published var planTemplate: (day: String, text: String)? = WorkLogPage.savedPlanTemplate() {
-        didSet { UserDefaults.standard.set(planTemplate.map { [$0.day, $0.text] }, forKey: "workLog.planTemplate") }
+        didSet { UserDefaults.standard.set(planTemplate.map { [$0.day, $0.text] } ?? [], forKey: "workLog.planTemplate") }
     }
 
     private static func savedPlanTemplate() -> (day: String, text: String)? {
-        if let saved = UserDefaults.standard.stringArray(forKey: "workLog.planTemplate"), saved.count == 2 { return (saved[0], saved[1]) }
-        return savedEdits("workLog.planEdits").max { $0.key < $1.key }.map { ($0.key, $0.value[0]) }
+        restoredPlanTemplate(saved: UserDefaults.standard.stringArray(forKey: "workLog.planTemplate"), edits: savedEdits("workLog.planEdits"))
+    }
+
+    /// 빈 배열은 사람이 지운 것이라 날짜별 글에서 되살리지 않는다. 저장한 적이 없을 때(nil)만 날짜별 글을 본다.
+    static func restoredPlanTemplate(saved: [String]?, edits: [String: [String]]) -> (day: String, text: String)? {
+        if let saved { return saved.count == 2 ? (saved[0], saved[1]) : nil }
+        return edits.max { $0.key < $1.key }.map { ($0.key, $0.value[0]) }
     }
 
     /// 날짜별로 Claude로 다듬은 진행 사항: 지금 글, 다듬을 때 일지에서 만든 글, Claude가 돌려준 글.
