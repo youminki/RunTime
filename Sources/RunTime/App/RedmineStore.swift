@@ -748,11 +748,7 @@ final class RedmineStore: ObservableObject {
                 return
             }
             // 여러 건을 고칠 때는 건마다 다시 받지 않고 끝에 한 번 받는다
-            if !batch {
-                self.loadDetail(id)
-                // 상태·담당자가 바뀌면 왼쪽 수도 바뀐다
-                if change.statusID != nil || change.assignedToID != nil { self.loadMyCounts() }
-            }
+            if !batch { self.reflected([id]) }
             done?(true)
         }
     }
@@ -796,7 +792,7 @@ final class RedmineStore: ObservableObject {
             guard let self else { return }
             self.editingJournals.remove(journal)
             if (200..<300).contains(status) {
-                self.loadDetail(issue)
+                self.reflected([issue])
                 return done(true)
             }
             if [405, 406].contains(status) {
@@ -958,6 +954,7 @@ final class RedmineStore: ObservableObject {
             // 범위·거르기에 맞는지 알 수 없어 끼워 넣지 않고 다시 받는다
             self.load()
             self.loadMyCounts()
+            if self.layout == .activity { self.loadActivity() }
             done(nil)
             // 새 일감 창이 닫힌 뒤에 연다
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.selected = made.id }
@@ -1015,9 +1012,19 @@ final class RedmineStore: ObservableObject {
                 done?(false)
                 return
             }
-            self.loadDetail(id)
+            self.reflected([id])
             done?(true)
         }
+    }
+
+    /// 레드마인에 반영된 뒤 그 일감이 보이는 곳을 모두 새로 받는다. 상세만 받으면 목록의 거르기·정렬, 작업 내역,
+    /// 왼쪽 내 일감 수, 업무 일지 보고서의 진척률이 앱을 다시 열 때까지 옛 값으로 남는다.
+    private func reflected(_ ids: [Int]) {
+        for id in ids where details[id] != nil || selected == id { loadDetail(id) }
+        load()
+        if layout == .activity { loadActivity() }
+        loadMyCounts()
+        WorkLogSync.shared.refreshInfo(ids)
     }
 
     func addRelation(_ id: Int, to: Int, type: String, done: @escaping (Bool) -> Void) {
@@ -1078,7 +1085,7 @@ final class RedmineStore: ObservableObject {
         fetch(request) { [weak self] data, status, failure in
             guard let self else { return }
             guard (200..<300).contains(status) else { return done(Self.message(status: status, error: failure, data: data)) }
-            self.loadDetail(id)
+            self.reflected([id])
             done(nil)
         }
     }
@@ -1221,8 +1228,7 @@ final class RedmineStore: ObservableObject {
                 checked.subtract(Set(targets).subtracting(failed))
                 bulkRunning = false
                 flash = failed.isEmpty ? "\(done)건을 고쳤습니다" : "\(done)건 고침 · \(failed.count)건 실패" + (reason.map { ": " + $0 } ?? "")
-                load()
-                loadMyCounts()
+                reflected(targets.filter { !failed.contains($0) })
                 return
             }
             left.removeFirst()

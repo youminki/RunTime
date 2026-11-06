@@ -105,6 +105,23 @@ enum WorkLogFlowCheck {
         settings.attachScreens = false
         sync.statuses = [RedmineAPI.Status(id: 1, name: "할일", isClosed: false), RedmineAPI.Status(id: 2, name: "완료", isClosed: true)]
 
+        let edits = ["2026-11-02": ["고친 글", "일지 글"], "2026-11-03": ["늦은 글", "일지 글"]]
+        check("저장한 적 없으면 가장 늦은 날짜별 계획을 쓴다", WorkLogPage.restoredPlanTemplate(saved: nil, edits: edits)?.text == "늦은 글")
+        check("저장한 계획을 그대로 읽는다", WorkLogPage.restoredPlanTemplate(saved: ["2026-11-04", "저장 글"], edits: edits)?.day == "2026-11-04")
+        check("지운 계획은 날짜별 글에서 되살리지 않는다", WorkLogPage.restoredPlanTemplate(saved: [], edits: edits) == nil)
+
+        func listed(ratio: Int) -> Data {
+            Data(#"{"issues":[{"id":20,"subject":"일감","project":{"id":1,"name":"시험"},"tracker":{"id":1,"name":"작업"},"status":{"id":1,"name":"할일"},"priority":{"id":2,"name":"보통"},"done_ratio":\#(ratio)}],"total_count":1,"offset":0,"limit":100}"#.utf8)
+        }
+        let before = listed(ratio: 10), after = listed(ratio: 70)
+        WorkLogSync.stub = { _ in (200, before) }
+        sync.loadInfo([20])
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        WorkLogSync.stub = { _ in (200, after) }
+        sync.refreshInfo([20])
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        check("레드마인 화면에서 고친 일감을 장부에 다시 받는다", WorkLogStore.shared.log.issue(20)?.doneRatio == 70)
+
         var row = line(1)
         answer(id: 1)
         var result = await send(1)
