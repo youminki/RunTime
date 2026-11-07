@@ -152,12 +152,10 @@ final class HumanPilot {
             ducking = duck
         }
         guard !holding, !duck, !canDuck, game.isOnGround else { return }
-        let gate = ahead.contains { underneath($0) && $0.x < next.x + next.width && next.x < $0.x + $0.width }
-        let airTime = gate ? game.tuning.shortHop.airTime : game.tuning.airTime
-        let lead = (closing * airTime - next.width - game.runnerWidth) / 2 - error * closing
+        let lead = (closing * game.tuning.airTime - next.width - game.runnerWidth) / 2 - error * closing
         if next.x - runner.maxX < max(lead, 4) {
             game.press()
-            if gate { game.release() } else { holding = true }
+            holding = true
         }
     }
 }

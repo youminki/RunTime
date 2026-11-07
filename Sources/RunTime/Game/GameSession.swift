@@ -81,10 +81,10 @@ final class GameSession {
     var onExit: () -> Void = {}
     /// 이 Mac의 최고 판. 고스트와 겨룰 때 같은 코스와 그때 움직임을 다시 돌린다.
     var savedGhost: GhostRecord?
-    /// 지금 겨루는 고스트와 그 고스트를 그릴 러너 (그 판을 달린 러너, 이 Mac에 없으면 유령).
+    /// 지금 겨루는 고스트와 그 고스트를 그릴 러너 (그 판을 달린 러너, 이 Mac에 없으면 호박 잭).
     private(set) var raceTarget: GhostRecord?
     var ghost: GhostRunner?
-    var ghostCharacter = Runner.ghost.character
+    var ghostCharacter = Runner.jack.character
     /// 고스트와 겨루는 판. 코스를 미리 알고 하는 판이라 기록과 순위에 넣지 않는다.
     private(set) var isRace = false
 
@@ -136,7 +136,7 @@ final class GameSession {
         if live { game.setAbilities(GameDecor.shared.abilities) }
         isRace = true
         raceTarget = record
-        ghostCharacter = AppSettings.character(forRunnerID: record.runner) ?? Runner.ghost.character
+        ghostCharacter = AppSettings.character(forRunnerID: record.runner) ?? Runner.jack.character
         game.press()
         game.release()
     }
@@ -268,7 +268,7 @@ final class GameSession {
             play(.coin)
             if let coin = game.coins.first(where: { $0.id == id }) {
                 let point = CGPoint(screenX(coin.x), CGFloat(coin.y))
-                burst(at: point, count: 8, color: NSColor(hex: 0xFFD45E), speed: 70, life: 0.45, drift: 0.6)
+                burst(at: point, count: 3, shape: .sprite("plasmaSparkle"), speed: 50, life: 0.45, drift: 0.6, size: 1.2...1.6)
                 coinFlyers.append(CoinFlyer(from: CGPoint(screenX(coin.x), groundY - CGFloat(coin.y))))
                 // 이어서 먹은 코인은 떠 있는 팝업 하나에 더해 글자가 겹치지 않게 한다
                 let value = game.tuning.coinValue
@@ -286,25 +286,26 @@ final class GameSession {
         case .airJumped:
             play(.airjump)
             let feet = CGPoint(runnerLeft + Self.runnerWidth / 2, CGFloat(game.runnerY))
-            burst(at: feet, count: 10, colors: [.white, NSColor(hex: 0x8FD3FF)], shape: .spark, speed: 70, life: 0.4,
-                  drift: 0.4, spread: 2)
+            burst(at: feet, count: 4, shape: .sprite("puff"), speed: 50, life: 0.45, drift: 0.4, spread: 2, size: 1.3...1.8)
         case .slammed(let id):
             shake = max(shake, 0.35)
             if let o = game.obstacles.first(where: { $0.id == id }) {
-                burst(at: CGPoint(screenX(o.x) + CGFloat(o.width) / 2, 0), count: 10, color: NSColor(white: 0.85, alpha: 1),
-                      speed: 80, life: 0.45, drift: 1)
+                burst(at: CGPoint(screenX(o.x) + CGFloat(o.width) / 2, 0), count: 4, shape: .sprite("smokePoff"), speed: 60,
+                      life: 0.5, drift: 1, size: 1.4...2.0)
             }
         case .shieldBroke:
             play(.shield)
             shake = 0.5
             let center = CGPoint(runnerLeft + Self.runnerWidth / 2, CGFloat(game.runnerY + Self.runnerHeight / 2))
-            burst(at: center, count: 14, colors: [NSColor(hex: 0x8FD3FF), .white], shape: .spark, speed: 140, life: 0.6,
-                  drift: 0, spread: 2)
+            burst(at: center, count: 1, shape: .sprite("plasmaBubble"), speed: 0, life: 0.6, drift: 0, spread: 2, size: 7...7,
+                  gravity: 0)
+            burst(at: center, count: 8, shape: .sprite("pumpingHeart"), speed: 120, life: 0.6, drift: 0, spread: 2,
+                  size: 1.0...1.4)
             popups.append(Popup(text: "보호막!", position: center, life: 0.8))
         case .nearMiss:
             play(.nearmiss)
             let point = CGPoint(runnerLeft + Self.runnerWidth / 2, CGFloat(game.runnerY + Self.runnerHeight * 0.6))
-            burst(at: point, count: 6, color: NSColor(hex: 0x8FD3FF), speed: 60, life: 0.4, drift: 0.5)
+            burst(at: point, count: 4, shape: .sprite("plasmaPuff"), speed: 50, life: 0.4, drift: 0.5, size: 1.0...1.4)
             popups.append(Popup(text: "아슬!", position: point, life: 0.7))
         case .newRecord where !isRace:
             play(.record)

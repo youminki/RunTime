@@ -10,6 +10,33 @@ enum GameKit {
 }
 
 /// 아래 모서리에 두께가 있는 단추.
+/// 화면의 대표 동작 단추. 금색으로 눈에 띄게 둔다.
+struct PrimaryGameButtonStyle: ButtonStyle {
+    var height: CGFloat = 34
+
+    func makeBody(configuration: Configuration) -> some View {
+        PrimaryBody(configuration: configuration, height: height)
+    }
+
+    private struct PrimaryBody: View {
+        let configuration: ButtonStyleConfiguration
+        let height: CGFloat
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Color(white: 0.1).opacity(enabled ? 1 : 0.65))
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .frame(height: height)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(GameKit.gold.opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.55)))
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+}
+
 struct GameButtonStyle: ButtonStyle {
     var height: CGFloat = 24
 
@@ -28,7 +55,7 @@ struct GameButtonStyle: ButtonStyle {
             let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
             let colors = palette
             configuration.label
-                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .font(.system(size: 12, weight: .bold).monospacedDigit())
                 .foregroundStyle(colors.text)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
@@ -55,7 +82,7 @@ extension View {
     /// 보통 단추와 같은 모습. 메뉴처럼 단추 꼴을 시스템이 정하는 곳의 이름표에 쓴다.
     func gameChip(height: CGFloat = 22) -> some View {
         let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
-        return font(.system(size: 11, weight: .bold))
+        return font(.system(size: 12, weight: .bold))
             .foregroundStyle(Theme.primary)
             .padding(.horizontal, 10)
             .frame(height: height)

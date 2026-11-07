@@ -17,6 +17,11 @@ enum GameFont {
         return registered || NSFont(name: postScriptName, size: 12) != nil
     }()
 
+    /// CoreGraphics로 그리는 글자 (포토카드).
+    static func nsFont(_ size: CGFloat) -> NSFont {
+        (available ? NSFont(name: postScriptName, size: size) : nil) ?? .systemFont(ofSize: size * 0.85, weight: .bold)
+    }
+
     static func pixel(_ size: CGFloat) -> Font {
         available ? .custom(postScriptName, fixedSize: size) : .system(size: size * 0.85, weight: .bold, design: .rounded)
     }

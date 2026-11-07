@@ -282,10 +282,10 @@ enum UIShots {
         let windowBackground = Color(nsColor: .windowBackgroundColor)
         let screens: [(name: String, appearance: NSAppearance.Name, height: CGFloat?, view: AnyView)] = [
             ("popover", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings))),
-            ("popover-runners", .darkAqua, nil,
-             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .runners))),
-            ("popover-decor", .darkAqua, nil,
-             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .decor))),
+            ("popover-pets", .darkAqua, nil,
+             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .pets))),
+            ("popover-effects", .darkAqua, nil,
+             AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .pets))),
             ("main-usage", .darkAqua, nil, mainPage(.usage, engine: engine)),
             // 사용량 화면은 시스템 모습을 따른다
             ("main-usage-light", .aqua, nil, mainPage(.usage, engine: engine)),
@@ -299,6 +299,11 @@ enum UIShots {
             ("main-runners", .darkAqua, nil, mainPage(.runners, engine: engine)),
             // 러너 화면의 오른쪽 탭 (아이콘 막대를 뺀 폭으로)
             ("main-runners-decor", .darkAqua, nil, runnersTab(.decor, engine: engine)),
+            ("main-runners-game", .darkAqua, nil, runnersTab(.game, engine: engine)),
+            ("main-runners-playing", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .game,
+                                                                         rehearseGame: true, layout: .runnersPage)
+                .environment(\.colorScheme, .dark)
+                .frame(width: mainSize.width - MainWindowView.railWidth - 1, height: mainSize.height))),
             ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),
             ("main-worklog-dark", .darkAqua, nil, mainPage(.workLog, engine: engine)),
             ("main-calendar", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .month, monthCalendar: true)),
@@ -341,16 +346,12 @@ enum UIShots {
                                               workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.usage))
                     .frame(width: mainSize.width, height: mainSize.height))
             }()),
-            ("decor-buddy", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .buddy).padding(14).frame(width: 376).background(Theme.background))),
-            ("decor-track", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .track).padding(14).frame(width: 376).background(Theme.background))),
-            ("decor-weather", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .weather).padding(14).frame(width: 376).background(Theme.background))),
-            ("decor-ability", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .ability).padding(14).frame(width: 376).background(Theme.background))),
-            ("decor-trail", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .trail).padding(14).frame(width: 376).background(Theme.background))),
-            ("decor-dust", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .dust).padding(14).frame(width: 376).background(Theme.background))),
-            ("decor-crash", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings, tab: .crash).padding(14).frame(width: 376).background(Theme.background))),
+            ("decor-scenes", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),
+            ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, form: PetdexSearch(), close: {}).background(windowBackground))),
             ("welcome", .darkAqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("welcome-light", .aqua, nil, AnyView(WelcomeView(settings: engine.settings))),
-            ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, close: {}).background(windowBackground))),
+            ("popover-pets", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .pets)
+                .environment(\.colorScheme, .dark))),
             // 업무 일지는 RUNTIME_WORKLOG로 예시 파일을 가리키고 찍는다 (내 일지가 그림에 남지 않게)
             ("worklog-day", .darkAqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),
             ("worklog-day-light", .aqua, 640, AnyView(WorkLogView(store: .shared, page: workLogPage(.day)))),

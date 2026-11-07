@@ -9,13 +9,14 @@ Claude Code를 쓰는 만큼 macOS 메뉴바의 러너가 빨리 달립니다.
 
 <p align="center">
   <img src="assets/readme-usage.png" width="260" alt="사용량 창: 무대에서 달리는 러너, 세션 42%, 주간 18%, 최근 30분 그래프">
-  <img src="assets/readme-decor.png" width="260" alt="꾸미기: 트랙, 날씨, 꼬리, 동료, 능력을 자유롭게 고르는 화면">
+  <img src="assets/readme-decor.png" width="260" alt="러너 화면: 펫, 배경, 효과, 게임 탭">
 </p>
 
 - 사용률은 Claude가 알려 주는 공식 값이라 웹과 데스크톱 앱에서 쓴 양도 들어갑니다.
 - 80%, 95%에 닿으면 러너가 지치고 알림이 옵니다.
-- 러너 28종, 내 그림, [Petdex](https://petdex.dev) 펫 가운데 골라 달립니다.
-- 무대에서 장애물 피하기 미니게임을 하고, 트랙·날씨·꼬리 같은 꾸미기를 조건 없이 골라 씁니다.
+- 기본 펫 5종, 내 그림, [Petdex](https://petdex.dev) 펫 5천여 종 가운데 골라 달리고(이름은 한국어로 보입니다), 설명을 쓰고 `Claude로 만들기`를 누르면 Claude가 도트 그림을 찍어 바로 러너로 고릅니다(1~3분). `Petdex에서 찾기`로 직접 고를 수도 있고, 펫 폴더에 새로 생긴 펫은 저절로 등록합니다, 펫마다 Petdex 그림의 동작(손 흔들기, 점프, 생각, 지침)으로 상태를 보입니다.
+- 무대에서 장애물 피하기 미니게임을 하고, 도트 배경 59종이 든 트랙과 꼬리·발먼지·부딪힘 같은 도트 효과를 조건 없이 골라 씁니다.
+- 게임은 두 가지입니다. 달리기는 끝없이 달려 최고 점수에 도전하고, 비행은 누르는 동안 올라가며 끝없이 납니다. 멀리 갈수록 빨라지고 장애물 11가지 조각이 무작위로 나오며, 난이도를 쉬움, 보통, 어려움에서 고릅니다.
 - Claude Code가 대답을 마치면 러너가 알려 줍니다.
 
 Anthropic이 만든 앱이 아닌 개인 프로젝트입니다.
@@ -58,9 +59,9 @@ cd RunTime
 | /etc/hosts 켜고 끄기, 정리, 백업 | 앱 창 왼쪽 "호스트"(⌘6), 또는 러너를 오른쪽 클릭하고 "호스트"에서 묶음을 바로 켜고 끄기. 저장할 때 관리자 암호를 묻습니다 |
 | 호스트가 실제로 닿는지 보기 | 호스트 화면의 "접속 확인". 이름마다 주소 풀이, 포트, 웹 응답, 인증서를 한 번에 보고, 사내 주소가 모두 막혔으면 VPN을 먼저 보라고 알려 줌 |
 | Claude 계정 바꾸기 | 러너를 오른쪽 클릭하고 "Claude 계정". 다른 계정은 Claude Code에서 `/login` 하면 저절로 추가되고, 설정 > 사용량에서 한도에 막히면 바로 다른 계정으로 바꾸게 할 수 있습니다 |
-| 러너 바꾸기 | 사용량 창에서 러너 이름(`고양이 ›`)을 누르고 러너 탭 |
+| 펫 바꾸기·동료 정하기 | 사용량 창에서 러너 이름(`고양이 ›`)을 누르고 펫 탭. 오른쪽 클릭으로 동료로 데려가기 |
 | 미니게임 | 무대 오른쪽 위 "게임". 스페이스·클릭으로 점프(길게 누르면 높이), ↓로 숙이기 |
-| 꾸미기 고르기 | 러너 이름을 누르고 꾸미기 탭 |
+| 배경·효과·능력 고르기 | 러너 이름을 누르고 배경·효과·게임 탭 |
 
 러너는 최근 1분 동안 쓴 토큰 양에 맞춰 걷고, 달리고, 질주합니다. 5분 넘게 쓰지 않으면 잡니다.
 
@@ -117,9 +118,11 @@ install.sh는 처음 설치할 때 러너를 오른쪽 끝에 두어 가장 늦�
 | Anthropic | Claude 계정이 둘 이상일 때 10분마다, 토큰이 바뀌었을 때 | 저장해 둔 다른 계정 토큰으로 사용률 조회, 토큰이 어느 계정 것인지 확인, 다른 계정 토큰이 만료되기 전에 리프레시 토큰으로 새로 받기 |
 | Anthropic (내 Claude Code) | 업무 일지에서 "Claude로 다듬기"를 눌렀을 때, `--worklog polish` | 그날 진행 사항 글. 이 Mac의 `claude -p`를 내 로그인으로 부르고, 결과는 고쳐 쓸 수 있는 초안으로만 둠 |
 | 보고 서버 | 업데이트 설치가 실패하거나 25분 넘게 멈췄을 때, 업데이트할지 가르지 못했을 때, 화면에서 일이 실패했을 때(레드마인·피그마 응답 오류, 일지·호스트·디자인 기록 파일을 읽거나 쓰지 못함, 팀즈 자동 보내기 실패, 사용량 창 잘림, 까닭을 가르지 못한 GitLab MR 받기 실패, 하루 넘게 이어진 업데이트 확인 실패. 토큰·권한·망 끊김은 빼고), 앱이 죽은 뒤 다시 켰을 때, 앱이 5초 넘게 멈췄을 때 (설정 > 일반 > 문제 기록에서 끔) | 무작위 설치 ID, 앱·macOS 버전과 커밋, 화면과 까닭, 실패한 코드 위치, 요청 길·보낸 칸·응답(일지 내용은 글자 수만), 사용자 폴더·이름·주소의 계정과 토큰을 가린 최근 기록. 앱이 죽었으면 macOS 충돌 보고서의 예외 종류와 호출 순서, 앱이 죽기 전에 찍은 오류 문구, 죽기 전까지의 기록. 앱이 멈췄으면 멈춘 시간, 그때 메인 스레드의 호출 순서, 앱 메모리·켠 뒤 시간·앱 창 화면 이름, 시스템 메모리 압박·스왑·CPU 부하·발열. 서버가 만든 사람에게 메일로 알리고(같은 까닭은 하루 한 통, 전체 하루 30통까지) 30일 뒤 지움 |
-| petdex.dev | Petdex에서 찾기를 열었을 때 | 없음 (펫 목록과 그림만 받음) |
+| petdex.dev | Petdex에서 찾기를 열었을 때 | 없음 (펫 목록과 그림만 받음. 점프·생각 동작이 없는 예전 펫은 이때 그림을 한 번 다시 받음) |
 | GitHub | 30분마다, 매일 오전 9시 | 없음 (공개 저장소의 커밋 비교만 받음) |
 | Figma | 디자인 변경 기록에 화면설계서를 더했을 때, 프로젝트의 가져오기를 눌렀을 때, 주기를 정한 프로젝트는 그 주기마다, 상세에서 화면을 볼 때, 날짜 비교에서 버전 비교를 눌렀을 때 | 없음 (내 토큰으로 파일 정보, 버전 기록, 그 버전의 화면 노드, 프레임 이미지만 받음). 받은 내용은 이 Mac에만 저장 |
+
+펫 만들기는 이 Mac의 Claude Code로 사용자가 쓴 설명만 보내고 그린 그림은 이 Mac에 저장합니다. `~/.codex/pets`, `~/.petdex/pets`, `~/.runtime/pets`에서는 `pet.json`과 스프라이트 시트만 읽습니다.
 
 로그인 토큰은 Anthropic 말고는 어디에도 보내지 않으며 파일이나 로그에 남기지 않습니다.
 Claude 계정을 바꿀 수 있게 Claude Code에 로그인했던 계정마다 로그인 정보를 이 Mac 키체인의 "RunTime Claude account" 항목에 두고,
@@ -160,8 +163,13 @@ python3 -I scripts/update-aliases.py  # Petdex 캐릭터의 한국어 이름을 
 | `--report` | 집계를 ccusage와 비교 |
 | `--worklog <명령>` | 업무 일지를 보고서 글로 받거나 줄을 넣기 (`--worklog`만 치면 명령 목록). `RUNTIME_WORKLOG`로 다른 파일을 쓰고, `RUNTIME_NO_KEYCHAIN`을 주면 키체인을 읽지 않음 |
 | `--sprite-sheet <폴더>` | 모든 러너의 동작을 시트로 저장 |
+| `--stage-check` | 진짜 키 이벤트로 비행·달리기를 조작하며 시작, 끝남, 다시 시작, 나가기, 삼단 점프 높이 점검 |
+| `--flight-shots <폴더>` | 비행 조각 화면 저장 |
+| `--pet-make <설명>`, `--pet-watch [초]` | Claude로 펫 만들기와 펫 폴더 지켜보기를 실제로 돌려 상태 출력 |
+| `--pet-import [폴더 또는 zip]` | `~/.codex/pets`·`~/.petdex/pets`에서 찾은 펫을 적고, 경로를 주면 가져오기 |
+| `--petdex-extract <시트.png> <폴더>` | Petdex 시트를 러너 프레임(서 있기·달리기·점프·생각 등)으로 잘라 저장 |
 | `--menubar-audit <폴더> [화면 배율] [메뉴바 높이] [크기 배율]` | 메뉴바 칸에서 잘림, 키, 어두운 윤곽을 `report.tsv`와 시트로 저장 |
-| `--stage-shots <폴더> [러너 id] [트랙·날씨,...]` | 상태와 사용량 반응마다 무대 장면과 메뉴바 프레임을 PNG로 저장 |
+| `--stage-shots <폴더> [러너 id 또는 sheet:<자른 폴더>] [트랙,...]` | 상태와 사용량 반응마다 무대 장면과 메뉴바 프레임을 PNG로 저장 |
 | `--game-shots <폴더> [러너 id]` | 미니게임을 자동으로 플레이하며 장면을 PNG로 저장 (`RUNTIME_GAME_SCALE=2`면 게임 화면처럼 키워 찍음) |
 | `--game-frames <폴더>` | README 게임 GIF용 장면을 이어 찍기 (`scripts/make-game-gif.sh`가 GIF로 만듦) |
 | `--game-bench` | 무대와 게임 한 장면을 그리는 데 드는 시간 재기 (`BENCH_FRAMES`로 장면 수) |
@@ -209,8 +217,11 @@ npx wrangler@4 secret put REPORT_EMAIL     # 받을 주소 (Resend 가입 주소
 
 ## 출처와 라이선스
 
-- 메뉴바 러너는 [RunCat](https://kyome.io/runcat/)에서, 미니게임의 무지개 꼬리는 냥캣에서 아이디어를 얻었습니다. 러너 그림은 모두 직접 그렸습니다.
+- 메뉴바 러너는 [RunCat](https://kyome.io/runcat/)에서 아이디어를 얻었습니다.
+- 기본 펫 5종은 pzUH(GameArt2D)의 CC0 그림입니다. 원본은 `Sources/RunTime/Assets/Pets/CREDITS.txt`에 있습니다.
+- 도트 트랙 그림은 OpenGameArt의 CC0 그림을 무대 크기로 잘라 썼습니다. 작가와 원본은 `Sources/RunTime/Assets/Scenes/CREDITS.txt`에 있습니다.
 - 미니게임의 장애물 간격과 속도 규칙은 [Chromium T-Rex Runner](https://chromium.googlesource.com/chromium/src/+/main/components/neterror/resources/)(BSD 3-Clause)를 따랐습니다.
+- 꾸미기 효과, 말풍선, 코인 사탕, 새·슬라임, 비행 블록은 OpenGameArt의 CC0 그림입니다. 작가와 원본은 `Sources/RunTime/Assets/FX/CREDITS.txt`에 있습니다.
 - 미니게임 그림과 효과음은 Kenney의 [Pixel Platformer](https://kenney.nl/assets/pixel-platformer), [Digital Audio](https://kenney.nl/assets/digital-audio), [Music Jingles](https://kenney.nl/assets/music-jingles), [Interface Sounds](https://kenney.nl/assets/interface-sounds)(CC0)입니다.
 - 미니게임 글자는 [Galmuri](https://github.com/quiple/galmuri)(SIL OFL 1.1) 픽셀 글꼴입니다. 한글·영문·기호만 남겨 싣습니다.
 - 집계 규칙은 [ccusage](https://ccusage.com/guide/blocks-reports)를 참고했습니다.

@@ -2,122 +2,296 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UsageCore
 
-/// 러너 고르기. 각 러너를 컬러로 보여 주고, 고른 러너와 마우스를 올린 러너는 실시간으로 달린다.
-/// 'Petdex'는 petdex.dev에서 골라 받은 펫, 맨 아래 '내 러너'는 사용자가 불러온 GIF·PNG로 만든 러너다.
+/// 펫 고르기. 맨 위에 Claude로 만들기와 Petdex에서 찾기를 두고, 아래에 내 펫을 늘어놓는다.
+/// 고른 펫과 마우스를 올린 펫은 실시간으로 달리고, 칸마다 호감도 하트와 같이 달리는 동료 표시가 붙는다.
+/// 오른쪽 클릭으로 동료로 데려가기, 이름 바꾸기, 삭제를 한다.
 struct RunnerPicker: View {
     @ObservedObject var settings: AppSettings
     /// 팝오버처럼 파일 창을 띄우면 닫혀 버리는 곳에서는 그림 불러오기를 이 동작(팝오버를 닫고 파일 창 열기)으로 넘긴다.
     var importInPlace: (() -> Void)?
     /// 팝오버처럼 늘 어두운 곳에서는 꾸미기와 같은 칸 틀을 쓴다. 설정 창은 시스템 밝기를 따른다.
     var gameStyle = false
+    /// 앱 창처럼 넓은 곳에서는 칸을 키운다.
+    var large = false
     @ObservedObject private var store = CustomRunnerStore.shared
     @ObservedObject private var petdex = PetdexStore.shared
+    @ObservedObject private var decor = GameDecor.shared
+    @ObservedObject private var factory = PetFactory.shared
     @StateObject private var hover = HoveredRunner()
     @StateObject private var importState = ImportState()
     @StateObject private var filter = RunnerFilter()
     @StateObject private var rename = RenameState()
+    @StateObject private var maker = PetMakerText()
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
-
-    /// 이름표 없이 돋보기와 안내 글만 둔 검색칸. Form 안에서 이름표가 왼쪽 절반을 차지하지 않게 한다.
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("이름으로 찾기", text: $filter.query, prompt: Text("이름으로 찾기"))
-                .textFieldStyle(.plain)
-                .labelsHidden()
-            if !filter.query.isEmpty {
-                Button { filter.query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("검색어 지우기")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .fill(gameStyle ? GameKit.slot : Color.primary.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .strokeBorder(gameStyle ? Theme.hairline : .clear))
-    }
+    /// 창이 넓어지면 칸 수가 늘어난다 (팝오버 폭에서는 4칸).
+    private var columns: [GridItem] { [GridItem(.adaptive(minimum: large ? 104 : 72), spacing: 8)] }
 
     var body: some View {
         let pets = petdex.pets.filter { filter.matches($0.name, $0.slug) }
-        VStack(alignment: .leading, spacing: 8) {
-            searchField
-            ForEach(Runner.Group.allCases, id: \.self) { group in
-                let runners = Runner.runners(in: group).filter { filter.matches($0.displayName, $0.rawValue) }
-                if !runners.isEmpty {
-                    groupTitle(group.rawValue)
-                    LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(runners, id: \.self) { runner in
-                            let selected = settings.customRunnerID == nil && settings.runner == runner
-                            Button { settings.select(runner) } label: {
-                                tile(runner.character, key: runner.rawValue, selected: selected)
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { hover.update(runner.rawValue, $0) }
-                            .accessibilityLabel(runner.displayName)
-                            .accessibilityAddTraits(selected ? .isSelected : [])
+        let made = pets.filter(\.isLocal)
+        let downloaded = pets.filter { !$0.isLocal }
+        let builtIns = Runner.allCases.filter { filter.matches($0.displayName, $0.rawValue) }
+        let customs = store.runners.filter { filter.matches($0.name, "") }
+        VStack(alignment: .leading, spacing: 10) {
+            actions
+            factoryStatus
+            found
+            if petdex.pets.count + store.runners.count > 6 { myPetSearch }
+            if !made.isEmpty || !customs.isEmpty {
+                groupTitle("내가 만든 펫")
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(made) { petTile($0) }
+                    // 내 그림 id는 UUID라 이름으로만 찾는다
+                    ForEach(customs) { custom in
+                        let selected = settings.customRunnerID == custom.id
+                        selectable(custom.id, action: { settings.select(custom) }) {
+                            tile(custom.character, key: custom.id, selected: selected)
                         }
-                    }
-                }
-            }
-            groupTitle("Petdex")
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(pets) { pet in
-                    if let character = petdex.character(for: pet) {
-                        let id = PetdexStore.storageID(pet.slug)
-                        let selected = settings.customRunnerID == id
-                        selectable(id, action: { settings.customRunnerID = id }) {
-                            tile(character, key: id, selected: selected)
-                        }
-                        .onHover { hover.update(id, $0) }
-                        .accessibilityLabel(pet.name)
+                        .onHover { hover.update(custom.id, $0) }
                         .contextMenu {
-                            Button("이름 바꾸기") { rename.start(id, name: pet.name) { petdex.rename(pet, to: $0) } }
-                            Button("Petdex에서 보기") {
-                                if let url = URL(string: "https://petdex.dev/pets/\(pet.slug)") { NSWorkspace.shared.open(url) }
-                            }
-                            Divider()
-                            Button("삭제") {
-                                if selected { settings.customRunnerID = nil }
-                                petdex.delete(pet)
-                            }
+                            companionButton(custom.id, name: custom.name)
+                            customMenu(custom)
                         }
-                        .tip("오른쪽 클릭: 이름 바꾸기, Petdex에서 보기, 삭제")
+                        .tip("오른쪽 클릭: 동료로 데려가기, 이름 바꾸기, 실루엣, 삭제")
                     }
                 }
-                Button { PetdexWindow.shared.show(settings: settings) } label: {
-                    actionTile(icon: "magnifyingglass", title: "Petdex에서 찾기")
-                }
-                .buttonStyle(.plain)
-                .tip("petdex.dev에 올라온 펫 수천 개 중에서 골라 러너로 받기")
             }
-            groupTitle("내 러너")
-            LazyVGrid(columns: columns, spacing: 8) {
-                // 내 러너 id는 UUID라 이름으로만 찾는다
-                ForEach(store.runners.filter { filter.matches($0.name, "") }) { custom in
-                    let selected = settings.customRunnerID == custom.id
-                    selectable(custom.id, action: { settings.select(custom) }) {
-                        tile(custom.character, key: custom.id, selected: selected)
+            if !downloaded.isEmpty {
+                groupTitle("Petdex 펫")
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(downloaded) { petTile($0) }
+                }
+            }
+            if !builtIns.isEmpty {
+                groupTitle("기본 펫")
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(builtIns, id: \.self) { runner in
+                        let selected = settings.customRunnerID == nil && settings.runner == runner
+                        Button { settings.select(runner) } label: {
+                            tile(runner.character, key: runner.rawValue, selected: selected)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hover.update(runner.rawValue, $0) }
+                        .contextMenu { companionButton(runner.rawValue, name: runner.displayName) }
+                        .accessibilityLabel(runner.displayName)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
                     }
-                    .onHover { hover.update(custom.id, $0) }
-                    .contextMenu { customMenu(custom) }
-                    .tip("오른쪽 클릭: 이름 바꾸기, 실루엣, 삭제")
                 }
-                Button {
-                    if let importInPlace { importInPlace() } else { RunnerImport.choose(settings: settings, report: importState.show) }
-                } label: {
-                    actionTile(icon: "plus", title: "그림 불러오기")
-                }
-                    .buttonStyle(.plain)
-                    .tip("GIF나 PNG(여러 장이면 파일 이름 순서가 프레임 순서)로 러너 만들기")
             }
             if let message = importState.message {
-                Text(message).font(.caption).foregroundStyle(importState.isError ? .orange : .secondary)
+                Text(message).font(.system(size: 12)).foregroundStyle(importState.isError ? .orange : Theme.secondary)
+            }
+            // 만들기·찾기 말고 드물게 쓰는 길은 맨 아래에 글자로만 둔다
+            HStack(spacing: 14) {
+                textLink("내 그림(GIF·PNG)으로 만들기") {
+                    if let importInPlace { importInPlace() } else { RunnerImport.choose(settings: settings, report: importState.show) }
+                }
+                textLink("펫 폴더·zip 가져오기") { chooseFolder() }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    /// 펫을 늘리는 두 가지 길. 칸에 설명을 쓰고 Claude로 만들거나, Petdex 창을 열어 직접 찾는다.
+    @ViewBuilder
+    private var actions: some View {
+        if large {
+            HStack(spacing: 8) {
+                describeField
+                makeButton
+                findButton
+            }
+        } else {
+            VStack(spacing: 6) {
+                describeField
+                HStack(spacing: 6) {
+                    makeButton
+                    findButton
+                }
             }
         }
+    }
+
+    private var describeField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "wand.and.stars").font(.system(size: 13, weight: .semibold)).foregroundStyle(GameKit.gold)
+            TextField(large ? "어떤 캐릭터를 만들까요? (맹구, 분홍 리본 고양이)" : "어떤 캐릭터를 만들까요?", text: $maker.text)
+                .textFieldStyle(.plain).font(.system(size: 13.5))
+                .onSubmit(make)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .frame(maxWidth: .infinity)
+        .slotFrame(radius: 9)
+    }
+
+    private var makeButton: some View {
+        Button(action: make) {
+            HStack(spacing: 5) {
+                if factory.isWorking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "sparkles").font(.system(size: 12, weight: .bold))
+                }
+                Text("Claude로 만들기")
+            }
+            .frame(maxWidth: large ? nil : .infinity)
+        }
+        .buttonStyle(PrimaryGameButtonStyle(height: 36))
+        .disabled(maker.text.trimmingCharacters(in: .whitespaces).isEmpty || factory.isWorking)
+        .tip("설명대로 Claude가 도트를 찍어 바로 러너로 골라요. 1~3분 걸려요")
+    }
+
+    private var findButton: some View {
+        Button { PetdexWindow.shared.show(settings: settings) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .bold))
+                Text("Petdex에서 찾기")
+            }
+            .frame(maxWidth: large ? nil : .infinity)
+        }
+        .buttonStyle(GameButtonStyle(height: 36))
+        .fixedSize(horizontal: large, vertical: false)
+        .tip("petdex.dev에 올라온 펫 수천 개 중에서 골라 받기")
+    }
+
+    private func textLink(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+    }
+
+    private func make() { factory.make(maker.text, settings: settings) }
+
+    /// 내 펫이 많을 때만 나오는 이름 찾기.
+    private var myPetSearch: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal.decrease").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.tertiary)
+            TextField("내 펫 이름으로 거르기", text: $filter.query)
+                .textFieldStyle(.plain).font(.system(size: 12.5))
+            if !filter.query.isEmpty {
+                Button { filter.query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain).foregroundStyle(Theme.tertiary).accessibilityLabel("지우기")
+            }
+        }
+        .padding(.horizontal, 2)
+        .frame(height: 24)
+    }
+
+    @ViewBuilder
+    private var factoryStatus: some View {
+        switch factory.state {
+        case .idle:
+            EmptyView()
+        case .working(let text):
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(text).font(.system(size: 12.5)).foregroundStyle(Theme.primary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .slotFrame(radius: 9)
+        case .failed(let text):
+            statusLine(text, color: .orange, redraw: false)
+        case .done(let text):
+            statusLine(text, color: Theme.primary, redraw: factory.lastMade != nil)
+        }
+    }
+
+    private func statusLine(_ text: String, color: Color, redraw: Bool) -> some View {
+        HStack(spacing: 10) {
+            Text(text).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+            if redraw {
+                Button("다시 그리기") { factory.redraw(settings: settings) }
+                    .buttonStyle(.plain).font(.system(size: 12.5, weight: .bold)).foregroundStyle(GameKit.gold)
+            }
+            Spacer(minLength: 4)
+            Button { factory.dismiss() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
+                .buttonStyle(.plain).foregroundStyle(Theme.tertiary).accessibilityLabel("닫기")
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .slotFrame(radius: 9)
+    }
+
+    /// 이 Mac에 이미 있던 펫 (다른 도구로 만든 것). 새로 생기는 펫은 저절로 등록된다.
+    @ViewBuilder
+    private var found: some View {
+        let list = petdex.scanLocalPets()
+        if !list.isEmpty {
+            FlowLayout(spacing: 6) {
+                Text("이 Mac에서 찾은 펫").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+                ForEach(list) { pet in
+                    Button(pet.name) { bring(pet.folder) }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)
+                        .padding(.horizontal, 8).frame(height: 24)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+            }
+        }
+    }
+
+    private func bring(_ url: URL) {
+        petdex.importLocal(from: url) { [settings, factory, importState] result in
+            switch result {
+            case .success(let pet):
+                settings.customRunnerID = PetdexStore.storageID(pet.slug)
+                factory.announce("'\(pet.name)'을(를) 데려왔어요")
+            case .failure(let error):
+                importState.show(error.localizedDescription, error: true)
+            }
+        }
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.allowedContentTypes = [.zip, .folder]
+        panel.message = "pet.json과 스프라이트 시트가 든 폴더나 zip을 고르세요"
+        panel.prompt = "가져오기"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        bring(url)
+    }
+
+    /// 받은 펫·직접 만든 펫 칸.
+    @ViewBuilder
+    private func petTile(_ pet: PetdexStore.Pet) -> some View {
+        if let character = petdex.character(for: pet) {
+            let id = PetdexStore.storageID(pet.slug)
+            let selected = settings.customRunnerID == id
+            selectable(id, action: { settings.customRunnerID = id }) {
+                tile(character, key: id, selected: selected)
+            }
+            .onHover { hover.update(id, $0) }
+            .accessibilityLabel(pet.name)
+            .contextMenu {
+                companionButton(id, name: pet.name)
+                Button("이름 바꾸기") { rename.start(id, name: pet.name) { petdex.rename(pet, to: $0) } }
+                if !pet.isLocal {
+                    Button("Petdex에서 보기") {
+                        if let url = URL(string: "https://petdex.dev/pets/\(pet.slug)") { NSWorkspace.shared.open(url) }
+                    }
+                }
+                Divider()
+                Button("삭제") {
+                    if selected { settings.customRunnerID = nil }
+                    if decor.companionID == id { decor.companionID = nil }
+                    petdex.delete(pet)
+                }
+            }
+            .tip("오른쪽 클릭: 동료로 데려가기, 이름 바꾸기, 삭제")
+        }
+    }
+
+    /// 같이 달리는 동료로 데려가거나 혼자 달리게 한다.
+    @ViewBuilder
+    private func companionButton(_ id: String, name: String) -> some View {
+        if decor.companionID == id {
+            Button("혼자 달리기") { decor.companionID = nil }
+        } else {
+            Button("\(name) 동료로 데려가기") { decor.companionID = id }
+        }
+        Divider()
     }
 
     @ViewBuilder
@@ -126,7 +300,7 @@ struct RunnerPicker: View {
             GameSectionHeader(title: text).padding(.top, 4)
         } else {
             Text(text)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
         }
@@ -145,11 +319,18 @@ struct RunnerPicker: View {
                     CharacterCanvas(character: character, theme: settings.spriteTheme, date: nil, activity: .stand)
                 }
             }
-            .frame(height: 56)
+            .frame(height: large ? 76 : 56)
             TileName(name: character.name, key: key, selected: selected, rename: rename)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
+        .overlay(alignment: .topLeading) {
+            if decor.companionID == key {
+                Image(systemName: "pawprint.fill").font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 16, height: 16).background(Circle().fill(Theme.accent)).padding(4)
+                    .tip("같이 달리는 동료")
+            }
+        }
         .modifier(TileFrame(gameStyle: gameStyle, selected: selected, live: live))
         .contentShape(Rectangle())
     }
@@ -182,21 +363,6 @@ struct RunnerPicker: View {
         } else {
             Button(action: action, label: label).buttonStyle(.plain)
         }
-    }
-
-    private func actionTile(icon: String, title: String) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(.secondary)
-                .frame(height: 56)
-            Text(title).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
-        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -282,6 +448,11 @@ final class HoveredRunner: ObservableObject {
     }
 }
 
+/// 펫 설명 입력. `@State`를 못 쓰는 이유는 HoverFlag 참고.
+final class PetMakerText: ObservableObject {
+    @Published var text = ""
+}
+
 final class ImportState: ObservableObject {
     @Published var message: String?
     @Published var isError = false
@@ -347,7 +518,7 @@ struct InlineNameField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.alignment = .center
-        field.font = .systemFont(ofSize: 11, weight: .semibold)
+        field.font = .systemFont(ofSize: 12, weight: .semibold)
         field.textColor = .labelColor
         field.cell?.isScrollable = true
         field.delegate = context.coordinator
@@ -409,14 +580,14 @@ struct TileName: View {
     var body: some View {
         if rename.id == key {
             InlineNameField(text: name) { rename.finish($0) }
-                .frame(height: 16)
+                .frame(height: 17)
                 .padding(.horizontal, 4)
                 .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color.black.opacity(0.35)))
                 .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Theme.accent.opacity(0.8)))
                 .padding(.horizontal, 6)
         } else {
             Text(name)
-                .font(.system(size: 11, weight: selected ? .bold : .medium))
+                .font(.system(size: 12, weight: selected ? .bold : .medium))
                 .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
         }

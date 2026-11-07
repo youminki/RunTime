@@ -1,20 +1,9 @@
 import AppKit
 
 /// 꾸미기 그림. 게임과 꾸미기 미리보기가 같은 함수로 그려 고를 때 본 모습이 게임에서도 그대로 나온다.
-/// 좌표는 위가 0인 무대 좌표다.
+/// 좌표는 위가 0인 무대 좌표다. 효과 그림은 모두 OpenGameArt의 CC0 도트 그림이다 (Assets/FX/CREDITS.txt).
 enum GameFX {
-    /// 흰 입자 그림 (Kenney Particle Pack, CC0). 색을 입혀 쓴다.
-    enum Texture: String {
-        case smoke = "fx_smoke_04", star = "fx_star_06", spark = "fx_spark_05",
-             flame = "fx_flame_03", glow = "fx_light_01", twirl = "fx_twirl_02", ring = "fx_circle_05"
-    }
-
     private static var images: [String: CGImage] = [:]
-    private struct TintKey: Hashable {
-        let texture: Texture
-        let rgb: UInt32
-    }
-    private static var tinted: [TintKey: CGImage] = [:]
 
     static func image(_ name: String, folder: String = "Game") -> CGImage? {
         let key = folder + "/" + name
@@ -26,243 +15,118 @@ enum GameFX {
         return image
     }
 
-    /// Fluent Emoji 3D 그림 하나 (Assets/Fluent, MIT). 가운데에 맞춰 돌려 그린다.
-    static func drawArt(_ name: String, at center: CGPoint, size: CGFloat, alpha: CGFloat = 1, rotation: CGFloat = 0,
-                        flip: Bool = false, _ cg: CGContext) {
-        guard alpha > 0.01, size > 0.5, let image = image(name, folder: "Fluent") else { return }
+    // MARK: 효과 그림
+
+    /// Assets/FX/<이름>의 프레임 묶음. fx.json에 프레임 수와 반복 여부가 있다.
+    struct Sheet: Decodable {
+        let frames: Int
+        let pixel: Bool
+        /// 하트·별·코인처럼 계속 도는 그림. 아니면 수명 동안 한 번 재생한다.
+        var loop: Bool?
+    }
+
+    private static let sheets: [String: Sheet] = {
+        guard let url = Bundle.assets.resourceURL?.appendingPathComponent("Assets/FX/fx.json"),
+              let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: Sheet].self, from: data)) ?? [:]
+    }()
+
+    static func loops(_ name: String) -> Bool { sheets[name]?.loop == true }
+
+    /// 효과 그림 한 장면. 한 번 재생하는 그림은 `progress`(0~1), 도는 그림은 `time`으로 프레임을 고른다.
+    static func drawSprite(_ name: String, at center: CGPoint, height: CGFloat, progress: CGFloat, time: Double,
+                           alpha: CGFloat = 1, rotation: CGFloat = 0, flip: Bool = false, _ cg: CGContext) {
+        guard alpha > 0.01, height > 0.5, let sheet = sheets[name] else { return }
+        let index = sheet.loop == true ? Int(time * 10) % sheet.frames
+            : min(max(Int(progress * CGFloat(sheet.frames)), 0), sheet.frames - 1)
+        guard let image = image("\(index)", folder: "FX/\(name)") else { return }
+        draw(image, at: center, height: height, pixel: sheet.pixel, alpha: alpha, rotation: rotation, flip: flip, cg)
+    }
+
+    /// 게임 코인으로 쓰는 사탕 그림. 자리마다 다르게 고른다.
+    static let candies = ["lollipop_pink", "swirl_blue", "jelly_yellow", "star_yellow", "mm_teal", "heart_red",
+                          "lollipop_teal", "swirl_pink", "jelly_pink", "candycane"]
+
+    static func candy(for seed: Double) -> String {
+        candies[Int(abs(seed).rounded()) % candies.count]
+    }
+
+    /// 사탕 그림 한 장 (Assets/FX/candy).
+    static func drawCandy(_ name: String, at center: CGPoint, height: CGFloat, alpha: CGFloat = 1, rotation: CGFloat = 0,
+                          _ cg: CGContext) {
+        guard alpha > 0.01, height > 0.5, let image = image(name, folder: "FX/candy") else { return }
+        draw(image, at: center, height: height, pixel: false, alpha: alpha, rotation: rotation, cg)
+    }
+
+    private static func draw(_ image: CGImage, at center: CGPoint, height: CGFloat, pixel: Bool, alpha: CGFloat,
+                             rotation: CGFloat, flip: Bool = false, _ cg: CGContext) {
+        let width = height * CGFloat(image.width) / CGFloat(max(image.height, 1))
         cg.saveGState()
         cg.setAlpha(alpha)
-        cg.interpolationQuality = .high
+        // 도트 그림은 점이 번지지 않게 키운다
+        cg.interpolationQuality = pixel ? .none : .high
         cg.translateBy(x: center.x, y: center.y)
-        cg.scaleBy(x: flip ? -1 : 1, y: -1)
+        cg.scaleBy(x: flip ? -1 : 1, y: -1)   // 무대는 위가 0이라 그림을 바로 세운다
         if rotation != 0 { cg.rotate(by: -rotation) }
-        cg.draw(image, in: CGRect(x: -size / 2, y: -size / 2, width: size, height: size))
-        cg.restoreGState()
-    }
-
-    /// 흰 그림의 밝기는 두고 색만 바꾼 그림. 색마다 한 번만 만든다.
-    static func image(_ texture: Texture, tint: NSColor) -> CGImage? {
-        let rgb = tint.usingColorSpace(.sRGB) ?? tint
-        let key = TintKey(texture: texture, rgb: UInt32(rgb.redComponent * 255) << 16 | UInt32(rgb.greenComponent * 255) << 8
-                            | UInt32(rgb.blueComponent * 255))
-        if let cached = tinted[key] { return cached }
-        guard let base = image(texture.rawValue),
-              let context = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        let rect = CGRect(x: 0, y: 0, width: base.width, height: base.height)
-        context.draw(base, in: rect)
-        context.setBlendMode(.sourceIn)
-        context.setFillColor(rgb.withAlphaComponent(1).cgColor)
-        context.fill(rect)
-        let result = context.makeImage()
-        tinted[key] = result
-        return result
-    }
-
-    /// 입자 그림 하나를 가운데에 맞춰 돌려 그린다. 빛나는 그림은 더해 그려 바탕 위에서 밝게 보이게 한다.
-    static func draw(_ texture: Texture, tint: NSColor, at center: CGPoint, size: CGFloat, alpha: CGFloat,
-                     rotation: CGFloat = 0, glow: Bool = true, _ cg: CGContext) {
-        guard alpha > 0.01, size > 0.2, let image = image(texture, tint: tint) else { return }
-        cg.saveGState()
-        cg.setAlpha(alpha)
-        if glow { cg.setBlendMode(.plusLighter) }
-        cg.interpolationQuality = .medium
-        cg.translateBy(x: center.x, y: center.y)
-        cg.scaleBy(x: 1, y: -1)   // 무대는 위가 0이라 그림을 바로 세운다
-        if rotation != 0 { cg.rotate(by: rotation) }
-        cg.draw(image, in: CGRect(x: -size / 2, y: -size / 2, width: size, height: size))
+        cg.draw(image, in: CGRect(x: -width / 2, y: -height / 2, width: width, height: height))
         cg.restoreGState()
     }
 
     // MARK: 입자
 
     enum Shape: Equatable {
-        case dot, heart, coin, spark
-        case texture(Texture)
-        /// Fluent 그림. 떨어지며 빙글 돈다.
-        case art(String)
+        case sprite(String)
+        /// 사탕 그림. 떨어지며 빙글 돈다.
+        case candy(String)
     }
 
-    /// 입자 하나. `progress`는 0(막 생김)에서 1(사라짐).
-    static func drawParticle(_ shape: Shape, color: NSColor, at center: CGPoint, size r: CGFloat, alpha: CGFloat,
-                             progress: CGFloat, seed: CGFloat, time: Double, _ cg: CGContext) {
+    /// 입자 하나. `progress`는 0(막 생김)에서 1(사라짐), `size`의 다섯 배가 그림 키다.
+    static func drawParticle(_ shape: Shape, at center: CGPoint, size r: CGFloat, alpha: CGFloat, progress: CGFloat,
+                             seed: CGFloat, time: Double, _ cg: CGContext) {
         switch shape {
-        case .dot:
-            cg.setFillColor(color.withAlphaComponent(alpha).cgColor)
-            cg.fillEllipse(in: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
-        case .heart:
-            GameSession.fillHeart(cg, at: center, size: r * 2.2, color: color.withAlphaComponent(alpha))
-        case .spark:
-            SpriteEffects.sparkle(cg, at: center, radius: r * 1.6, color: color.withAlphaComponent(alpha))
-        case .coin:
-            if let image = GameSprite.coin.frame(at: time + Double(seed)) {
-                cg.saveGState()
-                cg.setAlpha(alpha)
-                GameAssets.draw(image, in: CGRect(x: center.x - r * 2, y: center.y - r * 2, width: r * 4, height: r * 4), cg)
-                cg.restoreGState()
-            }
-        case .art(let name):
-            drawArt(name, at: center, size: r * 5, alpha: alpha, rotation: (seed - 0.5) * 2 + progress * (seed - 0.5) * 5, cg)
-        case .texture(let texture):
-            // 연기는 퍼지며 커지고, 고리는 크게 번진다
-            let grow: CGFloat = switch texture {
-            case .smoke: 1 + progress * 1.4
-            case .ring, .twirl: 0.4 + progress * 2.6
-            default: 1
-            }
-            // 불꽃은 늘 위로 서고, 나머지는 돌며 흩어진다
-            let rotation = texture == .flame ? 0 : seed * 6 + progress * (texture == .twirl ? 4 : 1.5)
-            draw(texture, tint: color, at: center, size: r * 5 * grow, alpha: alpha, rotation: rotation,
-                 glow: texture != .smoke, cg)
+        case .sprite(let name):
+            drawSprite(name, at: center, height: r * 5, progress: progress, time: time + Double(seed) * 3, alpha: alpha, cg)
+        case .candy(let name):
+            drawCandy(name, at: center, height: r * 5, alpha: alpha,
+                      rotation: (seed - 0.5) * 2 + progress * (seed - 0.5) * 5, cg)
         }
     }
 
     // MARK: 꼬리
 
-    /// `points`는 오래된 자리부터 러너 쪽 순서 (무대 좌표).
+    /// `points`는 오래된 자리부터 러너 쪽 순서 (무대 좌표). 사탕은 팔랑이며 떨어지고,
+    /// 도는 그림은 둥실거리고, 한 번 재생하는 그림(연기·불꽃·마법)은 뒤로 갈수록 끝까지 재생돼 흩어진다.
     static func drawTrail(_ item: Cosmetic, points: [CGPoint], time: Double, _ cg: CGContext) {
-        guard points.count > 1 else { return }
-        cg.saveGState()
-        cg.setLineCap(.round)
-        let count = CGFloat(points.count)
-        if let art = item.art {
-            drawArtTrail(item, art: art, points: points, time: time, cg)
-            cg.restoreGState()
-            return
-        }
-        switch item {
-        case .rainbowTrail:
-            for (band, color) in SpriteEffects.rainbow.enumerated() {
-                let dy = (CGFloat(band) - 2.5) * 2.2
-                for i in 1..<points.count {
-                    let t = CGFloat(i) / count
-                    cg.setStrokeColor(color.withAlphaComponent(0.85 * t).cgColor)
-                    cg.setLineWidth(2.4)
-                    cg.move(to: CGPoint(x: points[i - 1].x, y: points[i - 1].y + dy))
-                    cg.addLine(to: CGPoint(x: points[i].x, y: points[i].y + dy))
-                    cg.strokePath()
-                }
-            }
-        case .cometTrail:
-            for i in 1..<points.count {
-                let t = CGFloat(i) / count
-                cg.setStrokeColor(item.color.withAlphaComponent(0.7 * t).cgColor)
-                cg.setLineWidth(1 + 7 * t)
-                cg.move(to: points[i - 1])
-                cg.addLine(to: points[i])
-                cg.strokePath()
-            }
-        case .fireTrail:
-            // 꼬리 쪽으로 갈수록 노랗고 작아지며 흔들린다
-            for (i, point) in points.enumerated() where i % 2 == 1 {
-                let t = CGFloat(i) / count
-                let flicker = CGFloat(sin(time * 23 + Double(i) * 1.7)) * 1.2
-                let color = NSColor(hex: 0xFFE14D).blended(withFraction: t, of: NSColor(hex: 0xFF5A1F)) ?? item.color
-                draw(.glow, tint: color, at: CGPoint(x: point.x, y: point.y + flicker), size: 6 + 14 * t, alpha: 0.3 * t, cg)
-                draw(.flame, tint: color, at: CGPoint(x: point.x, y: point.y + flicker - 4 * t), size: 7 + 17 * t,
-                     alpha: 0.35 + 0.65 * t, cg)
-            }
-        case .noteTrail, .heartTrail:
-            for (i, point) in points.enumerated() where i % 5 == 1 {
-                let t = CGFloat(i) / count
-                let bob = CGFloat(sin(time * 6 + Double(i))) * 3
-                let p = CGPoint(x: point.x, y: point.y - 6 + bob)
-                let color = item.color.withAlphaComponent(0.3 + 0.7 * t)
-                if item == .heartTrail {
-                    GameSession.fillHeart(cg, at: p, size: 4 + 3 * t, color: color)
-                } else {
-                    let s = 0.8 + 0.5 * t
-                    cg.setFillColor(color.cgColor)
-                    cg.fillEllipse(in: CGRect(x: p.x - 2.4 * s, y: p.y + 1.5 * s, width: 3.6 * s, height: 2.6 * s))
-                    cg.setStrokeColor(color.cgColor)
-                    cg.setLineWidth(1.1 * s)
-                    cg.move(to: CGPoint(x: p.x + 1.1 * s, y: p.y + 2.6 * s))
-                    cg.addLine(to: CGPoint(x: p.x + 1.1 * s, y: p.y - 4 * s))
-                    cg.addLine(to: CGPoint(x: p.x + 3.2 * s, y: p.y - 2.6 * s))
-                    cg.strokePath()
-                }
-            }
-        case .magicTrail:
-            // 보라·분홍 별이 돌며 뒤로 흩어진다
-            for (i, point) in points.enumerated() where i % 2 == 0 {
-                let t = CGFloat(i) / count
-                let wobble = CGFloat(sin(time * 7 + Double(i) * 0.9)) * 4 * (1 - t)
-                let color = i % 4 == 0 ? NSColor(hex: 0xC68CFF) : NSColor(hex: 0xFF9AE0)
-                draw(.glow, tint: color, at: CGPoint(x: point.x, y: point.y + wobble), size: 10 + 14 * t, alpha: 0.5 * t, cg)
-                draw(.star, tint: color, at: CGPoint(x: point.x, y: point.y + wobble), size: 9 + 13 * t, alpha: 0.4 + 0.6 * t,
-                     rotation: CGFloat(time * 3) + CGFloat(i), cg)
-            }
-        case .smokeTrail:
-            // 오래된 김일수록 크고 옅다
-            for (i, point) in points.enumerated() where i % 2 == 0 {
-                let t = CGFloat(i) / count
-                let rise = (1 - t) * 8
-                draw(.smoke, tint: item.color, at: CGPoint(x: point.x, y: point.y - rise), size: 8 + 16 * (1 - t),
-                     alpha: 0.12 + 0.4 * t, rotation: CGFloat(i) * 0.7, glow: false, cg)
-            }
-        case .sparkTrail:
-            // 틱마다 모양이 바뀌는 지그재그 번개
-            let tick = Int(time * 20)
-            for pass in 0..<2 {
-                let path = CGMutablePath()
-                for (i, point) in points.enumerated() {
-                    let jitter = (RunnerStageHash.value(i, tick + pass * 31) - 0.5) * 8 * (1 - CGFloat(i) / count)
-                    let p = CGPoint(x: point.x, y: point.y + jitter)
-                    i == 0 ? path.move(to: p) : path.addLine(to: p)
-                }
-                cg.addPath(path)
-                cg.setStrokeColor(item.color.withAlphaComponent(pass == 0 ? 0.35 : 0.9).cgColor)
-                cg.setLineWidth(pass == 0 ? 4 : 1.3)
-                cg.setLineJoin(.round)
-                cg.strokePath()
-            }
-            if let head = points.last {
-                draw(.spark, tint: item.color, at: head, size: 18, alpha: 0.7, rotation: CGFloat(tick % 4) * .pi / 2, cg)
-            }
-        default:
-            for (i, point) in points.enumerated() where i % 3 == 0 {
-                let t = CGFloat(i) / count
-                let twinkle = 0.7 + 0.3 * CGFloat(sin(time * 9 + Double(i)))
-                draw(.star, tint: item.color, at: point, size: (5 + 10 * t) * twinkle, alpha: t, cg)
-            }
-        }
-        cg.restoreGState()
-    }
-
-    /// 그림 꼬리. 꽃잎·잎·눈은 팔랑이며 떨어지고, 비눗방울은 떠오르며 커지고, 사탕은 돈다.
-    private static func drawArtTrail(_ item: Cosmetic, art: String, points: [CGPoint], time: Double, _ cg: CGContext) {
+        guard points.count > 1, let shape = item.fx else { return }
         let count = CGFloat(points.count)
         for (i, point) in points.enumerated() where i % 3 == 1 {
             let t = CGFloat(i) / count          // 러너 쪽이 1
             let age = 1 - t
             let phase = time * 3 + Double(i) * 0.8
             var p = point
-            var rotation: CGFloat = 0
-            var size = 7 + 6 * t
-            switch item {
-            case .bubbleTrail:
-                p.y -= age * 14 + CGFloat(sin(phase)) * 2
-                p.x += CGFloat(sin(phase * 0.7)) * 3
-                size = 6 + 9 * age
-            case .candyTrail:
-                rotation = CGFloat(phase)
-            default:
-                // 팔랑이며 아래로 떨어진다
+            switch shape {
+            case .candy:
                 p.y += age * 10
                 p.x += CGFloat(sin(phase)) * 4 * age
-                rotation = CGFloat(sin(phase * 0.9)) * 0.9
+            case .sprite(let name) where loops(name):
+                p.y += CGFloat(sin(phase)) * 2
+            case .sprite:
+                p.y -= age * 6
             }
-            drawArt(art, at: p, size: size, alpha: 0.25 + 0.75 * t, rotation: rotation, cg)
+            drawParticle(shape, at: p, size: 1.5 + 1.8 * t, alpha: 0.25 + 0.75 * t, progress: age,
+                         seed: CGFloat(i % 7) / 7, time: time, cg)
         }
     }
 
     // MARK: 동료
 
     /// 동료 (Petdex 펫) 한 장면. `feet`는 발이 닿는 자리, `height`는 서 있을 때 키(pt).
+    /// `jump`(0~1)를 주면 뛰는 중이라 그림 러너는 점프 줄로 그린다.
     static func drawCompanion(_ character: RunnerCharacter, feet: CGPoint, height: CGFloat, phase: CGFloat, moving: Bool,
-                              theme: SpriteTheme = .auto, _ cg: CGContext) {
-        let scene = CharacterScene(rig: character.rig, pose: CharacterPose(activity: moving ? .run : .stand, phase: phase))
+                              jump: CGFloat? = nil, theme: SpriteTheme = .auto, _ cg: CGContext) {
+        var pose = CharacterPose(activity: moving ? .run : .stand, phase: phase)
+        pose.jump = jump
+        let scene = CharacterScene(rig: character.rig, pose: pose)
         let scale = height / FittedRig.targetHeight
         cg.saveGState()
         cg.translateBy(x: feet.x - FittedRig.targetCenterX * scale, y: feet.y - Stage.ground * scale)
@@ -277,7 +141,6 @@ enum GameFX {
 
     struct Spray {
         var count: Int
-        var colors: [NSColor]
         var shape: Shape
         var speed: CGFloat
         var life: CGFloat
@@ -289,77 +152,54 @@ enum GameFX {
         var drift: CGFloat = 0
     }
 
-    /// 발을 디딜 때 일어나는 먼지.
+    /// 한 번 터지는 큰 그림 하나 (부딪힘의 가운데).
+    private static func blast(_ name: String, size: CGFloat, life: CGFloat = 0.6) -> Spray {
+        Spray(count: 1, shape: .sprite(name), speed: 0, life: life, size: size...size, spread: 2, gravity: 0)
+    }
+
+    /// 발을 디딜 때 일어나는 먼지. 고르지 않았으면 흙먼지.
     static func dust(_ item: Cosmetic?, landing: Bool) -> Spray {
-        let count = landing ? 4 : 5
-        let speed: CGFloat = landing ? 30 : 40
-        if let item, let art = item.art {
-            return Spray(count: landing ? 2 : 1, colors: [item.color], shape: .art(art), speed: speed * 0.8, life: 0.6,
-                         size: 1.2...1.8, gravity: 80, drift: 1)
-        }
-        switch item {
-        case .cloudDust:
-            return Spray(count: 3, colors: [item!.color], shape: .texture(.smoke), speed: speed * 0.7, life: 0.55,
-                         size: 1.4...2.2, gravity: -20, drift: 1)
-        case .starDust:
-            return Spray(count: count, colors: [item!.color, .white], shape: .texture(.star), speed: speed, life: 0.45,
-                         size: 1.0...1.6, drift: 1)
-        case .rainbowDust:
-            return Spray(count: count + 1, colors: SpriteEffects.rainbow, shape: .dot, speed: speed, life: 0.4, drift: 1)
-        case let item?:
-            return Spray(count: count, colors: [item.color], shape: .dot, speed: speed, life: 0.35, drift: 1)
-        case nil:
-            return Spray(count: count, colors: [NSColor(white: 0.85, alpha: 1)], shape: .dot, speed: speed, life: 0.35, drift: 1)
-        }
+        let shape = item?.fx ?? .sprite("smokePoff")
+        // 연기는 떠오르고, 하트·별·사탕은 튀었다 떨어진다
+        let floats = if case .sprite(let name) = shape { !loops(name) } else { false }
+        return Spray(count: landing ? 3 : 2, shape: shape, speed: landing ? 30 : 40, life: floats ? 0.5 : 0.6,
+                     size: 1.1...1.6, gravity: floats ? -20 : 80, drift: 1)
     }
 
     /// 부딪힌 순간 터지는 것들. 여러 겹이면 여러 개를 돌려준다.
     static func crash(_ item: Cosmetic?) -> [(offset: CGPoint, spray: Spray)] {
         switch item {
-        case .fireworksCrash:
-            return [-18.0, 0, 20].enumerated().map { k, dx in
-                (CGPoint(x: dx, y: 18 + Double(k % 2) * 10),
-                 Spray(count: 14, colors: SpriteEffects.rainbow.shuffled(), shape: .spark, speed: 110, life: 0.9, spread: 2))
-            }
-        case .heartCrash:
-            return [(.zero, Spray(count: 12, colors: [NSColor(hex: 0xFF8FB8), NSColor(hex: 0xFF5C8A)], shape: .heart,
-                                  speed: 120, life: 0.9, size: 2.2...3.4, spread: 2))]
-        case .coinCrash:
-            return [(.zero, Spray(count: 16, colors: [.white], shape: .coin, speed: 170, life: 1.1, size: 1.6...2.4,
-                                  spread: 2, drift: 0.3))]
-        case .magicCrash:
-            return [(.zero, Spray(count: 1, colors: [NSColor(hex: 0xC68CFF)], shape: .texture(.ring), speed: 0, life: 0.7,
-                                  size: 5...5, spread: 2, gravity: 0)),
-                    (.zero, Spray(count: 1, colors: [NSColor(hex: 0xFF9AE0)], shape: .texture(.twirl), speed: 0, life: 0.8,
-                                  size: 4...4, spread: 2, gravity: 0)),
-                    (.zero, Spray(count: 12, colors: [NSColor(hex: 0xC68CFF), NSColor(hex: 0xFF9AE0), .white],
-                                  shape: .texture(.star), speed: 130, life: 0.8, size: 1.2...2.0, spread: 2, gravity: 60))]
+        case .starburstCrash:
+            return [(.zero, blast("starburst", size: 9, life: 0.7)),
+                    (.zero, Spray(count: 8, shape: .sprite("rainbowStar"), speed: 130, life: 0.8, size: 1.2...1.8, spread: 2))]
+        case .ringCrash:
+            return [(.zero, blast("ringBoom", size: 8, life: 0.7))]
         case .boomCrash:
-            return [(.zero, Spray(count: 1, colors: [.white], shape: .art("collision"), speed: 0, life: 0.5, size: 6...6,
-                                  spread: 2, gravity: 0)),
-                    (.zero, Spray(count: 10, colors: [NSColor(hex: 0xFFE14D), NSColor(hex: 0xFF8A3D)], shape: .texture(.star),
-                                  speed: 150, life: 0.6, size: 1.0...1.6, spread: 2))]
-        case .balloonCrash:
-            return [(.zero, Spray(count: 5, colors: [.white], shape: .art("balloon"), speed: 40, life: 1.4, size: 1.6...2.2,
-                                  gravity: -90))]
-        case .sweetCrash:
-            return ["donut", "candy", "lollipop"].map { art in
-                (.zero, Spray(count: 4, colors: [.white], shape: .art(art), speed: 150, life: 1.1, size: 1.3...1.9, spread: 2))
-            }
-        case .confettiCrash:
-            return [(CGPoint(x: 0, y: 6), Spray(count: 1, colors: [.white], shape: .art("confetti"), speed: 0, life: 0.9,
-                                                size: 4.5...4.5, spread: 2, gravity: 0)),
-                    (CGPoint(x: -14, y: 0), Spray(count: 2, colors: [.white], shape: .art("popper"), speed: 60, life: 0.9,
-                                                  size: 2.2...2.6, gravity: 120)),
-                    (.zero, Spray(count: 18, colors: SpriteEffects.rainbow, shape: .texture(.star), speed: 170, life: 1.0,
-                                  size: 0.9...1.5, spread: 2, gravity: 120))]
-        case .flameCrash:
-            return [(.zero, Spray(count: 14, colors: [NSColor(hex: 0xFFE14D), NSColor(hex: 0xFF8A3D), NSColor(hex: 0xFF4A1F)],
-                                  shape: .texture(.flame), speed: 90, life: 0.75, size: 1.6...2.6, gravity: -160)),
-                    (.zero, Spray(count: 6, colors: [NSColor(white: 0.6, alpha: 1)], shape: .texture(.smoke), speed: 50,
-                                  life: 1.0, size: 2...3, gravity: -60))]
+            return [(.zero, blast("boom", size: 8, life: 0.8)),
+                    (.zero, Spray(count: 5, shape: .sprite("smokePoff"), speed: 60, life: 0.8, size: 1.6...2.4, gravity: -60))]
+        case .fireCrash:
+            return [(.zero, blast("fireBlast", size: 8)),
+                    (.zero, Spray(count: 8, shape: .sprite("firePlume"), speed: 90, life: 0.8, size: 1.4...2.2, gravity: -160))]
+        case .candyCrash:
+            return [(.zero, blast("candyPop_pink", size: 8)),
+                    (.zero, Spray(count: 4, shape: .candy("lollipop_pink"), speed: 150, life: 1.1, size: 1.2...1.6, spread: 2)),
+                    (.zero, Spray(count: 4, shape: .candy("swirl_blue"), speed: 150, life: 1.1, size: 1.2...1.6, spread: 2)),
+                    (.zero, Spray(count: 4, shape: .candy("jelly_yellow"), speed: 150, life: 1.1, size: 1.2...1.6, spread: 2))]
+        case .heartCrash:
+            return [(.zero, blast("candyPop_red", size: 7)),
+                    (.zero, Spray(count: 10, shape: .sprite("pumpingHeart"), speed: 130, life: 1.0, size: 1.2...1.8, spread: 2))]
+        case .gemCrash:
+            return [(.zero, Spray(count: 8, shape: .sprite("gemHeart"), speed: 150, life: 1.1, size: 1.4...2.0, spread: 2,
+                                  drift: 0.3))]
+        case .coinCrash:
+            return [(.zero, Spray(count: 14, shape: .sprite("coin"), speed: 170, life: 1.1, size: 1.2...1.8, spread: 2,
+                                  drift: 0.3))]
+        case .magicCrash:
+            return [(.zero, blast("plasmaBubble", size: 8, life: 0.7)),
+                    (.zero, Spray(count: 12, shape: .sprite("plasmaSparkle"), speed: 130, life: 0.8, size: 1.2...2.0,
+                                  spread: 2, gravity: 60))]
         default:
-            return [(.zero, Spray(count: 12, colors: [.white], shape: .dot, speed: 120, life: 0.55))]
+            return [(.zero, blast("pixelBoom", size: 6))]
         }
     }
 
@@ -375,8 +215,8 @@ enum GameFX {
             let x = origin.x - cos(angle) * v * age - spray.drift * 60 * age
             let y = origin.y - sin(angle) * v * age + 0.5 * spray.gravity * age * age
             let size = spray.size.lowerBound + (spray.size.upperBound - spray.size.lowerBound) * RunnerStageHash.value(i, 9)
-            drawParticle(spray.shape, color: spray.colors[i % spray.colors.count], at: CGPoint(x: x, y: y), size: size,
-                         alpha: 1 - age / life, progress: age / life, seed: jitter, time: time, cg)
+            drawParticle(spray.shape, at: CGPoint(x: x, y: y), size: size, alpha: 1 - age / life, progress: age / life,
+                         seed: jitter, time: time, cg)
         }
     }
 }

@@ -24,12 +24,16 @@ enum MotionEffect {
     case dream(CGFloat)
     case speedLines(CGFloat)
     case zzz(CGFloat)
+    /// 정지 말풍선 하나 (Assets/FX/emote): 이름과 진행도.
+    case emote(String, CGFloat)
 }
 
 /// 한 번 재생하고 끝나는 동작. 시간 함수라 메뉴바는 fps만큼 잘라 쓰고 팝오버는 매 프레임 계산한다.
 enum Trick: String, CaseIterable {
     // 깨어 있을 때
     case hop, flip, spin, lookAround, love, sing, dance, stretch, blink, shake, sneeze, sparkle, doze, dizzy, zoom, wiggle
+    /// 손을 흔들며 반긴다 (Claude가 일을 마쳤을 때, 쓰다듬을 때).
+    case greet
     // 상태가 바뀔 때
     case wakeUp, fallAsleep, celebrate
     // 잘 때
@@ -37,15 +41,17 @@ enum Trick: String, CaseIterable {
     // 세션 사용률이 25·50·75%를 넘을 때
     case milestone25, milestone50, milestone75
 
-    static let awake: [Trick] = [.hop, .flip, .spin, .lookAround, .love, .sing, .dance, .stretch, .blink, .blink,
-                                 .shake, .sneeze, .sparkle, .doze, .dizzy, .zoom, .wiggle]
+    /// 혼자 하는 장난. 몸을 돌리거나 찌그러뜨리는 큰 동작은 빼고, 펫 그림의 줄(생각·손 흔들기)과 말풍선으로 보이는 것만 둔다.
+    /// 나머지 동작은 '동작' 메뉴에서 직접 고를 수 있다.
+    static let awake: [Trick] = [.lookAround, .sing, .doze, .greet, .love, .blink]
     static let asleep: [Trick] = [.rollOver, .snore, .dream]
-    /// 팝오버에서 러너를 눌렀을 때.
-    static let petting: [Trick] = [.hop, .flip, .spin, .love, .dance, .sparkle, .shake, .wiggle]
+    /// 팝오버에서 러너를 눌렀을 때. 같은 것을 연달아 하지 않게 고른다.
+    static let petting: [Trick] = [.greet, .hop, .sing]
 
     var duration: TimeInterval {
         switch self {
         case .blink: return 0.6
+        case .greet: return 1.6
         case .hop: return 0.9
         case .shake: return 1.0
         case .spin: return 1.0
@@ -81,6 +87,7 @@ enum Trick: String, CaseIterable {
         case .dizzy: return "어질어질"
         case .zoom: return "슝"
         case .wiggle: return "실룩실룩"
+        case .greet: return "인사"
         case .wakeUp: return "기상"
         case .fallAsleep: return "하품"
         case .celebrate: return "신남"
@@ -106,14 +113,20 @@ enum Trick: String, CaseIterable {
         switch self {
         case .hop:
             f.transform = Self.jump(t, height: 3.6, start: 0.18, end: 0.74)
-            if t > 0.18 && t < 0.74 { f.pose = CharacterPose(activity: .run, phase: 0.62, speed: 1) }
+            if t > 0.18 && t < 0.74 {
+                f.pose = CharacterPose(activity: .run, phase: 0.62, speed: 1)
+                f.pose.jump = (t - 0.18) / 0.56
+            }
 
         case .flip, .celebrate:
             f.transform = Self.jump(t, height: 5, start: 0.16, end: 0.8)
             let spinT = smoothstep((t - 0.2) / 0.55)
             f.transform.rotation = -tau * spinT
             f.transform.pivotAtCenter = true
-            if t > 0.16 && t < 0.8 { f.pose = CharacterPose(activity: .run, phase: 0.62, speed: 1) }
+            if t > 0.16 && t < 0.8 {
+                f.pose = CharacterPose(activity: .run, phase: 0.62, speed: 1)
+                f.pose.jump = (t - 0.16) / 0.64
+            }
             f.pose.eyes = t > 0.75 ? .happy : .open
             // 착지하는 순간 터진다
             if self == .celebrate { f.effects = [.burst((t - 0.72) / 0.28)] }
@@ -125,16 +138,23 @@ enum Trick: String, CaseIterable {
             f.pose.eyes = .happy
 
         case .lookAround:
+            // 그림 러너는 턱을 괴고 생각하는 줄로, 벡터 러너는 좌우를 둘러본다
+            stand.review = seconds / 1.0
+            f.pose = stand
             f.transform.scaleX = Self.turn(t, at: 0.12, back: 0.62)
             f.effects = [.question(Self.window(t, 0.25, 0.75))]
-            f.transform.rotation = 0.06 * sin(tau * t * 2)
 
         case .love:
             stand.eyes = .happy
             stand.wave = seconds / Self.waveCycle
             f.pose = stand
-            f.transform.squash = 1 + 0.05 * sin(tau * t * 3)
             f.effects = [.hearts(t)]
+
+        case .greet:
+            stand.eyes = .happy
+            stand.wave = seconds / Self.waveCycle
+            f.pose = stand
+            f.effects = [.emote("stars", t)]
 
         case .sing:
             stand.eyes = .happy
@@ -337,37 +357,21 @@ enum Trick: String, CaseIterable {
 extension MotionEffect {
     /// 러너가 차지한 영역(`bounds`)을 기준으로 효과를 그린다. `tint`는 단색 효과(물음표·Z 등)의 색.
     func draw(in cg: CGContext, around bounds: CGRect, tint: NSColor) {
-        let head = CGPoint(bounds.maxX - 3, bounds.minY)
         let nose = CGPoint(bounds.maxX - 0.5, bounds.minY + min(4, bounds.height * 0.35))
-        let pink = NSColor(hex: 0xFF5C93)
-        let gold = NSColor(hex: 0xFFD23F)
-        let warm = NSColor(hex: 0xFFB547)
         switch self {
         case .hearts(let t):
-            for k in 0..<3 {
-                let local = (t * 1.25 - CGFloat(k) * 0.22)
-                guard local > 0 && local < 1 else { continue }
-                let c = head + CGPoint(-2 + CGFloat(k) * 2.2 + sin(local * 7 + CGFloat(k)) * 0.8, -local * 8)
-                let size = 1.0 + 0.5 * sin(.pi * min(local * 2, 1))
-                SpriteEffects.heart(cg, at: c, size: size, color: pink.withAlphaComponent(1 - local * local))
-            }
+            Emote.animate("balloonHeart", in: cg, around: bounds, progress: min(1, t / 0.45),
+                          alpha: 1 - smoothstep((t - 0.85) / 0.15))
         case .notes(let t):
-            for k in 0..<3 {
-                let local = (t * 1.4 - CGFloat(k) * 0.3).truncatingRemainder(dividingBy: 1.1)
-                guard local > 0 && local < 1 else { continue }
-                let c = head + CGPoint(-1 + CGFloat(k) * 1.8 + sin(local * 6) * 1.2, -local * 8 + 1)
-                SpriteEffects.note(cg, at: c, size: 2.2, color: tint.withAlphaComponent(sin(.pi * local)))
-            }
+            Emote.draw("music", in: cg, around: bounds, pop: t / 0.15, alpha: 1 - smoothstep((t - 0.85) / 0.15),
+                       bob: sin(t * tau * 2) * 0.4)
         case .question(let alpha):
-            guard alpha > 0.01 else { return }
-            drawGlyph(cg, "?", at: head + CGPoint(0.5, -1.5 - alpha), size: 5, color: tint.withAlphaComponent(alpha))
+            Emote.animate("balloonQuestion", in: cg, around: bounds, progress: alpha, alpha: alpha)
         case .exclaim(let alpha):
-            guard alpha > 0.01 else { return }
-            SpriteEffects.exclaim(cg, at: head + CGPoint(0.8, -1.5), height: 4.5 * (0.7 + 0.3 * alpha),
-                                  color: NSColor.systemOrange.withAlphaComponent(alpha))
+            Emote.animate("balloonExclaim", in: cg, around: bounds, progress: alpha, alpha: alpha)
         case .burst(let t):
-            SpriteEffects.burst(cg, at: CGPoint(bounds.midX, bounds.midY - bounds.height * 0.1),
-                                radius: max(bounds.width, bounds.height) * 0.42, t: t, color: tint, accent: warm)
+            GameFX.drawSprite("starburst", at: CGPoint(bounds.midX, bounds.midY - bounds.height * 0.1),
+                              height: max(bounds.width, bounds.height) * 1.2, progress: t, time: 0, cg)
         case .ring(let t, let from, let to):
             let fill = smoothstep((t - 0.12) / 0.38)
             let alpha = smoothstep(t / 0.1) * (1 - smoothstep((t - 0.8) / 0.2))
@@ -387,90 +391,27 @@ extension MotionEffect {
                 cg.strokeEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
             }
         case .dizzyStars(let t):
-            for k in 0..<3 {
-                let angle = t * tau * 2 + CGFloat(k) / 3 * tau
-                let c = head + CGPoint(cos(angle) * 3.2, -1 + sin(angle) * 1.1)
-                SpriteEffects.sparkle(cg, at: c, radius: sin(angle) > 0 ? 1.3 : 0.9, color: gold)
-            }
+            Emote.draw("swirl", in: cg, around: bounds, pop: 1, bob: sin(t * tau) * 0.4)
         case .dots(let t):
-            for k in 0..<3 where t > CGFloat(k) * 0.25 {
-                let c = head + CGPoint(CGFloat(k) * 1.5, -2)
-                cg.setFillColor(tint.cgColor)
-                cg.fillEllipse(in: CGRect(x: c.x - 0.5, y: c.y - 0.5, width: 1, height: 1))
-            }
+            Emote.animate("balloonDots", in: cg, around: bounds, progress: t)
         case .puff(let t):
-            for k in 0..<4 {
-                let angle = CGFloat(k) * 0.5 - 0.75
-                let c = nose + CGPoint.polar(angle, 1 + t * 4)
-                let r = 0.6 + t * 1.2
-                cg.setFillColor(tint.withAlphaComponent(0.5 * (1 - t)).cgColor)
-                cg.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
-            }
+            GameFX.drawSprite("puff", at: nose + CGPoint(2 + t * 2, -0.5), height: 4, progress: t, time: 0, cg)
         case .splash(let t):
-            for k in 0..<6 {
-                let angle = CGFloat(k) / 6 * tau + 0.3
-                let local = (t * 2 + CGFloat(k) * 0.13).truncatingRemainder(dividingBy: 1)
-                let c = CGPoint(bounds.midX, bounds.midY) + CGPoint.polar(angle, bounds.width * 0.35 + local * 4)
-                SpriteEffects.drop(cg, at: c, size: 0.6, color: NSColor(hex: 0x5AC8FA).withAlphaComponent(1 - local))
-            }
+            Emote.draw("drops", in: cg, around: bounds, pop: t / 0.2, alpha: 1 - smoothstep((t - 0.8) / 0.2))
         case .bubble(let t):
-            if t < 0.85 {
-                let r = 0.4 + 2.6 * smoothstep(t / 0.85) * (1 + 0.06 * sin(t * 40))
-                let c = nose + CGPoint(r * 0.7, -r * 0.2)
-                cg.setFillColor(NSColor(hex: 0xBFE9FF).withAlphaComponent(0.55).cgColor)
-                cg.setStrokeColor(NSColor(hex: 0x7FD0FF).cgColor)
-                cg.setLineWidth(0.35)
-                cg.addEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
-                cg.drawPath(using: .fillStroke)
-                cg.setFillColor(NSColor.white.withAlphaComponent(0.9).cgColor)
-                cg.fillEllipse(in: CGRect(x: c.x - r * 0.5, y: c.y - r * 0.6, width: r * 0.45, height: r * 0.35))
-            } else {
-                let k = (t - 0.85) / 0.15
-                let c = nose + CGPoint(2, -0.5)
-                for i in 0..<6 {
-                    let p = c + CGPoint.polar(CGFloat(i) / 6 * tau, 1.5 + k * 2.5)
-                    cg.setFillColor(NSColor(hex: 0x7FD0FF).withAlphaComponent(1 - k).cgColor)
-                    cg.fillEllipse(in: CGRect(x: p.x - 0.35, y: p.y - 0.35, width: 0.7, height: 0.7))
-                }
-            }
+            // 코풍선: 부풀다가 0.85에서 터진다
+            let swell = 1.5 + 4 * smoothstep(min(t, 0.85) / 0.85)
+            GameFX.drawSprite("plasmaBubble", at: nose + CGPoint(swell * 0.4, -swell * 0.1), height: swell,
+                              progress: t < 0.85 ? 0.45 : 0.6 + (t - 0.85) / 0.15 * 0.4, time: 0, cg)
         case .dream(let t):
-            let base = head + CGPoint(0, -0.5)
-            let sizes: [CGFloat] = [0.5, 0.8, 2.8]
-            let offsets = [CGPoint(0, 0), CGPoint(1.3, -1.6), CGPoint(3.4, -4.6)]
-            for k in 0..<3 {
-                let appear = smoothstep((t - CGFloat(k) * 0.12) / 0.15) * (1 - smoothstep((t - 0.85) / 0.15))
-                guard appear > 0 else { continue }
-                let c = base + offsets[k]
-                let r = sizes[k] * appear
-                cg.setFillColor(NSColor.white.withAlphaComponent(0.92).cgColor)
-                cg.setStrokeColor(tint.withAlphaComponent(0.6).cgColor)
-                cg.setLineWidth(0.3)
-                cg.addEllipse(in: CGRect(x: c.x - r * 1.2, y: c.y - r, width: r * 2.4, height: r * 2))
-                cg.drawPath(using: .fillStroke)
-                if k == 2 && appear > 0.6 {
-                    SpriteEffects.heart(cg, at: c + CGPoint(0, 0.1), size: 1.0 * appear, color: pink)
-                }
-            }
+            Emote.draw("hearts", in: cg, around: bounds, pop: t / 0.2, alpha: 1 - smoothstep((t - 0.85) / 0.15))
         case .speedLines(let t):
-            SpriteEffects.airStreaks(cg, phase: t - floor(t), maxX: bounds.minX,
-                                     band: (bounds.minY + bounds.height * 0.2)...(bounds.maxY - bounds.height * 0.25),
-                                     color: tint)
+            GameFX.drawSprite("puff", at: CGPoint(bounds.minX - 2, bounds.maxY - 2), height: 5, progress: t - floor(t), time: 0, cg)
+        case .emote(let name, let t):
+            Emote.draw(name, in: cg, around: bounds, pop: t / 0.15, alpha: 1 - smoothstep((t - 0.85) / 0.15))
         case .zzz(let t):
-            SpriteEffects.zzz(cg, from: CGPoint(bounds.maxX - 2.5, bounds.minY + 0.5), phase: t, color: tint)
+            Emote.draw(t.truncatingRemainder(dividingBy: 1) < 0.5 ? "sleep" : "sleeps", in: cg, around: bounds, pop: 1,
+                       bob: sin(t * tau) * 0.3)
         }
-    }
-
-    private func drawGlyph(_ cg: CGContext, _ text: String, at c: CGPoint, size: CGFloat, color: NSColor) {
-        let font = NSFont.systemFont(ofSize: size, weight: .heavy)
-        let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
-        let line = CTLineCreateWithAttributedString(string)
-        let width = CTLineGetTypographicBounds(line, nil, nil, nil)
-        cg.saveGState()
-        // 텍스트는 y 위 좌표로 그려지므로 뒤집는다
-        cg.translateBy(x: c.x - CGFloat(width) / 2, y: c.y + size * 0.35)
-        cg.scaleBy(x: 1, y: -1)
-        cg.textPosition = .zero
-        CTLineDraw(line, cg)
-        cg.restoreGState()
     }
 }

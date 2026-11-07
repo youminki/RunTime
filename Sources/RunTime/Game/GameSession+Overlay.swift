@@ -3,6 +3,12 @@ import SwiftUI
 
 /// 점수판과 시작·끝 화면 글자.
 extension GameSession {
+    /// 점수판의 간식 아이콘 (사탕 그림, 원래 색 그대로).
+    static let candyIcon: Image = {
+        let image = GameFX.image("lollipop_pink", folder: "FX/candy").map { NSImage(cgImage: $0, size: NSSize(width: 11, height: 11)) }
+        return Image(nsImage: image ?? NSImage())
+    }()
+
     // MARK: 점수판
 
     /// 무대 위 글자. 그리기 컨텍스트가 바로 그리도록 위치와 함께 넘긴다.
@@ -45,7 +51,7 @@ extension GameSession {
             // 점수 아래 한 줄: 최고 점수, 먹은 코인, 남은 보호막
             var line = Text(verbatim: "BEST \(game.countsTowardBest ? max(game.best, game.score) : game.best)").foregroundColor(.white.opacity(0.6))
             if game.coinsTaken > 0 {
-                line = line + Text("   ") + Text(Image(systemName: "circle.fill")).foregroundColor(gold)
+                line = line + Text("   ") + Text(Self.candyIcon)
                     + Text(verbatim: " \(game.coinsTaken)").foregroundColor(gold)
             }
             if game.abilities.shields > 0 {
@@ -130,7 +136,7 @@ extension GameSession {
             labels.append(Label(text: Text(verbatim: "BEST \(game.best)").font(caption).foregroundColor(.white.opacity(0.55)),
                                 position: CGPoint(cardLeft + cardWidth - 12, cardTop + 12), anchor: .topTrailing))
             if game.coinsTaken > 0 {
-                labels.append(Label(text: (Text(Image(systemName: "circle.fill")) + Text(verbatim: " +\(game.coinsTaken)")).font(caption)
+                labels.append(Label(text: (Text(Self.candyIcon) + Text(verbatim: " +\(game.coinsTaken)")).font(caption)
                                         .foregroundColor(gold),
                                     position: CGPoint(cardLeft + cardWidth - 12, cardTop + 38), anchor: .topTrailing))
             }

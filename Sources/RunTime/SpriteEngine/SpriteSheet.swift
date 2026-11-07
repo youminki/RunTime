@@ -129,9 +129,9 @@ enum SpriteSheet {
 
     /// README 첫 화면 GIF: 러너 몇 마리가 차례로 달린다 (`--hero-gif <파일>`).
     static func writeHeroGIF(to url: URL) throws {
-        let cast: [(Runner, SpriteDisplay)] = [(.cat, .normal(.rainbow)), (.fox, .normal(.dashing)),
-                                               (.unicorn, .normal(.rainbow)), (.penguin, .normal(.running)),
-                                               (.dino, .normal(.dashing)), (.ghost, .normal(.running))]
+        let cast: [(Runner, SpriteDisplay)] = [(.cat, .normal(.rainbow)), (.dog, .normal(.dashing)),
+                                               (.girl, .normal(.running)), (.dino, .normal(.dashing)),
+                                               (.jack, .normal(.running))]
         let scale: CGFloat = 6
         let pad: CGFloat = 14
         let size = CGSize(width: Stage.size.width * scale + pad * 2, height: Stage.size.height * scale + pad * 2)

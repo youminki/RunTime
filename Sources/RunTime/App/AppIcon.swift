@@ -42,7 +42,7 @@ enum AppIcon {
         var sky = Sky.at(hour: 22, space: false)
         sky.stars = 1
         Backdrop.draw(cg, size: size, sky: sky, time: 3.2, groundY: groundY, scroll: 60, speed: 0,
-                      track: nil, weather: nil)
+                      track: nil)
         // 공기 줄 셋: 빠르게 달리는 느낌만
         cg.setLineCap(.round)
         for (y, x, length) in [(84.0, 12.0, 30.0), (108.0, 4.0, 24.0), (132.0, 16.0, 18.0)] as [(CGFloat, CGFloat, CGFloat)] {

@@ -59,13 +59,13 @@ enum GameShots {
         }
         // 꾸미기를 단 모습 (꼬리 셋, 발먼지)
         let looks: [(trail: Cosmetic, dust: Cosmetic)] = [
-            (.rainbowTrail, .rainbowDust), (.fireTrail, .cloudDust), (.noteTrail, .starDust), (.heartTrail, .heartDust),
-            (.magicTrail, .starDust), (.smokeTrail, .cloudDust), (.sparkTrail, .goldDust), (.blossomTrail, .sparkleDust),
-            (.bubbleTrail, .noteDust),
+            (.rainbowStarTrail, .starDust), (.fireTrail, .smokeDust), (.heartTrail, .heartDust), (.gemTrail, .sparkleDust),
+            (.candyTrail, .candyDust), (.smokeTrail, .puffDust), (.coinTrail, .coinDust), (.magicTrail, .bubbleDust),
+            (.bubbleTrail, .sparkleDust), (.waterTrail, .puffDust), (.cometTrail, .starDust), (.swirlTrail, .candyDust),
         ]
         session.companionOverride = PetdexStore.shared.pets.first.flatMap(PetdexStore.shared.character(for:))
         for (item, dust) in looks where game.phase == .playing {
-            GameDecor.shared.preview = [item, dust, .confettiCrash]
+            GameDecor.shared.preview = [item, dust, .candyCrash]
             step(0.5, autoplay: true)
             try shot("2-play-\(item.rawValue)")
         }
@@ -95,7 +95,7 @@ enum GameShots {
 
         // 방금 판을 고스트로 두고 겨룬다. 같은 자동 플레이에 앞으로 조금 나가 고스트와 겹치지 않게 한다
         // 고스트는 그 판을 달린 러너 모습이어야 한다 (내 러너와 다르게 용으로)
-        session.savedGhost = GhostStore.record(of: game, runner: Runner.dragon.rawValue)
+        session.savedGhost = GhostStore.record(of: game, runner: Runner.dino.rawValue)
         let ok = GhostStore.verified(session.savedGhost!, tuning: game.tuning, runnerWidth: game.runnerWidth,
                                      runnerHeight: game.runnerHeight)
         var forged = session.savedGhost!
@@ -149,7 +149,7 @@ enum GameBench {
         guard let session = model.game else { return }
         let game = session.game
         game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 3, glide: true))
-        GameDecor.shared.preview = [.rainbowTrail, .rainbowDust, .fireworksCrash]
+        GameDecor.shared.preview = [.rainbowStarTrail, .starDust, .starburstCrash]
         let pilot = Autopilot(game: game)
         session.press()
         session.release()
@@ -206,10 +206,10 @@ enum GameFrames {
         // 자동 플레이어는 거의 부딪히지 않아서 손을 놓아 판을 끝낸다
         while game.phase == .playing { step(0.25, autoplay: false) }
         step(0.6)
-        session.savedGhost = GhostStore.record(of: game, runner: Runner.dragon.rawValue)
+        session.savedGhost = GhostStore.record(of: game, runner: Runner.dino.rawValue)
 
         // 꾸미기와 능력을 달고 고스트와 겨룬다. 앞뒤로 움직여 고스트와 겹치지 않게 한다
-        GameDecor.shared.preview = [.rainbowTrail, .rainbowDust]
+        GameDecor.shared.preview = [.rainbowStarTrail, .starDust]
         game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 2))
         session.startRace(session.savedGhost)
         step(1.2)

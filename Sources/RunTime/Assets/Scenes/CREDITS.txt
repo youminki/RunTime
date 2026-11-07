@@ -1,0 +1,50 @@
+도트 트랙 그림 출처. 모두 OpenGameArt에 CC0(퍼블릭 도메인)로 올라온 그림이다.
+http://creativecommons.org/publicdomain/zero/1.0/
+무대 높이(140px)에 맞춰 위아래를 자르거나 정수배로 키우고 줄였다. 좌우가 이어지지 않는 층은 뒤집은 그림을 이어 붙였다.
+폴더마다 scene.json에 층 수, 땅 색, 시간대 처리를 적었다.
+
+Pixel-boy (Sparklin Labs, Superpowers asset packs)
+  https://opengameart.org/content/superpowers-assets-background-elements
+  bushForest, jungle, redForest, snowPines, flowerHills, springField, greenVillage, wheatRoad, castleHill,
+  forestGlade, sandDunes, redCanyon, pyramid, sandPalace, whiteTemple, summerBeach, tropicalSea, underwater,
+  deepSea, mintSky, goldenSky, skyIslands, airship, cloudPeaks, trainBridge, palace, greenCity, fullMoon,
+  mossCave, lavaCave
+ansimuz
+  cloudWoods https://opengameart.org/content/sunnyland-woods
+  mistForest https://opengameart.org/content/sunnyland-forest-of-illusion
+  tallForest https://opengameart.org/content/sunnyland-tall-forest-environment
+  frostForest https://opengameart.org/content/tinyrpg-stranger-forest-pack
+  amberForest https://opengameart.org/content/forest-background
+  duskPeaks https://opengameart.org/content/mountain-at-dusk-background
+  oceanDay, oceanSunset, oceanNight https://opengameart.org/content/warped-ocean-view
+  mistCity https://opengameart.org/content/urban-landscape
+  violetCave https://opengameart.org/content/warped-caves-pixel-art-pack
+damarindra
+  mintForest https://opengameart.org/content/forest-minimal-platformer-16x16
+  greenForest https://opengameart.org/content/forest-platformer-64x64-cc-0
+FabinhoSC
+  emeraldClouds, pinkClouds https://opengameart.org/content/background-clouds-and-mountains-parallax
+  harborNight https://opengameart.org/content/skyline-background
+Spring Spring
+  sunsetField https://opengameart.org/content/the-war-over-a-melon-field-main-menu-background
+  pinkCave, crystalCave https://opengameart.org/content/pastel-caves
+DustDFG
+  xmasPeaks https://opengameart.org/content/pixel-art-mountains-parallax
+MatiasVME
+  sunnyHills https://opengameart.org/content/parallax-background-forest-pixel-art
+stealthix
+  sandyBeach https://opengameart.org/content/pixel-art-backgrounds-0
+Sly-Little-Fox
+  pinkSunset https://opengameart.org/content/sky-at-the-sunset
+kotnaszynce
+  cherryBridge https://opengameart.org/content/animated-cityscape-backgroundwallpaper
+Guido Bos
+  hillTown https://opengameart.org/content/old-frogatto-parallax-layers
+Ei
+  greenHills https://opengameart.org/content/mountains-2
+Emcee Flesher
+  desertArch https://opengameart.org/content/cethiels-desert-background-redux
+Gustavo Saraiva
+  starCity https://opengameart.org/content/city-parallax-pixel-art
+FisherG
+  violetCity https://opengameart.org/content/parallax-city-night-4-colors

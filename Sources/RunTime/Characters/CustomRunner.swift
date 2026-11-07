@@ -19,8 +19,6 @@ struct RunnerCharacter {
     let name: String
     let sound: String
     let rig: CharacterRig
-    /// 기본 러너만: Assets 폴더의 PNG로 교체할 때 쓰는 이름.
-    let assetPrefix: String?
     /// 그림 러너는 자동일 때 원본 색을 그대로 쓴다. 실루엣이면 nil이라 설정 색을 따른다.
     let fixedTheme: SpriteTheme?
 
@@ -42,14 +40,14 @@ struct RunnerCharacter {
 
 extension Runner {
     var character: RunnerCharacter {
-        RunnerCharacter(key: rawValue, name: displayName, sound: sound, rig: rig, assetPrefix: rawValue, fixedTheme: nil)
+        RunnerCharacter(key: rawValue, name: displayName, sound: sound, rig: rig, fixedTheme: .natural)
     }
 }
 
 extension CustomRunner {
     var character: RunnerCharacter {
         RunnerCharacter(key: "custom.\(id).\(silhouette)", name: name, sound: name, rig: CustomRig(runner: self),
-                        assetPrefix: nil, fixedTheme: silhouette ? nil : .natural)
+                        fixedTheme: silhouette ? nil : .natural)
     }
 }
 
@@ -59,6 +57,7 @@ extension CustomRunner {
 struct CustomRig: CharacterRig {
     let runner: CustomRunner
     let palette = CharacterPalette(body: .white, belly: .white, dark: .black)
+    var isPicture: Bool { true }
 
     func draw(_ s: Sketch) {
         let frames = CustomRunnerStore.shared.frames(for: runner)

@@ -12,7 +12,7 @@ enum ReadmeShots {
         UserDefaults.standard.setVolatileDomain([
             "runner": "cat", "customRunner": "", "spriteTheme": "auto",
             "gameCompanion": "",
-            "gameCosmeticsEquipped": ["pineTrack", "rainbowTrail", "starDust"],
+            "gameCosmeticsEquipped": ["cloudWoodsTrack", "rainbowStarTrail", "starDust"],
             "gameAbilitiesOn": ["airJump", "shield"],
         ], forName: UserDefaults.argumentDomain)
     }
@@ -29,7 +29,7 @@ enum ReadmeShots {
         Sky.hourOverride = 12
         let screens: [(String, AnyView)] = [
             ("usage", AnyView(PopoverView(engine: engine, settings: engine.settings))),
-            ("decor", AnyView(RunnerDecorView(settings: engine.settings, tab: .track)
+            ("decor", AnyView(RunnerDecorView(settings: engine.settings)
                 .padding(14).frame(width: 376).background(Theme.background))),
         ]
         let windows = screens.map { _, view -> NSWindow in

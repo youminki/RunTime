@@ -26,6 +26,13 @@ struct CharacterScene {
         rig.draw(sketch)
         parts = sketch.parts
         self.pose = pose
+        // 그림 러너는 자리 옮김과 좌우 돌아보기만 쓰고 동작은 시트의 줄(점프·손 흔들기 등)로 보인다
+        var transform = transform
+        if rig.isPicture {
+            transform.rotation = 0
+            transform.squash = 1
+            transform.scaleX = transform.scaleX < 0 ? -1 : 1
+        }
         self.transform = transform
         bounds = parts.filter { $0.layer == .base }.reduce(CGRect.null) { rect, part in
             rect.union(part.path.boundingBoxOfPath.insetBy(dx: -part.stroke / 2, dy: -part.stroke / 2))
@@ -109,7 +116,8 @@ struct CharacterScene {
               placed.minY < range.lowerBound - tolerance || placed.maxY > range.upperBound + tolerance
         else { return .identity }
         var s = min(1, (range.upperBound - range.lowerBound) / placed.height)
-        if placed.minY < range.lowerBound {
+        // 바닥이 무대 위로 넘어가면 줄여서는 넣을 수 없어 옮기기만 한다 (음수 배율이면 그림이 뒤집힌다)
+        if placed.minY < range.lowerBound, range.lowerBound < Stage.ground {
             s = min(s, (Stage.ground - range.lowerBound) / max(Stage.ground - placed.minY, 0.01))
         }
         let t = CGAffineTransform(translationX: placed.midX, y: Stage.ground)
@@ -169,10 +177,10 @@ struct CharacterScene {
         for part in parts where part.layer == .eye { eye(part, cg, look) }
 
         if look.rich && !hasImage { shade(cg) }
-        if look.alarm && look.rich {
+        // 그림 러너는 빨갛게 덮지 않는다. 슬픈 줄과 느낌표 말풍선이 대신 알린다
+        if look.alarm && look.rich && !hasImage {
             cg.setBlendMode(.sourceAtop)
-            // 그림 러너는 많이 덮으면 누군지 알아볼 수 없다
-            cg.setFillColor(NSColor.systemRed.withAlphaComponent(hasImage ? 0.38 : 0.55).cgColor)
+            cg.setFillColor(NSColor.systemRed.withAlphaComponent(0.55).cgColor)
             cg.fill(bounds.insetBy(dx: -2, dy: -2))
         }
         cg.endTransparencyLayer()

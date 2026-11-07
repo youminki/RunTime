@@ -9,7 +9,7 @@ import Foundation
 /// 여기에 점프 시간으로 잰 하한을 더해, 넘을 수 없는 배치는 만들지 않는다.
 ///
 /// 최고 속도에 닿은 뒤에도 같은 판이 되풀이되지 않게, 시간이 갈수록(압박) 속도가 조금씩 더 오르고 간격이 좁아지며
-/// 걸어오는 적이 빨라진다. 일정 속도부터는 머리 위에 박쥐가 낮게 뜬 장애물(문)이 나와 짧게 뛰어야만 지나간다.
+/// 걸어오는 적이 빨라진다.
 ///
 /// 좌표: x는 앞으로(+), y는 바닥에서 위로(+), 단위 pt. 1/120초 고정 간격으로 진행해 화면 주사율과 상관없이 같다.
 public final class RunnerGame {
@@ -178,24 +178,21 @@ public final class RunnerGame {
         public var lateMaxGapCoefficient: Double = 1.15
         /// 압박이 다 찼을 때 걸어오는 적이 더 빨라지는 비율.
         public var lateApproachBoost: Double = 0.6
-        /// 이 속도부터 문(머리 위 박쥐 + 땅 장애물)이 나오고, 압박에 따라 확률이 오른다.
-        public var gateSpeed: Double = 420
-        public var gateChance: Double = 0.15
-        public var lateGateChance: Double = 0.35
         /// 숙인 키 (선 키 대비).
         public var duckRatio: Double = 0.55
-        /// 판정은 보이는 모습보다 조금 너그럽게 한다. 2.5면 첫 장애물 타이밍 창이 약 130ms라 처음 하는 사람이
-        /// 첫 장애물에서 자주 끝나서, 창이 약 170ms가 되는 5로 둔다 (`--game-sim`으로 잰 값).
-        public var hitInset: Double = 5
+        /// 판정은 보이는 모습보다 너그럽게 한다. 처음 하는 사람이 첫 장애물들에서 바로 끝나지 않는 값이다 (`--game-sim`으로 잰 값).
+        public var hitInset: Double = 7
         /// 뛰어넘을 수 있다고 칠 때 사람에게 남겨 두는 누름 시각 여유(초). 이보다 빠듯하면 숙이거나 아래로 지나가야 하는 높이만 쓴다.
         public var jumpSlack: Double = 0.05
         /// 내리찍는 장애물이 러너에 닿기 이만큼(초) 전에 떨어지기 시작하고, 이 중력으로 떨어진다.
         public var dropLead: Double = 0.7
         public var dropGravity: Double = 4000
         /// 장애물과 위아래로 이보다 가깝게 지나가면 아슬아슬하게 피한 것으로 친다.
-        public var nearMissGap: Double = 7
+        public var nearMissGap: Double = 9
         /// 이단 점프는 처음 점프보다 조금 낮게 뛴다.
         public var airJumpVelocity: Double = 500
+        /// 발이 오를 수 있는 높이. 공중 점프를 겹쳐도 무대(바닥 위 135pt) 밖으로 나가지 않게 한다.
+        public var maxRise: Double = 86
         /// 글라이드 중 떨어지는 속도 상한과 그동안의 중력.
         public var glideFallSpeed: Double = 110
         public var glideGravity: Double = 600
@@ -214,29 +211,6 @@ public final class RunnerGame {
 
         /// 점프 한 번에 공중에 머무는 시간.
         public var airTime: Double { 2 * jumpVelocity / gravity }
-
-        /// 누르자마자 뗀 가장 짧은 점프의 높이 곡선. 최소 높이까지는 그대로 오르고, 그 뒤 releaseVelocity로 끊긴다.
-        public func shortHop(at t: Double) -> Double {
-            let v = jumpVelocity, g = gravity
-            let cut = (v - (v * v - 2 * g * minJumpHeight).squareRoot()) / g
-            guard t > cut else { return v * t - g * t * t / 2 }
-            let u = t - cut, rise = min(v - g * cut, releaseVelocity)
-            return minJumpHeight + rise * u - g * u * u / 2
-        }
-
-        /// 가장 짧은 점프가 공중에 머무는 시간과 꼭대기 높이.
-        public var shortHop: (airTime: Double, apex: Double) {
-            let v = jumpVelocity, g = gravity
-            let cut = (v - (v * v - 2 * g * minJumpHeight).squareRoot()) / g
-            let rise = min(v - g * cut, releaseVelocity)
-            let fall = (rise + (rise * rise + 2 * g * minJumpHeight).squareRoot()) / g
-            return (cut + fall, minJumpHeight + rise * rise / (2 * g))
-        }
-
-        /// 문 위 박쥐의 아래끝. 짧은 점프는 머리가 닿지 않고, 끝까지 누른 점프는 닿는다.
-        public func gateCeiling(runnerHeight: Double) -> Double {
-            (shortHop.apex + runnerHeight - hitInset + 6).rounded()
-        }
     }
 
     public let tuning: Tuning
@@ -319,7 +293,7 @@ public final class RunnerGame {
     public static let step: Double = 1.0 / 120
 
     /// 규칙 번호. 속도·점수에 관한 Tuning 기본값을 바꾸면 올려서, 옛 규칙으로 남긴 고스트를 쓰지 않게 한다.
-    public static let rulesVersion = 2
+    public static let rulesVersion = 3
 
     public init(tuning: Tuning, runnerWidth: Double, runnerHeight: Double, best: Int = 0,
                 seed: UInt64 = UInt64.random(in: 0...UInt64.max), abilities: Abilities = Abilities()) {
@@ -533,6 +507,10 @@ public final class RunnerGame {
         velocityY -= gravity * dt
         if isGliding { velocityY = max(velocityY, -tuning.glideFallSpeed) }
         runnerY += velocityY * dt
+        if runnerY > tuning.maxRise {
+            runnerY = tuning.maxRise
+            velocityY = min(velocityY, 0)
+        }
         if runnerY <= 0 {
             runnerY = 0
             velocityY = 0
@@ -702,19 +680,6 @@ public final class RunnerGame {
         bottom + tuning.hitInset >= runnerHeight * tuning.duckRatio + 1
     }
 
-    /// 가장 짧은 점프로 머리 위 `ceiling` 아래를 지나며 폭 `width`, 높이 `top` 장애물을 넘을 수 있는지 (문).
-    public func canHop(width: Double, top: Double, ceiling: Double, closingSpeed: Double) -> Bool {
-        let hop = tuning.shortHop
-        guard hop.apex + runnerHeight < ceiling + tuning.hitInset - 1 else { return false }
-        let clearance = top - tuning.hitInset
-        var above = 0.0, t = 0.0
-        while t < hop.airTime {
-            if tuning.shortHop(at: t) > clearance { above += Self.step }
-            t += Self.step
-        }
-        return (above - tuning.jumpSlack) * closingSpeed >= width + runnerWidth - tuning.hitInset * 2 + 6
-    }
-
     /// 서서 그 아래로 지나갈 수 있는지 (높이 떠 있는 장애물).
     private func canPassUnder(_ bottom: Double) -> Bool { bottom + tuning.hitInset >= runnerHeight + 2 }
 
@@ -729,17 +694,6 @@ public final class RunnerGame {
                 while count > 1, !canJump(width: kind.width * Double(count), top: kind.height, closingSpeed: closing) {
                     count -= 1
                 }
-            }
-            if count == 1, y == 0, kind.approachSpeed == 0, let ceiling = gateCeiling(over: kind) {
-                let ground = Obstacle(id: makeID(), kind: kind, x: nextSpawnX, y: 0, count: 1, spawnSpeed: speed)
-                obstacles.append(ground)
-                obstacles.append(Obstacle(id: makeID(), kind: ceiling, x: ground.x + (kind.width - ceiling.width) / 2,
-                                          y: tuning.gateCeiling(runnerHeight: runnerHeight), count: 1, spawnSpeed: speed))
-                recentKinds.append(kind.id)
-                if recentKinds.count > tuning.maxDuplication { recentKinds.removeFirst() }
-                upcoming = pickKind()
-                nextSpawnX = ground.x + ground.width + gap(after: ground, next: upcoming)
-                continue
             }
             let obstacle = Obstacle(id: makeID(), kind: kind, x: nextSpawnX, y: y, count: count, spawnSpeed: speed)
             obstacles.append(obstacle)
@@ -765,17 +719,6 @@ public final class RunnerGame {
                             minSpeed: kind.minSpeed, groupSpeed: kind.groupSpeed, minGap: kind.minGap,
                             approachSpeed: kind.approachSpeed * (1 + tuning.lateApproachBoost * pressure),
                             dropFrom: kind.dropFrom)
-    }
-
-    /// 이 땅 장애물 위에 문을 세운다면 쓸 박쥐. 속도·확률이 안 되거나 짧은 점프로 못 넘으면 nil.
-    private func gateCeiling(over kind: ObstacleKind) -> ObstacleKind? {
-        guard speed >= tuning.gateSpeed,
-              let flyer = tuning.catalog.first(where: { !$0.elevations.isEmpty && speed >= $0.minSpeed }) else { return nil }
-        let chance = tuning.gateChance + (tuning.lateGateChance - tuning.gateChance) * pressure
-        guard random.unit() < chance,
-              canHop(width: kind.width, top: kind.height, ceiling: tuning.gateCeiling(runnerHeight: runnerHeight),
-                     closingSpeed: speed) else { return nil }
-        return flyer
     }
 
     /// 떠 있는 장애물은 서서 지나가거나, 숙여서 지나가거나, 여유 있게 뛰어넘을 수 있는 높이만 고른다.

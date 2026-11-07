@@ -33,6 +33,12 @@ struct CharacterPose {
     var mouthOpen = false
     /// 손 흔들기 진행(주기 단위). 그림 러너는 시트의 손 흔들기 줄로 그리고, 벡터 러너는 쓰지 않는다.
     var wave: CGFloat?
+    /// 뛰는 진행 (0 도약 ~ 1 착지). 그림 러너는 시트의 점프 줄로 그리고, 벡터 러너는 쓰지 않는다.
+    var jump: CGFloat?
+    /// 생각하는 진행(주기 단위). 그림 러너는 시트의 검토 줄로 그리고, 벡터 러너는 쓰지 않는다.
+    var review: CGFloat?
+    /// 앉은 자세에서 고개를 떨군다 (한도 경고). 그림 러너는 시트의 슬픔 줄로 그린다.
+    var sad = false
 
     var cycle: CGFloat { phase - floor(phase) }
 }
@@ -250,7 +256,13 @@ final class Sketch {
 /// 캐릭터 하나. 자세를 받아 도형을 쌓는다.
 protocol CharacterRig {
     var palette: CharacterPalette { get }
+    /// 그림(Petdex·내 그림) 러너인지. 그림은 돌리거나 찌그러뜨리면 도트가 깨져 어색하다.
+    var isPicture: Bool { get }
     func draw(_ s: Sketch)
+}
+
+extension CharacterRig {
+    var isPicture: Bool { false }
 }
 
 // MARK: - 걸음 계산

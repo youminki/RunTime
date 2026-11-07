@@ -30,14 +30,13 @@ extension GameSession {
         let ground = { (height: Double) in groundY - CGFloat(height) }
         self.groundY = groundY
 
-        // 코인
+        // 간식 (코인)
         for coin in game.coins where !coin.taken {
             let x = screenX(coin.x)
-            guard x > -20, x < size.width + 20, let image = GameSprite.coin.frame(at: time + coin.x * 0.01) else { continue }
+            guard x > -20, x < size.width + 20 else { continue }
             let bob = CGFloat(sin(time * 5 + coin.x * 0.05)) * 1.5
-            let s = GameSprite.pixelScale
-            let rect = CGRect(x: x - 9 * s, y: ground(coin.y) - 9 * s + bob, width: 18 * s, height: 18 * s)
-            GameAssets.draw(image, in: rect, cg)
+            GameFX.drawCandy(GameFX.candy(for: coin.x / 40), at: CGPoint(x, ground(coin.y) + bob), height: 20,
+                             rotation: CGFloat(sin(time * 3 + coin.x)) * 0.15, cg)
         }
 
         // 장애물
@@ -112,7 +111,7 @@ extension GameSession {
         // 파티클
         for p in particles {
             let alpha = max(0, min(1, p.life / p.total))
-            GameFX.drawParticle(p.shape, color: p.color, at: CGPoint(p.position.x, ground(Double(p.position.y))), size: p.size,
+            GameFX.drawParticle(p.shape, at: CGPoint(p.position.x, ground(Double(p.position.y))), size: p.size,
                                 alpha: alpha, progress: 1 - alpha, seed: p.seed, time: time, cg)
         }
 
@@ -123,10 +122,8 @@ extension GameSession {
             let e = t * t
             let x = flyer.from.x + (target.x - flyer.from.x) * e
             let y = flyer.from.y + (target.y - flyer.from.y) * e - sin(t * .pi) * 18
-            let size = 12 - 5 * t
-            if let image = GameSprite.coin.frame(at: time) {
-                GameAssets.draw(image, in: CGRect(x: x - size / 2, y: y - size / 2, width: size, height: size), cg)
-            }
+            GameFX.drawCandy(GameFX.candy(for: Double(flyer.from.x) / 40), at: CGPoint(x, y), height: 14 - 6 * t,
+                             rotation: t * 6, cg)
         }
 
         // 빠를수록 바람이 보인다
@@ -162,6 +159,8 @@ extension GameSession {
             frame = MotionFrame(pose: CharacterPose(activity: .stand, phase: CGFloat(time / 2.4)))
         case .playing where !game.isOnGround:
             frame = MotionFrame(pose: CharacterPose(activity: .run, phase: 0.62, speed: 1.2))
+            // 그림 러너는 시트의 점프 줄로: 오를 때 도약, 꼭대기, 내려올 때 착지 준비
+            frame.pose.jump = min(max(0.5 - 0.3 * CGFloat(game.velocityY / game.tuning.jumpVelocity), 0.2), 0.79)
             // 오를 때 살짝 들고, 내려올 때 숙인다
             frame.transform.rotation = CGFloat(-game.velocityY / game.tuning.jumpVelocity) * 0.12
         case .playing:

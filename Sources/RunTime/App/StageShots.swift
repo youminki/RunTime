@@ -1,7 +1,7 @@
 import AppKit
 
-/// 효과 점검 (`--stage-shots <폴더> [러너] [트랙·날씨,...]`): 상태와 사용량 반응마다 무대 장면 몇 장과 메뉴바 프레임을
-/// 이어 붙여 PNG로 남긴다. 트랙·날씨를 주면 그것을 써 본 무대로 찍는다.
+/// 효과 점검 (`--stage-shots <폴더> [러너] [트랙,...]`): 상태와 사용량 반응마다 무대 장면 몇 장과 메뉴바 프레임을
+/// 이어 붙여 PNG로 남긴다. 트랙을 주면 그것을 써 본 무대로 찍는다.
 @MainActor
 enum StageShots {
     static func run(to directory: URL, character: RunnerCharacter, wearing: [Cosmetic] = []) throws {
@@ -19,18 +19,22 @@ enum StageShots {
             try write(stack([stage, menuBarStrip(frames), menuBarStrip(frames, dark: false)]),
                       to: directory.appendingPathComponent("\(name).png"))
         }
-        let tricks: [Trick] = [.celebrate, .sparkle, .zoom, .milestone50, .milestone75]
+        let tricks: [Trick] = [.celebrate, .greet, .zoom, .milestone50, .love, .sing, .lookAround, .dizzy, .doze,
+                               .dream, .snore, .hop]
         for trick in tricks {
             let times = (1...4).map { 0.6 + trick.duration * Double($0) / 5 }
             let stage = stageStrip(display: .normal(.running), trick: trick, character: character, at: times)
             let frames = SpriteFrames.clip(for: trick, character: character, theme: .auto, fps: 12)?.frames ?? []
             try write(stack([stage, menuBarStrip(frames)]), to: directory.appendingPathComponent("trick-\(trick.rawValue).png"))
         }
+        let patted = stageStrip(display: .normal(.walking), trick: .greet, character: character, at: [0.75, 0.95, 1.2, 1.5],
+                                patAt: 0.6)
+        try write(stack([patted]), to: directory.appendingPathComponent("pet.png"))
     }
 
     /// 무대를 1초 60장으로 돌리며 `times`(초)마다 한 장씩 찍는다. 앞의 0.6초는 속도가 붙는 시간이다.
     private static func stageStrip(display: SpriteDisplay, trick: Trick?, character: RunnerCharacter,
-                                   at times: [Double]) -> CGImage? {
+                                   at times: [Double], patAt: Double? = nil) -> CGImage? {
         let size = CGSize(width: 348, height: RunnerStage.height)
         let scale: CGFloat = 2
         guard let cg = context(size: size, scale: scale) else { return nil }
@@ -41,6 +45,7 @@ enum StageShots {
         var frame = 0
         while let last = times.last, Double(frame) / 60 <= last {
             let seconds = Double(frame) / 60
+            if let patAt, abs(seconds - patAt) <= 0.5 / 60 { model.pat(at: start.addingTimeInterval(seconds)) }
             if let trick, !played, seconds >= 0.6 {
                 model.play(trick, at: start.addingTimeInterval(seconds))
                 played = true

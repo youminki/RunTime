@@ -11,7 +11,7 @@ enum KoreanAliases {
     }()
 
     /// "한글1/한글2" → 영어 낱말들.
-    private static let table: [(String, [String])] = [
+    static let table: [(String, [String])] = [
         // 애니메이션·게임 캐릭터
         ("짱구/신짱/신짱구/크레용신짱/짱구는못말려", ["shin", "crayon", "shinchan", "shin-chan"]),
         ("도라에몽", ["doraemon"]),
@@ -65,7 +65,7 @@ enum KoreanAliases {
         ("우사기", ["usagi"]),
         ("리락쿠마", ["rilakkuma"]),
         ("가필드", ["garfield"]),
-        ("톰과제리/톰", ["tom"]),
+        ("톰/톰과제리", ["tom"]),
         ("제리", ["jerry"]),
         ("벅스바니", ["bugs"]),
         ("핑구", ["pingu"]),

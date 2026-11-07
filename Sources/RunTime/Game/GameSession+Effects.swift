@@ -3,67 +3,22 @@ import GameCore
 
 /// 능력·꾸미기·파티클 같은 화면 효과.
 extension GameSession {
-    static func fillHeart(_ cg: CGContext, at c: CGPoint, size s: CGFloat, color: NSColor) {
-        let path = CGMutablePath()
-        path.move(to: CGPoint(c.x, c.y + s * 0.35))
-        path.addCurve(to: CGPoint(c.x - s * 0.5, c.y - s * 0.1), control1: CGPoint(c.x - s * 0.1, c.y + s * 0.1),
-                      control2: CGPoint(c.x - s * 0.5, c.y + s * 0.15))
-        path.addArc(center: CGPoint(c.x - s * 0.25, c.y - s * 0.12), radius: s * 0.25, startAngle: .pi, endAngle: 0,
-                    clockwise: false)
-        path.addArc(center: CGPoint(c.x + s * 0.25, c.y - s * 0.12), radius: s * 0.25, startAngle: .pi, endAngle: 0,
-                    clockwise: false)
-        path.addCurve(to: CGPoint(c.x, c.y + s * 0.35), control1: CGPoint(c.x + s * 0.5, c.y + s * 0.15),
-                      control2: CGPoint(c.x + s * 0.1, c.y + s * 0.1))
-        cg.setFillColor(color.cgColor)
-        cg.addPath(path)
-        cg.fillPath()
-    }
-
     // MARK: 능력
 
-    /// 보호막 방울과 글라이드 날개. 내 러너에만.
+    /// 남은 보호막은 머리 위 하트로, 글라이드는 발밑 구름으로 보인다. 내 러너에만.
     func drawAbilities(_ cg: CGContext, groundY: CGFloat, time: Double) {
         guard game.phase == .playing, entrance >= 1 else { return }
         let center = CGPoint(runnerLeft + CGFloat(Self.runnerWidth) / 2, groundY - CGFloat(game.runnerY + Self.runnerHeight / 2))
-        cg.saveGState()
-        if game.shieldsLeft > 0 {
-            // 고리 하나를 남은 보호막 수만큼 나눠 그려 몇 번 더 버티는지 보인다. 천천히 돈다
-            let r: CGFloat = 28 + CGFloat(sin(time * 5)) * 0.8
-            let tint = NSColor(hex: 0x8FD3FF)
-            cg.setFillColor(tint.withAlphaComponent(0.07).cgColor)
-            cg.fillEllipse(in: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
-            let count = game.shieldsLeft
-            let gap: CGFloat = count > 1 ? 0.22 : 0
-            let span = 2 * .pi / CGFloat(count)
-            let spin = CGFloat(time * 0.8)
-            cg.setStrokeColor(tint.withAlphaComponent(0.8).cgColor)
-            cg.setLineWidth(1.6)
-            cg.setLineCap(.round)
-            for k in 0..<count {
-                let start = spin + CGFloat(k) * span + gap / 2
-                cg.addArc(center: center, radius: r, startAngle: start, endAngle: start + span - gap, clockwise: false)
-                cg.strokePath()
-            }
+        let count = game.shieldsLeft
+        for k in 0..<count {
+            let x = center.x + (CGFloat(k) - CGFloat(count - 1) / 2) * 11
+            let bob = CGFloat(sin(time * 4 + Double(k))) * 1.2
+            GameFX.drawSprite("pumpingHeart", at: CGPoint(x, center.y - 34 + bob), height: 9, progress: 0,
+                              time: time + Double(k) * 0.2, cg)
         }
         if game.isGliding {
-            // 머리 위 낙하산
-            let top = CGPoint(center.x - 2, center.y - 40)
-            let canopy = CGMutablePath()
-            canopy.addArc(center: CGPoint(top.x, top.y + 6), radius: 17, startAngle: .pi * 1.08, endAngle: .pi * 1.92,
-                          clockwise: false)
-            canopy.closeSubpath()
-            cg.setFillColor(NSColor(hex: 0xFF8FB8).withAlphaComponent(0.9).cgColor)
-            cg.addPath(canopy)
-            cg.fillPath()
-            cg.setStrokeColor(NSColor.white.withAlphaComponent(0.7).cgColor)
-            cg.setLineWidth(0.8)
-            for dx in [-14.0, 0, 14] {
-                cg.move(to: CGPoint(top.x + CGFloat(dx), top.y + 1))
-                cg.addLine(to: CGPoint(center.x - 2, center.y - 14))
-            }
-            cg.strokePath()
+            GameFX.drawSprite("puff", at: CGPoint(center.x, center.y + 18), height: 18, progress: 0, time: time, alpha: 0.95, cg)
         }
-        cg.restoreGState()
     }
 
     // MARK: 꾸미기
@@ -82,8 +37,8 @@ extension GameSession {
     }
 
     func spray(_ spray: GameFX.Spray, at point: CGPoint) {
-        burst(at: point, count: spray.count, colors: spray.colors, shape: spray.shape, speed: spray.speed, life: spray.life,
-              drift: spray.drift, spread: spray.spread, size: spray.size, gravity: -spray.gravity)
+        burst(at: point, count: spray.count, shape: spray.shape, speed: spray.speed, life: spray.life, drift: spray.drift,
+              spread: spray.spread, size: spray.size, gravity: -spray.gravity)
     }
 
     func updateTrail(_ k: CGFloat) {
@@ -131,27 +86,21 @@ extension GameSession {
         let running = game.phase == .playing
         // 보폭 50pt마다 한 걸음, 서 있으면 숨 쉬기
         let phase = running ? CGFloat(game.distance / 50) : CGFloat(time / 2.4)
-        GameFX.drawCompanion(companion, feet: CGPoint(x, groundY - lift), height: 24, phase: phase, moving: running, cg)
+        GameFX.drawCompanion(companion, feet: CGPoint(x, groundY - lift), height: 24, phase: phase, moving: running,
+                             jump: lift > 2 ? 0.5 : nil, cg)
     }
 
     // MARK: 화면 효과
 
-    /// 바닥 위 높이(y 위로)로 잰 점 주변에 작은 점을 흩뿌린다.
-    func burst(at point: CGPoint, count: Int, color: NSColor, speed: CGFloat, life: CGFloat, drift: CGFloat) {
-        burst(at: point, count: count, colors: [color], speed: speed, life: life, drift: drift)
-    }
-
-    /// `spread`가 1이면 위쪽 반원, 2면 사방으로 흩어진다.
-    func burst(at point: CGPoint, count: Int, colors: [NSColor], shape: GameFX.Shape = .dot, speed: CGFloat,
-                       life: CGFloat, drift: CGFloat, spread: CGFloat = 1, size: ClosedRange<CGFloat> = 1.4...2.6,
-                       gravity: CGFloat = -220) {
+    /// 바닥 위 높이(y 위로)로 잰 점 주변에 효과 그림을 흩뿌린다. `spread`가 1이면 위쪽 반원, 2면 사방으로 흩어진다.
+    func burst(at point: CGPoint, count: Int, shape: GameFX.Shape, speed: CGFloat, life: CGFloat, drift: CGFloat,
+               spread: CGFloat = 1, size: ClosedRange<CGFloat> = 1.4...2.6, gravity: CGFloat = -220) {
         for i in 0..<count {
             let angle = CGFloat(i) / CGFloat(count) * .pi * spread + .pi * 0.05 + CGFloat.random(in: -0.2...0.2)
             let v = speed * CGFloat.random(in: 0.6...1.1)
             particles.append(Particle(position: point, velocity: CGPoint(-cos(angle) * v, sin(angle) * v),
                                       gravity: gravity, life: life * CGFloat.random(in: 0.7...1), total: life,
-                                      color: colors[i % colors.count], size: CGFloat.random(in: size), drift: drift,
-                                      shape: shape))
+                                      size: CGFloat.random(in: size), drift: drift, shape: shape))
         }
     }
 
@@ -161,11 +110,10 @@ extension GameSession {
         var gravity: CGFloat
         var life: CGFloat
         let total: CGFloat
-        let color: NSColor
         let size: CGFloat
         /// 땅을 따라 뒤로 흘러가는 정도 (먼지 1, 터지는 별 0).
         let drift: CGFloat
-        var shape: GameFX.Shape = .dot
+        var shape: GameFX.Shape
         /// 0~1 고정 값. 입자마다 다르게 돌린다.
         let seed = CGFloat.random(in: 0...1)
     }

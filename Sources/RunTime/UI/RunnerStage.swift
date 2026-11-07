@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import GameCore
 import UsageCore
 
 /// 팝오버 맨 위 무대. 러너가 시간대별 하늘 아래를 달리고, 속도에 맞춰 배경이 겹겹이 흘러간다.
@@ -13,6 +14,8 @@ struct RunnerStage: View {
     var onPet: (Trick) -> Void = { _ in }
     /// 메뉴에서 고른 동작. 바뀔 때마다 무대 러너가 그 동작을 한다.
     var trickRequest: TrickRequest?
+    /// 게임 탭에서 누른 게임 시작.
+    var stageAction: StageAction?
     /// Claude가 대화 차례를 마쳤다 (폴더 이름).
     var claudeFinished: AnyPublisher<TurnEndDetector.FinishedTurn, Never> = Empty().eraseToAnyPublisher()
     /// 같은 단계 안에서의 빠르기 (사용량이 많을수록 빨리).
@@ -21,6 +24,8 @@ struct RunnerStage: View {
     var reactions: AnyPublisher<UsageReactions.Reaction, Never> = Empty().eraseToAnyPublisher()
     /// 앱 창 러너 화면처럼 크게 띄울 때의 높이. 장면은 높이 150 기준으로 계산하고 그릴 때만 키운다.
     var height: CGFloat = RunnerStage.height
+    /// 게임을 켜고 끌 때. 앱 창이 이때 무대를 폭 가득 키운다.
+    var onGameChange: (Bool) -> Void = { _ in }
 
     @StateObject private var model = StageModel()
     @ObservedObject private var updater = AppUpdater.shared
@@ -34,8 +39,8 @@ struct RunnerStage: View {
         let _ = decor.equipped
         // 게임은 사용자가 직접 켠 것이라 동작 줄이기 설정이어도 움직이고, 손맛을 위해 늘 1초 60장으로 그린다.
         // 게임이 아니면 메뉴바 러너와 같은 '움직임' 설정(12·30·60장)을 따라 팝오버를 열어 둔 동안의 CPU를 줄인다
-        TimelineView(.animation(minimumInterval: 1.0 / (model.game == nil ? AppSettings.shared.smoothness.fps : 60),
-                                paused: model.reduceMotion && model.game == nil)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / (!model.isPlaying ? AppSettings.shared.smoothness.fps : 60),
+                                paused: model.reduceMotion && !model.isPlaying)) { timeline in
             Canvas { context, size in
                 // 크게 띄우면 좌표계를 늘려 같은 장면을 다시 그린다. 그림을 늘리는 것과 달리 흐려지지 않는다
                 let scale = size.height / Self.height
@@ -46,6 +51,7 @@ struct RunnerStage: View {
                                theme: character.theme(theme), tempo: tempo)
                 }
                 if let game = model.game { Self.drawOverlay(game.overlay(size: scene), in: &context) }
+                if let flight = model.flight { Self.drawOverlay(flight.overlay(size: scene), in: &context) }
             }
         }
         .frame(height: height)
@@ -60,12 +66,21 @@ struct RunnerStage: View {
             .updating($pressed) { _, state, _ in state = true }
             .onEnded { value in
                 // 게임 밖에서는 끌지 않고 누른 것만 쓰다듬기로 받는다
-                guard model.game == nil, hypot(value.translation.width, value.translation.height) < 6 else { return }
+                guard !model.isPlaying, hypot(value.translation.width, value.translation.height) < 6 else { return }
                 onPet(model.pet(character: character, display: display))
             })
         .onChange(of: pressed) { model.setPressed($0) }
+        .onChange(of: model.isPlaying) { onGameChange($0) }
         .onChange(of: trickRequest) { request in
             if let request { model.play(request.trick) }
+        }
+        .onChange(of: stageAction) { action in
+            switch action?.kind {
+            case .game: model.startGame(character: character)
+            case .flight: model.startFlight(character: character)
+            case .rehearsal: model.startGame(character: character, rehearsal: true)
+            case nil: break
+            }
         }
         .overlay(alignment: .topTrailing) { controls }
         .overlay { updateLayer }
@@ -78,10 +93,11 @@ struct RunnerStage: View {
             model.greet(display: display)
         }
         .onDisappear {
+            onGameChange(false)
             model.setPointer(false)   // 커서를 올린 채 팝오버가 닫혀도 짝을 맞춘다
             model.popoverClosed()
         }
-        .tip(model.game == nil ? "러너를 누르면 장난을 쳐요"
+        .tip(!model.isPlaying ? "러너를 누르면 장난을 쳐요" : model.flight != nil ? "누르는 동안 올라가요. →·오른쪽 클릭 가속, esc 나가기"
               : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓·오른쪽 클릭 숙이기, ←→ 이동, G 고스트와 겨루기, esc 나가기")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(character.name)
@@ -92,9 +108,11 @@ struct RunnerStage: View {
     /// 오른쪽 위 작은 단추: 게임 켜기, 게임 중에는 소리와 나가기.
     private var controls: some View {
         HStack(spacing: 4) {
-            if model.game == nil {
-                StageButton(systemImage: "gamecontroller.fill", title: "게임") { model.startGame(character: character) }
-                    .tip("장애물 피하기 게임 (최고 \(GameRecords.best)점)")
+            if !model.isPlaying {
+                StageButton(systemImage: "figure.run", title: "달리기") { model.startGame(character: character) }
+                    .tip("끝없이 달려 최고 점수 (최고 \(GameRecords.best)점)")
+                StageButton(systemImage: "paperplane.fill", title: "비행") { model.startFlight(character: character) }
+                    .tip("누르는 동안 올라가며 끝없이 날아요 (\(FlightRecords.difficulty.title) 최고 \(FlightRecords.best(FlightRecords.difficulty))점)")
             } else {
                 StageButton(systemImage: model.soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill",
                             label: model.soundOn ? "효과음 끄기" : "효과음 켜기") {
@@ -147,7 +165,7 @@ struct RunnerStage: View {
     private var updateLayer: some View {
         GeometryReader { geo in
             let scale = geo.size.height / Self.height
-            if updater.hasPendingUpdate, model.bubble == nil, model.game == nil {
+            if updater.hasPendingUpdate, model.bubble == nil, !model.isPlaying {
                 UpdateBubble(text: updater.pendingPrompt) { updater.update() }
                     .tip(updater.incoming.isEmpty ? "누르면 바로 업데이트해요"
                          : "누르면 바로 업데이트해요\n" + updater.incoming.map { "· \($0)" }.joined(separator: "\n"))
@@ -157,7 +175,7 @@ struct RunnerStage: View {
                               y: 46 * scale)
                     .transition(.opacity.combined(with: .offset(y: 3)))
             }
-            if updater.state == .updating, !updater.isSilent, model.game == nil, let progress = updater.progress {
+            if updater.state == .updating, !updater.isSilent, !model.isPlaying, let progress = updater.progress {
                 VStack {
                     Spacer()
                     UpdateProgressPanel(progress: progress)
@@ -176,7 +194,7 @@ private struct SpeechBubble: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(Color(nsColor: NSColor(hex: 0x1F1C26)))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -211,12 +229,12 @@ private struct StageButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: systemImage).font(.system(size: 10, weight: .semibold))
-                if let title { Text(title).font(.system(size: 10.5, weight: .semibold)) }
+                Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
+                if let title { Text(title).font(.system(size: 12, weight: .semibold)) }
             }
             .foregroundStyle(.white.opacity(hover.on ? 1 : 0.85))
             .padding(.horizontal, title == nil ? 6 : 8)
-            .frame(height: 22)
+            .frame(height: 24)
             .background(Capsule().fill(Color.black.opacity(hover.on ? 0.5 : 0.32)))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.14)))
             .contentShape(Capsule())
@@ -245,6 +263,7 @@ private struct WindowReader: NSViewRepresentable {
 final class StageModel: ObservableObject {
     @Published var bubble: String?
     @Published private(set) var game: GameSession?
+    @Published private(set) var flight: FlightSession?
     @Published private(set) var soundOn = GameSound.shared.isOn
     weak var window: NSWindow?
     /// 게임 때문에 앱을 앞으로 가져왔는지. 팝오버가 닫히면 키 입력을 원래 앱에 돌려준다.
@@ -264,9 +283,15 @@ final class StageModel: ObservableObject {
     private var nextIdle = Date().addingTimeInterval(5)
     private var lastIdleTrick: Trick?
     private var bubbleToken = 0
+    private var lastHop: CGFloat = 0
+    /// 최근에 누른 때. 짧은 사이에 여러 번 누르면 간지러워하고 잠깐 쉰다.
+    private var pets: [Date] = []
+    private var ticklishUntil = Date.distantPast
     private let extras = StageExtras()
 
     private var pointerPushed = false
+
+    var isPlaying: Bool { game != nil || flight != nil }
 
     func setPointer(_ inside: Bool) {
         guard inside != pointerPushed else { return }
@@ -278,7 +303,7 @@ final class StageModel: ObservableObject {
 
     /// `rehearsal`이면 키를 받지 않고 기록도 남기지 않는다 (화면 점검 도구).
     func startGame(character: RunnerCharacter, rehearsal: Bool = false) {
-        guard game == nil else { return }
+        guard !isPlaying else { return }
         let session = GameSession(character: character, live: !rehearsal)
         session.window = { [weak self] in self?.window }
         session.onExit = { [weak self] in self?.endGame() }
@@ -288,7 +313,21 @@ final class StageModel: ObservableObject {
         game = session
         bubble = nil
         guard !rehearsal else { return }
-        // 메뉴바 앱은 평소 앞에 나서지 않으니, 게임을 켤 때만 팝오버 창이 키를 받게 한다
+        takeKeys()
+    }
+
+    func startFlight(character: RunnerCharacter, rehearsal: Bool = false) {
+        guard !isPlaying else { return }
+        let session = FlightSession(difficulty: FlightRecords.difficulty, character: character, live: !rehearsal)
+        session.window = { [weak self] in self?.window }
+        session.onExit = { [weak self] in self?.endGame() }
+        flight = session
+        bubble = nil
+        if !rehearsal { takeKeys() }
+    }
+
+    /// 메뉴바 앱은 평소 앞에 나서지 않으니, 게임을 켤 때만 팝오버 창이 키를 받게 한다.
+    private func takeKeys() {
         if !NSApp.isActive {
             NSApp.activate(ignoringOtherApps: true)
             activatedForGame = true
@@ -297,6 +336,7 @@ final class StageModel: ObservableObject {
     }
 
     func endGame() {
+        flight = nil
         game = nil
         // 게임이 scroll을 판 거리로 바꿔 놓아 길 위 물건 자리가 어긋난다
         extras.reset()
@@ -316,6 +356,7 @@ final class StageModel: ObservableObject {
 
     func setPressed(_ down: Bool) {
         down ? game?.press() : game?.release()
+        down ? flight?.press() : flight?.release()
     }
 
     // MARK: 말풍선·장난
@@ -347,7 +388,7 @@ final class StageModel: ObservableObject {
 
     /// 메뉴에서 고른 동작을 무대 러너도 한다. 게임 중에는 판을 방해하지 않게 하지 않는다.
     func play(_ kind: Trick, at date: Date = Date()) {
-        guard game == nil else { return }
+        guard !isPlaying else { return }
         trick = (kind, date)
         nextIdle = date.addingTimeInterval(kind.duration + 9)
     }
@@ -358,18 +399,34 @@ final class StageModel: ObservableObject {
         switch display {
         case .normal(.sleeping): kind = .wakeUp
         case .tired, .alert, .straining: kind = .shake
-        default: kind = Trick.petting.filter { $0 != trick?.kind }.randomElement() ?? .hop
+        default:
+            let now = Date()
+            pets = pets.filter { now.timeIntervalSince($0) < 3 } + [now]
+            if now < ticklishUntil {
+                // 간지러워하는 동안에는 동작을 끊지 않는다
+                return trick?.kind ?? .greet
+            }
+            if pets.count >= 4 {
+                pets.removeAll()
+                ticklishUntil = now.addingTimeInterval(2.5)
+                trick = (.dizzy, now)
+                say("간지러워!", seconds: 1.6)
+                return .dizzy
+            }
+            kind = Trick.petting.filter { $0 != trick?.kind }.randomElement() ?? .greet
         }
         trick = (kind, Date())
         nextIdle = Date().addingTimeInterval(kind.duration + 9)
-        let line = Bool.random() ? "\(character.sound)!" : (Self.phrases(for: display).randomElement() ?? character.sound)
-        say(line, seconds: 1.8)
+        GameSound.shared.play(.pet)
+        pat(at: Date())
+        // 매번 말하면 시끄러워 가끔만 소리를 낸다
+        if Int.random(in: 0..<4) == 0 { say("\(character.sound)!", seconds: 1.4) }
         return kind
     }
 
     /// 사용량 흐름에 반응한다. 메뉴바 러너와 같은 동작을 하고 무슨 일인지 말풍선으로 알린다. 게임 중에는 판을 방해하지 않는다.
     func react(_ reaction: UsageReactions.Reaction, display: SpriteDisplay) {
-        guard game == nil, AppSettings.shared.tricksEnabled, !display.isLimited else { return }
+        guard !isPlaying, AppSettings.shared.tricksEnabled, !display.isLimited else { return }
         play(SpriteAnimator.trick(for: reaction))
         let line = switch reaction {
         case .burst: "갑자기 바빠졌네"
@@ -386,9 +443,17 @@ final class StageModel: ObservableObject {
         let name = project.map { " · \($0)" } ?? ""
         if let game, game.game.phase == .playing {
             game.announce("Claude 작업 끝\(name)")
+        } else if let flight, flight.isPlaying {
+            flight.announce("Claude 작업 끝\(name)")
         } else {
+            play(.greet)
             say("Claude가 끝났어요\(name)", seconds: 3)
         }
+    }
+
+    /// 머리 위로 하트가 피어오른다.
+    func pat(at date: Date) {
+        extras.pat(at: date.timeIntervalSinceReferenceDate)
     }
 
     func say(_ text: String, seconds: Double) {
@@ -421,6 +486,10 @@ final class StageModel: ObservableObject {
               theme: SpriteTheme, tempo: Double = 1) {
         if let game {
             drawGame(game, cg, size: size, date: date, character: character, theme: theme)
+            return
+        }
+        if let flight {
+            drawFlight(flight, cg, size: size, date: date, character: character, theme: theme)
             return
         }
         let dt = CGFloat(min(max(date.timeIntervalSince(lastDate ?? date), 0), 0.1))
@@ -465,7 +534,12 @@ final class StageModel: ObservableObject {
 
         // 러너 장면
         let rig = character.rig
-        let frame = playing.map { $0.kind.frame(at: $0.t) } ?? display.motion(at: gait)
+        var frame = playing.map { $0.kind.frame(at: $0.t) } ?? display.motion(at: gait)
+        // 길 위 장애물을 넘을 때 그림 러너는 점프 줄로: 오를 때 도약, 내려올 때 착지 준비
+        if playing == nil, hop > 2 {
+            frame.pose.jump = hop >= lastHop ? 0.3 : 0.7
+        }
+        lastHop = hop
         var scene = CharacterScene(rig: rig, pose: frame.pose, transform: frame.transform)
         // 공중제비처럼 무대 위로 넘치는 장면은 무대 높이 안으로 줄여 넣는다
         scene.fit(verticallyIn: (-origin.y / scale + 0.4)...((size.height - origin.y) / scale))
@@ -488,10 +562,6 @@ final class StageModel: ObservableObject {
                                  phase: moving ? scroll / 60 : time / 2.4, moving: moving, theme: theme, cg)
         }
 
-        let top = display.pace == .rainbow
-        if playing == nil && (display.pace == .dashing || top) {
-            drawWind(cg, size: size, groundY: groundY, color: sky.edge, count: top ? 9 : 5)
-        }
 
         // 몸 자리(화면 좌표)를 넘겨 코인 줍기·장애물 넘기·꼬리·발먼지를 맞춘다
         let screenBody = CGRect(x: origin.x + bounds.minX * scale, y: origin.y + bounds.minY * scale,
@@ -507,20 +577,19 @@ final class StageModel: ObservableObject {
         cg.saveGState()
         cg.translateBy(x: origin.x, y: origin.y)
         cg.scaleBy(x: scale, y: scale)
-        let leftEdge = -origin.x / scale
         let loopPhase = gait - floor(gait)
         // 무대는 메뉴바보다 훨씬 커서 흐린 잔상과 빛 꼬리가 번져 보인다. 전력 질주도 공기 줄만 쓰고,
         // 그 대신 하늘 바람 줄·꼬리·발먼지로 빠르기를 보인다
         let effects = Self.stageEffects(display)
         if playing == nil {
-            effects.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: false, leftEdge: leftEdge)
+            effects.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: false)
         }
         var look = CharacterLook(rich: true, palette: theme.richPalette(rig.palette, phase: time / 6),
                                  tint: .white, outline: 0.36)
         look.alarm = display.isCritical && playing == nil
         scene.draw(in: cg, look: look)
         if playing == nil {
-            effects.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: true, leftEdge: leftEdge)
+            effects.drawLoopEffects(in: cg, scene: scene, phase: loopPhase, tint: .white, front: true)
         }
         for effect in frame.effects {
             effect.draw(in: cg, around: bounds, tint: .white)
@@ -591,34 +660,25 @@ final class StageModel: ObservableObject {
         cg.restoreGState()
     }
 
+    private func drawFlight(_ flight: FlightSession, _ cg: CGContext, size: CGSize, date: Date, character: RunnerCharacter,
+                            theme: SpriteTheme) {
+        flight.use(character)
+        flight.update(date: date)
+        lastDate = date
+        let groundY = size.height - 15
+        let time = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 10_000)
+        scroll = CGFloat(flight.game.x)
+        let sky = Sky.at(hour: Sky.hourOverride ?? Calendar.current.component(.hour, from: date), space: false)
+        Backdrop.draw(cg, size: size, sky: sky, time: CGFloat(time), groundY: groundY, scroll: scroll, speed: speed,
+                      track: GameDecor.shared.equipped(.track) ?? flight.zoneTrack)
+        flight.draw(cg, size: size, groundY: groundY, theme: theme, time: time)
+    }
+
     // MARK: 배경
 
     private func drawBackdrop(_ cg: CGContext, size: CGSize, sky: Sky, time: CGFloat, groundY: CGFloat) {
         Backdrop.draw(cg, size: size, sky: sky, time: time, groundY: groundY, scroll: scroll, speed: speed,
-                      track: GameDecor.shared.equipped(.track), weather: GameDecor.shared.equipped(.weather))
-    }
-
-    /// 질주할 때 하늘을 가로지르는 공기 줄. 앞머리가 진하고 꼬리로 갈수록 옅어진다.
-    private func drawWind(_ cg: CGContext, size: CGSize, groundY: CGFloat, color: NSColor, count: Int) {
-        let tint = color.blended(withFraction: 0.5, of: .white) ?? color
-        for i in 0..<count {
-            let span = size.width + 120
-            let raw = Self.hash(i, 21) * span - scroll * (1.8 + Self.hash(i, 24) * 0.8)
-            let x = raw - floor(raw / span) * span - 60
-            let y = 22 + Self.hash(i, 22) * (groundY - 34)
-            let length = 26 + Self.hash(i, 23) * 34
-            let rect = CGRect(x: x, y: y - 0.6, width: length, height: 1.2)
-            cg.saveGState()
-            cg.addPath(CGPath(roundedRect: rect, cornerWidth: 0.6, cornerHeight: 0.6, transform: nil))
-            cg.clip()
-            if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-                                         colors: [tint.withAlphaComponent(0.45).cgColor,
-                                                  tint.withAlphaComponent(0).cgColor] as CFArray,
-                                         locations: [0, 1]) {
-                cg.drawLinearGradient(gradient, start: CGPoint(x, y), end: CGPoint(x + length, y), options: [])
-            }
-            cg.restoreGState()
-        }
+                      track: GameDecor.shared.equipped(.track))
     }
 
     /// 0~1 고정 난수 (자리마다 같은 값).
@@ -630,16 +690,11 @@ final class StageModel: ObservableObject {
 
 /// 시간대별 하늘색.
 struct Sky {
+    /// 낮 그림을 밤으로 누를 때 덮는 색.
     var top: NSColor
-    var bottom: NSColor
-    var far: NSColor
-    var near: NSColor
     var ground: NSColor
     var edge: NSColor
     var stars: CGFloat = 0
-    var clouds: CGFloat = 0
-    var orb: NSColor
-    var moon = false
     var orbLow = false
 
     /// 화면 점검(--ui-shots)에서 시간대별 하늘을 찍으려고 시각을 고정한다.
@@ -648,39 +703,27 @@ struct Sky {
     /// 두 하늘 사이 (게임 구간이 바뀔 때).
     func mixed(with other: Sky, _ t: CGFloat) -> Sky {
         func mix(_ a: NSColor, _ b: NSColor) -> NSColor { a.blended(withFraction: t, of: b) ?? b }
-        var sky = Sky(top: mix(top, other.top), bottom: mix(bottom, other.bottom), far: mix(far, other.far),
-                      near: mix(near, other.near), ground: mix(ground, other.ground), edge: mix(edge, other.edge),
-                      orb: mix(orb, other.orb))
+        var sky = Sky(top: mix(top, other.top), ground: mix(ground, other.ground), edge: mix(edge, other.edge))
         sky.stars = stars + (other.stars - stars) * t
-        sky.clouds = clouds + (other.clouds - clouds) * t
-        sky.moon = t < 0.5 ? moon : other.moon
         sky.orbLow = t < 0.5 ? orbLow : other.orbLow
         return sky
     }
 
     static func at(hour: Int, space: Bool) -> Sky {
         if space {
-            return Sky(top: NSColor(hex: 0x120B2E), bottom: NSColor(hex: 0x3A1A6E), far: NSColor(hex: 0x2A1658),
-                       near: NSColor(hex: 0x1E1045), ground: NSColor(hex: 0x170C36), edge: NSColor(hex: 0xA17BFF),
-                       stars: 1, orb: NSColor(hex: 0xFFE7A3), moon: true)
+            return Sky(top: NSColor(hex: 0x120B2E), ground: NSColor(hex: 0x170C36), edge: NSColor(hex: 0xA17BFF),
+                       stars: 1)
         }
         switch hour {
         case 5..<8:
-            return Sky(top: NSColor(hex: 0x4E5A86), bottom: NSColor(hex: 0xE4B39A), far: NSColor(hex: 0x7F7194),
-                       near: NSColor(hex: 0x5B5174), ground: NSColor(hex: 0x3A3352), edge: NSColor(hex: 0xE6C4A8),
-                       stars: 0.2, clouds: 0.45, orb: NSColor(hex: 0xF6D6A8), orbLow: true)
+            return Sky(top: NSColor(hex: 0x4E5A86), ground: NSColor(hex: 0x3A3352), edge: NSColor(hex: 0xE6C4A8),
+                       stars: 0.2, orbLow: true)
         case 8..<17:
-            return Sky(top: NSColor(hex: 0x6191C4), bottom: NSColor(hex: 0xBCD6E8), far: NSColor(hex: 0x93B2CC),
-                       near: NSColor(hex: 0x739F7C), ground: NSColor(hex: 0x4C7A5C), edge: NSColor(hex: 0xA9CDA2),
-                       clouds: 0.9, orb: NSColor(hex: 0xFBF1CF))
+            return Sky(top: NSColor(hex: 0x6191C4), ground: NSColor(hex: 0x4C7A5C), edge: NSColor(hex: 0xA9CDA2))
         case 17..<20:
-            return Sky(top: NSColor(hex: 0x4D4373), bottom: NSColor(hex: 0xE59B80), far: NSColor(hex: 0x7B5B80),
-                       near: NSColor(hex: 0x514166), ground: NSColor(hex: 0x372D4D), edge: NSColor(hex: 0xE9B391),
-                       clouds: 0.5, orb: NSColor(hex: 0xF4B48A), orbLow: true)
+            return Sky(top: NSColor(hex: 0x4D4373), ground: NSColor(hex: 0x372D4D), edge: NSColor(hex: 0xE9B391), orbLow: true)
         default:
-            return Sky(top: NSColor(hex: 0x131A33), bottom: NSColor(hex: 0x2B3660), far: NSColor(hex: 0x212C52),
-                       near: NSColor(hex: 0x19223F), ground: NSColor(hex: 0x131A34), edge: NSColor(hex: 0x4E5E98),
-                       stars: 0.85, orb: NSColor(hex: 0xF2EBD0), moon: true)
+            return Sky(top: NSColor(hex: 0x131A33), ground: NSColor(hex: 0x131A34), edge: NSColor(hex: 0x4E5E98), stars: 0.85)
         }
     }
 }
@@ -689,4 +732,11 @@ struct Sky {
 struct TrickRequest: Equatable {
     let id = UUID()
     let trick: Trick
+}
+
+/// 펫 카드에서 무대에 보내는 간식 주기·포토카드. 같은 것을 다시 눌러도 바뀐 것으로 보이게 매번 새 id를 붙인다.
+struct StageAction: Equatable {
+    enum Kind: Equatable { case game, flight, rehearsal }
+    let id = UUID()
+    let kind: Kind
 }

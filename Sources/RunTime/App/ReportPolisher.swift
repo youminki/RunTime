@@ -10,7 +10,7 @@ enum ReportPolisher {
         var errorDescription: String? {
             switch self {
             case .noClaude: return "Claude Code(claude)를 찾지 못했습니다. 터미널에서 claude가 실행되는지 확인하세요"
-            case .timedOut: return "Claude가 90초 안에 답하지 않았습니다"
+            case .timedOut: return "Claude가 제한 시간 안에 답하지 않았습니다"
             case .failed(let message): return "Claude가 다듬지 못했습니다: \(message)"
             case .malformed: return "Claude가 보고서 꼴이 아닌 글을 돌려줘 쓰지 않았습니다"
             }
@@ -50,22 +50,40 @@ enum ReportPolisher {
     private static var cachedEnvironment: (path: String, claude: String?)?
 
     private static func run(_ report: String) throws -> String {
+        // 도구·MCP·설정 파일(훅)을 끄고 이 지시만으로 한 번 답하게 한다. 줄을 묶고 줄이는 일이라 가벼운 모델로 충분하고
+        // (같은 보고서로 견줘 결과가 같았다) 사용량은 sonnet의 15분의 1쯤이다
+        // 프로젝트 폴더에서 돌면 그 CLAUDE.md를 읽어 꼴이 흔들린다. 빈 폴더에서 돌린다
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("RunTimeReportPolish")
+        let text = try ask(report, system: instructions, model: "haiku", folder: folder)
+        guard WorkReport.keepsShape(original: report, polished: text) else { throw Failure.malformed }
+        return text
+    }
+
+    /// `queue`에서 다른 일을 하지 않고 한 번 묻는다. `done`은 메인 스레드에서 부른다.
+    static func request(_ input: String, system: String, model: String, tools: [String] = [], folder: URL,
+                        timeout: TimeInterval = 90, done: @escaping (Result<String, Error>) -> Void) {
+        queue.async {
+            let result = Result { try ask(input, system: system, model: model, tools: tools, folder: folder, timeout: timeout) }
+            DispatchQueue.main.async { done(result) }
+        }
+    }
+
+    private static func ask(_ report: String, system: String, model: String, tools: [String] = [], folder: URL,
+                            timeout: TimeInterval = 90) throws -> String {
         // claude가 stdin을 읽기 전에 끝나면 닫힌 파이프에 쓰다 SIGPIPE로 앱이 죽는다. 오류로만 받게 한다
         signal(SIGPIPE, SIG_IGN)
         let found = cachedEnvironment?.claude.map { FileManager.default.isExecutableFile(atPath: $0) } == true
             ? cachedEnvironment : loginEnvironment()
         guard let shell = found, let claude = shell.claude else { throw Failure.noClaude }
         cachedEnvironment = shell
-        let deadline = Date().addingTimeInterval(90)
-        // 프로젝트 폴더에서 돌면 그 CLAUDE.md를 읽어 꼴이 흔들린다. 빈 폴더에서 돌린다
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("RunTimeReportPolish")
+        let deadline = Date().addingTimeInterval(timeout)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: claude)
-        // 도구·MCP·설정 파일(훅)을 끄고 이 지시만으로 한 번 답하게 한다. 줄을 묶고 줄이는 일이라 가벼운 모델로 충분하고
-        // (같은 보고서로 견줘 결과가 같았다) 사용량은 sonnet의 15분의 1쯤이다
-        process.arguments = ["-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--setting-sources", "",
-                             "--no-session-persistence", "--output-format", "text", "--system-prompt", instructions]
+        let list = tools.joined(separator: ",")
+        process.arguments = ["-p", "--model", model, "--tools", list] + (tools.isEmpty ? [] : ["--allowedTools", list])
+            + ["--strict-mcp-config", "--setting-sources", "", "--no-session-persistence", "--output-format", "text",
+               "--system-prompt", system]
         process.currentDirectoryURL = folder
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = shell.path
@@ -106,7 +124,6 @@ enum ReportPolisher {
             let message = String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             throw Failure.failed(String((message.isEmpty ? text : message).prefix(200)))
         }
-        guard WorkReport.keepsShape(original: report, polished: text) else { throw Failure.malformed }
         return text
     }
 

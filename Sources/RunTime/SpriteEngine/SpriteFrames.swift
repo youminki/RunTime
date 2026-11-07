@@ -94,10 +94,10 @@ enum SpriteDisplay: Equatable {
         case .tired:
             return MotionFrame(pose: CharacterPose(activity: .sit, phase: phase, mouthOpen: true))
         case .alert:
-            // 멈춰 서서 무겁게 숨 쉰다. 떨게 하면 메뉴바에서 계속 눈에 걸려 일을 방해한다
-            var frame = MotionFrame(pose: CharacterPose(activity: .stand, phase: phase))
-            frame.transform.squash = 1 - 0.035 * sin(tau * phase)
-            return frame
+            // 주저앉아 고개를 떨군다. 떨거나 깜빡이면 메뉴바에서 계속 눈에 걸려 일을 방해한다
+            var pose = CharacterPose(activity: .sit, phase: phase, eyes: .closed)
+            pose.sad = true
+            return MotionFrame(pose: pose)
         case .straining(let state, _):
             // 지쳐도 달리는 모습은 그대로 두고 입만 벌린다
             var frame = SpriteDisplay.normal(state).motion(at: phase)
@@ -106,51 +106,40 @@ enum SpriteDisplay: Equatable {
         }
     }
 
-    /// 상태마다 늘 붙는 효과 (빛 꼬리, 공기 줄, 흙먼지, z, 입김, 경고 점).
-    /// `leftEdge`는 빛 꼬리가 끝나는 x (팝오버 무대는 화면 왼쪽 끝까지 끈다).
+    /// 상태마다 늘 붙는 효과 (발밑 먼지, 뒤로 남는 구름·별, 잠·경고 말풍선).
+    /// `menuBar`면 22pt 칸에서 점처럼 보이는 먼지·구름·별은 빼고 잠·한도 말풍선만 남긴다 (빠르기는 달리는 속도로 보인다).
     /// `compact`면 메뉴바에서 러너 바로 오른쪽에 사용률 숫자가 붙어 있다. 몸 오른쪽으로 나가는 효과는 숫자를 가리므로
     /// 빼거나 왼쪽으로 돌린다. 경고는 숫자 색(주황·빨강)이 대신 알린다.
     func drawLoopEffects(in cg: CGContext, scene: CharacterScene, phase: CGFloat, tint: NSColor, front: Bool,
-                         leftEdge: CGFloat = -1, compact: Bool = false) {
+                         menuBar: Bool = false, compact: Bool = false) {
         let bounds = scene.placedBounds
-        let body = (bounds.minY + bounds.height * 0.2)...(bounds.maxY - bounds.height * 0.25)
-        let mouth = scene.headAnchor.map {
-            CGPoint(min($0.eye.x + $0.width * 0.32, bounds.maxX), $0.eye.y + $0.width * 0.3)
-        } ?? CGPoint(bounds.maxX - 0.3, bounds.minY + min(4, bounds.height * 0.35))
         if case .straining(let state, let critical) = self {
-            // 속도 효과는 그대로, 위에 한도 표시만 얹는다
+            // 달리는 모습은 그대로 두고, 거의 다 썼을 때만 느낌표를 띄운다
             SpriteDisplay.normal(state).drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front,
-                                                        leftEdge: leftEdge, compact: compact)
-            guard front, !compact else { return }
-            if critical {
-                // 달리는 한 주기가 짧아 퍼지는 원은 너무 잦다. 점만 둔다
-                let c = CGPoint(min(bounds.maxX + 1.4, 33), max(bounds.minY + 0.5, 4.8))
-                cg.setFillColor(NSColor.systemRed.cgColor)
-                cg.fillEllipse(in: CGRect(x: c.x - 1.1, y: c.y - 1.1, width: 2.2, height: 2.2))
-            } else {
-                SpriteEffects.breath(cg, at: mouth, phase: phase, color: tint)
-            }
+                                                        menuBar: menuBar, compact: compact)
+            if front, critical, !compact { Emote.draw("exclamation", in: cg, around: bounds, pop: 1) }
             return
         }
+        // 효과는 모두 도트 그림(Assets/FX)이다. 속도는 발밑 먼지와 뒤로 남는 구름·별로 보인다
+        let feet = CGPoint(bounds.minX + 4, Stage.ground - 1.2)
         switch (self, front) {
-        case (.normal(.rainbow), false):
-            SpriteEffects.lightTrail(cg, from: leftEdge, to: bounds.minX + 4, centerY: bounds.midY - 0.3, width: 2.6,
-                                     phase: phase, color: tint)
-            SpriteEffects.airStreaks(cg, phase: phase * 2, maxX: bounds.minX + 1, band: body, color: tint, count: 4,
-                                     length: 8)
-        case (.normal(.dashing), false):
-            SpriteEffects.airStreaks(cg, phase: phase, maxX: bounds.minX + 2, band: body, color: tint)
-        case (.normal(.running), false):
-            SpriteEffects.footDust(cg, at: CGPoint(bounds.minX + 4, Stage.ground - 0.7), phase: phase, color: tint)
-        case (.normal(.sleeping), true):
-            SpriteEffects.zzz(cg, from: CGPoint(bounds.maxX - 2.5, bounds.minY + 0.5), phase: phase, color: tint,
-                              leftward: compact)
-        case (.tired, true) where !compact:
-            SpriteEffects.breath(cg, at: mouth, phase: phase, color: tint)
+        case (.normal(.rainbow), false) where !menuBar:
+            for k in 0..<3 {
+                let local = (phase + CGFloat(k) / 3).truncatingRemainder(dividingBy: 1)
+                GameFX.drawSprite("rainbowStar", at: CGPoint(bounds.minX - 1.5 - local * 7, bounds.midY - 1 + CGFloat(k - 1) * 1.6),
+                                  height: 3.4 * (1 - local * 0.5), progress: 0, time: Double(phase) + Double(k) * 0.3,
+                                  alpha: 1 - local, cg)
+            }
+        case (.normal(.dashing), false) where !menuBar:
+            GameFX.drawSprite("puff", at: CGPoint(bounds.minX - 1.5, bounds.maxY - 2.5), height: 4.5,
+                              progress: (phase * 2).truncatingRemainder(dividingBy: 1), time: 0, cg)
+        case (.normal(.running), false) where !menuBar:
+            GameFX.drawSprite("smokePoff", at: feet, height: 3.6, progress: (phase * 2).truncatingRemainder(dividingBy: 1),
+                              time: 0, cg)
+        case (.normal(.sleeping), true) where !compact:
+            Emote.draw(phase < 0.5 ? "sleep" : "sleeps", in: cg, around: bounds, pop: 1, bob: sin(phase * tau) * 0.3)
         case (.alert, true) where !compact:
-            // 퍼지는 원(반지름 2.4)이 메뉴바 칸 위·오른쪽에서 잘리지 않는 자리
-            SpriteEffects.ping(cg, at: CGPoint(min(bounds.maxX + 1.4, 33), max(bounds.minY + 0.5, 4.8)),
-                               phase: phase, color: .systemRed)
+            Emote.draw("exclamation", in: cg, around: bounds, pop: 1)
         default:
             break
         }
@@ -276,7 +265,6 @@ enum SpriteFrames {
     /// `visibleY`를 주면 그 높이 범위(메뉴바 칸)를 벗어나는 장면을 줄여 넣는다.
     static func clip(for display: SpriteDisplay, character: RunnerCharacter, theme chosen: SpriteTheme,
                      fps: Double, visibleY: ClosedRange<CGFloat>? = nil, compact: Bool = false) -> SpriteClip {
-        if let prefix = character.assetPrefix, let assets = assetClip(for: display, prefix: prefix) { return assets }
         let theme = character.menuBarTheme(chosen)
         let overlay = character.imageTint(chosen)
         let (count, interval) = timing(cycle: display.cycle, fps: min(fps, display.maxFPS))
@@ -287,17 +275,17 @@ enum SpriteFrames {
             return image { cg in
                 render(cg, rig: rig, frame: display.motion(at: phase), theme: theme, themePhase: phase,
                        alarm: display.isCritical, fit: fit, overlay: overlay) { cg, scene, tint, front in
-                    display.drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front, compact: compact)
+                    display.drawLoopEffects(in: cg, scene: scene, phase: phase, tint: tint, front: front, menuBar: true,
+                                            compact: compact)
                 }
             }
         }
         return SpriteClip(frames: frames, interval: interval)
     }
 
-    /// 한 번 재생하는 동작. Assets 폴더 PNG로 바꾼 러너는 동작 프레임이 없어 nil.
+    /// 한 번 재생하는 동작.
     static func clip(for trick: Trick, character: RunnerCharacter, theme chosen: SpriteTheme, fps: Double,
                      visibleY: ClosedRange<CGFloat>? = nil, compact: Bool = false) -> SpriteClip? {
-        if let prefix = character.assetPrefix, loadAssets(named: "\(prefix)_run", count: 8) != nil { return nil }
         let theme = character.menuBarTheme(chosen)
         let overlay = character.imageTint(chosen)
         let (count, interval) = timing(cycle: trick.duration, fps: fps)
@@ -368,41 +356,5 @@ enum SpriteFrames {
             draw(cg)
             return true
         }
-    }
-
-    // MARK: - 파일 에셋
-
-    private static func assetClip(for display: SpriteDisplay, prefix: String) -> SpriteClip? {
-        let frames: [NSImage]?
-        switch display {
-        case .normal(.sleeping): frames = loadAssets(named: "\(prefix)_sleep", count: 2)
-        case .normal(.rainbow):
-            frames = loadAssets(named: "\(prefix)_rainbow", count: 8) ?? loadAssets(named: "\(prefix)_run", count: 8)
-        case .normal: frames = loadAssets(named: "\(prefix)_run", count: 8)
-        case .tired: frames = loadAssets(named: "\(prefix)_tired", count: 2)
-        case .alert: frames = loadAssets(named: "\(prefix)_alert", count: 2)
-        case .straining(let state, _): return assetClip(for: .normal(state), prefix: prefix)
-        }
-        guard let frames else { return nil }
-        return SpriteClip(frames: frames, interval: display.cycle / Double(frames.count))
-    }
-
-    private static var assetCache: [String: [NSImage]?] = [:]
-
-    private static func loadAssets(named prefix: String, count: Int) -> [NSImage]? {
-        if let cached = assetCache[prefix] { return cached }
-        var result: [NSImage]? = nil
-        if let assetsDir = Bundle.assets.resourceURL?.appendingPathComponent("Assets") {
-            var frames: [NSImage] = []
-            for i in 0..<count {
-                let url = assetsDir.appendingPathComponent("\(prefix)_\(i).png")
-                guard let image = NSImage(contentsOf: url) else { break }   // 하나라도 없으면 전체 폴백
-                image.size = spriteSize
-                frames.append(image)
-            }
-            if frames.count == count { result = frames }
-        }
-        assetCache[prefix] = result
-        return result
     }
 }

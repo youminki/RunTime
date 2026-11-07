@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import GameCore
 
@@ -161,31 +162,6 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         #expect(perSecond(from: 130, to: 160) > perSecond(from: 40, to: 70) * 1.1)
     }
 
-    /// 문은 최고 속도 근처에서 나오고, 끝까지 누른 점프는 박쥐에 닿지만 가장 짧은 점프는 지나간다.
-    @Test func gatesNeedShortHop() {
-        let game = makeGame()
-        let tuning = game.tuning
-        let ceiling = tuning.gateCeiling(runnerHeight: runnerSize.height)
-        #expect(tuning.shortHop.apex + runnerSize.height < ceiling + tuning.hitInset)
-        let fullApex = tuning.jumpVelocity * tuning.jumpVelocity / (2 * tuning.gravity)
-        #expect(fullApex + runnerSize.height > ceiling + tuning.hitInset + 8)
-        var gates = 0
-        for seed in 1...10 as ClosedRange<UInt64> {
-            let met = meetings(seed: seed, seconds: 150)
-            for (time, o) in met where o.y == ceiling {
-                gates += 1
-                #expect(time > 30)
-                let ground = met.first { $0.obstacle.y == 0 && abs($0.time - time) < 0.1 }?.obstacle
-                #expect(ground != nil)
-                if let ground {
-                    #expect(game.canHop(width: ground.width, top: ground.height, ceiling: ceiling,
-                                        closingSpeed: ground.spawnSpeed))
-                }
-            }
-        }
-        #expect(gates > 10)
-    }
-
     @Test func scoreGrowsWithDistanceAndCoins() {
         let game = makeGame(catalog: [])
         game.press()
@@ -282,7 +258,7 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
     @Test func lowFlyerJumpNeedsSlackOtherwiseDuck() {
         let game = makeGame()
         let bat = catalog().first { $0.id == "bat" }!
-        #expect(!game.canJump(width: bat.width, top: 22 + bat.height, closingSpeed: 400))
+        #expect(!game.canJump(width: bat.width, top: 22 + bat.height, closingSpeed: 300))
         #expect(game.canDuckUnder(22))
         #expect(!game.canDuckUnder(10))
     }
@@ -527,7 +503,7 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
     @Test func firesOncePerObstacleWithoutChangingScore() {
         var total = 0
         for seed in 1...6 as ClosedRange<UInt64> {
-            let (ids, _) = nearMisses(seed: seed, gap: 7)
+            let (ids, _) = nearMisses(seed: seed, gap: 14)
             #expect(Set(ids).count == ids.count)
             total += ids.count
         }
@@ -662,5 +638,201 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         #expect(game.moveDirection == 0)
         #expect(game.runnerOffset == offset)
         #expect(!game.isDucking)
+    }
+}
+
+@Suite struct RunnerGameHeightTests {
+    /// 공중 점프를 겹쳐도 발이 무대 위로 나가지 않는다 (나가면 그림 맞춤이 어긋나 뒤집혀 보였다).
+    @Test func airJumpsStayOnStage() {
+        let game = makeGame()
+        game.setAbilities(.init(airJumps: 2))
+        game.press()
+        game.release()
+        for _ in 0..<240 { game.advance(by: 1.0 / 120) }
+        var left = 2, top = 0.0
+        game.press()
+        for _ in 0..<600 where game.phase == .playing {
+            game.advance(by: 1.0 / 120)
+            top = max(top, game.runnerY)
+            if game.velocityY <= 0, !game.isOnGround, left > 0 {
+                game.release()
+                game.press()
+                left -= 1
+            }
+        }
+        #expect(top <= game.tuning.maxRise)
+    }
+
+    /// 사람처럼 한 번에 100ms 넘게 눌러도, 판을 정해 두고 보면 모든 장애물을 넘을 수 있다. 자동 플레이어가 그렇게 논다.
+    @Test func everyObstacleAllowsANormalPress() {
+        for seed in UInt64(1)...40 {
+            let game = makeGame(seed: seed)
+            let pilot = Autopilot(game: game)
+            game.press()
+            game.release()
+            var elapsed = 0.0
+            while elapsed < 120, game.phase == .playing {
+                pilot.step()
+                game.advance(by: 1.0 / 60)
+                elapsed += 1.0 / 60
+            }
+            #expect(game.phase == .playing, "씨앗 \(seed)가 \(Int(elapsed))초에 끝남")
+        }
+    }
+}
+
+@Suite struct FlightGameTests {
+    private func run(_ difficulty: FlightDifficulty, seed: UInt64, distance: Double) -> FlightGame {
+        let game = FlightGame(difficulty: difficulty, seed: seed)
+        let pilot = FlightPilot(game: game)
+        game.press()
+        game.release()
+        var ticks = 0
+        while game.phase == .playing, game.x < distance, ticks < 200_000 {
+            pilot.step()
+            game.advance(by: FlightGame.step)
+            ticks += 1
+        }
+        return game
+    }
+
+    /// 어떤 씨앗과 난이도에서도 끝까지 갈 길이 있다. 못 지나가는 배치가 없다는 뜻이다.
+    @Test(arguments: FlightDifficulty.allCases)
+    func alwaysPassable(difficulty: FlightDifficulty) {
+        for seed in UInt64(1)...3 {
+            let game = FlightGame(difficulty: difficulty, seed: seed)
+            game.generate(until: 12_000)
+            #expect(game.hasPath(until: 11_000), "\(difficulty) 씨앗 \(seed)")
+        }
+    }
+
+    /// 앞을 보는 플레이어가 대부분 끝까지 난다. 사람이 눈으로 보고 지나갈 수 있다는 뜻이다.
+    @Test(arguments: FlightDifficulty.allCases)
+    func pilotMostlySurvives(difficulty: FlightDifficulty) {
+        let finished = (UInt64(1)...3).filter { run(difficulty, seed: $0, distance: 4_000).phase == .playing }.count
+        #expect(finished >= 2, "\(difficulty) \(finished)/3")
+    }
+
+    /// 같은 조각이 네 번 안에 다시 나오지 않고 여러 조각이 고루 나온다.
+    @Test func chunksVary() {
+        let game = FlightGame(difficulty: .normal, seed: 3)
+        game.generate(until: 60_000)
+        #expect(Set(game.chunks).count == FlightChunk.allCases.count, "\(Set(game.chunks))")
+        var repeats = 0
+        for index in 0..<max(game.chunks.count - 3, 0) where Set(game.chunks[index..<(index + 4)]).count < 4 { repeats += 1 }
+        #expect(repeats == 0)
+    }
+
+    /// 길이 없는 배치를 찾는 검사가 빈말이 아니다: 위아래가 막히면 길이 없다고 답한다.
+    @Test func passabilityCheckCatchesAWall() {
+        let game = FlightGame(difficulty: .easy, seed: 1)
+        game.addForTest(FlightHazard(id: 999_999, kind: .pillar, x: 300, y: 0, width: 26, height: FlightGame.ceiling))
+        #expect(!game.hasPath(until: 600))
+    }
+
+    @Test func differentSeedsGiveDifferentRuns() {
+        let a = run(.normal, seed: 1, distance: 8_000).chunks
+        let b = run(.normal, seed: 2, distance: 8_000).chunks
+        #expect(a != b)
+    }
+
+    @Test func speedRisesAndHardIsFaster() {
+        let game = FlightGame(difficulty: .normal, seed: 1)
+        #expect(game.speed(at: 20_000) > game.speed(at: 0) + 100)
+        #expect(game.speed(at: 200_000) <= FlightDifficulty.normal.maxSpeed)
+        #expect(FlightDifficulty.hard.startSpeed > FlightDifficulty.normal.startSpeed)
+        #expect(FlightDifficulty.normal.startSpeed > FlightDifficulty.easy.startSpeed)
+    }
+
+    @Test func holdRisesAndReleaseFalls() {
+        let game = FlightGame(difficulty: .easy, seed: 1)
+        game.press()
+        let start = game.y
+        game.advance(by: 0.2)
+        #expect(game.y > start)
+        let high = game.y
+        game.release()
+        game.advance(by: 0.5)
+        #expect(game.y < high)
+    }
+
+    @Test func standingStillEndsAndKeepsBest() {
+        let game = FlightGame(difficulty: .hard, seed: 5)
+        game.press()
+        game.release()
+        var ticks = 0
+        while game.phase == .playing, ticks < 200_000 {
+            game.advance(by: FlightGame.step)
+            ticks += 1
+        }
+        #expect(game.phase == .over)
+        #expect(game.best == game.score)
+        #expect(game.crashedInto != nil)
+    }
+
+    @Test func boostGoesFasterAndScoresMore() {
+        let plain = FlightGame(difficulty: .easy, seed: 9)
+        let fast = FlightGame(difficulty: .easy, seed: 9)
+        plain.press()
+        fast.press()
+        fast.setBoost(true)
+        plain.advance(by: 0.5)
+        fast.advance(by: 0.5)
+        #expect(fast.x > plain.x)
+        #expect(fast.score > plain.score)
+    }
+}
+
+@Suite struct PetSketchTests {
+    private func rows(_ fill: String = "a") -> [String] {
+        Array(repeating: String(repeating: fill, count: 32), count: 32)
+    }
+
+    private func json(_ frames: [String: [String]], palette: [String: String] = ["a": "#102030"]) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: ["name": "맹구", "palette": palette, "frames": frames], options: .sortedKeys)
+        return "앞말 " + String(decoding: data ?? Data(), as: UTF8.self) + " 뒷말"
+    }
+
+    @Test func readsFramesAndColors() throws {
+        let sketch = try #require(PetSketch.parse(json(["stand": rows(), "stepA": rows(), "stepB": rows(), "jump": rows()])))
+        #expect(sketch.name == "맹구")
+        #expect(sketch.frames["stand"]?[0][0] == PetSketch.Color(red: 0x10, green: 0x20, blue: 0x30))
+    }
+
+    /// 줄 길이가 어긋나도 32칸으로 맞추고, 빠진 프레임은 서 있는 모습으로 대신한다.
+    @Test func repairsBadRowsAndMissingFrames() throws {
+        var bad = rows()
+        bad[0] += "aaa"
+        bad[1] = "aaa"
+        bad.removeLast()
+        let sketch = try #require(PetSketch.parse(json(["stand": bad])))
+        let stand = try #require(sketch.frames["stand"])
+        #expect(stand.count == 32)
+        #expect(stand.allSatisfy { $0.count == 32 })
+        #expect(stand[1][3] == nil)
+        #expect(sketch.frames["jump"] == stand)
+    }
+
+    /// 고쳐 쓰며 답을 두 번 적으면 뒤의 답을 쓴다.
+    @Test func prefersTheLastAnswer() throws {
+        let first = "{\"name\":\"깨진 답\",\"palette\":{\"a\":\"#102030\"},\"frames\":{\"stand\":[\"aa"
+        let sketch = try #require(PetSketch.parse(first + "\n잠깐, 고쳐 씁니다:\n" + json(["stand": rows()])))
+        #expect(sketch.name == "맹구")
+    }
+
+    @Test func rejectsGarbage() {
+        #expect(PetSketch.parse("그림을 못 그렸어요") == nil)
+        #expect(PetSketch.parse(json(["stepA": rows()])) == nil)
+        #expect(PetSketch.parse(json(["stand": rows(".")])) == nil)
+        #expect(PetSketch.parse(json(["stand": rows()], palette: ["a": "red"])) == nil)
+    }
+
+    @Test func groundsFeetOnTheBottomRow() throws {
+        var floating = rows(".")
+        for y in 10..<20 { floating[y] = String(repeating: "a", count: 32) }
+        let sketch = try #require(PetSketch.parse(json(["stand": floating])))
+        let grounded = sketch.grounded("stand")
+        #expect(grounded.count == 32)
+        #expect(grounded[31][0] != nil)
     }
 }

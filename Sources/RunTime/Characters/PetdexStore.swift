@@ -17,6 +17,8 @@ final class PetdexStore: ObservableObject {
         let spritesheetUrl: String
 
         var id: String { slug }
+        /// 목록에 보일 한국어 이름. 받을 때도 이 이름으로 저장한다.
+        var koreanName: String { KoreanName.make(displayName, slug: slug) }
         var thumbnailURL: URL? { URL(string: "https://assets.petdex.dev/pets/\(slug)/thumb.webp") }
         var pageURL: URL? { URL(string: "https://petdex.dev/pets/\(slug)") }
     }
@@ -29,10 +31,12 @@ final class PetdexStore: ObservableObject {
         let added: Date
 
         var id: String { slug }
+        /// Claude로 만들거나 이 Mac에서 가져온 펫. petdex.dev에 페이지가 없다.
+        var isLocal: Bool { slug.hasPrefix(PetdexStore.localPrefix) }
     }
 
     enum Kind: String, CaseIterable {
-        case all, character, creature, object
+        case creature, character, object, all
 
         var displayName: String {
             switch self {
@@ -82,10 +86,18 @@ final class PetdexStore: ObservableObject {
     static let catalogLifetime: TimeInterval = 24 * 60 * 60
 
     @Published private(set) var entries: [Entry] = [] {
-        didSet { targets = Dictionary(uniqueKeysWithValues: entries.map { ($0.slug, HangulSearch.Target($0.slug, $0.displayName)) }) }
+        didSet {
+            applyOfficialNames()
+            koreanNames = Dictionary(uniqueKeysWithValues: entries.map { ($0.slug, $0.koreanName) })
+            targets = Dictionary(uniqueKeysWithValues: entries.map {
+                ($0.slug, HangulSearch.Target($0.slug, $0.displayName, koreanNames[$0.slug] ?? ""))
+            })
+        }
     }
     /// 검색용 글. 목록이 바뀔 때 한 번만 만든다 (4천여 개를 글자마다 다시 만들지 않게).
     private var targets: [String: HangulSearch.Target] = [:]
+    /// 목록의 한국어 이름. 칸을 그릴 때마다 다시 만들지 않게 한 번만 만든다.
+    private(set) var koreanNames: [String: String] = [:]
     @Published private(set) var catalogState: CatalogState = .idle
     @Published private(set) var pets: [Pet] = []
     @Published private(set) var installing: Set<String> = []
@@ -126,7 +138,7 @@ final class PetdexStore: ObservableObject {
         if let cached = characters[pet.slug] { return cached }
         guard let rig = SheetRig(folder: Self.folder(pet.slug)) else { return nil }
         let character = RunnerCharacter(key: "petdex.\(pet.slug)", name: pet.name, sound: pet.name,
-                                        rig: FittedRig(rig), assetPrefix: nil, fixedTheme: .natural)
+                                        rig: FittedRig(rig), fixedTheme: .natural)
         characters[pet.slug] = character
         return character
     }
@@ -156,6 +168,7 @@ final class PetdexStore: ObservableObject {
                 if let list, status == 200 {
                     self.entries = list
                     self.catalogState = .loaded
+                    self.upgradeOldPets()
                     try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
                     try? data?.write(to: cached)
                 } else if self.entries.isEmpty {
@@ -246,7 +259,7 @@ final class PetdexStore: ObservableObject {
             self.installing.remove(entry.slug)
             switch result {
             case .success:
-                let pet = Pet(slug: entry.slug, name: String(entry.displayName.prefix(24)),
+                let pet = Pet(slug: entry.slug, name: String(entry.koreanName.prefix(24)),
                               submittedBy: entry.submittedBy, added: Date())
                 SheetFrames.forget(folder)
                 self.pets.append(pet)
@@ -255,6 +268,37 @@ final class PetdexStore: ObservableObject {
             case .failure(let error):
                 completion(.failure(error))
             }
+        }
+    }
+
+    /// 점프·검토 줄이 생기기 전에 받은 펫은 목록을 받을 때 한 번 다시 받아 새 줄을 채운다.
+    /// 옆 폴더에 풀어 두었다가 성공했을 때만 바꿔 끼워, 실패해도 쓰던 펫은 그대로 남는다.
+    private func upgradeOldPets() {
+        for pet in pets where SheetFrames.meta(Self.folder(pet.slug))?.counts["review"] == nil
+            && !installing.contains(pet.slug) {
+            guard let entry = entries.first(where: { $0.slug == pet.slug }), let url = URL(string: entry.spritesheetUrl),
+                  Self.isPetdexURL(url) else { continue }
+            installing.insert(pet.slug)
+            let folder = Self.folder(pet.slug)
+            let staging = Self.directory.appendingPathComponent(".\(pet.slug).new", isDirectory: true)
+            var request = URLRequest(url: url, timeoutInterval: 60)
+            request.setValue("RunTime", forHTTPHeaderField: "User-Agent")
+            session.dataTask(with: request) { data, response, error in
+                DispatchQueue.global(qos: .utility).async {
+                    var upgraded = false
+                    if (try? Self.extract(data: data, response: response, error: error, to: staging)) != nil {
+                        upgraded = (try? FileManager.default.replaceItemAt(folder, withItemAt: staging)) != nil
+                    }
+                    try? FileManager.default.removeItem(at: staging)
+                    DispatchQueue.main.async {
+                        self.installing.remove(pet.slug)
+                        guard upgraded else { return }
+                        SheetFrames.forget(folder)
+                        self.characters[pet.slug] = nil
+                        self.objectWillChange.send()
+                    }
+                }
+            }.resume()
         }
     }
 
@@ -276,13 +320,217 @@ final class PetdexStore: ObservableObject {
         save()
     }
 
+    // MARK: 직접 만든 펫 가져오기
+
+    /// 슬러그 앞머리. Petdex 슬러그와 겹치지 않게 하이픈을 둘 둔다.
+    static let localPrefix = "local--"
+
+    /// 이 Mac에 있는 Codex 펫 폴더 하나 (pet.json과 스프라이트 시트).
+    struct LocalPet: Identifiable, Equatable {
+        let folder: URL
+        let sheet: URL
+        let name: String
+        var id: String { folder.path }
+        var slug: String { PetdexStore.localSlug(folder.lastPathComponent) }
+    }
+
+    enum LocalImportError: LocalizedError {
+        case notAPet
+        case tooBig
+        case badZip
+
+        var errorDescription: String? {
+            switch self {
+            case .notAPet: return "pet.json과 스프라이트 시트가 든 펫 폴더가 아닙니다."
+            case .tooBig: return "파일이 너무 커서 가져오지 않았습니다."
+            case .badZip: return "zip 파일을 풀지 못했습니다."
+            }
+        }
+    }
+
+    /// 펫을 만들면 Codex·Petdex 도구가 넣어 두는 곳.
+    static var localRoots: [URL] {
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        return [".codex/pets", ".petdex/pets", ".runtime/pets"].map { home.appendingPathComponent($0, isDirectory: true) }
+    }
+
+    /// 폴더 이름을 슬러그로 바꾼다. 영문이 아니면 같은 이름이 늘 같은 값이 되게 글자 값으로 만든다.
+    static func localSlug(_ name: String) -> String {
+        let ascii = name.lowercased().map { ($0.isASCII && ($0.isLetter || $0.isNumber)) ? String($0) : "-" }.joined()
+        var hash: UInt32 = 5381
+        for scalar in name.unicodeScalars { hash = hash &* 33 &+ scalar.value }
+        return localPrefix + String(ascii.prefix(40)) + "-" + String(hash, radix: 16)
+    }
+
+    /// 아직 가져오지 않은 펫 목록. 폴더 수를 믿지 않고 앞의 200개만 본다.
+    func scanLocalPets() -> [LocalPet] {
+        let manager = FileManager.default
+        var seen = Set<String>()
+        return Self.localRoots.flatMap { root -> [LocalPet] in
+            let folders = (try? manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil,
+                                                            options: .skipsHiddenFiles)) ?? []
+            return folders.prefix(200).compactMap(Self.localPet)
+        }
+        .filter { pet in
+            // 크기만 읽어 시트가 아닌 그림은 목록에 올리지 않는다
+            guard let image = CGImageSourceCreateWithURL(pet.sheet as CFURL, nil), PetdexAtlas.isSupported(image) else { return false }
+            return !isInstalled(pet.slug) && seen.insert(pet.slug).inserted
+        }
+    }
+
+    /// 폴더 안 pet.json을 읽는다. 받은 파일일 수 있어 시트 경로는 파일 이름만 쓰고 링크는 따라가지 않는다.
+    static func localPet(_ folder: URL) -> LocalPet? {
+        let manifest = folder.appendingPathComponent("pet.json")
+        guard isPlainFile(manifest), let data = try? Data(contentsOf: manifest), data.count < 1 << 20 else { return nil }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let named = (json["spritesheetPath"] as? String).map { ($0 as NSString).lastPathComponent }
+        let candidates = [named, "spritesheet.webp", "spritesheet.png"].compactMap { $0 }
+        guard let sheet = candidates.map({ folder.appendingPathComponent($0) }).first(where: isPlainFile) else { return nil }
+        let display = (json["displayName"] as? String) ?? (json["id"] as? String) ?? folder.lastPathComponent
+        return LocalPet(folder: folder, sheet: sheet, name: KoreanName.make(display, slug: (json["id"] as? String) ?? ""))
+    }
+
+    private static func isPlainFile(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+    }
+
+    /// 가져오기: 폴더나 zip에서 펫을 찾아 시트를 풀어 저장한다. 원본은 건드리지 않는다.
+    func importLocal(from url: URL, completion: @escaping (Result<Pet, Error>) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var unpacked: URL?
+            defer { if let unpacked { try? FileManager.default.removeItem(at: unpacked) } }
+            let result = Result { () -> (LocalPet, URL) in
+                let source: URL
+                if url.pathExtension.lowercased() == "zip" {
+                    let folder = try Self.unzip(url)
+                    unpacked = folder
+                    source = folder
+                } else {
+                    source = url
+                }
+                guard let found = Self.findPet(in: source) else { throw LocalImportError.notAPet }
+                // 임시 폴더 이름 대신 zip 이름으로 슬러그를 만들어 같은 파일이 같은 펫이 되게 한다
+                let name = unpacked != nil ? url.deletingPathExtension().lastPathComponent : found.folder.lastPathComponent
+                let folder = Self.folder(Self.localSlug(name))
+                guard ((try? found.sheet.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? .max) <= 16 << 20 else {
+                    throw LocalImportError.tooBig
+                }
+                guard let image = CGImageSourceCreateWithURL(found.sheet as CFURL, nil) else {
+                    throw PetdexAtlas.ExtractError.unsupportedSize
+                }
+                try? FileManager.default.removeItem(at: folder)
+                do {
+                    try PetdexAtlas.extract(from: image, to: folder)
+                } catch {
+                    try? FileManager.default.removeItem(at: folder)
+                    throw error
+                }
+                return (found, folder)
+            }
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let (found, folder)):
+                    let slug = folder.lastPathComponent
+                    SheetFrames.forget(folder)
+                    self.characters[slug] = nil
+                    self.pets.removeAll { $0.slug == slug }
+                    let pet = Pet(slug: slug, name: String(found.name.prefix(24)), submittedBy: nil, added: Date())
+                    self.pets.append(pet)
+                    self.save()
+                    completion(.success(pet))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
+
+    /// 폴더 자체이거나 그 아래 두 단계 안의 펫 폴더. zip은 대개 폴더 하나로 감싸져 있다.
+    private static func findPet(in root: URL) -> LocalPet? {
+        if let pet = localPet(root) { return pet }
+        let children = ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil,
+                                                                      options: .skipsHiddenFiles)) ?? []).prefix(200)
+        return children.lazy.compactMap(localPet).first
+            ?? children.lazy.compactMap { child in
+                ((try? FileManager.default.contentsOfDirectory(at: child, includingPropertiesForKeys: nil,
+                                                               options: .skipsHiddenFiles)) ?? []).prefix(200)
+                    .lazy.compactMap(localPet).first
+            }.first
+    }
+
+    /// 임시 폴더에 푼다. 받은 파일이라 크기를 재고, 오래 걸리면 끊는다.
+    private static func unzip(_ zip: URL) throws -> URL {
+        guard ((try? zip.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? .max) <= 32 << 20 else {
+            throw LocalImportError.tooBig
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-pet-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", zip.path, folder.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw LocalImportError.badZip
+        }
+        let limit = DispatchWorkItem { process.terminate() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: limit)
+        process.waitUntilExit()
+        limit.cancel()
+        guard process.terminationStatus == 0 else {
+            try? FileManager.default.removeItem(at: folder)
+            throw LocalImportError.badZip
+        }
+        return folder
+    }
+
     // MARK: 목록 파일
+
+    private static let koreanNamesKey = "petdexKoreanNames"
+    private static let officialNamesKey = "petdexOfficialNames"
+    /// 공식 이름표를 크게 고치면 올려서 받아 둔 펫에도 한 번 다시 적용한다.
+    private static let officialNamesVersion = 1
+
+    /// 받아 둔 펫의 이름을 공식 이름으로 맞춘다. 저장된 이름이 소리대로 옮긴 그대로일 때만 바꿔 사용자가 고친 이름은 둔다.
+    /// 원래 이름은 목록에만 있어 목록을 처음 읽을 때 한다.
+    private func applyOfficialNames() {
+        let defaults = UserDefaults.standard
+        guard !entries.isEmpty, defaults.integer(forKey: Self.officialNamesKey) < Self.officialNamesVersion else { return }
+        defaults.set(Self.officialNamesVersion, forKey: Self.officialNamesKey)
+        var changed = false
+        for entry in entries {
+            guard let index = pets.firstIndex(where: { $0.slug == entry.slug }) else { continue }
+            let plain = String(KoreanName.make(entry.displayName, slug: entry.slug, official: false).prefix(24))
+            guard pets[index].name == plain || pets[index].name == entry.displayName else { continue }
+            pets[index].name = String(entry.koreanName.prefix(24))
+            characters[entry.slug] = nil
+            changed = true
+        }
+        if changed { save() }
+    }
 
     private func load() {
         guard let data = try? Data(contentsOf: indexURL),
               let list = try? JSONDecoder().decode([Pet].self, from: data) else { return }
         // 폴더가 지워진 펫은 버린다
         pets = list.filter { Self.isValidSlug($0.slug) && SheetFrames.meta(Self.folder($0.slug)) != nil }
+        // 이름이 외국어로 저장된 펫은 한 번만 한국어로 바꾼다. 그 뒤에 영어로 고친 이름은 그대로 둔다
+        if !UserDefaults.standard.bool(forKey: Self.koreanNamesKey) {
+            UserDefaults.standard.set(true, forKey: Self.koreanNamesKey)
+            for index in pets.indices where !HangulSearch.containsHangul(pets[index].name) {
+                pets[index].name = String(KoreanName.make(pets[index].name, slug: pets[index].slug).prefix(24))
+            }
+            save()
+        }
+        // 공식 이름표가 새로 생겼으면 받아 둔 목록으로 이름을 맞춘다. 켤 때 네트워크에 나가지 않게 파일만 읽는다
+        if !pets.isEmpty, UserDefaults.standard.integer(forKey: Self.officialNamesKey) < Self.officialNamesVersion,
+           let data = try? Data(contentsOf: Self.catalogURL), let list = Self.decode(data) {
+            entries = list
+            catalogState = .loaded
+        }
     }
 
     private func save() {

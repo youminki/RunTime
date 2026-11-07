@@ -5,20 +5,27 @@ import GameCore
 /// 미니게임 러너에 다는 꾸미기. 그림만 바뀌고 판정과 점수는 같다.
 /// 이름·색·그림은 아래 `info` 표 한 곳에서 정한다. 동료는 꾸미기가 아니라 Petdex 펫을 데려간다 (`GameDecor.companionID`).
 enum Cosmetic: String, CaseIterable, Identifiable {
-    case sparkleTrail, cometTrail, rainbowTrail, fireTrail, noteTrail, heartTrail, magicTrail, smokeTrail, sparkTrail
-    case blossomTrail, cloverTrail, mapleTrail, snowTrail, bubbleTrail, candyTrail
-    case heartDust, goldDust, starDust, rainbowDust, cloudDust, sparkleDust, noteDust
-    case pineTrack, autumnTrack, desertTrack, beachTrack, snowTrack, blossomTrack, peakTrack, cityTrack
-    case drizzleWeather, snowWeather, petalWeather, leafWeather, fogWeather, fireflyWeather
-    case fireworksCrash, heartCrash, coinCrash, magicCrash, flameCrash, boomCrash, confettiCrash, balloonCrash, sweetCrash
+    case rainbowStarTrail, heartTrail, gemTrail, coinTrail, candyTrail, swirlTrail, fireTrail, smokeTrail, magicTrail
+    case bubbleTrail, waterTrail, cometTrail
+    case puffDust, smokeDust, heartDust, starDust, sparkleDust, coinDust, candyDust, bubbleDust
+    case cloudWoodsTrack, mintForestTrack, greenForestTrack, mistForestTrack, tallForestTrack, bushForestTrack
+    case jungleTrack, redForestTrack, amberForestTrack, frostForestTrack, snowPinesTrack, xmasPeaksTrack
+    case greenHillsTrack, flowerHillsTrack, sunnyHillsTrack, springFieldTrack, hillTownTrack, greenVillageTrack
+    case wheatRoadTrack, castleHillTrack, forestGladeTrack, sunsetFieldTrack, sandDunesTrack, desertArchTrack
+    case redCanyonTrack, pyramidTrack, sandPalaceTrack, whiteTempleTrack, summerBeachTrack, sandyBeachTrack
+    case tropicalSeaTrack, oceanDayTrack, oceanSunsetTrack, oceanNightTrack, underwaterTrack, deepSeaTrack
+    case mintSkyTrack, goldenSkyTrack, skyIslandsTrack, airshipTrack, cloudPeaksTrack, emeraldCloudsTrack
+    case pinkCloudsTrack, pinkSunsetTrack, duskPeaksTrack, cherryBridgeTrack, trainBridgeTrack, palaceTrack
+    case greenCityTrack, mistCityTrack, harborNightTrack, starCityTrack, violetCityTrack, fullMoonTrack
+    case pinkCaveTrack, crystalCaveTrack, violetCaveTrack, mossCaveTrack, lavaCaveTrack
+    case starburstCrash, ringCrash, boomCrash, fireCrash, candyCrash, heartCrash, gemCrash, coinCrash, magicCrash
 
     enum Slot: CaseIterable {
-        case track, weather, trail, dust, crash
+        case track, trail, dust, crash
 
         var title: String {
             switch self {
             case .track: "트랙"
-            case .weather: "날씨"
             case .trail: "꼬리"
             case .dust: "발먼지"
             case .crash: "부딪힘"
@@ -29,70 +36,110 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     struct Info {
         let slot: Slot
         let name: String
-        /// 발먼지 색, 꼬리의 바탕색, 미리보기 빛.
+        /// 목록 칸의 빛.
         let color: NSColor
-        /// Fluent Emoji 그림 이름 (Assets/Fluent). 꼬리·발먼지·부딪힘의 입자로 쓴다.
-        var art: String? = nil
-        /// 그림이 없는 물건(날씨)을 목록에 보일 SF Symbol.
-        var symbol: String? = nil
+        /// 꼬리·발먼지의 입자 그림 (Assets/FX).
+        var fx: GameFX.Shape? = nil
     }
 
     private static func row(_ slot: Slot, _ name: String, _ hex: UInt32,
-                            art: String? = nil, symbol: String? = nil) -> Info {
-        Info(slot: slot, name: name, color: NSColor(hex: hex), art: art, symbol: symbol)
+                            fx: GameFX.Shape? = nil) -> Info {
+        Info(slot: slot, name: name, color: NSColor(hex: hex), fx: fx)
     }
 
     private static let info: [Cosmetic: Info] = [
         // 트랙: 무대와 게임에서 달리는 곳
-        .pineTrack: row(.track, "소나무 숲", 0x3D6B52),
-        .autumnTrack: row(.track, "가을 들판", 0xC07A3A),
-        .desertTrack: row(.track, "사막", 0xD9A066),
-        .beachTrack: row(.track, "해변", 0x3E8FB8),
-        .snowTrack: row(.track, "설원", 0xB9CDE0),
-        .blossomTrack: row(.track, "벚꽃길", 0xE9AFC8),
-        .peakTrack: row(.track, "설산", 0x8C9DB8),
-        .cityTrack: row(.track, "도시 야경", 0xFFD27A),
-        // 날씨: 무대와 게임 하늘에 떠도는 입자
-        .drizzleWeather: row(.weather, "이슬비", 0x9DB8D9, symbol: "cloud.drizzle.fill"),
-        .snowWeather: row(.weather, "눈", 0xDCE8F2, symbol: "snowflake"),
-        .petalWeather: row(.weather, "꽃잎", 0xF7B6CF, symbol: "camera.macro"),
-        .leafWeather: row(.weather, "단풍", 0xE0702F, symbol: "leaf.fill"),
-        .fogWeather: row(.weather, "안개", 0xC9D4E3, symbol: "cloud.fog.fill"),
-        .fireflyWeather: row(.weather, "반딧불", 0xD8F27A, symbol: "sparkle"),
+        .cloudWoodsTrack: row(.track, "구름 숲", 0x48A4AC),
+        .mintForestTrack: row(.track, "연둣빛 숲", 0x6EAD6A),
+        .greenForestTrack: row(.track, "초록 숲", 0x699A49),
+        .mistForestTrack: row(.track, "신비한 숲", 0x587548),
+        .tallForestTrack: row(.track, "키 큰 숲", 0x344B2C),
+        .bushForestTrack: row(.track, "덤불 숲", 0x73A049),
+        .jungleTrack: row(.track, "정글", 0x58833E),
+        .redForestTrack: row(.track, "빨간 나무 숲", 0x6C9358),
+        .amberForestTrack: row(.track, "황금 숲", 0x6A4F37),
+        .frostForestTrack: row(.track, "서리 숲", 0x76A3A9),
+        .snowPinesTrack: row(.track, "눈 내린 숲", 0x81C3CA),
+        .xmasPeaksTrack: row(.track, "크리스마스 산", 0x569B91),
+        .greenHillsTrack: row(.track, "푸른 언덕", 0x68B2A6),
+        .flowerHillsTrack: row(.track, "꽃 언덕", 0x83DA83),
+        .sunnyHillsTrack: row(.track, "햇살 언덕", 0x6A926E),
+        .springFieldTrack: row(.track, "봄 들판", 0x91F787),
+        .hillTownTrack: row(.track, "언덕 마을", 0xA68D7B),
+        .greenVillageTrack: row(.track, "초록 마을", 0xACD7A8),
+        .wheatRoadTrack: row(.track, "밀밭 길", 0xC9DB9F),
+        .castleHillTrack: row(.track, "성 언덕", 0xB4CCB4),
+        .forestGladeTrack: row(.track, "숲속 공터", 0x469F1A),
+        .sunsetFieldTrack: row(.track, "저녁 들판", 0x636633),
+        .sandDunesTrack: row(.track, "모래 언덕", 0xC6EEC1),
+        .desertArchTrack: row(.track, "바위 사막", 0x9B9CA0),
+        .redCanyonTrack: row(.track, "붉은 협곡", 0xCAA988),
+        .pyramidTrack: row(.track, "피라미드", 0x8FF7D1),
+        .sandPalaceTrack: row(.track, "모래 궁전", 0xD8A970),
+        .whiteTempleTrack: row(.track, "하얀 신전", 0xCDC0A1),
+        .summerBeachTrack: row(.track, "여름 해변", 0x76E4E6),
+        .sandyBeachTrack: row(.track, "모래 해변", 0x4DA6B1),
+        .tropicalSeaTrack: row(.track, "열대 바다", 0x67E2EC),
+        .oceanDayTrack: row(.track, "낮 바다", 0x3767A9),
+        .oceanSunsetTrack: row(.track, "노을 바다", 0xCD8152),
+        .oceanNightTrack: row(.track, "밤바다", 0x0E4F6F),
+        .underwaterTrack: row(.track, "바닷속", 0x4ECDAD),
+        .deepSeaTrack: row(.track, "깊은 바다", 0x22ADB6),
+        .mintSkyTrack: row(.track, "민트 하늘", 0x95F2DE),
+        .goldenSkyTrack: row(.track, "황금 하늘", 0xEFC14E),
+        .skyIslandsTrack: row(.track, "하늘섬", 0x82DFC3),
+        .airshipTrack: row(.track, "비행선 하늘", 0x69CCD1),
+        .cloudPeaksTrack: row(.track, "구름 위 설산", 0xE2EFEA),
+        .emeraldCloudsTrack: row(.track, "에메랄드 구름", 0x219073),
+        .pinkCloudsTrack: row(.track, "분홍 구름", 0x5A5F66),
+        .pinkSunsetTrack: row(.track, "분홍 노을", 0xF4C9B7),
+        .duskPeaksTrack: row(.track, "노을 산맥", 0x784F68),
+        .cherryBridgeTrack: row(.track, "벚꽃 다리", 0xCECBD1),
+        .trainBridgeTrack: row(.track, "기차 다리", 0xB7C4AF),
+        .palaceTrack: row(.track, "기와 궁궐", 0xB2A78F),
+        .greenCityTrack: row(.track, "초록빛 도시", 0xAFC582),
+        .mistCityTrack: row(.track, "안개 도시", 0xAECCD6),
+        .harborNightTrack: row(.track, "항구 야경", 0x56272C),
+        .starCityTrack: row(.track, "별밤 도시", 0x312E59),
+        .violetCityTrack: row(.track, "보랏빛 도시", 0x574064),
+        .fullMoonTrack: row(.track, "보름달 밤", 0x131B40),
+        .pinkCaveTrack: row(.track, "분홍 동굴", 0xAC719E),
+        .crystalCaveTrack: row(.track, "수정 동굴", 0xA79AAA),
+        .violetCaveTrack: row(.track, "보랏빛 동굴", 0xAF4CC5),
+        .mossCaveTrack: row(.track, "이끼 동굴", 0x1E3F4A),
+        .lavaCaveTrack: row(.track, "용암 동굴", 0xA43C23),
         // 꼬리
-        .sparkleTrail: row(.trail, "반짝이", 0xFFD45E),
-        .heartTrail: row(.trail, "하트", 0xFF8FB8),
-        .noteTrail: row(.trail, "음표", 0xB79CFF),
-        .cometTrail: row(.trail, "혜성", 0x8FD3FF),
-        .smokeTrail: row(.trail, "증기", 0xE8EEF5),
-        .blossomTrail: row(.trail, "벚꽃", 0xFFB7D5, art: "blossom"),
-        .cloverTrail: row(.trail, "네잎클로버", 0x7BD88F, art: "clover"),
-        .fireTrail: row(.trail, "불꽃", 0xFF7A2F),
-        .mapleTrail: row(.trail, "단풍", 0xFF8A3D, art: "maple"),
-        .snowTrail: row(.trail, "눈송이", 0xBFE6FF, art: "snowflake"),
-        .bubbleTrail: row(.trail, "비눗방울", 0xA8E4FF, art: "bubbles"),
-        .magicTrail: row(.trail, "마법 별", 0xC68CFF),
-        .rainbowTrail: row(.trail, "무지개", 0xFF9E3D),
-        .candyTrail: row(.trail, "사탕", 0xFF6FA8, art: "candy"),
-        .sparkTrail: row(.trail, "번개", 0x7FE9FF),
+        .rainbowStarTrail: row(.trail, "무지개 별", 0xFFD45E, fx: .sprite("rainbowStar")),
+        .heartTrail: row(.trail, "콩닥 하트", 0xFF6F7F, fx: .sprite("pumpingHeart")),
+        .gemTrail: row(.trail, "보석 하트", 0xFF8FB8, fx: .sprite("gemHeart")),
+        .coinTrail: row(.trail, "코인", 0xFFD45E, fx: .sprite("coin")),
+        .candyTrail: row(.trail, "무지개 사탕", 0xFF6FA8, fx: .candy("lollipop_rainbow")),
+        .swirlTrail: row(.trail, "소용돌이 사탕", 0xFFB7D5, fx: .candy("swirl_pink")),
+        .fireTrail: row(.trail, "불꽃", 0xFF7A2F, fx: .sprite("firePlume")),
+        .smokeTrail: row(.trail, "구름", 0xE8EEF5, fx: .sprite("puff")),
+        .magicTrail: row(.trail, "마법 가루", 0xC68CFF, fx: .sprite("plasmaSparkle")),
+        .bubbleTrail: row(.trail, "분홍 방울", 0xFF9AE0, fx: .sprite("plasmaBubble")),
+        .waterTrail: row(.trail, "물빛", 0x5CA8FF, fx: .sprite("water")),
+        .cometTrail: row(.trail, "혜성", 0xE8F4FF, fx: .sprite("pure")),
         // 발먼지
-        .heartDust: row(.dust, "분홍", 0xFF8FB8),
-        .starDust: row(.dust, "하늘빛", 0x8FD3FF),
-        .goldDust: row(.dust, "금빛", 0xFFD45E),
-        .cloudDust: row(.dust, "구름", 0xE8EEF5),
-        .rainbowDust: row(.dust, "무지개", 0x5BD86B),
-        .noteDust: row(.dust, "콧노래", 0xB79CFF, art: "note"),
-        .sparkleDust: row(.dust, "반짝반짝", 0xFFE58A, art: "sparkles"),
+        .puffDust: row(.dust, "퐁퐁 구름", 0xE8EEF5, fx: .sprite("puff")),
+        .smokeDust: row(.dust, "흙먼지", 0xB8B0A8, fx: .sprite("smokePoff")),
+        .heartDust: row(.dust, "하트", 0xFF6F7F, fx: .sprite("pumpingHeart")),
+        .starDust: row(.dust, "무지개 별", 0xFFD45E, fx: .sprite("rainbowStar")),
+        .sparkleDust: row(.dust, "반짝이", 0xC68CFF, fx: .sprite("plasmaSparkle")),
+        .coinDust: row(.dust, "코인", 0xFFD45E, fx: .sprite("coin")),
+        .candyDust: row(.dust, "젤리", 0xFF8FB8, fx: .candy("jelly_pink")),
+        .bubbleDust: row(.dust, "보라 방울", 0xB48CFF, fx: .sprite("plasmaPuff")),
         // 부딪힘
-        .heartCrash: row(.crash, "하트 펑", 0xFF8FB8),
-        .fireworksCrash: row(.crash, "폭죽", 0xFFE14D),
-        .flameCrash: row(.crash, "불기둥", 0xFF8A3D),
-        .boomCrash: row(.crash, "쾅!", 0xFFB03D, art: "collision"),
+        .starburstCrash: row(.crash, "별 터짐", 0xBFE6FF),
+        .ringCrash: row(.crash, "링 폭발", 0xFFB03D),
+        .boomCrash: row(.crash, "쾅!", 0xFF8A3D),
+        .fireCrash: row(.crash, "불꽃 펑", 0xFF7A2F),
+        .candyCrash: row(.crash, "사탕 펑", 0xFF6FA8),
+        .heartCrash: row(.crash, "하트 펑", 0xFF6F7F),
+        .gemCrash: row(.crash, "보석 비", 0xFF8FB8),
         .coinCrash: row(.crash, "코인 비", 0xFFD45E),
-        .balloonCrash: row(.crash, "풍선", 0xFF5C5C, art: "balloon"),
-        .magicCrash: row(.crash, "마법진", 0xC68CFF),
-        .sweetCrash: row(.crash, "간식 비", 0xFFB0C8, art: "donut"),
-        .confettiCrash: row(.crash, "축하 파티", 0xFFD45E, art: "confetti"),
+        .magicCrash: row(.crash, "마법", 0xC68CFF),
     ]
 
     var id: String { rawValue }
@@ -100,8 +147,7 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     var slot: Slot { details.slot }
     var name: String { details.name }
     var color: NSColor { details.color }
-    var art: String? { details.art }
-    var symbol: String? { details.symbol }
+    var fx: GameFX.Shape? { details.fx }
 }
 
 enum Ability: String, CaseIterable, Identifiable {
@@ -118,12 +164,13 @@ enum Ability: String, CaseIterable, Identifiable {
         }
     }
 
-    var icon: String {
+    /// 능력 칸의 그림 (Assets/FX). 게임에서 그 능력이 보이는 모습이다.
+    var sprite: String {
         switch self {
-        case .airJump: "arrow.up.to.line"
-        case .shield: "shield.lefthalf.filled"
-        case .magnet: "dot.circle.and.hand.point.up.left.fill"
-        case .glide: "wind"
+        case .airJump: "puff"
+        case .shield: "pumpingHeart"
+        case .magnet: "candyPop_blue"
+        case .glide: "rainbowStar"
         }
     }
 
@@ -190,8 +237,9 @@ final class GameDecor: ObservableObject {
     }
 
     /// 데려갈 동료 그림. 펫을 지웠으면 nil.
+    /// 같이 달리는 펫. 기본 펫, Petdex 펫, 내 그림 어느 것이든 데려간다.
     var companion: RunnerCharacter? {
-        companionID.flatMap { PetdexStore.shared.pet(storageID: $0) }.flatMap(PetdexStore.shared.character(for:))
+        AppSettings.character(forRunnerID: companionID)
     }
 
     func equipped(_ slot: Cosmetic.Slot) -> Cosmetic? {

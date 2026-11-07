@@ -1,0 +1,8 @@
+기본 펫 그림 출처. 모두 pzUH(GameArt2D)가 OpenGameArt에 CC0(퍼블릭 도메인)로 올린 그림이다.
+http://creativecommons.org/publicdomain/zero/1.0/
+서 있기·달리기 칸에 맞춰 자르고 키 144px로 줄였다. 줄 이름은 Petdex 펫과 같다 (idle, run, wait, sad, jump).
+
+cat, dog  https://opengameart.org/content/cat-dog-free-sprites (Idle, Run, Walk, Hurt, Jump)
+dino      https://opengameart.org/content/free-dino-sprites (Idle, Run, Walk, Dead 앞 네 장, Jump)
+girl      https://opengameart.org/content/cute-girl-free-sprites (Idle, Run, Walk, Dead 앞 네 장, Jump)
+jack      https://opengameart.org/content/jack-o-lantern-free-sprite (Idle, Run, Walk, Dead 앞 네 장, Jump)

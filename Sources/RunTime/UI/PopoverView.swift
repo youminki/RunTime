@@ -13,10 +13,14 @@ struct PopoverView: View {
     var openDesign: () -> Void = {}
     /// 팝오버를 닫고 같은 화면을 창으로 띄운다. 창 안에서는 비워 두어 단추를 숨긴다.
     var openAsWindow: (() -> Void)?
+    /// 팝오버에서 앱 창의 러너 화면을 연다.
+    var openRunners: (() -> Void)?
     /// 무대에서 러너를 누르거나 메뉴에서 동작을 고르면 메뉴바 러너도 같은 동작을 한다.
     var performTrick: (Trick) -> Void = { _ in }
     /// 화면 점검에서 러너·꾸미기 화면을 바로 띄울 때.
     var startSection: PopoverPage.Section?
+    /// 화면 점검 도구가 게임 화면을 찍을 때 키 입력과 기록 없이 게임을 켠다.
+    var rehearseGame = false
     /// 팝오버인지, 앱 창의 어느 화면인지. 창에서는 사용량과 러너(게임·꾸미기)를 따로 크게 보인다.
     var layout: Layout = .popover
 
@@ -78,19 +82,21 @@ struct PopoverView: View {
                 page.section = startSection
                 page.showsRunners = true
             }
+            if rehearseGame { DispatchQueue.main.async { page.stageAction = StageAction(kind: .rehearsal) } }
         }
     }
 
     private var stage: some View { stage(height: RunnerStage.height) }
 
-    /// 무대. 앱 창에서는 `height`만큼 키우고, 폭은 장면 비율(348×150)대로 둔다.
+    /// 무대. 앱 창에서는 `height`만큼 키우고, 폭은 놓인 자리가 정한다.
     private func stage(height: CGFloat) -> some View {
         RunnerStage(display: display, character: settings.character, theme: settings.spriteTheme,
                     onPet: performTrick,
                     trickRequest: page.trick,
+                    stageAction: page.stageAction,
                     claudeFinished: engine.turnEnded.eraseToAnyPublisher(), tempo: engine.tempo,
-                    reactions: engine.reacted.eraseToAnyPublisher(), height: height)
-            .frame(width: windowed ? height * Self.stageRatio : nil)
+                    reactions: engine.reacted.eraseToAnyPublisher(), height: height,
+                    onGameChange: { page.playing = windowed && $0 })
     }
 
     private var narrowBody: some View {
@@ -150,73 +156,35 @@ struct PopoverView: View {
     static let stageRatio = stageScene.width / stageScene.height
     static let maxStageZoom: CGFloat = 2
 
-    /// 게임 조작법. 무대 위 도움말을 읽지 않아도 보이게 키 모양으로 늘어놓고, 좁으면 다음 줄로 넘긴다.
-    private var gameKeys: some View {
-        FlowLayout(spacing: 8) {
-            // 고스트는 한 판을 끝내야 생긴다
-            ForEach([("스페이스 · ↑", "점프 (길게 누르면 높이)"), ("↓", "숙이기"), ("← →", "이동")]
-                    + (GameRecords.plays > 0 ? [("G", "고스트와 겨루기")] : []) + [("esc", "나가기")], id: \.0) { key, action in
-                HStack(spacing: 6) {
-                    Text(key)
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Theme.primary)
-                        .padding(.horizontal, 7)
-                        .frame(height: 20)
-                        .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.surface))
-                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Theme.hairline))
-                    Text(action).font(captionFont).foregroundStyle(Theme.secondary)
-                }
-                .fixedSize()
-                .padding(.trailing, 8)
-            }
-        }
-    }
-
-    /// 이 Mac의 최고 점수와 판 수.
-    private var gameRecord: some View {
-        Card(padding: 0) {
-            HStack(spacing: 0) {
-                StatColumn(label: "내 최고 점수", value: GameRecords.best.formatted())
-                Rectangle().fill(Theme.hairline).frame(width: 1)
-                StatColumn(label: "판 수", value: GameRecords.plays.formatted(), unit: "판")
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.top, 4)
-    }
-
-    /// 창의 러너 화면: 왼쪽에 키운 무대와 조작법·내 기록, 오른쪽에 러너·꾸미기 탭.
-    /// 게임과 꾸미기를 한 화면에 두어, 고른 꾸미기를 바로 무대에서 써 본다.
+    /// 창의 러너 화면: 위에 창 폭 가득한 무대, 아래에 펫·꾸미기·게임 격자.
+    /// 평소 무대는 넓은 띠라 장면이 옆으로 더 보일 뿐이다. 게임을 켜면 탭을 치우고 비율을 지켜 창에 가득 키운다.
+    /// 게임 장면 폭이 창마다 달라지면 장애물을 미리 보는 거리가 달라져 기록을 견줄 수 없어 비율은 고정한다.
     private var runnersPage: some View {
-        HStack(alignment: .top, spacing: 24) {
-            GeometryReader { geo in
-                // 장면은 팝오버 무대와 같은 348×150으로 계산하고 비율을 지킨 채 키운다.
-                // 장면 폭이 창마다 달라지면 장애물을 미리 보는 거리가 달라져 최고 점수를 견줄 수 없다.
-                // 2배보다 크게 키우면 픽셀 그림·효과 그림이 흐려지고 점수판 글자가 화면을 가려 그만큼에서 멈춘다
-                let height = max(RunnerStage.height,
-                                 min(geo.size.width / Self.stageRatio, geo.size.height - 330,
-                                     RunnerStage.height * Self.maxStageZoom))
-                VStack(alignment: .leading, spacing: 14) {
-                    stage(height: height)
-                    stageCaption
-                    gameKeys
-                    // 첫 판 전에는 0만 보여 뜻이 없다
-                    if GameRecords.plays > 0 { gameRecord }
+        GeometryReader { geo in
+            let full = geo.size.width - Self.pagePadding.width * 2
+            let room = geo.size.height - Self.pagePadding.height * 2
+            let inGame = max(RunnerStage.height, min(full / Self.stageRatio, room - Self.gameKeysHeight))
+            let idle = max(RunnerStage.height, min(room * 0.36, RunnerStage.height * Self.maxStageZoom))
+            let height = page.playing ? inGame : idle
+            VStack(spacing: Self.columnGap) {
+                stage(height: height)
+                    .frame(width: page.playing ? height * Self.stageRatio : full)
+                if page.playing {
+                    GameKeys().frame(height: Self.gameKeysHeight - Self.columnGap)
+                } else {
+                    runnerPage
                 }
-                .frame(width: height * Self.stageRatio)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .frame(minWidth: Self.sideStageWidth)
-            runnerPage
-                .frame(width: Self.hubWidth)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: page.playing ? .center : .top)
+            .padding(.horizontal, Self.pagePadding.width)
+            .padding(.vertical, Self.pagePadding.height)
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 22)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    static let sideStageWidth: CGFloat = 400
-    static let hubWidth: CGFloat = 440
+    private static let pagePadding = CGSize(width: 24, height: 18)
+    private static let columnGap: CGFloat = 12
+    /// 게임 중 무대 아래 조작법 한 줄 (간격 포함).
+    private static let gameKeysHeight: CGFloat = 40
 
     @ViewBuilder
     private var usageContent: some View {
@@ -357,7 +325,7 @@ struct PopoverView: View {
             }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: "hand.tap").font(.system(size: 9.5, weight: .semibold))
+                Image(systemName: "hand.tap").font(.system(size: 10.5, weight: .semibold))
                 Text("동작")
             }
             .font(labelFont)
@@ -384,18 +352,25 @@ struct PopoverView: View {
 
     // MARK: 러너 고르기
 
-    /// 러너 이름을 누르면 아래 사용량 대신 러너·꾸미기 화면을 띄운다. 무대는 위에 그대로 두어 고른 러너와 꾸미기가 바로 보인다.
+    /// 팝오버는 펫 고르기만, 앱 창은 펫·꾸미기·게임 탭을 둔다. 무대는 위에 그대로 두어 고른 것이 바로 보인다.
     private var runnerPage: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                hubTabs
-                Spacer(minLength: 4)
+        VStack(alignment: .leading, spacing: 10) {
+            if windowed {
+                HStack(spacing: 12) {
+                    hubTabs.frame(maxWidth: 420)
+                    stageCaption
+                    if page.section == .pets { petTools }
+                }
             }
             SlimScrollView {
                 Group {
                     switch page.section {
-                    case .runners: RunnerPicker(settings: settings, importInPlace: importRunner, gameStyle: true)
-                    case .decor: RunnerDecorView(settings: settings)
+                    case .pets:
+                        RunnerPicker(settings: settings, importInPlace: importRunner, gameStyle: true, large: windowed)
+                    case .decor:
+                        RunnerDecorView(settings: settings)
+                    case .game:
+                        GameHub { page.stageAction = StageAction(kind: $0) }
                     }
                 }
                 .padding(.horizontal, 2)
@@ -404,67 +379,79 @@ struct PopoverView: View {
             // 팝오버는 사용량 화면과 높이를 맞춰 전환할 때 출렁이지 않게 고정하고, 창에서는 남은 높이를 다 쓴다
             .frame(height: windowed ? nil : 304)
             .frame(maxHeight: windowed ? .infinity : nil)
-            // 시스템 단추 대신 꾸미기와 같은 단추로 둔다
-            HStack(spacing: 6) {
-                if !windowed {
+            if !windowed {
+                HStack(spacing: 6) {
                     Button { page.showsRunners = false } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
                             Text("사용량")
                         }
                     }
-                    .buttonStyle(GameButtonStyle(height: 22))
+                    .buttonStyle(GameButtonStyle(height: 24))
                     .keyboardShortcut(.cancelAction)
-                }
-                Spacer()
-                if page.section == .runners {
-                    Menu {
-                        Picker("색상", selection: $settings.spriteTheme) {
-                            ForEach(SpriteTheme.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                        }
-                        .pickerStyle(.inline)
-                        .labelsHidden()
-                    } label: {
-                        // 메뉴는 단추 꼴을 시스템이 그려서 같은 모습을 이름표에 직접 칠한다
-                        HStack(spacing: 4) {
-                            Image(systemName: "paintpalette.fill").font(.system(size: 9.5))
-                            Text(settings.spriteTheme.displayName)
-                            Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold)).opacity(0.7)
-                        }
-                        .gameChip()
+                    Spacer()
+                    if let openRunners {
+                        Button(action: openRunners) { Text("꾸미기·기록") }
+                            .buttonStyle(GameButtonStyle(height: 24))
+                            .tip("앱 창에서 배경, 효과, 코스 기록 보기")
                     }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .tip("러너 색상")
-                    Button(action: pickRandomRunner) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "shuffle").font(.system(size: 9, weight: .bold))
-                            Text("아무거나")
-                        }
-                    }
-                    .buttonStyle(GameButtonStyle(height: 22))
-                    .tip("다른 러너 하나를 아무거나 고르기")
+                    petTools
                 }
+                .padding(.bottom, 2)
             }
-            .padding(.bottom, 2)
         }
     }
 
-    /// 러너·꾸미기 탭.
+    /// 러너 색상과 아무거나.
+    private var petTools: some View {
+        HStack(spacing: 6) {
+            Menu {
+                Picker("색상", selection: $settings.spriteTheme) {
+                    ForEach(SpriteTheme.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                // 메뉴는 단추 꼴을 시스템이 그려서 같은 모습을 이름표에 직접 칠한다
+                HStack(spacing: 4) {
+                    Image(systemName: "paintpalette.fill").font(.system(size: 10.5))
+                    Text(settings.spriteTheme.displayName)
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
+                }
+                .gameChip(height: 24)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .tip("러너 색상")
+            Button(action: pickRandomRunner) {
+                HStack(spacing: 3) {
+                    Image(systemName: "shuffle").font(.system(size: 10, weight: .bold))
+                    Text("아무거나")
+                }
+            }
+            .buttonStyle(GameButtonStyle(height: 24))
+            .tip("다른 러너 하나를 아무거나 고르기")
+        }
+        .fixedSize()
+    }
+
+    /// 펫·꾸미기·게임 탭. 폭을 똑같이 나눠 어디서든 같은 자리에서 누른다.
     private var hubTabs: some View {
         HStack(spacing: 2) {
             ForEach(PopoverPage.Section.allCases, id: \.self) { section in
                 let on = page.section == section
                 Button { page.section = section } label: {
-                    Text(section.title)
-                    .font(.system(size: 11.5, weight: on ? .semibold : .medium))
+                    HStack(spacing: 5) {
+                        Image(systemName: section.icon).font(.system(size: 12, weight: .semibold))
+                        Text(section.title).font(.system(size: 13, weight: on ? .bold : .medium))
+                    }
                     .foregroundStyle(on ? Theme.primary : Theme.secondary)
-                    .padding(.horizontal, 10)
-                    .frame(height: 24)
-                    .background(Capsule().fill(Color.white.opacity(on ? 0.14 : 0)))
-                    .contentShape(Capsule())
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 32)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(on ? 0.14 : 0)))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(section.title)
@@ -472,8 +459,8 @@ struct PopoverView: View {
             }
         }
         .padding(2)
-        .background(Capsule().fill(GameKit.slot))
-        .overlay(Capsule().strokeBorder(Theme.hairline))
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(GameKit.slot))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Theme.hairline))
     }
 
     // MARK: 세션 · 주간
@@ -757,19 +744,33 @@ final class HoverIndex: ObservableObject {
 
 /// 팝오버 안 화면과 무대에 보낼 동작. `@State`를 못 쓰는 이유는 HoverFlag 참고.
 final class PopoverPage: ObservableObject {
+    /// 러너 화면의 갈래. 펫(고르기·찾기), 꾸미기(배경·꼬리·발먼지·부딪힘), 게임(비행·달리기).
     enum Section: CaseIterable {
-        case runners, decor
+        case pets, decor, game
 
         var title: String {
             switch self {
-            case .runners: "러너"
+            case .pets: "펫"
             case .decor: "꾸미기"
+            case .game: "게임"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .pets: "pawprint.fill"
+            case .decor: "sparkles"
+            case .game: "gamecontroller.fill"
             }
         }
     }
 
     @Published var showsRunners = false
-    @Published var section: Section = .runners
+    @Published var section: Section = .pets
     @Published var trick: TrickRequest?
+    /// 앱 창에서 게임 중인지. 이때 무대가 창 폭을 다 쓴다.
+    @Published var playing = false
+    /// 펫 카드에서 누른 간식 주기·포토카드. 무대가 받아 그 자리에서 한다.
+    @Published var stageAction: StageAction?
 }
 

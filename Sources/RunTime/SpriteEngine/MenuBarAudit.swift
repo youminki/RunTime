@@ -96,7 +96,7 @@ enum MenuBarAudit {
                     } ?? .each(canvas.visibleY)
                     SpriteFrames.render(cg, rig: character.rig, frame: frame, theme: theme, themePhase: 0,
                                         alarm: display == .alert, fit: fit) { cg, scene, tint, front in
-                        display?.drawLoopEffects(in: cg, scene: scene, phase: 0.3, tint: tint, front: front)
+                        display?.drawLoopEffects(in: cg, scene: scene, phase: 0.3, tint: tint, front: front, menuBar: true)
                     }
                 }
                 return SpriteRasterizer.cgImage(image, canvas: canvas, appearance: dark, halo: halo)

@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import HostsCore
 import ReportCore
@@ -183,6 +184,25 @@ if let index = CommandLine.arguments.firstIndex(of: "--game-shots") {
 }
 
 // README용: 고스트와 겨루는 게임 장면을 이어 찍어 PNG로 저장하고 종료.
+if CommandLine.arguments.contains("--stage-check") {
+    Task { @MainActor in exit(StageCheck.run(character: Runner.cat.character) ? 0 : 1) }
+    dispatchMain()
+}
+
+if let index = CommandLine.arguments.firstIndex(of: "--flight-shots") {
+    let path = CommandLine.arguments.dropFirst(index + 1).first ?? "flight-shots"
+    Task { @MainActor in
+        do {
+            try FlightShots.run(to: URL(fileURLWithPath: path), character: Runner.cat.character)
+            exit(0)
+        } catch {
+            print("failed: \(error)")
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--game-frames") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "game-frames"
     Task { @MainActor in
@@ -211,6 +231,65 @@ if CommandLine.arguments.contains("--game-bench") {
         exit(0)
     }
     dispatchMain()
+}
+
+// Petdex 시트 자르기 점검: 받은 시트 PNG를 폴더에 러너 프레임으로 잘라 두고 종료.
+// 펫 만들기 점검: 설명 한 줄로 실제로 만들어 고른다. --pet-watch는 몇 초 동안 폴더를 지켜본다
+if let index = CommandLine.arguments.firstIndex(of: "--pet-make") {
+    let text = CommandLine.arguments.dropFirst(index + 1).joined(separator: " ")
+    let factory = PetFactory.shared
+    let watch = factory.$state.sink { state in
+        print("상태: \(state)")
+        if case .done = state {
+            print("고른 펫: \(AppSettings.shared.customRunnerID ?? "-")")
+            exit(0)
+        }
+        if case .failed = state { exit(1) }
+    }
+    factory.make(text, settings: AppSettings.shared)
+    withExtendedLifetime(watch) { RunLoop.main.run(until: Date().addingTimeInterval(300)) }
+    exit(1)
+}
+if let index = CommandLine.arguments.firstIndex(of: "--pet-watch") {
+    let seconds = CommandLine.arguments.dropFirst(index + 1).first.flatMap(Double.init) ?? 10
+    PetWatcher.shared.start(settings: AppSettings.shared)
+    let watch = PetFactory.shared.$state.sink { print("상태: \($0)") }
+    withExtendedLifetime(watch) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
+    print("펫: \(PetdexStore.shared.pets.map(\.name)), 고른 펫: \(AppSettings.shared.customRunnerID ?? "-")")
+    exit(0)
+}
+
+// 직접 만든 펫 찾기·가져오기 점검: 찾은 펫을 적고, 경로를 주면 가져온다
+if let index = CommandLine.arguments.firstIndex(of: "--pet-import") {
+    for pet in PetdexStore.shared.scanLocalPets() { print("found: \(pet.name) \(pet.slug) \(pet.sheet.lastPathComponent)") }
+    guard let path = CommandLine.arguments.dropFirst(index + 1).first else { exit(0) }
+    PetdexStore.shared.importLocal(from: URL(fileURLWithPath: path)) { result in
+        switch result {
+        case .success(let pet):
+            print("imported: \(pet.name) \(pet.slug) picture=\(PetdexStore.shared.character(for: pet) != nil)")
+            exit(0)
+        case .failure(let error):
+            print("failed: \(error.localizedDescription)")
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
+if let index = CommandLine.arguments.firstIndex(of: "--petdex-extract") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    guard args.count == 2, let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[0]) as CFURL, nil) else {
+        print("usage: --petdex-extract <sheet.png> <folder>")
+        exit(1)
+    }
+    do {
+        try PetdexAtlas.extract(from: source, to: URL(fileURLWithPath: args[1]))
+        print("saved: \(args[1])")
+        exit(0)
+    } catch {
+        print("failed: \(error)")
+        exit(1)
+    }
 }
 
 // 디자인 점검용: 모든 러너의 대표 장면을 PNG로 저장하고 종료.
@@ -242,7 +321,11 @@ if let index = CommandLine.arguments.firstIndex(of: "--stage-shots") {
     let args = Array(CommandLine.arguments.dropFirst(index + 1))
     // 기본 러너 id나 Petdex·내 그림 러너 id (메뉴바 점검과 같은 목록)
     let id = args.dropFirst().first ?? ""
-    let character = MenuBarAudit.entries().first { $0.id == id }?.character ?? Runner.cat.character
+    // "sheet:<폴더>"면 --petdex-extract로 자른 폴더를 바로 러너로 쓴다
+    let sheet = id.hasPrefix("sheet:") ? SheetRig(folder: URL(fileURLWithPath: String(id.dropFirst(6)))) : nil
+    let character = sheet.map {
+        RunnerCharacter(key: id, name: "시트", sound: "시트", rig: FittedRig($0), fixedTheme: .natural)
+    } ?? MenuBarAudit.entries().first { $0.id == id }?.character ?? Runner.cat.character
     Task { @MainActor in
         do {
             let wearing = (args.dropFirst(2).first ?? "").split(separator: ",").compactMap { Cosmetic(rawValue: String($0)) }

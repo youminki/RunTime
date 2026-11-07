@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct SheetRig: CharacterRig {
     let folder: URL
     let palette = CharacterPalette(body: .white, belly: .white, dark: .black)
+    var isPicture: Bool { true }
     private let meta: SheetFrames.Meta
 
     init?(folder: URL) {
@@ -21,13 +22,22 @@ struct SheetRig: CharacterRig {
         // 원하는 줄이 비었으면 뒤의 줄을 쓴다
         let order: [String]
         switch pose.activity {
-        case .walk, .run: order = ["run", "idle"]
-        case .stand: order = pose.wave == nil ? ["idle", "run"] : ["wave", "idle", "run"]
-        case .sit: order = ["sad", "run", "idle"]     // 한도 80% 이상 지침
-        case .sleep: order = ["wait", "run", "idle"]
+        case .walk, .run: order = pose.jump == nil ? ["run", "idle"] : ["jump", "run", "idle"]
+        case .stand:
+            order = pose.wave != nil ? ["wave", "idle", "run"] : pose.review != nil ? ["review", "idle", "run"] : ["idle", "run"]
+        // 한도 80%는 기다리는 줄(고개 갸웃), 95%는 슬픔 줄(고개 숙임)
+        case .sit: order = pose.sad ? ["sad", "wait", "idle"] : ["wait", "sad", "idle"]
+        // 시트에 잠자는 줄이 없어 서 있기 줄을 천천히 돌린다 (말풍선 Z가 잠을 알린다)
+        case .sleep: order = ["idle", "wait"]
         }
         guard let (row, frames) = SheetFrames.frames(folder, rows: order) else { return }
-        let cycle = row == "wave" ? (pose.wave ?? 0) - floor(pose.wave ?? 0) : pose.cycle
+        func loop(_ value: CGFloat?) -> CGFloat { (value ?? 0) - floor(value ?? 0) }
+        let cycle = switch row {
+        case "wave": loop(pose.wave)
+        case "review": loop(pose.review)
+        case "jump": min(max(pose.jump ?? 0, 0), 0.999)
+        default: pose.cycle
+        }
         let image = frames.images[min(Int(cycle * CGFloat(frames.images.count)), frames.images.count - 1)]
         // 출력 1px이 차지할 설계 단위. 기준 칸의 키를 목표 키에 맞춘다.
         let unit = FittedRig.targetHeight / CGFloat(max(meta.h, 1))
@@ -63,7 +73,7 @@ enum SheetFrames {
         let content: CGRect
     }
 
-    static let rows = ["idle", "run", "sad", "wait", "wave"]
+    static let rows = ["idle", "run", "sad", "wait", "wave", "jump", "review"]
 
     private static var metas: [URL: Meta] = [:]
     private static var cache: [String: Row] = [:]
@@ -138,7 +148,7 @@ enum SheetFrames {
     }
 }
 
-/// Petdex 스프라이트 시트(192×208 칸, 8열, 9줄 또는 11줄)에서 서 있기(0줄)·달리기(1줄)·손 흔들기(3줄)·슬픔(5줄)·기다리기(6줄)를
+/// Petdex 스프라이트 시트(192×208 칸, 8열, 9줄 또는 11줄)에서 서 있기(0줄)·달리기(1줄)·손 흔들기(3줄)·점프(4줄)·슬픔(5줄)·기다리기(6줄)·검토(8줄)를
 /// 뽑아 SheetRig 폴더로 쓴다. 줄 구성은 Petdex 저장소의 src/lib/pet-states.ts, 규격 검사는 src/lib/sprite-atlas.ts를 따른다.
 enum PetdexAtlas {
     enum ExtractError: LocalizedError {
@@ -218,9 +228,9 @@ enum PetdexAtlas {
 
         // 달리기 줄이 비었으면 제자리 달리기(7줄), 그것도 없으면 왼쪽 달리기(2줄)를 뒤집어 쓴다
         var sources: [String: (row: Int, mirrored: Bool)] = ["idle": (0, false), "sad": (5, false), "wait": (6, false),
-                                                             "wave": (3, false)]
+                                                             "wave": (3, false), "jump": (4, false), "review": (8, false)]
         var scanned: [String: (columns: [Int], box: Box?)] = [:]
-        for name in ["idle", "sad", "wait", "wave"] { scanned[name] = scan(sources[name]!.row) }
+        for name in ["idle", "sad", "wait", "wave", "jump", "review"] { scanned[name] = scan(sources[name]!.row) }
         for (row, mirrored) in [(1, false), (7, false), (2, true)] {
             let result = scan(row)
             if result.box != nil {
@@ -258,7 +268,7 @@ enum PetdexAtlas {
                 let k = CGFloat(frameH) / r.height
                 crops[name] = (r, CGSize(width: r.width * k, height: CGFloat(frameH)))
                 frameW = max(frameW, Int((r.width * k).rounded(.up)))
-            } else if !perRow, ["sad", "wait", "wave"].contains(name), let rowBox {
+            } else if !perRow, ["sad", "wait", "wave", "jump", "review"].contains(name), let rowBox {
                 // 서 있기·달리기보다 넓게 그린 줄(누운 자세, 머리 위 표시, 든 손)은 칸을 넓히되 배율은 그대로 둔다
                 let r = padded(shared.union(rowBox))
                 crops[name] = (r, CGSize(width: (r.width * s).rounded(.up), height: (r.height * s).rounded(.up)))
@@ -302,6 +312,9 @@ enum PetdexAtlas {
                 counts[name] = i + 1
             }
         }
+        // 줄이 빈 시트도 본 것으로 남겨 다시 받지 않게 한다
+        counts["jump"] = counts["jump"] ?? 0
+        counts["review"] = counts["review"] ?? 0
         let meta = SheetFrames.Meta(w: frameW, h: frameH, counts: counts, rects: rects.isEmpty ? nil : rects)
         try JSONEncoder().encode(meta).write(to: folder.appendingPathComponent("frames.json"))
     }

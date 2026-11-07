@@ -10,7 +10,7 @@ struct WelcomeView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
                 // 사용량 창 무대처럼 하늘과 언덕 위를 고른 러너가 달린다
-                ItemPreview(kind: .cosmetic(.pineTrack), character: settings.character)
+                ItemPreview(kind: .cosmetic(.cloudWoodsTrack), character: settings.character)
                     .frame(width: 96, height: 64)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))

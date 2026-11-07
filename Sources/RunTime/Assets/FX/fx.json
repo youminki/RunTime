@@ -1,0 +1,191 @@
+{
+"starburst": {
+"frames": 12,
+"w": 72,
+"h": 72,
+"pixel": false
+},
+"ringBoom": {
+"frames": 14,
+"w": 57,
+"h": 72,
+"pixel": false
+},
+"boom": {
+"frames": 14,
+"w": 72,
+"h": 65,
+"pixel": false
+},
+"pixelBoom": {
+"frames": 6,
+"w": 36,
+"h": 30,
+"pixel": true
+},
+"fireBlast": {
+"frames": 18,
+"w": 22,
+"h": 22,
+"pixel": true
+},
+"firePlume": {
+"frames": 17,
+"w": 20,
+"h": 18,
+"pixel": true
+},
+"smokePoff": {
+"frames": 9,
+"w": 20,
+"h": 19,
+"pixel": true
+},
+"puff": {
+"frames": 7,
+"w": 28,
+"h": 29,
+"pixel": true
+},
+"rainbowStar": {
+"frames": 12,
+"w": 16,
+"h": 16,
+"pixel": true,
+"loop": true
+},
+"pumpingHeart": {
+"frames": 4,
+"w": 28,
+"h": 26,
+"pixel": true,
+"loop": true
+},
+"gemHeart": {
+"frames": 4,
+"w": 32,
+"h": 32,
+"pixel": true,
+"loop": true
+},
+"coin": {
+"frames": 8,
+"w": 31,
+"h": 32,
+"pixel": true,
+"loop": true
+},
+"water": {
+"frames": 5,
+"w": 52,
+"h": 64,
+"pixel": false
+},
+"pure": {
+"frames": 10,
+"w": 64,
+"h": 54,
+"pixel": false
+},
+"plasmaBubble": {
+"frames": 10,
+"w": 9,
+"h": 9,
+"pixel": true
+},
+"plasmaSparkle": {
+"frames": 8,
+"w": 13,
+"h": 13,
+"pixel": true
+},
+"plasmaPuff": {
+"frames": 4,
+"w": 5,
+"h": 5,
+"pixel": true
+},
+"candyPop_pink": {
+"frames": 5,
+"w": 80,
+"h": 77,
+"pixel": false
+},
+"candyPop_blue": {
+"frames": 5,
+"w": 80,
+"h": 77,
+"pixel": false
+},
+"candyPop_green": {
+"frames": 5,
+"w": 80,
+"h": 77,
+"pixel": false
+},
+"candyPop_red": {
+"frames": 5,
+"w": 80,
+"h": 77,
+"pixel": false
+},
+"balloonHeart": {
+"frames": 8,
+"w": 16,
+"h": 16,
+"pixel": true
+},
+"balloonDots": {
+"frames": 8,
+"w": 16,
+"h": 16,
+"pixel": true
+},
+"balloonExclaim": {
+"frames": 8,
+"w": 16,
+"h": 16,
+"pixel": true
+},
+"balloonQuestion": {
+"frames": 8,
+"w": 16,
+"h": 16,
+"pixel": true
+},
+"birdYellow": {
+"frames": 6,
+"w": 23,
+"h": 22,
+"pixel": true,
+"loop": true
+},
+"birdMaroon": {
+"frames": 6,
+"w": 27,
+"h": 21,
+"pixel": true,
+"loop": true
+},
+"birdRed": {
+"frames": 6,
+"w": 27,
+"h": 22,
+"pixel": true,
+"loop": true
+},
+"birdPurple": {
+"frames": 6,
+"w": 27,
+"h": 23,
+"pixel": true,
+"loop": true
+},
+"slime": {
+"frames": 4,
+"w": 53,
+"h": 40,
+"pixel": true,
+"loop": true
+}
+}

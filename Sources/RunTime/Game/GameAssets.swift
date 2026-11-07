@@ -4,7 +4,7 @@ import GameCore
 /// 게임 그림 (Kenney Pixel Platformer, CC0. 출처는 Assets/Game/CREDITS.txt).
 /// 원본 1px을 2pt로, 이웃 픽셀 그대로 키워 그린다.
 enum GameSprite: String, CaseIterable {
-    case spikes, mushroom, cactus, tree, crab, drill, bat, spikeball, crusher, coin
+    case spikes, mushroom, cactus, tree, crab, drill, bat, spikeball, crusher
 
     static let pixelScale: CGFloat = 2
 
@@ -22,7 +22,6 @@ enum GameSprite: String, CaseIterable {
         case .drill: return ["drill_0", "drill_1", "drill_2"]
         case .bat: return ["bat_0", "bat_1", "bat_2", "bat_1"]
         case .crusher: return ["crusher_0", "crusher_1"]
-        case .coin: return ["coin_0", "coin_1"]
         default: return [rawValue]
         }
     }
@@ -31,7 +30,6 @@ enum GameSprite: String, CaseIterable {
     var framesPerSecond: Double {
         switch self {
         case .bat: return 10
-        case .coin: return 5
         default: return 7
         }
     }

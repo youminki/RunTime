@@ -11,6 +11,7 @@ struct FittedRig: CharacterRig {
     let placedBottom: CGFloat
 
     var palette: CharacterPalette { base.palette }
+    var isPicture: Bool { base.isPicture }
 
     /// 목표 키와 폭 (36×22 칸, 바닥 y = 21). 위쪽은 Z·하트 같은 효과가 들어갈 자리를 조금 남긴다.
     static let targetHeight: CGFloat = 18.5

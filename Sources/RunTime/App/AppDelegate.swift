@@ -43,6 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 없앤 호감도 기능이 남긴 값
+        for key in ["bondSnacks", "bondAffection", "bondFrames"] { UserDefaults.standard.removeObject(forKey: key) }
+        PetWatcher.shared.start(settings: engine.settings)
         // 점검용: 앱 창의 한 화면을 바로 연다 (UI 자동화로 눌러 볼 때)
         if let name = ProcessInfo.processInfo.environment["RUNTIME_OPEN_PAGE"], let page = MainPage(rawValue: name) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
@@ -190,12 +193,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             .store(in: &cancellables)
 
-        // Claude가 일을 마치면 메뉴바 러너가 축하 동작으로 알린다 (다른 창을 보고 있어도 눈에 띄게).
+        // Claude가 일을 마치면 메뉴바 러너가 손을 흔들며 알린다 (다른 창을 보고 있어도 눈에 띄게).
         // 오래 걸린 작업이고 사용량 창이 닫혀 있으면 알림도 보낸다. 짧은 대답마다 보내면 대화하는 동안 계속 울린다.
         engine.turnEnded
             .sink { [weak self] turn in
                 guard let self else { return }
-                _ = self.animator.perform(.celebrate)
+                _ = self.animator.perform(.greet)
                 guard self.engine.settings.claudeDoneAlertEnabled, turn.duration >= Self.claudeDoneMinimum,
                       self.popover?.isShown != true,
                       // 무대가 보이면 러너가 말풍선으로 알리니 알림은 보내지 않는다
@@ -482,6 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                                   openWorkLog: { [weak self] in self?.openWorkLog() },
                                   openDesign: { [weak self] in self?.showMain(.design) },
                                   openAsWindow: { [weak self] in self?.openUsageWindow() },
+                                  openRunners: { [weak self] in self?.showMain(.runners) },
                                   performTrick: { [weak self] trick in self?.animator.perform(trick) }))
         // 내용 크기가 바뀌면 창 제약 대신 팝오버에 알려서, 팝오버가 메뉴바 쪽 자리를 지킨 채 크기를 바꾸게 한다
         content.sizingOptions = [.preferredContentSize]
@@ -609,7 +613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popoverFrameObservers.forEach(NotificationCenter.default.removeObserver)
         popoverFrameObservers = []
         anchorWindow?.orderOut(nil)
-        // 꾸미기에서 써 보던 트랙·날씨가 닫힌 뒤에도 남지 않게
+        // 꾸미기에서 써 보던 트랙이 닫힌 뒤에도 남지 않게
         GameDecor.shared.tryingOn = nil
         AppUpdater.shared.appClosedWindow()
     }

@@ -1,11 +1,13 @@
 import AppKit
 
-/// 게임 효과음 (Kenney Digital Audio, CC0). 메뉴바 앱이라 작게 낸다.
+/// 게임과 무대 효과음 (CC0, 출처는 Assets/Game/CREDITS.txt). 메뉴바 앱이라 작게 낸다.
 final class GameSound {
     enum Effect: String, CaseIterable {
         case jump, coin, hit, milestone, record, airjump, shield, nearmiss
         // 짧은 음악: 신기록·고스트 이김, 게임 오버
         case fanfare, gameover
+        // 무대: 쓰다듬기
+        case pet
     }
 
     static let shared = GameSound()
@@ -24,7 +26,7 @@ final class GameSound {
             guard let url = folder?.appendingPathComponent("\(effect.rawValue).m4a"),
                   let sound = NSSound(contentsOf: url, byReference: false) else { continue }
             sound.volume = switch effect {
-            case .jump, .nearmiss: 0.25
+            case .jump, .nearmiss, .pet: 0.25
             case .fanfare, .gameover: 0.3
             default: 0.35
             }
