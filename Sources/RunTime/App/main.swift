@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 import Combine
 import AppKit
 import HostsCore
@@ -236,20 +237,90 @@ if CommandLine.arguments.contains("--game-bench") {
 // Petdex 시트 자르기 점검: 받은 시트 PNG를 폴더에 러너 프레임으로 잘라 두고 종료.
 // 펫 만들기 점검: 설명 한 줄로 실제로 만들어 고른다. --pet-watch는 몇 초 동안 폴더를 지켜본다
 if let index = CommandLine.arguments.firstIndex(of: "--pet-make") {
-    let text = CommandLine.arguments.dropFirst(index + 1).joined(separator: " ")
     let factory = PetFactory.shared
+    var revised = false
     let watch = factory.$state.sink { state in
         print("상태: \(state)")
         if case .done = state {
             print("고른 펫: \(AppSettings.shared.customRunnerID ?? "-")")
+            // RUNTIME_PET_REVISE=고칠 점: 다 만든 뒤 한 번 고쳐 본다
+            if let ask = ProcessInfo.processInfo.environment["RUNTIME_PET_REVISE"], !revised {
+                revised = true
+                DispatchQueue.main.async { factory.revise(ask, settings: AppSettings.shared) }
+                return
+            }
             exit(0)
         }
         if case .failed = state { exit(1) }
     }
-    factory.make(text, settings: AppSettings.shared)
-    withExtendedLifetime(watch) { RunLoop.main.run(until: Date().addingTimeInterval(300)) }
+    // --pet-make --reference <그림> <설명>
+    var words = Array(CommandLine.arguments.dropFirst(index + 1))
+    var references: [URL] = []
+    while let at = words.firstIndex(of: "--reference"), at + 1 < words.count {
+        references.append(URL(fileURLWithPath: words[at + 1]))
+        words.removeSubrange(at...(at + 1))
+    }
+    // RUNTIME_PET_CANCEL_AFTER=초: 그만큼 뒤에 멈추기를 눌러 그리던 프로세스가 끝나는지 본다
+    if let after = ProcessInfo.processInfo.environment["RUNTIME_PET_CANCEL_AFTER"].flatMap(Double.init) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + after) {
+            factory.cancel()
+            print("멈춤: 상태 \(factory.state)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                let pipe = Pipe()
+                let check = Process()
+                check.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+                check.arguments = ["-f", "petmaker.py"]
+                check.standardOutput = pipe
+                try? check.run()
+                check.waitUntilExit()
+                print("남은 그림 프로세스: \(check.terminationStatus == 0 ? "있음" : "없음")")
+                exit(0)
+            }
+        }
+    }
+    factory.make(words.joined(separator: " "), references: references, settings: AppSettings.shared)
+    withExtendedLifetime(watch) { RunLoop.main.run(until: Date().addingTimeInterval(3600)) }
     exit(1)
 }
+// 참고 그림 받기 점검: 파일 끌어다 놓기, 그림 붙여 넣기(데이터), 그림이 아닌 파일, 네 장째를 차례로 넣어 본다
+if let index = CommandLine.arguments.firstIndex(of: "--pet-drop-check") {
+    let paths = CommandLine.arguments.dropFirst(index + 1).map { URL(fileURLWithPath: $0) }
+    let maker = PetMakerText()
+    var providers = paths.map { NSItemProvider(contentsOf: $0) ?? NSItemProvider() }
+    if let first = paths.first, let data = try? Data(contentsOf: first) {
+        providers.insert(NSItemProvider(item: data as NSData, typeIdentifier: UTType.png.identifier), at: 0)
+    }
+    maker.take(Array(providers.prefix(2)))
+    maker.take(Array(providers.dropFirst(2)))
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+        print("받은 그림 \(maker.references.count)장: \(maker.references.map(\.lastPathComponent))")
+        exit(maker.references.count <= 3 ? 0 : 1)
+    }
+    dispatchMain()
+}
+
+// Petdex 이름 다듬기 점검 (`--petdex-names [묶음 수]`): 목록을 받고 그만큼 Claude에 물어 바뀐 이름을 보인다
+if let index = CommandLine.arguments.firstIndex(of: "--petdex-names") {
+    let batches = CommandLine.arguments.dropFirst(index + 1).first.flatMap { Int($0) } ?? 1
+    let store = PetdexStore.shared
+    store.loadCatalog()
+    var seen = 0
+    var before: [String: String] = [:]
+    Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+        guard !store.entries.isEmpty else { return }
+        if before.isEmpty { before = store.koreanNames }
+        if !store.isRefiningNames { seen += 1 }
+        let changed = store.entries.filter { before[$0.slug] != store.koreanNames[$0.slug] }
+        if seen > batches * 2 || changed.count >= batches * 100 {
+            print("바뀐 이름 \(changed.count)개")
+            for entry in changed.prefix(40) { print("  \(entry.displayName) : \(before[entry.slug] ?? "") → \(store.koreanNames[entry.slug] ?? "")") }
+            exit(0)
+        }
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(600))
+    exit(1)
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--pet-watch") {
     let seconds = CommandLine.arguments.dropFirst(index + 1).first.flatMap(Double.init) ?? 10
     PetWatcher.shared.start(settings: AppSettings.shared)

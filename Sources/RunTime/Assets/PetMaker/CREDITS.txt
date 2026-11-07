@@ -1,0 +1,8 @@
+extract_strip_frames.py, compose_atlas.py
+  OpenAI hatch-pet skill (https://github.com/openai/skills/tree/main/skills/.curated/hatch-pet)
+  Apache License 2.0, LICENSE-hatch-pet.txt. Unmodified copies.
+
+Model (downloaded on first use, not bundled)
+  FLUX.2 [klein] 4B, Black Forest Labs, Apache License 2.0
+  4-bit MLX weights: https://huggingface.co/Runpod/FLUX.2-klein-4B-mflux-4bit
+  Runtime: mflux (https://github.com/filipstrand/mflux), MIT

@@ -2,7 +2,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UsageCore
 
-/// 펫 고르기. 맨 위에 Claude로 만들기와 Petdex에서 찾기를 두고, 아래에 내 펫을 늘어놓는다.
+/// 펫 고르기. 맨 위 '펫 만들기' 카드는 늘 새로 그리고, 그 아래 '내 펫'은 가진 펫을 찾고 고른다.
+/// Petdex에서 받기는 내 펫 쪽에 둔다 (만들기와 섞이면 무엇을 하는지 헷갈린다).
 /// 고른 펫과 마우스를 올린 펫은 실시간으로 달리고, 칸마다 호감도 하트와 같이 달리는 동료 표시가 붙는다.
 /// 오른쪽 클릭으로 동료로 데려가기, 이름 바꾸기, 삭제를 한다.
 struct RunnerPicker: View {
@@ -33,10 +34,9 @@ struct RunnerPicker: View {
         let builtIns = Runner.allCases.filter { filter.matches($0.displayName, $0.rawValue) }
         let customs = store.runners.filter { filter.matches($0.name, "") }
         VStack(alignment: .leading, spacing: 10) {
-            actions
-            factoryStatus
+            makeCard
+            myPetsHeader
             found
-            if petdex.pets.count + store.runners.count > 6 { myPetSearch }
             if !made.isEmpty || !customs.isEmpty {
                 groupTitle("내가 만든 펫")
                 LazyVGrid(columns: columns, spacing: 8) {
@@ -87,42 +87,168 @@ struct RunnerPicker: View {
                     if let importInPlace { importInPlace() } else { RunnerImport.choose(settings: settings, report: importState.show) }
                 }
                 textLink("펫 폴더·zip 가져오기") { chooseFolder() }
+                if factory.isPrepared, !factory.isWorking {
+                    textLink("펫 만들기 모델 지우기 (\(ByteCountFormatter.string(fromByteCount: factory.storageSize, countStyle: .file)))") {
+                        factory.removeTools()
+                    }
+                    .tip("다음에 펫을 만들 때 다시 받아요. 만든 펫은 남아요")
+                }
             }
             .padding(.top, 2)
         }
     }
 
-    /// 펫을 늘리는 두 가지 길. 칸에 설명을 쓰고 Claude로 만들거나, Petdex 창을 열어 직접 찾는다.
-    @ViewBuilder
-    private var actions: some View {
-        if large {
-            HStack(spacing: 8) {
-                describeField
-                makeButton
-                findButton
+    /// 펫 만들기 카드: 설명, 참고 그림(세 장까지), 만들기 단추. 만드는 중이면 진행 화면이 이 자리를 쓴다.
+    private var makeCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "wand.and.stars").font(.system(size: 13, weight: .bold)).foregroundStyle(GameKit.gold)
+                Text("펫 만들기").font(.system(size: 13.5, weight: .bold)).foregroundStyle(Theme.primary)
+                Text("설명이나 그림으로 이 Mac에서 새로 그려요").font(.system(size: 12)).foregroundStyle(Theme.tertiary).lineLimit(1)
             }
-        } else {
-            VStack(spacing: 6) {
-                describeField
-                HStack(spacing: 6) {
+            if factory.isWorking {
+                progressView
+            } else {
+                if large {
+                    HStack(spacing: 8) {
+                        describeField
+                        makeButton
+                    }
+                } else {
+                    describeField
                     makeButton
-                    findButton
+                }
+                referenceRow
+                factoryStatus
+            }
+        }
+        .padding(10)
+        .slotFrame(radius: 11)
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .strokeBorder(GameKit.gold.opacity(maker.dropping ? 0.9 : 0), lineWidth: 2))
+        .onDrop(of: [.fileURL, .image], isTargeted: $maker.dropping) { providers in
+            maker.take(providers)
+            return true
+        }
+    }
+
+    /// 참고 그림 줄: 넣은 그림과 더하기 칸. 그림을 카드 아무 데나 끌어다 놓아도 된다.
+    private var referenceRow: some View {
+        HStack(spacing: 8) {
+            ForEach(Array(maker.references.enumerated()), id: \.offset) { index, url in
+                ZStack(alignment: .topTrailing) {
+                    PreviewImage(url: url)
+                        .frame(width: 40, height: 40)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06)))
+                    Button { maker.references.remove(at: index) } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.white, .black.opacity(0.6))
+                    }
+                    .buttonStyle(.plain).offset(x: 4, y: -4).accessibilityLabel("이 그림 빼기")
+                }
+            }
+            if maker.references.count < 3 {
+                Button(action: chooseReference) {
+                    VStack(spacing: 1) {
+                        Image(systemName: "plus").font(.system(size: 11, weight: .bold))
+                        Text("그림").font(.system(size: 10.5))
+                    }
+                    .foregroundStyle(Theme.secondary)
+                    .frame(width: 40, height: 40)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("참고 그림 넣기")
+            }
+            Text(maker.references.isEmpty
+                 ? "원작이 있는 캐릭터는 그림을 끌어다 놓거나 붙여 넣으면 똑같이 그려요 (세 장까지, 다른 각도면 더 좋아요)"
+                 : "이 그림을 따라 그려요. 다른 각도 그림을 더 넣으면 옆모습이 더 닮아요")
+                .font(.system(size: 12)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 만드는 중: 단계, 진행 막대, 남은 시간, 지금까지 그린 그림.
+    private var progressView: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            if case .working(let text, let since, let done, let total) = factory.state {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(text).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.primary).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(Self.remaining(elapsed: context.date.timeIntervalSince(since), done: done, total: total))
+                            .font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
+                        Button("멈추기") { factory.cancel() }
+                            .buttonStyle(GameButtonStyle(height: 26))
+                    }
+                    HStack(spacing: 8) {
+                        ProgressView(value: Double(done), total: Double(max(total, 1))).tint(GameKit.gold)
+                        Text("\(done)/\(total)").font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    if !factory.previews.isEmpty {
+                        ScrollViewReader { reader in
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(Array(factory.previews.enumerated()), id: \.offset) { index, url in
+                                        PreviewImage(url: url).frame(height: 64).id(index)
+                                    }
+                                }
+                            }
+                            .onChange(of: factory.previews.count) { reader.scrollTo($0 - 1, anchor: .trailing) }
+                        }
+                    }
+                    if factory.guessing {
+                        Text("원작 그림 없이 글로 그리는 중이라 원작과 다를 수 있어요. 끝나면 그림을 넣고 다시 그려 보세요")
+                            .font(.system(size: 12)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
     }
 
-    private var describeField: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "wand.and.stars").font(.system(size: 13, weight: .semibold)).foregroundStyle(GameKit.gold)
-            TextField(large ? "어떤 캐릭터를 만들까요? (맹구, 분홍 리본 고양이)" : "어떤 캐릭터를 만들까요?", text: $maker.text)
-                .textFieldStyle(.plain).font(.system(size: 13.5))
-                .onSubmit(make)
+    /// 지금까지 한 장에 걸린 시간으로 남은 시간을 어림한다. 첫 장 전에는 대략의 값을 보인다.
+    static func remaining(elapsed: TimeInterval, done: Int, total: Int) -> String {
+        guard done > 0 else { return "보통 6~8분" }
+        let left = elapsed / Double(done) * Double(max(total - done, 0))
+        return left < 60 ? "곧 끝나요" : "약 \(Int((left / 60).rounded(.up)))분 남음"
+    }
+
+    /// 내 펫 머리: 이름 찾기와 Petdex에서 받기.
+    private var myPetsHeader: some View {
+        HStack(spacing: 8) {
+            Text("내 펫").font(.system(size: 13.5, weight: .bold)).foregroundStyle(Theme.primary)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                TextField("내 펫 찾기", text: $filter.query)
+                    .textFieldStyle(.plain).font(.system(size: 12.5))
+                if !filter.query.isEmpty {
+                    Button { filter.query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(Theme.tertiary).accessibilityLabel("지우기")
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .frame(maxWidth: large ? 260 : .infinity)
+            .slotFrame(radius: 7)
+            if large { Spacer(minLength: 4) }
+            findButton
         }
-        .padding(.horizontal, 10)
-        .frame(height: 36)
-        .frame(maxWidth: .infinity)
-        .slotFrame(radius: 9)
+        .padding(.top, 4)
+    }
+
+    /// 설명 칸. 붙여 넣은 그림은 참고 그림으로 받는다.
+    private var describeField: some View {
+        TextField(large ? "예: 분홍 리본 고양이, 하늘색 꼬리 여우, 맹구(그림을 넣으면 똑같이)" : "어떤 펫을 만들까요?", text: $maker.text)
+            .textFieldStyle(.plain).font(.system(size: 13.5))
+            .onSubmit(make)
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.25)))
+            .onPasteCommand(of: [.fileURL, .image]) { maker.take($0) }
     }
 
     private var makeButton: some View {
@@ -133,25 +259,25 @@ struct RunnerPicker: View {
                 } else {
                     Image(systemName: "sparkles").font(.system(size: 12, weight: .bold))
                 }
-                Text("Claude로 만들기")
+                Text("만들기")
             }
             .frame(maxWidth: large ? nil : .infinity)
         }
         .buttonStyle(PrimaryGameButtonStyle(height: 36))
-        .disabled(maker.text.trimmingCharacters(in: .whitespaces).isEmpty || factory.isWorking)
-        .tip("설명대로 Claude가 도트를 찍어 바로 러너로 골라요. 1~3분 걸려요")
+        .disabled((maker.text.trimmingCharacters(in: .whitespaces).isEmpty && maker.references.isEmpty) || factory.isWorking)
+        .tip(factory.isPrepared ? "이 Mac에서 새로 그려요 (6~8분, 무료)"
+             : "처음 한 번 그림 도구와 모델(약 5GB)을 받고 이 Mac에서 그려요. 무료이고 그림은 밖으로 보내지 않아요")
     }
 
     private var findButton: some View {
         Button { PetdexWindow.shared.show(settings: settings) } label: {
             HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .bold))
-                Text("Petdex에서 찾기")
+                Image(systemName: "square.and.arrow.down").font(.system(size: 11.5, weight: .bold))
+                Text(large ? "Petdex에서 받기" : "Petdex")
             }
-            .frame(maxWidth: large ? nil : .infinity)
         }
-        .buttonStyle(GameButtonStyle(height: 36))
-        .fixedSize(horizontal: large, vertical: false)
+        .buttonStyle(GameButtonStyle(height: 28))
+        .fixedSize()
         .tip("petdex.dev에 올라온 펫 수천 개 중에서 골라 받기")
     }
 
@@ -161,21 +287,16 @@ struct RunnerPicker: View {
             .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
     }
 
-    private func make() { factory.make(maker.text, settings: settings) }
+    private func make() { factory.make(maker.text, references: maker.references, settings: settings) }
 
-    /// 내 펫이 많을 때만 나오는 이름 찾기.
-    private var myPetSearch: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "line.3.horizontal.decrease").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.tertiary)
-            TextField("내 펫 이름으로 거르기", text: $filter.query)
-                .textFieldStyle(.plain).font(.system(size: 12.5))
-            if !filter.query.isEmpty {
-                Button { filter.query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain).foregroundStyle(Theme.tertiary).accessibilityLabel("지우기")
-            }
-        }
-        .padding(.horizontal, 2)
-        .frame(height: 24)
+    private func chooseReference() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.message = "따라 그릴 캐릭터 그림을 고르세요"
+        panel.prompt = "넣기"
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        maker.add(panel.urls)
     }
 
     @ViewBuilder
@@ -183,35 +304,56 @@ struct RunnerPicker: View {
         switch factory.state {
         case .idle:
             EmptyView()
-        case .working(let text):
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text(text).font(.system(size: 12.5)).foregroundStyle(Theme.primary).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .slotFrame(radius: 9)
+        case .working:
+            EmptyView()
         case .failed(let text):
             statusLine(text, color: .orange, redraw: false)
         case .done(let text):
             statusLine(text, color: Theme.primary, redraw: factory.lastMade != nil)
+            if factory.lastMade != nil { reviseRow }
         }
     }
 
     private func statusLine(_ text: String, color: Color, redraw: Bool) -> some View {
         HStack(spacing: 10) {
             Text(text).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(color).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
             if redraw {
                 Button("다시 그리기") { factory.redraw(settings: settings) }
                     .buttonStyle(.plain).font(.system(size: 12.5, weight: .bold)).foregroundStyle(GameKit.gold)
+                    .tip("같은 설명과 그림으로 다시 그려요")
+                Button("Petdex에 올리기") { factory.shareToPetdex() }
+                    .buttonStyle(.plain).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.secondary)
+                    .tip("zip을 다운로드 폴더에 만들고 Petdex 제출 페이지를 열어요. 올리면 다른 Mac에서도 바로 받아요")
             }
-            Spacer(minLength: 4)
             Button { factory.dismiss() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
                 .buttonStyle(.plain).foregroundStyle(Theme.tertiary).accessibilityLabel("닫기")
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .slotFrame(radius: 9)
+    }
+
+    /// 고치기: 마음에 안 드는 점을 쓰면 지금 펫에서 그 부분만 바꿔 다시 그린다.
+    private var reviseRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "pencil").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.secondary)
+            TextField("고칠 점 (예: 모자를 씌워 줘, 눈을 더 크게, 옷을 파란색으로)", text: $maker.revision)
+                .textFieldStyle(.plain).font(.system(size: 13))
+                .onSubmit(revise)
+            Button("고치기", action: revise)
+                .buttonStyle(GameButtonStyle(height: 28))
+                .disabled(maker.revision.trimmingCharacters(in: .whitespaces).isEmpty)
+                .tip("지금 펫에서 그 부분만 바꿔 다시 그리고, 다 되면 지금 펫을 바꿔요 (6~8분)")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.25)))
+    }
+
+    private func revise() {
+        factory.revise(maker.revision, settings: settings)
+        maker.revision = ""
     }
 
     /// 이 Mac에 이미 있던 펫 (다른 도구로 만든 것). 새로 생기는 펫은 저절로 등록된다.
@@ -448,9 +590,67 @@ final class HoveredRunner: ObservableObject {
     }
 }
 
-/// 펫 설명 입력. `@State`를 못 쓰는 이유는 HoverFlag 참고.
+/// 펫 설명과 참고 그림(세 장까지). `@State`를 못 쓰는 이유는 HoverFlag 참고.
 final class PetMakerText: ObservableObject {
     @Published var text = ""
+    @Published var references: [URL] = []
+    @Published var revision = ""
+    @Published var dropping = false
+
+    func add(_ urls: [URL]) {
+        for url in urls where references.count < 3 && !references.contains(url) && NSImage(contentsOf: url) != nil {
+            references.append(url)
+        }
+    }
+
+    /// 끌어다 놓거나 붙여 넣은 파일이나 그림을 참고 그림으로 받는다. 그림 데이터는 임시 파일로 둔다.
+    func take(_ providers: [NSItemProvider]) {
+        for provider in providers.prefix(3) {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    DispatchQueue.main.async { self.add([url]) }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data, NSImage(data: data) != nil else { return }
+                    let url = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-reference-\(UUID().uuidString).img")
+                    guard (try? data.write(to: url)) != nil else { return }
+                    DispatchQueue.main.async { self.add([url]) }
+                }
+            }
+        }
+    }
+}
+
+/// 진행 화면과 참고 그림 칸의 그림 한 장. 파일을 한 번만, 백그라운드에서 읽는다.
+private struct PreviewImage: View {
+    let url: URL
+    @StateObject private var holder = PreviewHolder()
+
+    var body: some View {
+        Group {
+            if let image = holder.image {
+                Image(nsImage: image).resizable().interpolation(.none).scaledToFit()
+            } else {
+                Color.white.opacity(0.05).frame(minWidth: 40)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onAppear { holder.load(url) }
+    }
+}
+
+private final class PreviewHolder: ObservableObject {
+    @Published var image: NSImage?
+
+    func load(_ url: URL) {
+        guard image == nil else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let loaded = NSImage(contentsOf: url)
+            DispatchQueue.main.async { self.image = loaded }
+        }
+    }
 }
 
 final class ImportState: ObservableObject {

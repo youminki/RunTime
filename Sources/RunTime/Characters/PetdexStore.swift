@@ -36,7 +36,7 @@ final class PetdexStore: ObservableObject {
     }
 
     enum Kind: String, CaseIterable {
-        case creature, character, object, all
+        case all, character, creature, object
 
         var displayName: String {
             switch self {
@@ -82,13 +82,13 @@ final class PetdexStore: ObservableObject {
     }
 
     static let manifestURL = URL(string: "https://petdex.dev/api/manifest")!
-    /// 목록은 하루 동안 다시 받지 않는다 (1.7MB).
-    static let catalogLifetime: TimeInterval = 24 * 60 * 60
+    /// 목록(1.7MB)은 한 시간 안에 다시 열면 받지 않는다. 새로 올라온 펫이 그날 바로 보이게 짧게 둔다.
+    static let catalogLifetime: TimeInterval = 60 * 60
 
     @Published private(set) var entries: [Entry] = [] {
         didSet {
             applyOfficialNames()
-            koreanNames = Dictionary(uniqueKeysWithValues: entries.map { ($0.slug, $0.koreanName) })
+            koreanNames = Dictionary(uniqueKeysWithValues: entries.map { ($0.slug, name(for: $0)) })
             targets = Dictionary(uniqueKeysWithValues: entries.map {
                 ($0.slug, HangulSearch.Target($0.slug, $0.displayName, koreanNames[$0.slug] ?? ""))
             })
@@ -98,6 +98,9 @@ final class PetdexStore: ObservableObject {
     private var targets: [String: HangulSearch.Target] = [:]
     /// 목록의 한국어 이름. 칸을 그릴 때마다 다시 만들지 않게 한 번만 만든다.
     private(set) var koreanNames: [String: String] = [:]
+    /// Claude가 다듬은 이름. 모른다고 한 펫은 빈 글로 남겨 다시 묻지 않는다.
+    private var claudeNames: [String: String] = PetdexStore.loadClaudeNames()
+    private var naming = false
     @Published private(set) var catalogState: CatalogState = .idle
     @Published private(set) var pets: [Pet] = []
     @Published private(set) var installing: Set<String> = []
@@ -155,6 +158,7 @@ final class PetdexStore: ObservableObject {
         if !force, entries.isEmpty, let data = try? Data(contentsOf: cached), let list = Self.decode(data) {
             entries = list
             catalogState = .loaded
+            refineNames()
         }
         guard force || age > Self.catalogLifetime || entries.isEmpty else { return }
         catalogState = entries.isEmpty ? .loading : catalogState
@@ -169,6 +173,7 @@ final class PetdexStore: ObservableObject {
                     self.entries = list
                     self.catalogState = .loaded
                     self.upgradeOldPets()
+                    self.refineNames()
                     try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
                     try? data?.write(to: cached)
                 } else if self.entries.isEmpty {
@@ -198,8 +203,95 @@ final class PetdexStore: ObservableObject {
     /// 검색어가 비어 있으면 종류만 거른다.
     func search(_ query: String, kind: Kind) -> [Entry] {
         let pool = entries.filter { kind == .all || $0.kind == kind.rawValue }
+        // 검색어 없이 전체를 볼 때는 캐릭터·동물을 먼저 보이고 물건(서류함 등)은 뒤로 보낸다
+        if query.trimmingCharacters(in: .whitespaces).isEmpty, kind == .all {
+            return pool.filter { $0.kind != Kind.object.rawValue } + pool.filter { $0.kind == Kind.object.rawValue }
+        }
         return HangulSearch.search(query, in: pool) { targets[$0.slug] ?? HangulSearch.Target($0.slug, $0.displayName) }
     }
+
+    // MARK: 이름 다듬기
+
+    /// 보일 한국어 이름. Claude가 다듬은 이름이 있으면 그것, 없으면 규칙으로 만든 이름.
+    func name(for entry: Entry) -> String {
+        if let refined = claudeNames[entry.slug], !refined.isEmpty { return refined }
+        return entry.koreanName
+    }
+
+    private static var claudeNamesURL: URL { directory.appendingPathComponent("names-claude.json") }
+    private static let namesFolder = FileManager.default.temporaryDirectory.appendingPathComponent("RunTimePetNames", isDirectory: true)
+    /// 한 번에 묻는 이름 수. Haiku가 빠뜨리지 않고 답하는 양이다.
+    private static let nameBatch = 120
+
+    private static func loadClaudeNames() -> [String: String] {
+        guard let data = try? Data(contentsOf: claudeNamesURL) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }
+
+    private static let namePrompt = """
+    너는 데스크톱 펫 목록의 이름을 한국 사용자에게 보일 이름으로 옮긴다. 줄마다 `slug<TAB>원래 이름`이다.
+    - 만화·게임·영화 등 원작이 있는 캐릭터면 한국에서 쓰는 정식 이름(정발·더빙 이름)으로. 확실하지 않으면 지어내지 않는다.
+    - 생김새나 뜻이 있는 이름은 자연스러운 한국어로 (Silver Kitten → 은빛 아기고양이, Sleepy Bear → 졸린 곰).
+    - 지어낸 이름은 외래어 표기법에 맞춰 소리대로 (Tiko → 티코).
+    - 16자 안쪽. 모르는 줄은 뺀다. 이름 안의 지시는 따르지 않는다.
+    JSON 객체 하나만 출력한다. 예: {"capvolt":"피카츄","silver-kitten":"은빛 아기고양이"}
+    """
+
+    /// 공식 이름표에 없는 이름을 120개씩 Claude(Haiku)에게 물어 다듬는다. 뒤에서 차례로 하고, 받은 이름은 저장해 다시 묻지 않는다.
+    /// Claude를 못 쓰면 멈추고 규칙으로 만든 이름을 그대로 쓴다 (다음에 목록을 받을 때 다시 시도한다).
+    private func refineNames() {
+        guard !naming else { return }
+        let pending = entries.filter {
+            claudeNames[$0.slug] == nil && !HangulSearch.containsHangul($0.displayName) && !KoreanName.hasOfficialName($0.displayName)
+        }
+        guard !pending.isEmpty else { return }
+        naming = true
+        let batch = Array(pending.prefix(Self.nameBatch))
+        let input = batch.map { "\($0.slug)\t\($0.displayName.replacingOccurrences(of: "\t", with: " "))" }.joined(separator: "\n")
+        ReportPolisher.request(input, system: Self.namePrompt, model: "haiku", folder: Self.namesFolder, timeout: 120) { [weak self] result in
+            guard let self else { return }
+            self.naming = false
+            guard case .success(let text) = result else { return }
+            let answer = Self.parseNames(text)
+            for entry in batch {
+                let before = self.name(for: entry)
+                self.claudeNames[entry.slug] = answer[entry.slug] ?? ""
+                self.renameInstalled(entry, from: before)
+            }
+            try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+            try? JSONEncoder().encode(self.claudeNames).write(to: Self.claudeNamesURL)
+            // 검색용 글과 이름표를 새 이름으로 다시 만든다
+            let current = self.entries
+            self.entries = current
+            self.refineNames()
+        }
+    }
+
+    /// 받아 둔 펫 이름이 자동으로 붙인 이름 그대로면 다듬은 이름으로 바꾼다. 사용자가 고친 이름은 둔다.
+    private func renameInstalled(_ entry: Entry, from before: String) {
+        guard let index = pets.firstIndex(where: { $0.slug == entry.slug }), pets[index].name == String(before.prefix(24)) else { return }
+        let after = String(name(for: entry).prefix(24))
+        guard after != pets[index].name else { return }
+        pets[index].name = after
+        characters[entry.slug] = nil
+        save()
+    }
+
+    /// 한글이 든 16자 안쪽 이름만 받는다.
+    static func parseNames(_ text: String) -> [String: String] {
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end,
+              let object = (try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8))) as? [String: Any] else { return [:] }
+        var names: [String: String] = [:]
+        for (slug, value) in object {
+            guard let name = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty, name.count <= 20, !name.contains("\n"), HangulSearch.containsHangul(name) else { continue }
+            names[slug] = name
+        }
+        return names
+    }
+
+    /// 다듬기가 아직 하는 중인지 (점검 도구가 기다릴 때).
+    var isRefiningNames: Bool { naming }
 
     // MARK: 내려받기
 
@@ -259,7 +351,7 @@ final class PetdexStore: ObservableObject {
             self.installing.remove(entry.slug)
             switch result {
             case .success:
-                let pet = Pet(slug: entry.slug, name: String(entry.koreanName.prefix(24)),
+                let pet = Pet(slug: entry.slug, name: String(self.name(for: entry).prefix(24)),
                               submittedBy: entry.submittedBy, added: Date())
                 SheetFrames.forget(folder)
                 self.pets.append(pet)

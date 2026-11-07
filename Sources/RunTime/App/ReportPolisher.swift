@@ -131,6 +131,14 @@ enum ReportPolisher {
     /// nvm으로 깐 claude는 `.zshrc`에서 PATH에 들어가며 node를 PATH에서 찾아 대화형 로그인 셸(-i -l)로 읽는다.
     /// 셸 설정이 다른 글을 찍어도 섞이지 않게 표시를 붙여 찍고, 셸이 멈추면 15초 뒤 흔한 설치 자리를 본다.
     /// 작업 제어(+m)를 끈다. 켜 두면 터미널에서 `--worklog polish`로 부를 때 셸이 터미널을 가져가 이 프로세스의 출력이 막힌다.
+    /// 로그인 셸의 PATH (메뉴바 앱은 터미널 PATH를 물려받지 않는다). 펫 만들기가 codex를 찾을 때도 쓴다.
+    /// 로그인 셸에서 찾은 claude. 펫 그림 스크립트가 옆모습을 고를 때 쓴다.
+    static func claudePath() -> String? { loginEnvironment()?.claude }
+
+    static func loginPath() -> String {
+        loginEnvironment()?.path ?? ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+    }
+
     private static func loginEnvironment() -> (path: String, claude: String?)? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")

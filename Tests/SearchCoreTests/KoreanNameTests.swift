@@ -44,6 +44,11 @@ struct KoreanNameTests {
         #expect(KoreanName.make("肉包", slug: "roubao") == "러우바오")
     }
 
+    @Test func knowsWhichNamesAreOfficial() {
+        #expect(KoreanName.hasOfficialName(" Patrick Star "))
+        #expect(!KoreanName.hasOfficialName("Sky Striker Ace"))
+    }
+
     @Test func officialNames() {
         #expect(KoreanName.make("Patrick Star") == "뚱이")
         #expect(KoreanName.make("卡比兽", slug: "kabi") == "잠만보")

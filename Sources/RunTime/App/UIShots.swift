@@ -299,6 +299,13 @@ enum UIShots {
             ("main-runners", .darkAqua, nil, mainPage(.runners, engine: engine)),
             // 러너 화면의 오른쪽 탭 (아이콘 막대를 뺀 폭으로)
             ("main-runners-decor", .darkAqua, nil, runnersTab(.decor, engine: engine)),
+            // RUNTIME_SHOT_PREVIEWS=그림1,그림2 를 주면 펫 만드는 중 화면을 찍는다
+            ("main-runners-making", .darkAqua, nil, {
+                let previews = (ProcessInfo.processInfo.environment["RUNTIME_SHOT_PREVIEWS"] ?? "").split(separator: ",")
+                    .map { URL(fileURLWithPath: String($0)) }
+                if !previews.isEmpty { PetFactory.shared.showProgressForShots(previews: previews) }
+                return runnersTab(.pets, engine: engine)
+            }()),
             ("main-runners-game", .darkAqua, nil, runnersTab(.game, engine: engine)),
             ("main-runners-playing", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .game,
                                                                          rehearseGame: true, layout: .runnersPage)

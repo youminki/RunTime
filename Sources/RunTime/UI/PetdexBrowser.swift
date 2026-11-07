@@ -13,33 +13,45 @@ struct PetdexBrowser: View {
     var body: some View {
         let results = store.search(form.query, kind: form.kind)
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                TextField("이름으로 찾기 (예: 짱구, 피카츄, 고양이)", text: $form.query)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13.5))
+            HStack(spacing: 10) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 14, weight: .semibold)).foregroundStyle(.secondary)
+                    TextField("이름으로 찾기 (짱구, 피카츄, 고양이)", text: $form.query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14))
+                    if !form.query.isEmpty {
+                        Button { form.query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("검색어 지우기")
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 34)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.06)))
                 Picker("", selection: $form.kind) {
                     ForEach(PetdexStore.Kind.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                Button("닫기", action: close).keyboardShortcut(.cancelAction)
             }
             // 자주 찾는 낱말. 누르면 검색칸에 넣는다
             HStack(spacing: 6) {
                 ForEach(Self.suggestions, id: \.self) { word in
                     Button(word) { form.query = form.query == word ? "" : word }
                         .buttonStyle(.plain)
-                        .font(.system(size: 12, weight: form.query == word ? .bold : .medium))
+                        .font(.system(size: 12.5, weight: form.query == word ? .bold : .medium))
                         .foregroundStyle(form.query == word ? Color.primary : Color.secondary)
-                        .padding(.horizontal, 10)
-                        .frame(height: 25)
+                        .padding(.horizontal, 11)
+                        .frame(height: 26)
                         .background(Capsule().fill(Color.primary.opacity(form.query == word ? 0.14 : 0.05)))
                         .contentShape(Capsule())
                 }
+                Spacer(minLength: 8)
+                status(results.count)
             }
-            status(results.count)
             SlimScrollView {
-                LazyVGrid(columns: columns, spacing: 8) {
+                LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(results) { entry in
                         Button { install(entry) } label: { tile(entry) }
                             .buttonStyle(.plain)
@@ -51,16 +63,14 @@ struct PetdexBrowser: View {
                 }
                 .padding(.vertical, 2)
             }
-            HStack(alignment: .top) {
-                Text("Petdex 펫은 사용자가 올린 팬아트입니다. 원작 권리는 원작자에게 있으니 개인적으로만 쓰세요. 고른 펫만 이 Mac에 내려받습니다.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                Button("닫기", action: close).keyboardShortcut(.cancelAction)
+            if results.isEmpty, store.catalogState == .loaded {
+                Text("찾는 펫이 없어요. 다른 이름으로 찾거나, 펫 탭의 '펫 만들기'로 직접 만들어 보세요")
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
             }
         }
         .padding(18)
-        .frame(width: 720, height: 640)
+        .frame(width: 780, height: 680)
         .onAppear { store.loadCatalog() }
     }
 
@@ -70,19 +80,26 @@ struct PetdexBrowser: View {
         case .idle, .loading:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Petdex 목록을 받는 중…")
+                Text("목록을 받는 중…")
             }
             .font(.system(size: 12)).foregroundStyle(.secondary)
         case .failed(let reason):
             HStack(spacing: 6) {
-                Text("목록을 받지 못했습니다 (\(reason))").foregroundStyle(.orange)
+                Text("목록을 받지 못했어요 (\(reason))").foregroundStyle(.orange)
                 Button("다시 시도") { store.loadCatalog(force: true) }.controlSize(.small)
             }
             .font(.system(size: 12))
         case .loaded:
-            Text(form.message ?? "펫 \(store.entries.count.formatted())개 중 \(count.formatted())개")
-                .font(.system(size: 12))
-                .foregroundStyle(form.isError ? .orange : .secondary)
+            HStack(spacing: 6) {
+                Text(form.message ?? "\(count.formatted())개 / 전체 \(store.entries.count.formatted())개")
+                    .foregroundStyle(form.isError ? .orange : .secondary)
+                    .lineLimit(1)
+                Button { store.loadCatalog(force: true) } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .tip("새로 올라온 펫 받기")
+                    .accessibilityLabel("목록 새로 받기")
+            }
+            .font(.system(size: 12))
         }
     }
 
@@ -144,8 +161,8 @@ struct PetdexBrowser: View {
 /// 검색 입력. `@State`를 못 쓰는 이유는 HoverFlag 참고.
 final class PetdexSearch: ObservableObject {
     @Published var query = "" { didSet { message = nil } }
-    // 물건(서류함 등)보다 동물·캐릭터를 찾는 사람이 많아 동물부터 보인다
-    @Published var kind: PetdexStore.Kind = .creature { didSet { message = nil } }
+    // 종류를 고르면 찾던 이름이 다른 갈래에 있을 때 안 보여서 늘 전체로 시작한다
+    @Published var kind: PetdexStore.Kind = .all { didSet { message = nil } }
     @Published var message: String?
     @Published var isError = false
     /// 마지막으로 누른 펫.

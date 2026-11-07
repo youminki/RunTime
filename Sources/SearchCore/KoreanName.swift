@@ -9,6 +9,11 @@ import Foundation
 /// 바꿀 수 없으면 원래 이름을 돌려준다.
 public enum KoreanName {
     /// `official`을 끄면 이름표 없이 소리대로만 적는다. 저장된 이름이 사용자가 고친 것인지 가릴 때 쓴다.
+    /// 사람이 고른 공식 이름표에 있는 이름인지. 없으면 소리대로 옮긴 이름이라 다듬을 여지가 있다.
+    public static func hasOfficialName(_ name: String) -> Bool {
+        KoreanOfficialNames.table[name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()] != nil
+    }
+
     public static func make(_ name: String, slug: String = "", official: Bool = true) -> String {
         // 눈에 안 보이는 글자가 붙어 올라온 이름이 있다 (Pikachu + U+200C)
         let visible = String(String.UnicodeScalarView(name.unicodeScalars.filter { !(0x200B...0x200D).contains($0.value) && $0.value != 0xFEFF }))

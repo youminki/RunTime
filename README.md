@@ -14,7 +14,7 @@ Claude Code를 쓰는 만큼 macOS 메뉴바의 러너가 빨리 달립니다.
 
 - 사용률은 Claude가 알려 주는 공식 값이라 웹과 데스크톱 앱에서 쓴 양도 들어갑니다.
 - 80%, 95%에 닿으면 러너가 지치고 알림이 옵니다.
-- 기본 펫 5종, 내 그림, [Petdex](https://petdex.dev) 펫 5천여 종 가운데 골라 달리고(이름은 한국어로 보입니다), 설명을 쓰고 `Claude로 만들기`를 누르면 Claude가 도트 그림을 찍어 바로 러너로 고릅니다(1~3분). `Petdex에서 찾기`로 직접 고를 수도 있고, 펫 폴더에 새로 생긴 펫은 저절로 등록합니다, 펫마다 Petdex 그림의 동작(손 흔들기, 점프, 생각, 지침)으로 상태를 보입니다.
+- 기본 펫 5종, 내 그림, [Petdex](https://petdex.dev) 펫 5천여 종 가운데 골라 달리고(이름은 한국어로 보입니다), 설명을 쓰고 `펫 만들기`를 누르면 이 Mac에서 FLUX.2 klein 4B로 Petdex와 같은 규격(동작 9줄)의 펫을 새로 그려 바로 러너로 고릅니다(6~8분, 무료). 원작이 있는 캐릭터는 그림을 넣지 않으면 Claude가 웹에서 그림을 찾아 맞는지 확인한 뒤 따라 그리고, 직접 넣은 그림(세 장까지)이 있으면 그 모습대로 그립니다. 다 만든 펫은 '고칠 점'을 적어 고칠 수 있고, `Petdex에 올리기`로 공식 CLI(`npx petdex`)를 통해 바로 올려 다른 사람도 받게 할 수 있습니다. `Petdex에서 찾기`로 직접 고를 수도 있고, 펫 폴더에 새로 생긴 펫은 저절로 등록합니다, 펫마다 Petdex 그림의 동작(손 흔들기, 점프, 생각, 지침)으로 상태를 보입니다.
 - 무대에서 장애물 피하기 미니게임을 하고, 도트 배경 59종이 든 트랙과 꼬리·발먼지·부딪힘 같은 도트 효과를 조건 없이 골라 씁니다.
 - 게임은 두 가지입니다. 달리기는 끝없이 달려 최고 점수에 도전하고, 비행은 누르는 동안 올라가며 끝없이 납니다. 멀리 갈수록 빨라지고 장애물 11가지 조각이 무작위로 나오며, 난이도를 쉬움, 보통, 어려움에서 고릅니다.
 - Claude Code가 대답을 마치면 러너가 알려 줍니다.
@@ -118,11 +118,12 @@ install.sh는 처음 설치할 때 러너를 오른쪽 끝에 두어 가장 늦�
 | Anthropic | Claude 계정이 둘 이상일 때 10분마다, 토큰이 바뀌었을 때 | 저장해 둔 다른 계정 토큰으로 사용률 조회, 토큰이 어느 계정 것인지 확인, 다른 계정 토큰이 만료되기 전에 리프레시 토큰으로 새로 받기 |
 | Anthropic (내 Claude Code) | 업무 일지에서 "Claude로 다듬기"를 눌렀을 때, `--worklog polish` | 그날 진행 사항 글. 이 Mac의 `claude -p`를 내 로그인으로 부르고, 결과는 고쳐 쓸 수 있는 초안으로만 둠 |
 | 보고 서버 | 업데이트 설치가 실패하거나 25분 넘게 멈췄을 때, 업데이트할지 가르지 못했을 때, 화면에서 일이 실패했을 때(레드마인·피그마 응답 오류, 일지·호스트·디자인 기록 파일을 읽거나 쓰지 못함, 팀즈 자동 보내기 실패, 사용량 창 잘림, 까닭을 가르지 못한 GitLab MR 받기 실패, 하루 넘게 이어진 업데이트 확인 실패. 토큰·권한·망 끊김은 빼고), 앱이 죽은 뒤 다시 켰을 때, 앱이 5초 넘게 멈췄을 때 (설정 > 일반 > 문제 기록에서 끔) | 무작위 설치 ID, 앱·macOS 버전과 커밋, 화면과 까닭, 실패한 코드 위치, 요청 길·보낸 칸·응답(일지 내용은 글자 수만), 사용자 폴더·이름·주소의 계정과 토큰을 가린 최근 기록. 앱이 죽었으면 macOS 충돌 보고서의 예외 종류와 호출 순서, 앱이 죽기 전에 찍은 오류 문구, 죽기 전까지의 기록. 앱이 멈췄으면 멈춘 시간, 그때 메인 스레드의 호출 순서, 앱 메모리·켠 뒤 시간·앱 창 화면 이름, 시스템 메모리 압박·스왑·CPU 부하·발열. 서버가 만든 사람에게 메일로 알리고(같은 까닭은 하루 한 통, 전체 하루 30통까지) 30일 뒤 지움 |
-| petdex.dev | Petdex에서 찾기를 열었을 때 | 없음 (펫 목록과 그림만 받음. 점프·생각 동작이 없는 예전 펫은 이때 그림을 한 번 다시 받음) |
+| huggingface.co | 펫 만들기를 처음 할 때 한 번 | 없음 (그림 모델 약 4.3GB를 받음. 그림 도구는 pypi.org에서 약 1GB) |
+| petdex.dev | Petdex에서 받기를 열었을 때 | 없음 (펫 목록과 그림만 받음. 점프·생각 동작이 없는 예전 펫은 이때 그림을 한 번 다시 받음) |
 | GitHub | 30분마다, 매일 오전 9시 | 없음 (공개 저장소의 커밋 비교만 받음) |
 | Figma | 디자인 변경 기록에 화면설계서를 더했을 때, 프로젝트의 가져오기를 눌렀을 때, 주기를 정한 프로젝트는 그 주기마다, 상세에서 화면을 볼 때, 날짜 비교에서 버전 비교를 눌렀을 때 | 없음 (내 토큰으로 파일 정보, 버전 기록, 그 버전의 화면 노드, 프레임 이미지만 받음). 받은 내용은 이 Mac에만 저장 |
 
-펫 만들기는 이 Mac의 Claude Code로 사용자가 쓴 설명만 보내고 그린 그림은 이 Mac에 저장합니다. `~/.codex/pets`, `~/.petdex/pets`, `~/.runtime/pets`에서는 `pet.json`과 스프라이트 시트만 읽습니다.
+펫 그림은 이 Mac에서 그리고 설명과 참고 그림은 밖으로 보내지 않습니다. 다만 생김새와 이름을 정리하고, 원작 그림을 웹에서 찾아 확인하고, 옆모습 후보를 고를 때 이 Mac의 Claude Code를 씁니다. Petdex 목록을 열면 공식 이름표에 없는 펫 이름을 Claude(Haiku)로 한국어로 다듬어 저장해 둡니다. 받은 모델과 그림 도구(약 5GB)는 `~/Library/Application Support/RunTime/PetMaker`에 두고, 펫 탭 맨 아래에서 지울 수 있습니다. `~/.codex/pets`, `~/.petdex/pets`, `~/.runtime/pets`에서는 `pet.json`과 스프라이트 시트만 읽습니다.
 
 로그인 토큰은 Anthropic 말고는 어디에도 보내지 않으며 파일이나 로그에 남기지 않습니다.
 Claude 계정을 바꿀 수 있게 Claude Code에 로그인했던 계정마다 로그인 정보를 이 Mac 키체인의 "RunTime Claude account" 항목에 두고,
@@ -222,6 +223,7 @@ npx wrangler@4 secret put REPORT_EMAIL     # 받을 주소 (Resend 가입 주소
 - 도트 트랙 그림은 OpenGameArt의 CC0 그림을 무대 크기로 잘라 썼습니다. 작가와 원본은 `Sources/RunTime/Assets/Scenes/CREDITS.txt`에 있습니다.
 - 미니게임의 장애물 간격과 속도 규칙은 [Chromium T-Rex Runner](https://chromium.googlesource.com/chromium/src/+/main/components/neterror/resources/)(BSD 3-Clause)를 따랐습니다.
 - 꾸미기 효과, 말풍선, 코인 사탕, 새·슬라임, 비행 블록은 OpenGameArt의 CC0 그림입니다. 작가와 원본은 `Sources/RunTime/Assets/FX/CREDITS.txt`에 있습니다.
+- 펫 만들기는 FLUX.2 klein 4B(Black Forest Labs, Apache 2.0)를 mflux(MIT)로 돌리고, 그림을 시트로 묶는 스크립트는 OpenAI hatch-pet(Apache 2.0)에서 가져왔습니다. `Sources/RunTime/Assets/PetMaker/CREDITS.txt`에 있습니다.
 - 미니게임 그림과 효과음은 Kenney의 [Pixel Platformer](https://kenney.nl/assets/pixel-platformer), [Digital Audio](https://kenney.nl/assets/digital-audio), [Music Jingles](https://kenney.nl/assets/music-jingles), [Interface Sounds](https://kenney.nl/assets/interface-sounds)(CC0)입니다.
 - 미니게임 글자는 [Galmuri](https://github.com/quiple/galmuri)(SIL OFL 1.1) 픽셀 글꼴입니다. 한글·영문·기호만 남겨 싣습니다.
 - 집계 규칙은 [ccusage](https://ccusage.com/guide/blocks-reports)를 참고했습니다.
