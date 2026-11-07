@@ -128,8 +128,10 @@ enum SpriteSheet {
     }
 
     /// README 첫 화면 GIF: 러너 몇 마리가 차례로 달린다 (`--hero-gif <파일>`).
-    static func writeHeroGIF(to url: URL) throws {
-        let cast: [(Runner, SpriteDisplay)] = [(.cat, .normal(.rainbow)), (.dog, .normal(.dashing)),
+    /// `lead`가 있으면 그 펫들이 먼저 달린다 (README는 짱구와 부리부리 대마왕).
+    static func writeHeroGIF(to url: URL, lead: [CharacterRig] = []) throws {
+        let leading: [(CharacterRig, SpriteDisplay)] = lead.enumerated().map { ($1, $0 == 0 ? .normal(.dashing) : .normal(.running)) }
+        let builtIns: [(Runner, SpriteDisplay)] = [(.cat, .normal(.rainbow)), (.dog, .normal(.dashing)),
                                                (.girl, .normal(.running)), (.dino, .normal(.dashing)),
                                                (.jack, .normal(.running))]
         let scale: CGFloat = 6
@@ -137,7 +139,8 @@ enum SpriteSheet {
         let size = CGSize(width: Stage.size.width * scale + pad * 2, height: Stage.size.height * scale + pad * 2)
         let delay = 0.04
         var frames: [CGImage] = []
-        for (runner, display) in cast {
+        let cast: [(CharacterRig, SpriteDisplay)] = leading + builtIns.prefix(lead.isEmpty ? 5 : 2).map { ($0.0.rig, $0.1) }
+        for (rig, display) in cast {
             let count = Int((display.cycle * 2 / delay).rounded())
             for i in 0..<count {
                 let phase = CGFloat(i) / CGFloat(count) * 2
@@ -145,7 +148,7 @@ enum SpriteSheet {
                     cg.translateBy(x: pad, y: pad)
                     cg.scaleBy(x: scale, y: scale)
                     let local = phase - floor(phase)
-                    SpriteFrames.render(cg, rig: runner.rig, frame: display.motion(at: local), theme: .natural,
+                    SpriteFrames.render(cg, rig: rig, frame: display.motion(at: local), theme: .natural,
                                         themePhase: 0, alarm: false) { cg, scene, _, front in
                         display.drawLoopEffects(in: cg, scene: scene, phase: local, tint: .white, front: front)
                     }

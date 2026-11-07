@@ -2,17 +2,18 @@ import AppKit
 import SwiftUI
 import UsageCore
 
-/// README 그림 (`--readme-shots <폴더>`): 내 사용량 대신 꾸민 예시 값으로 사용량 창과 꾸미기를 찍는다.
+/// README 그림 (`--readme-shots <폴더>`): 내 사용량 대신 꾸민 예시 값으로 사용량 창과 펫 화면을 찍는다.
 /// 예시 값은 저장하지 않는 임시 설정 영역에 두고, 실제 기록과 공식 사용량은 읽지 않는다.
-/// Petdex 펫은 사용자가 올린 팬아트라 README에 싣지 않게 동료를 비운다.
+/// 러너는 짱구, 동료는 부리부리 대마왕(Petdex 펫)이다. 실제 펫 목록을 건드리지 않게 CFFIXED_USER_HOME으로
+/// 두 펫만 복사한 폴더를 가리켜 찍는다 (README의 그림 다시 만들기 참고). 펫이 없으면 기본 펫 고양이로 찍힌다.
 @MainActor
 enum ReadmeShots {
     /// GameDecor·AppSettings가 처음 읽히기 전에 불러야 한다.
     static func useDemoDefaults() {
         UserDefaults.standard.setVolatileDomain([
-            "runner": "cat", "customRunner": "", "spriteTheme": "auto",
-            "gameCompanion": "",
-            "gameCosmeticsEquipped": ["cloudWoodsTrack", "rainbowStarTrail", "starDust"],
+            "runner": "cat", "customRunner": "petdex:crayon-shin-chan", "spriteTheme": "natural",
+            "gameCompanion": "petdex:futuduozaemon",
+            "gameCosmeticsEquipped": ["sunnyHillsTrack", "sparkleDust", "heartCrash"],
             "gameAbilitiesOn": ["airJump", "shield"],
         ], forName: UserDefaults.argumentDomain)
     }
@@ -29,8 +30,8 @@ enum ReadmeShots {
         Sky.hourOverride = 12
         let screens: [(String, AnyView)] = [
             ("usage", AnyView(PopoverView(engine: engine, settings: engine.settings))),
-            ("decor", AnyView(RunnerDecorView(settings: engine.settings)
-                .padding(14).frame(width: 376).background(Theme.background))),
+            ("pets", AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .pets, layout: .runnersPage)
+                .environment(\.colorScheme, .dark).frame(width: 1100, height: 700))),
         ]
         let windows = screens.map { _, view -> NSWindow in
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))

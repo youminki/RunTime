@@ -190,6 +190,22 @@ if CommandLine.arguments.contains("--stage-check") {
     dispatchMain()
 }
 
+// README 비행 GIF용 장면 (`--flight-frames <폴더>`)
+if let index = CommandLine.arguments.firstIndex(of: "--flight-frames") {
+    let path = CommandLine.arguments.dropFirst(index + 1).first ?? "flight-frames"
+    Task { @MainActor in
+        do {
+            ReadmeShots.useDemoDefaults()
+            try FlightShots.frames(to: URL(fileURLWithPath: path), character: AppSettings.shared.character)
+            exit(0)
+        } catch {
+            print("failed: \(error)")
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--flight-shots") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "flight-shots"
     Task { @MainActor in
@@ -208,7 +224,9 @@ if let index = CommandLine.arguments.firstIndex(of: "--game-frames") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "game-frames"
     Task { @MainActor in
         do {
-            try GameFrames.run(to: URL(fileURLWithPath: path), character: Runner.cat.character)
+            // README 예시 러너(짱구). 받아 두지 않았으면 기본 펫 고양이
+            let lead = PetdexStore.shared.pets.first { $0.slug == "crayon-shin-chan" }.flatMap(PetdexStore.shared.character(for:))
+            try GameFrames.run(to: URL(fileURLWithPath: path), character: lead ?? Runner.cat.character)
             exit(0)
         } catch {
             print("failed: \(error)")
@@ -382,7 +400,11 @@ if let index = CommandLine.arguments.firstIndex(of: "--sprite-sheet") {
 // README GIF 생성: 러너 몇 마리가 차례로 달리는 애니메이션.
 if let index = CommandLine.arguments.firstIndex(of: "--hero-gif") {
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "runtime-run.gif"
-    try? SpriteSheet.writeHeroGIF(to: URL(fileURLWithPath: path))
+    // 받아 둔 짱구와 부리부리 대마왕이 있으면 먼저 달린다
+    let lead = ["crayon-shin-chan", "futuduozaemon"].compactMap { slug in
+        PetdexStore.shared.pets.first { $0.slug == slug }.flatMap { PetdexStore.shared.character(for: $0)?.rig }
+    }
+    try? SpriteSheet.writeHeroGIF(to: URL(fileURLWithPath: path), lead: lead)
     print("saved: \(path)")
     exit(0)
 }
@@ -412,9 +434,13 @@ if let index = CommandLine.arguments.firstIndex(of: "--stage-shots") {
 
 // 앱 아이콘: 무대 그림으로 1024px PNG를 그리고 종료 (scripts/make-icon.sh가 .icns로 만든다).
 if let index = CommandLine.arguments.firstIndex(of: "--app-icon") {
-    let path = CommandLine.arguments.dropFirst(index + 1).first ?? "AppIcon.png"
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    let path = args.first ?? "AppIcon.png"
+    let folders = args.dropFirst().map { URL(fileURLWithPath: $0, isDirectory: true) }
     do {
-        try MainActor.assumeIsolated { try AppIcon.write(to: URL(fileURLWithPath: path)) }
+        try MainActor.assumeIsolated {
+            try AppIcon.write(to: URL(fileURLWithPath: path), runner: folders.first, companion: folders.dropFirst().first)
+        }
         print("saved: \(path)")
         exit(0)
     } catch {

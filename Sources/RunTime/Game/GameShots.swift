@@ -177,7 +177,7 @@ enum GameBench {
 enum GameFrames {
     @MainActor
     static func run(to directory: URL, character: RunnerCharacter) throws {
-        // README GIF라 내 꾸미기 대신 예시 값을 쓴다 (팬아트인 Petdex 동료가 찍히지 않게)
+        // README GIF라 내 꾸미기 대신 README 예시 값을 쓴다
         ReadmeShots.useDemoDefaults()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = StageModel()
@@ -209,7 +209,7 @@ enum GameFrames {
         session.savedGhost = GhostStore.record(of: game, runner: Runner.dino.rawValue)
 
         // 꾸미기와 능력을 달고 고스트와 겨룬다. 앞뒤로 움직여 고스트와 겹치지 않게 한다
-        GameDecor.shared.preview = [.rainbowStarTrail, .starDust]
+        GameDecor.shared.preview = [.sunnyHillsTrack, .sparkleDust, .heartCrash, .rainbowStarTrail]
         game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 2))
         session.startRace(session.savedGhost)
         step(1.2)

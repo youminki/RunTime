@@ -475,8 +475,33 @@ enum FlightShots {
         }
     }
 
+    /// README GIF용: 앞을 보는 플레이어로 보통 난이도를 날며 1초 20장으로 찍는다.
     @MainActor
-    private static func write(_ session: FlightSession, to url: URL) throws {
+    static func frames(to directory: URL, character: RunnerCharacter) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let session = FlightSession(difficulty: .normal, character: character, live: false)
+        let pilot = FlightPilot(game: session.game)
+        session.game.press()
+        session.game.release()
+        // 앞의 빈 하늘을 지나 장애물이 나오는 곳부터 찍는다
+        for _ in 0..<(120 * 3) {
+            pilot.step()
+            session.advance(seconds: FlightGame.step)
+        }
+        var index = 0
+        for tick in 0..<(120 * 6) where session.game.phase == .playing {
+            pilot.step()
+            session.advance(seconds: FlightGame.step)
+            if tick % 6 == 0 {
+                index += 1
+                try write(session, to: directory.appendingPathComponent(String(format: "%04d.png", index)), scale: 2)
+            }
+        }
+        print("frames \(index)")
+    }
+
+    @MainActor
+    private static func write(_ session: FlightSession, to url: URL, scale: CGFloat = 3) throws {
         let size = CGSize(width: 348, height: 150)
         let view = Canvas { context, _ in
             context.withCGContext { cg in
@@ -489,7 +514,7 @@ enum FlightShots {
         }
         .frame(width: size.width, height: size.height)
         let renderer = ImageRenderer(content: view)
-        renderer.scale = 3
+        renderer.scale = scale
         guard let image = renderer.cgImage,
               let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
         try data.write(to: url)
