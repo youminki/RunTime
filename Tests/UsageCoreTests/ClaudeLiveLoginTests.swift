@@ -319,9 +319,13 @@ struct ClaudeRefreshLockWaitTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let paths = [dir.appendingPathComponent("a.lock")]
         let held = try #require(ClaudeRefreshLock.acquire(paths: paths))
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { held.release() }
+        // 테스트를 나란히 돌리면 공용 스레드가 모두 기다리는 테스트로 차 늦게 풀릴 수 있어 전용 스레드에서 푼다
+        Thread.detachNewThread {
+            Thread.sleep(forTimeInterval: 0.4)
+            held.release()
+        }
         let start = Date()
-        let lock = try #require(ClaudeRefreshLock.acquire(paths: paths, waiting: 3))
+        let lock = try #require(ClaudeRefreshLock.acquire(paths: paths, waiting: 15))
         #expect(Date().timeIntervalSince(start) >= 0.3)
         lock.release()
         // 끝내 못 잡으면 기다린 뒤 nil
