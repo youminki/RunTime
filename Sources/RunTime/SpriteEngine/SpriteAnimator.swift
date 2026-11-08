@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import UsageCore
 
 /// 표시 상태의 반복 동작을 재생하고, 가끔 한 번짜리 동작(Trick)을 끼워 넣는다.
@@ -6,6 +7,8 @@ import UsageCore
 /// 프레임마다 버튼 이미지를 바꾸면 버튼 전체를 다시 그려 30fps에서 CPU 18%를 썼다. 레이어 애니메이션은
 /// 시스템 렌더 서버가 돌리므로 앱은 상태가 바뀔 때만 깨어난다.
 final class SpriteAnimator {
+    /// 메뉴바 러너가 한 번짜리 동작을 시작했다. 무대와 꺼낸 펫이 같은 동작을 따라 해 셋이 함께 움직인다.
+    static let performed = PassthroughSubject<Trick, Never>()
 
     /// 메뉴바 버튼 위에 얹는 레이어.
     let layer: CALayer = {
@@ -80,6 +83,7 @@ final class SpriteAnimator {
               let clip = rasterized(trick: trick) else { return false }
         playing = trick
         show(clip, loop: false)
+        Self.performed.send(trick)
         return true
     }
 

@@ -837,7 +837,18 @@ final class WorkLogSync: ObservableObject {
                 if assigned { self.loadingIssues = false }
                 switch result {
                 case .success(let book):
+                    let before = Set(self.store.log.issues.values.filter(\.assigned).map(\.id))
                     self.store.updateIssues(book.infos, assignedIDs: book.assignedIDs)
+                    // 새로 맡은 일감을 메뉴바 말풍선으로 알린다. 처음 받을 때는 모두 새것이라 알리지 않는다
+                    if let ids = book.assignedIDs, !before.isEmpty {
+                        let fresh = book.infos.filter { ids.contains($0.id) && !before.contains($0.id) }
+                        if !fresh.isEmpty {
+                            MenuBarNews.post(.init(title: "레드마인 새 일감 \(fresh.count)건",
+                                                   items: fresh.prefix(3).map { "#\($0.id) \($0.subject)" }
+                                                       + (fresh.count > 3 ? ["외 \(fresh.count - 3)건"] : []),
+                                                   actionTitle: "레드마인 열기", action: { MenuBarNews.open(.redmine) }))
+                        }
+                    }
                     if assigned { self.issuesLoadedAt = Date() }
                     self.issuesError = nil
                     self.quietUntil = .distantPast

@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return mainWindow?.isVisible == true ? ["main:" + navigator.page.rawValue] : []
         }
         AppUpdater.shared.start()
+        watchUpdateNews()
         CrashReports.sendNew()
         HangWatch.start()
         // 자동 업데이트는 다른 앱을 쓰는 동안 일어나므로, 다시 연 창이 그 앱의 초점을 빼앗지 않게 뒤에 둔다
@@ -215,6 +216,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.animator.setTempo($0) }
             .store(in: &cancellables)
+        // 꺼낸 펫은 메뉴바와 같은 상태·동작을 쓴다
+        let pet = DesktopPet.shared
+        pet.displayProvider = { [weak self] in self?.animator.display ?? .normal(.walking) }
+        pet.characterProvider = { [weak self] in self?.engine.settings.character ?? Runner.cat.character }
+        pet.themeProvider = { [weak self] in self?.engine.settings.spriteTheme ?? .auto }
+        pet.companionProvider = { GameDecor.shared.companion }
+        pet.sizeProvider = { [weak self] in CGFloat(self?.engine.settings.desktopPetSize ?? 1) }
+        pet.modeProvider = { [weak self] in self?.engine.settings.desktopPetMode ?? .roam }
+        pet.pinnedProvider = { [weak self] in self?.engine.settings.desktopPetSpot }
+        pet.onSize = { [weak self] in self?.engine.settings.desktopPetSize = Double($0) }
+        pet.onMode = { [weak self] in self?.engine.settings.desktopPetMode = $0 }
+        pet.onPin = { [weak self] in self?.engine.settings.desktopPetSpot = $0 }
+        pet.openPage = { [weak self] in self?.showMain($0) }
+        pet.perform = { [weak self] trick in _ = self?.animator.perform(trick) }
+        pet.onChange = { [weak self] shown in
+            if self?.engine.settings.desktopPet != shown { self?.engine.settings.desktopPet = shown }
+        }
+        if engine.settings.desktopPet { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { pet.show() } }
+
         engine.reacted
             .sink { [weak self] reaction in
                 guard let self, self.engine.settings.tricksEnabled else { return }
@@ -284,6 +304,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// 업데이트 소식을 사용량 창을 열지 않아도 메뉴바 러너 아래 말풍선으로 알린다. 같은 소식은 한 번만.
+    /// 새 버전이 있으면 바뀔 점과 '업데이트' 단추를, 업데이트 뒤 처음 켜지면 바뀐 점을 핵심 몇 줄로 보인다.
+    private func watchUpdateNews() {
+        // 레드마인 새 일감, 디자인 변경 같은 소식도 같은 말풍선으로 띄운다. 사용량 창이 열려 있으면 가리지 않게 넘긴다
+        MenuBarNews.open = { [weak self] page in self?.showMain(page) }
+        MenuBarNews.post = { [weak self] content in
+            guard let self, self.popover?.isShown != true, let anchor = self.statusItem.button?.window?.frame else { return }
+            MenuBarBubble.shared.show(content, below: anchor)
+        }
+        let updater = AppUpdater.shared
+        let shownKey = "menuBarNewsShown"
+        func showOnce(_ key: String, title: String, lines: [String], action: (String, () -> Void)?) {
+            let items = UpdateDigest.make(lines)
+            guard UserDefaults.standard.string(forKey: shownKey) != key, !items.isEmpty, self.popover?.isShown != true,
+                  let anchor = self.statusItem.button?.window?.frame else { return }
+            UserDefaults.standard.set(key, forKey: shownKey)
+            MenuBarBubble.shared.show(.init(title: title, items: items, actionTitle: action?.0, action: action?.1), below: anchor)
+        }
+        // 업데이트하고 처음 켜졌을 때: 러너가 자리 잡은 뒤에 바뀐 점을 보인다
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            let notes = updater.patchSource
+            guard notes.at > 0 else { return }
+            showOnce("notes-\(Int(notes.at))", title: "업데이트했어요", lines: notes.lines, action: nil)
+        }
+        // 자동으로 받지 못한 새 버전: 무엇이 바뀌는지와 함께 바로 받을 단추를 둔다
+        updater.$target
+            .combineLatest(updater.$state)
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { target, _ in
+                guard let target, updater.hasPendingUpdate else { return }
+                showOnce("pending-\(target)", title: "새 버전이 있어요", lines: updater.incomingLines,
+                         action: ("지금 업데이트", { updater.update() }))
+            }
+            .store(in: &cancellables)
+    }
+
     @objc private func statusItemClicked() {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
@@ -323,6 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         addHostsMenu(to: menu)
         menu.addItem(.separator())
         add("러너와 게임") { [weak self] in self?.showMain(.runners) }
+        add(DesktopPet.shared.isShown ? "펫 넣기" : "펫 꺼내기 (화면에서 돌아다니기)") { DesktopPet.shared.toggle() }
         menu.addItem(.separator())
         add("설정…") { [weak self] in self?.openSettings() }
         add("업데이트 확인") { [weak self] in

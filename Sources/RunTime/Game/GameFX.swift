@@ -123,10 +123,12 @@ enum GameFX {
     /// 동료 (Petdex 펫) 한 장면. `feet`는 발이 닿는 자리, `height`는 서 있을 때 키(pt).
     /// `jump`(0~1)를 주면 뛰는 중이라 그림 러너는 점프 줄로 그린다.
     static func drawCompanion(_ character: RunnerCharacter, feet: CGPoint, height: CGFloat, phase: CGFloat, moving: Bool,
-                              jump: CGFloat? = nil, theme: SpriteTheme = .auto, _ cg: CGContext) {
+                              jump: CGFloat? = nil, facing: CGFloat = 1, theme: SpriteTheme = .auto, _ cg: CGContext) {
         var pose = CharacterPose(activity: moving ? .run : .stand, phase: phase)
         pose.jump = jump
-        let scene = CharacterScene(rig: character.rig, pose: pose)
+        var transform = CharacterTransform()
+        transform.scaleX = facing < 0 ? -1 : 1
+        let scene = CharacterScene(rig: character.rig, pose: pose, transform: transform)
         let scale = height / FittedRig.targetHeight
         cg.saveGState()
         cg.translateBy(x: feet.x - FittedRig.targetCenterX * scale, y: feet.y - Stage.ground * scale)

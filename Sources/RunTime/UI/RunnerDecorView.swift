@@ -1,34 +1,157 @@
 import SwiftUI
 import GameCore
 
-/// 러너 화면의 꾸미기 갈래: 배경, 꼬리, 발먼지, 부딪힘. 고르면 무대에 바로 보인다.
+/// 러너 화면의 꾸미기 갈래: 배경, 꼬리, 발먼지, 부딪힘, 같이 달리는 동료. 고르면 무대에 바로 보인다.
 struct RunnerDecorView: View {
     @ObservedObject var settings: AppSettings
+    /// 앱 창처럼 넓은 곳에서는 왼쪽에 꾸밀 곳 목록, 오른쪽에 물건 격자를 둔다.
+    var large = false
     @ObservedObject private var decor = GameDecor.shared
     @StateObject private var hover = HoveredRunner()
     @StateObject private var filter = SceneFilter()
 
+    private static let slots: [Cosmetic.Slot] = [.track, .trail, .dust, .crash]
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            kindTabs
-            switch filter.kind {
-            case .track:
-                sceneChips
-                grid(filter.items, minimum: 170, previewHeight: 84)
-            case let slot:
-                grid(Cosmetic.allCases.filter { $0.slot == slot }, minimum: 130, previewHeight: 58)
+        Group {
+            if large {
+                HStack(alignment: .top, spacing: RunnerHubLayout.gap) {
+                    sideList.frame(width: RunnerHubLayout.sideWidth)
+                    SlimScrollView(keepsGutter: true) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            if filter.companion {
+                                companionGrid
+                            } else {
+                                if filter.kind == .track { sceneChips }
+                                items
+                            }
+                        }
+                        .padding(.trailing, 6)
+                        .padding(.bottom, 4)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    kindTabs
+                    if filter.kind == .track { sceneChips }
+                    items
+                    hint(hintText)
+                }
             }
-            hint(filter.kind == .track ? "마우스를 올리면 무대에서 미리 봐요. 고른 배경을 다시 누르면 기본 배경으로 돌아가요."
-                 : "고른 것을 다시 누르면 떼요. 달릴 때와 게임에서 보여요.")
         }
         // 써 보던 중에 닫혀도 무대와 게임이 원래 배경으로 돌아가게 한다
         .onDisappear { decor.tryingOn = nil }
     }
 
+    @ViewBuilder
+    private var items: some View {
+        if filter.kind == .track {
+            grid(filter.items, minimum: 170, previewHeight: 84)
+        } else {
+            grid(Cosmetic.allCases.filter { $0.slot == filter.kind }, minimum: 130, previewHeight: 58)
+        }
+    }
+
+    private var hintText: String {
+        if filter.companion { return "고른 펫이 러너 뒤를 따라 달려요. 다시 누르면 혼자 달려요." }
+        return filter.kind == .track ? "마우스를 올리면 무대에서 미리 봐요. 고른 배경을 다시 누르면 기본 배경으로 돌아가요."
+            : "고른 것을 다시 누르면 떼요. 달릴 때와 게임에서 보여요."
+    }
+
+    /// 넓은 화면의 왼쪽 칸: 꾸밀 곳마다 지금 쓰는 것과 떼기.
+    private var sideList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Self.slots, id: \.self) { slot in
+                let equipped = decor.equipped(slot)
+                SideItem(icon: Self.icon(slot), title: slot == .track ? "배경" : slot.title,
+                         detail: equipped?.name ?? (slot == .track ? "구름 숲 (기본)" : "없음"),
+                         selected: !filter.companion && filter.kind == slot, action: {
+                             filter.kind = slot
+                             filter.companion = false
+                         }) {
+                    if let equipped {
+                        Button { decor.choose(equipped) } label: {
+                            Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(Theme.tertiary)
+                                .frame(width: 22, height: 22)
+                                .background(Circle().fill(Color.white.opacity(0.07)))
+                        }
+                        .buttonStyle(.plain)
+                        .tip(slot == .track ? "기본 배경으로" : "떼기")
+                        .accessibilityLabel("\(equipped.name) 떼기")
+                    }
+                }
+            }
+            SideItem(icon: "pawprint.fill", title: "같이 달리는 동료",
+                     detail: decor.companion?.name ?? "혼자 달리기",
+                     selected: filter.companion, action: { filter.companion = true }) {
+                if decor.companionID != nil {
+                    Button { decor.companionID = nil } label: {
+                        Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(Theme.tertiary)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(Color.white.opacity(0.07)))
+                    }
+                    .buttonStyle(.plain)
+                    .tip("혼자 달리기")
+                    .accessibilityLabel("동료 보내기")
+                }
+            }
+            hint(hintText).padding(.top, 6).padding(.horizontal, 2)
+        }
+    }
+
+    /// 동료로 데려갈 수 있는 펫. 지금 러너는 빼고, 기본 펫·내가 만든 펫·받은 펫을 모두 둔다.
+    private var companionGrid: some View {
+        let current = settings.runnerID
+        let ids = Runner.allCases.map(\.rawValue)
+            + PetdexStore.shared.pets.map { PetdexStore.storageID($0.slug) }
+            + CustomRunnerStore.shared.runners.map(\.id)
+        let choices = ids.filter { $0 != current }.compactMap { id in AppSettings.character(forRunnerID: id).map { (id, $0) } }
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 6)], spacing: 6) {
+            ForEach(choices, id: \.0) { id, character in
+                let on = decor.companionID == id
+                Button { decor.companionID = on ? nil : id } label: {
+                    VStack(spacing: 3) {
+                        Group {
+                            if on || hover.key == id {
+                                TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                                    CharacterCanvas(character: character, theme: settings.spriteTheme, date: context.date, activity: .run)
+                                }
+                            } else {
+                                CharacterCanvas(character: character, theme: settings.spriteTheme, date: nil, activity: .stand)
+                            }
+                        }
+                        .frame(height: 64)
+                        Text(character.name).font(.system(size: 12, weight: on ? .bold : .medium))
+                            .foregroundStyle(on ? Theme.primary : Theme.secondary).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .slotFrame(highlight: on ? Theme.accent : nil)
+                    .overlay(alignment: .topTrailing) { if on { EquippedBadge(text: "동료").padding(4) } }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hover.update(id, $0) }
+                .accessibilityLabel("\(character.name), \(on ? "같이 달리는 중" : "동료로 데려가기")")
+            }
+        }
+    }
+
+    private static func icon(_ slot: Cosmetic.Slot) -> String {
+        switch slot {
+        case .track: "photo"
+        case .trail: "wind"
+        case .dust: "smoke.fill"
+        case .crash: "burst.fill"
+        }
+    }
+
     /// 꾸밀 곳 고르기. 지금 쓰는 것의 이름도 함께 보인다.
     private var kindTabs: some View {
         HStack(spacing: 8) {
-            ForEach([Cosmetic.Slot.track, .trail, .dust, .crash], id: \.self) { slot in
+            ForEach(Self.slots, id: \.self) { slot in
                 let on = filter.kind == slot
                 Button { filter.kind = slot } label: {
                     VStack(alignment: .leading, spacing: 1) {
@@ -121,48 +244,6 @@ struct RunnerDecorView: View {
         .accessibilityLabel("\(item.name), \(on ? "쓰는 중" : "쓰지 않음")")
     }
 
-}
-
-/// 게임 조작법. 키 모양으로 늘어놓고 좁으면 다음 줄로 넘긴다.
-struct GameKeys: View {
-    var body: some View {
-        FlowLayout(spacing: 8) {
-            // 고스트는 한 판을 끝내야 생긴다
-            ForEach([("스페이스 · ↑", "점프 (길게 누르면 높이)"), ("↓", "숙이기"), ("← →", "이동")]
-                    + (GameRecords.plays > 0 ? [("G", "고스트와 겨루기")] : []) + [("esc", "나가기")], id: \.0) { key, action in
-                HStack(spacing: 6) {
-                    Text(key)
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Theme.primary)
-                        .padding(.horizontal, 7)
-                        .frame(height: 22)
-                        .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.surface))
-                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Theme.hairline))
-                    Text(action).font(.system(size: 12.5)).foregroundStyle(Theme.secondary)
-                }
-                .fixedSize()
-                .padding(.trailing, 8)
-            }
-        }
-    }
-}
-
-/// 능력 아이콘. 게임에서 그 능력이 보이는 도트 그림 (보호막은 하트, 글라이드는 구름 등).
-struct AbilityIcon: View {
-    let ability: Ability
-    let active: Bool
-
-    var body: some View {
-        Canvas { context, size in
-            context.withCGContext { cg in
-                GameFX.drawSprite(ability.sprite, at: CGPoint(size.width / 2, size.height / 2), height: size.height * 0.62,
-                                  progress: 0.3, time: 0, alpha: active ? 1 : 0.4, cg)
-            }
-        }
-        .frame(width: 30, height: 30)
-        .background(Circle().fill(active ? Theme.accent.opacity(0.35) : Color.white.opacity(0.06)))
-        .accessibilityHidden(true)
-    }
 }
 
 /// 꾸미기 칸 위의 작은 무대. 게임과 같은 그림 함수로 그 물건이 게임에서 보일 모습을 계속 돌려 보여 준다.
@@ -294,6 +375,8 @@ struct ItemPreview: View {
 final class SceneFilter: ObservableObject {
     @Published var group = 0
     @Published var kind = Cosmetic.Slot.track
+    /// 꾸밀 곳 대신 동료 고르기를 보이는지.
+    @Published var companion = false
 
     /// Cosmetic에 적은 트랙 순서대로 갈래를 자른다.
     static let groups: [(name: String, items: [Cosmetic])] = {

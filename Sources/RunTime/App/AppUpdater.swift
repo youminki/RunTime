@@ -69,8 +69,8 @@ final class AppUpdater: ObservableObject {
     private var logOffset: UInt64 = 0
     /// 받을 변경의 제목들 (최근 것부터 5개, "feat: " 같은 머리말은 뺀다).
     @Published private(set) var incoming: [String] = []
-    /// 받을 커밋의 첫 줄 전부 (오래된 것부터). 설치할 때 패치노트 재료로 남긴다.
-    private var incomingLines: [String] = []
+    /// 받을 커밋의 첫 줄 전부 (오래된 것부터). 설치할 때 패치노트 재료로 남긴다. 메뉴바 말풍선 요약에도 쓴다.
+    private(set) var incomingLines: [String] = []
     /// 업데이트 뒤 러너 아래에 띄울 패치노트. 닫으면 nil.
     @Published private(set) var patchNotes: PatchNotes?
     /// 패치노트는 며칠 지나면 새 소식이 아니라 저절로 거둔다.
@@ -204,6 +204,12 @@ final class AppUpdater: ObservableObject {
             return
         }
         patchNotes = notes
+    }
+
+    /// 지금 패치노트의 재료(커밋 첫 줄)와 남긴 시각. 메뉴바 말풍선이 같은 소식을 한 번만 보이는 데 쓴다.
+    var patchSource: (lines: [String], at: Double) {
+        let defaults = UserDefaults.standard
+        return (defaults.stringArray(forKey: Key.notes) ?? [], defaults.double(forKey: Key.notesAt))
     }
 
     func dismissPatchNotes() {

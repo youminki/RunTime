@@ -53,6 +53,9 @@ extension GameSession {
             if game.coinsTaken > 0 {
                 line = line + Text("   ") + Text(Self.candyIcon)
                     + Text(verbatim: " \(game.coinsTaken)").foregroundColor(gold)
+                if game.coinCombo >= 2 {
+                    line = line + Text(verbatim: "  콤보 ×\(min(game.coinCombo, game.tuning.maxCoinCombo))").foregroundColor(gold.opacity(0.85))
+                }
             }
             if game.abilities.shields > 0 {
                 line = line + Text("   ") + Text(Image(systemName: "shield.fill"))
@@ -136,7 +139,7 @@ extension GameSession {
             labels.append(Label(text: Text(verbatim: "BEST \(game.best)").font(caption).foregroundColor(.white.opacity(0.55)),
                                 position: CGPoint(cardLeft + cardWidth - 12, cardTop + 12), anchor: .topTrailing))
             if game.coinsTaken > 0 {
-                labels.append(Label(text: (Text(Self.candyIcon) + Text(verbatim: " +\(game.coinsTaken)")).font(caption)
+                labels.append(Label(text: (Text(Self.candyIcon) + Text(verbatim: " \(game.coinsTaken)개 +\(game.coinPoints)점")).font(caption)
                                         .foregroundColor(gold),
                                     position: CGPoint(cardLeft + cardWidth - 12, cardTop + 38), anchor: .topTrailing))
             }

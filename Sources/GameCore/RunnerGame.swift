@@ -11,6 +11,41 @@ import Foundation
 /// 최고 속도에 닿은 뒤에도 같은 판이 되풀이되지 않게, 시간이 갈수록(압박) 속도가 조금씩 더 오르고 간격이 좁아지며
 /// 걸어오는 적이 빨라진다.
 ///
+/// 달리기 난이도. 보통은 기본 규칙 그대로라 예전 기록과 고스트가 그대로 이어진다.
+public enum RunDifficulty: String, CaseIterable, Sendable {
+    case easy, normal, hard
+
+    public var title: String {
+        switch self {
+        case .easy: "쉬움"
+        case .normal: "보통"
+        case .hard: "어려움"
+        }
+    }
+
+    /// 속도와 간격, 판정 여유를 난이도에 맞춘다. 넘을 수 없는 배치는 속도로 다시 재므로 어려움에서도 생기지 않는다.
+    public func apply(to tuning: inout RunnerGame.Tuning) {
+        switch self {
+        case .normal:
+            break
+        case .easy:
+            tuning.startSpeed = 180
+            tuning.rampSpeed = 360
+            tuning.maxSpeed = 450
+            tuning.gapCoefficient = 0.8
+            tuning.lateGapCoefficient = 0.6
+            tuning.hitInset = 9
+        case .hard:
+            tuning.startSpeed = 270
+            tuning.rampSpeed = 500
+            tuning.maxSpeed = 600
+            tuning.gapCoefficient = 0.5
+            tuning.lateGapCoefficient = 0.4
+            tuning.hitInset = 6
+        }
+    }
+}
+
 /// 좌표: x는 앞으로(+), y는 바닥에서 위로(+), 단위 pt. 1/120초 고정 간격으로 진행해 화면 주사율과 상관없이 같다.
 public final class RunnerGame {
     public enum Phase: Equatable {
@@ -22,7 +57,8 @@ public final class RunnerGame {
         case started
         case jumped
         case landed
-        case coin(id: Int)
+        /// 코인을 먹었다. 이어 먹은 수(콤보)에 따라 오른 점수를 함께 준다.
+        case coin(id: Int, points: Int, combo: Int)
         /// 100점마다.
         case milestone(Int)
         /// 이번 판에서 처음으로 지난 최고 점수를 넘었을 때 한 번.
@@ -94,6 +130,8 @@ public final class RunnerGame {
         public internal(set) var x: Double
         public internal(set) var y: Double
         public internal(set) var taken = false
+        /// 러너가 먹지 못하고 지나쳤다. 콤보가 끊긴다.
+        public internal(set) var missed = false
     }
 
     /// 판에 들어온 입력. 같은 씨앗에 같은 틱으로 다시 넣으면 같은 판이 나온다 (고스트).
@@ -201,6 +239,8 @@ public final class RunnerGame {
         /// 1pt당 점수와 코인 하나의 점수.
         public var scorePerPoint: Double = 0.04
         public var coinValue = 10
+        /// 놓치지 않고 이어 먹으면 코인 하나의 점수가 coinValue씩 오른다. 이 배수까지.
+        public var maxCoinCombo = 5
         /// 장애물·코인을 미리 깔아 두는 거리 (보이는 폭보다 넉넉히).
         public var lookAhead: Double = 520
         /// 부딪힌 뒤 다시 시작을 받기까지. 누르던 손에 바로 새 판이 시작되지 않게.
@@ -241,6 +281,10 @@ public final class RunnerGame {
     public private(set) var obstacles: [Obstacle] = []
     public private(set) var coins: [Coin] = []
     public private(set) var coinsTaken = 0
+    /// 놓치지 않고 이어 먹은 코인 수. 하나라도 지나치면 0이 된다.
+    public private(set) var coinCombo = 0
+    /// 코인으로 얻은 점수 (콤보 포함).
+    public private(set) var coinPoints = 0
     public private(set) var score = 0
     public private(set) var best: Int
     /// 판이 시작할 때의 최고 점수. 신기록인지 가른다.
@@ -293,7 +337,7 @@ public final class RunnerGame {
     public static let step: Double = 1.0 / 120
 
     /// 규칙 번호. 속도·점수에 관한 Tuning 기본값을 바꾸면 올려서, 옛 규칙으로 남긴 고스트를 쓰지 않게 한다.
-    public static let rulesVersion = 3
+    public static let rulesVersion = 4
 
     public init(tuning: Tuning, runnerWidth: Double, runnerHeight: Double, best: Int = 0,
                 seed: UInt64 = UInt64.random(in: 0...UInt64.max), abilities: Abilities = Abilities()) {
@@ -450,6 +494,8 @@ public final class RunnerGame {
         obstacles = []
         coins = []
         coinsTaken = 0
+        coinCombo = 0
+        coinPoints = 0
         score = 0
         bestAtStart = best
         crashedInto = nil
@@ -581,7 +627,7 @@ public final class RunnerGame {
     }
 
     private func updateScore() {
-        score = Int(distance * tuning.scorePerPoint) + coinsTaken * tuning.coinValue
+        score = Int(distance * tuning.scorePerPoint) + coinPoints
         let milestone = score / 100
         if milestone > lastMilestone {
             lastMilestone = milestone
@@ -657,7 +703,13 @@ public final class RunnerGame {
             if c.x + reach > runner.minX, c.x - reach < runner.maxX, c.y + reach > runner.minY, c.y - reach < runner.maxY {
                 coins[i].taken = true
                 coinsTaken += 1
-                events.append(.coin(id: c.id))
+                coinCombo += 1
+                let points = tuning.coinValue * min(coinCombo, tuning.maxCoinCombo)
+                coinPoints += points
+                events.append(.coin(id: c.id, points: points, combo: coinCombo))
+            } else if !c.missed, c.x + reach < runner.minX {
+                coins[i].missed = true
+                coinCombo = 0
             }
         }
     }

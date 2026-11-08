@@ -17,6 +17,21 @@ enum Backdrop {
 
     static let defaultFolder = "cloudWoods"
     private static var scenes: [String: Scene] = [:]
+    /// 층을 겹쳐 둘 작은 판. 도트 그림의 원래 해상도로 겹친 뒤 화면에는 한 번만 키워 그린다.
+    /// 큰 창 무대에서 층마다 키워 겹치면 한 장면에 10ms 넘게 걸려 60장을 못 그린다.
+    /// 크기마다 하나씩 둔다 (무대와 꾸미기 칸이 번갈아 그린다). 메인 스레드에서만 쓴다.
+    private static var boards: [Int: CGContext] = [:]
+
+    private static func canvas(width: Int, height: Int) -> CGContext? {
+        let key = width << 16 | height
+        if let board = boards[key] { return board }
+        // 창 크기를 바꾸는 동안 생긴 판이 쌓이지 않게 넘치면 비운다
+        if boards.count > 12 { boards.removeAll() }
+        let board = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        boards[key] = board
+        return board
+    }
 
     /// 트랙 꾸미기의 그림 폴더. 꾸미기 이름에서 "Track"을 뗀 이름이다.
     static func folder(_ item: Cosmetic?) -> String {
@@ -53,26 +68,35 @@ enum Backdrop {
     private static func drawScene(_ cg: CGContext, _ scene: Scene, folder: String, size: CGSize, sky: Sky, time: CGFloat,
                                   groundY: CGFloat, scroll: CGFloat, speed: CGFloat) {
         let height = groundY + 2
-        cg.saveGState()
-        cg.translateBy(x: 0, y: height)
-        cg.scaleBy(x: 1, y: -1)
-        for layer in 0..<scene.layers {
-            guard let image = GameFX.image("\(layer)", folder: "Scenes/\(folder)") else { continue }
-            let scale = height / CGFloat(image.height)
-            // 작은 칸에서는 점을 건너뛰면 그림이 깨져서, 줄일 때만 부드럽게 줄인다
-            cg.interpolationQuality = scale < 0.9 ? .medium : .none
-            let width = CGFloat(image.width) * scale
-            let depth = scene.layers > 1 ? CGFloat(layer) / CGFloat(scene.layers - 1) : 0.25
-            let moved = scroll * (0.04 + 0.36 * depth) + (layer == scene.clouds ? time * 3 : 0)
-            var x = -moved.truncatingRemainder(dividingBy: width)
-            if x > 0 { x -= width }
-            while x < size.width {
-                // 한 칸씩 겹쳐 그려 소수점 폭에서 이음매가 벌어지지 않게 한다
-                cg.draw(image, in: CGRect(x: x.rounded(.down), y: 0, width: ceil(width) + 1, height: height))
-                x += width
+        let images = (0..<scene.layers).map { GameFX.image("\($0)", folder: "Scenes/\(folder)") }
+        // 원래 그림 높이(px)를 판 높이로 쓴다. 층은 판에서 정수 픽셀 자리에 놓여 도트가 흔들리지 않는다
+        let native = images.compactMap { $0?.height }.max() ?? Int(height)
+        let perPoint = CGFloat(native) / height
+        if let board = canvas(width: Int((size.width * perPoint).rounded(.up)) + 1, height: native) {
+            board.clear(CGRect(x: 0, y: 0, width: board.width, height: board.height))
+            board.interpolationQuality = .none
+            for (layer, image) in images.enumerated() {
+                guard let image else { continue }
+                let width = CGFloat(image.width) * CGFloat(native) / CGFloat(image.height)
+                let depth = scene.layers > 1 ? CGFloat(layer) / CGFloat(scene.layers - 1) : 0.25
+                let moved = (scroll * (0.04 + 0.36 * depth) + (layer == scene.clouds ? time * 3 : 0)) * perPoint
+                var x = (-moved.truncatingRemainder(dividingBy: width)).rounded(.down)
+                if x > 0 { x -= width }
+                while x < CGFloat(board.width) {
+                    board.draw(image, in: CGRect(x: x, y: 0, width: width, height: CGFloat(native)))
+                    x += width
+                }
+            }
+            if let composed = board.makeImage() {
+                cg.saveGState()
+                cg.translateBy(x: 0, y: height)
+                cg.scaleBy(x: 1, y: -1)
+                // 화면이 판보다 작으면(꾸미기 칸) 점을 건너뛰지 않게 부드럽게 줄인다
+                cg.interpolationQuality = abs(cg.ctm.d) * height < CGFloat(native) * 0.9 ? .medium : .none
+                cg.draw(composed, in: CGRect(x: 0, y: 0, width: CGFloat(board.width) / perPoint, height: height))
+                cg.restoreGState()
             }
         }
-        cg.restoreGState()
         let night = scene.ownTime == true ? 0 : nightness(sky)
         if night > 0 {
             cg.setFillColor(sky.top.withAlphaComponent(night * 0.5).cgColor)

@@ -315,7 +315,8 @@ final class PetFactory: ObservableObject {
                     guard let data, data.count < 8 << 20, (response as? HTTPURLResponse)?.statusCode == 200,
                           let source = CGImageSourceCreateWithData(data as CFData, nil),
                           let image = CGImageSourceCreateImageAtIndex(source, 0, nil), image.width >= 100, image.height >= 100,
-                          let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
+                          let png = NSBitmapImageRep(cgImage: Self.shrunk(image, longest: 768)).representation(using: .png, properties: [:])
+                    else { return }
                     let file = folder.appendingPathComponent("\(index + 1).png")
                     if (try? png.write(to: file)) != nil {
                         lock.lock()
@@ -348,6 +349,20 @@ final class PetFactory: ObservableObject {
                 }
             }
         }
+    }
+
+    /// 긴 변이 `longest`를 넘으면 줄인다. Claude가 그림을 볼 때 크기만큼 토큰을 쓰고, 그림 모델은 512px로 쓰므로 더 클 필요가 없다.
+    static func shrunk(_ image: CGImage, longest: Int) -> CGImage {
+        let side = max(image.width, image.height)
+        guard side > longest else { return image }
+        let scale = CGFloat(longest) / CGFloat(side)
+        let width = max(1, Int(CGFloat(image.width) * scale)), height = max(1, Int(CGFloat(image.height) * scale))
+        guard let cg = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
+        cg.interpolationQuality = .high
+        cg.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return cg.makeImage() ?? image
     }
 
     static func parseNumbers(_ text: String) -> [Int] {
@@ -477,6 +492,7 @@ final class PetFactory: ObservableObject {
                     let url = URL(fileURLWithPath: path)
                     DispatchQueue.main.async { if self.job == current { self.previews.append(url) } }
                 }
+            case "review": self.progress("Claude가 칸마다 같은 캐릭터인지 보는 중…", done: 8, total: 9, job: current)
             case "pack": self.progress("시트로 묶는 중…", done: 9, total: 9, job: current)
             case "failed": failure = event["reason"] as? String
             default: break

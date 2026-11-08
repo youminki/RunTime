@@ -5,16 +5,46 @@ import SwiftUI
 /// 막대는 내용이 넘칠 때 늘 보이고, 끌거나 트랙을 눌러 움직일 수 있으며, 오른쪽에 제 자리를 따로 가져 글을 가리지 않는다.
 struct SlimScrollView<Content: View>: View {
     private let content: Content
+    /// 넘치지 않아도 막대 자리를 비워 둔다. 탭마다 내용 길이가 달라도 폭이 같게 할 때 쓴다.
+    private let keepsGutter: Bool
 
-    init(@ViewBuilder content: () -> Content) {
+    init(keepsGutter: Bool = false, @ViewBuilder content: () -> Content) {
+        self.keepsGutter = keepsGutter
         self.content = content()
     }
 
+    @StateObject private var fit = ScrollFit()
+
     var body: some View {
-        ScrollView(.vertical) {
-            content.background(ScrollerInstaller().frame(width: 0, height: 0))
+        if keepsGutter {
+            // 막대는 넘칠 때만 자리를 가져가니, 넘치지 않을 때는 그만큼 오른쪽을 비워 폭을 같게 둔다
+            GeometryReader { outer in
+                ScrollView(.vertical) {
+                    content
+                        .padding(.trailing, fit.contentHeight <= outer.size.height ? SlimScroller.width : 0)
+                        .background(GeometryReader { inner in
+                            Color.clear.preference(key: ContentHeightKey.self, value: inner.size.height)
+                        })
+                        .background(ScrollerInstaller().frame(width: 0, height: 0))
+                }
+                .onPreferenceChange(ContentHeightKey.self) { fit.contentHeight = $0 }
+            }
+        } else {
+            ScrollView(.vertical) {
+                content.background(ScrollerInstaller().frame(width: 0, height: 0))
+            }
         }
     }
+}
+
+/// 스크롤 칸 내용의 높이. `@State`를 못 쓰는 이유는 HoverFlag 참고.
+private final class ScrollFit: ObservableObject {
+    @Published var contentHeight: CGFloat = 0
+}
+
+private struct ContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// 스크롤 칸 내용 안에 숨어 있다가 감싼 NSScrollView를 찾아 막대를 갈아 끼운다.

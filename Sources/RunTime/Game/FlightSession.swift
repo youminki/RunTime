@@ -1,5 +1,6 @@
 import AppKit
 import GameCore
+import UsageCore
 import SwiftUI
 
 /// 난이도별 최고 점수와 고른 난이도. 이 Mac에만 저장한다.
@@ -557,6 +558,35 @@ enum StageCheck {
             }
         }
 
+        // 게임 밖: ←→로 걷고 스페이스로 뛰고, 들어 옮겨 놓으면 땅으로 돌아온다. 동료는 뒤를 따라온다
+        model.installRoamKeys { _ in }
+        model.companionOverride = Runner.dog.character
+        frames(60)
+        let home = model.roamOffset
+        let buddyHome = model.buddyPosition ?? 0
+        check("동료가 러너 뒤에 선다", buddyHome < model.bodyRect.midX - 20)
+        key(124, down: true)
+        frames(40)
+        key(124, down: false)
+        check("→로 걷는다 (\(Int(model.roamOffset - home))pt)", model.roamOffset > home + 40)
+        frames(30)
+        check("동료가 따라 걷는다 (\(Int((model.buddyPosition ?? 0) - buddyHome))pt)", (model.buddyPosition ?? 0) > buddyHome + 30)
+        key(49, down: true)
+        key(49, down: false)
+        frames(8)
+        check("스페이스로 뛴다 (높이 \(Int(model.liftHeight)))", model.liftHeight > 5)
+        frames(90)
+        check("뛰고 나면 땅에 내린다", model.liftHeight == 0)
+        let body = model.bodyRect
+        model.drag(from: CGPoint(body.midX, body.midY), to: CGPoint(body.midX + 10, body.midY - 30))
+        frames(20)
+        check("러너를 잡고 끌면 들린다 (높이 \(Int(model.liftHeight)))", model.liftHeight > 10)
+        _ = model.release(at: CGPoint(body.midX + 10, body.midY - 30), tapped: false)
+        frames(120)
+        check("놓으면 땅으로 떨어진다", model.liftHeight == 0)
+        check("러너 몸이 무대 위로 나가지 않는다", model.bodyRect.minY >= 0)
+        model.companionOverride = nil
+
         // 비행: 키로 시작하고, 눌러서 오르고, →로 빨라지고, 끝나면 다시 시작하고, esc로 나간다
         model.startFlight(character: character, rehearsal: false)
         check("비행을 켜면 게임 중이 된다", model.isPlaying && model.flight != nil)
@@ -600,10 +630,7 @@ enum StageCheck {
         }
         model.endGame()
 
-        // 달리기: 공중 점프를 다 써도 무대 안에 있고 그림이 뒤집히지 않는다
-        let hadAirJump = GameDecor.shared.isOn(.airJump)
-        if !hadAirJump { GameDecor.shared.toggle(.airJump) }
-        defer { if !hadAirJump { GameDecor.shared.toggle(.airJump) } }
+        // 달리기: 길게 눌러 가장 높이 뛰어도 무대 안에 있고 그림이 뒤집히지 않는다
         model.startGame(character: character)
         guard let session = model.game else { return false }
         key(49, down: true)
@@ -611,16 +638,13 @@ enum StageCheck {
         // 첫 장애물이 오기 전에 시험한다
         frames(35)
         var top = 0.0
-        for _ in 0..<3 {
-            key(49, down: true)
-            for _ in 0..<16 {
-                frames(1)
-                top = max(top, session.game.runnerY)
-            }
-            key(49, down: false)
+        key(49, down: true)
+        for _ in 0..<40 {
+            frames(1)
+            top = max(top, session.game.runnerY)
         }
-        check("삼단 점프가 무대 안에서 멈춘다 (발 높이 \(Int(top)))",
-              top > 70 && top <= session.game.tuning.maxRise && top <= 135)
+        key(49, down: false)
+        check("점프가 무대 안에서 멈춘다 (발 높이 \(Int(top)))", top > 30 && top <= session.game.tuning.maxRise && top <= 135)
         let fit = CharacterScene.fitTransform(for: CGRect(x: 0, y: -30, width: 20, height: 20), in: 40...60)
         check("맞춤 배율이 음수가 되지 않는다", fit.a > 0 && fit.d > 0)
         key(53, down: true)

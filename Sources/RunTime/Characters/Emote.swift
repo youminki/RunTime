@@ -10,8 +10,9 @@ enum Emote {
         abs(cg.ctm.a) > 4 ? 4.6 : height
     }
 
+    /// 위끝을 머리 꼭대기에 맞춘다. 메뉴바는 장면을 칸 안에 맞춰 넣으므로 머리보다 위로 나가면 칸 밖에서 잘린다.
     static func spot(_ bounds: CGRect) -> CGPoint {
-        CGPoint(min(bounds.maxX + 2.4, 36 - height / 2 - 0.2), max(bounds.minY + 0.4, height / 2 + 0.2))
+        CGPoint(min(bounds.maxX + 2.4, 36 - height / 2 - 0.2), max(bounds.minY + height / 2, height / 2 + 0.2))
     }
 
     /// 정지 말풍선 (Assets/FX/emote). `pop`(0~1)이 1에 닿을 때까지 톡 튀어나오며 커진다.

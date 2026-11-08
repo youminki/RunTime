@@ -150,68 +150,19 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     var fx: GameFX.Shape? { details.fx }
 }
 
-enum Ability: String, CaseIterable, Identifiable {
-    case airJump, shield, magnet, glide
-
-    var id: String { rawValue }
-
-    var name: String {
-        switch self {
-        case .airJump: "이단 점프"
-        case .shield: "보호막"
-        case .magnet: "자석"
-        case .glide: "글라이드"
-        }
-    }
-
-    /// 능력 칸의 그림 (Assets/FX). 게임에서 그 능력이 보이는 모습이다.
-    var sprite: String {
-        switch self {
-        case .airJump: "puff"
-        case .shield: "pumpingHeart"
-        case .magnet: "candyPop_blue"
-        case .glide: "rainbowStar"
-        }
-    }
-
-    /// 켜면 쓰는 단계.
-    var level: Int {
-        switch self {
-        case .airJump: 2
-        case .shield, .magnet: 3
-        case .glide: 1
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .airJump: "공중에서 두 번 더 뛰기"
-        case .shield: "한 판에 세 번 부딪혀도 버팀"
-        case .magnet: "가까운 코인을 끌어옴"
-        case .glide: "뛴 채 누르고 있으면 천천히 내려옴"
-        }
-    }
-}
-
-/// 쓰는 꾸미기와 능력, 동료. 모두 자유롭게 켜고 끈다. 이 Mac에만 저장한다.
+/// 쓰는 꾸미기와 동료. 모두 자유롭게 켜고 끈다. 이 Mac에만 저장한다.
 final class GameDecor: ObservableObject {
     static let shared = GameDecor()
 
     private enum Key {
         static let equipped = "gameCosmeticsEquipped"
         static let companion = "gameCompanion"
-        static let abilities = "gameAbilitiesOn"
-        // 예전에 산 능력을 그대로 켜 두려고 처음 한 번 읽는다
-        static let oldLevels = "gameAbilityLevels", oldOff = "gameAbilitiesOff"
     }
 
     private let defaults = UserDefaults.standard
 
     @Published private(set) var equipped: Set<Cosmetic> {
         didSet { defaults.set(equipped.map(\.rawValue), forKey: Key.equipped) }
-    }
-    @Published private(set) var abilitiesOn: Set<Ability> {
-        didSet { defaults.set(abilitiesOn.map(\.rawValue), forKey: Key.abilities) }
     }
     /// 게임과 무대에서 러너 뒤를 따라 달리는 Petdex 펫 (`PetdexStore.storageID`). 없으면 nil.
     @Published var companionID: String? {
@@ -227,13 +178,6 @@ final class GameDecor: ObservableObject {
     private init() {
         equipped = Set((defaults.stringArray(forKey: Key.equipped) ?? []).compactMap(Cosmetic.init(rawValue:)))
         companionID = defaults.string(forKey: Key.companion)
-        if let saved = defaults.stringArray(forKey: Key.abilities) {
-            abilitiesOn = Set(saved.compactMap(Ability.init(rawValue:)))
-        } else {
-            let levels = defaults.dictionary(forKey: Key.oldLevels) as? [String: Int] ?? [:]
-            let off = Set(defaults.stringArray(forKey: Key.oldOff) ?? [])
-            abilitiesOn = Set(Ability.allCases.filter { (levels[$0.rawValue] ?? 0) > 0 && !off.contains($0.rawValue) })
-        }
     }
 
     /// 데려갈 동료 그림. 펫을 지웠으면 nil.
@@ -245,20 +189,6 @@ final class GameDecor: ObservableObject {
     func equipped(_ slot: Cosmetic.Slot) -> Cosmetic? {
         if let tryingOn, tryingOn.slot == slot { return tryingOn }
         return (preview ?? equipped).first { $0.slot == slot }
-    }
-
-    func isOn(_ ability: Ability) -> Bool { abilitiesOn.contains(ability) }
-
-    func toggle(_ ability: Ability) {
-        if abilitiesOn.contains(ability) { abilitiesOn.remove(ability) } else { abilitiesOn.insert(ability) }
-    }
-
-    /// 다음 판에 쓸 능력 (켜 둔 것만).
-    var abilities: RunnerGame.Abilities {
-        RunnerGame.Abilities(airJumps: isOn(.airJump) ? Ability.airJump.level : 0,
-                             shields: isOn(.shield) ? Ability.shield.level : 0,
-                             magnet: isOn(.magnet) ? Ability.magnet.level : 0,
-                             glide: isOn(.glide))
     }
 
     /// 갈래마다 하나씩 쓴다. 쓰는 것을 다시 고르면 뗀다.

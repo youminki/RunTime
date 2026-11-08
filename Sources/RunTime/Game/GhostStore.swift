@@ -17,11 +17,12 @@ struct GhostRecord: Codable {
     var seedValue: UInt64? { UInt64(seed) }
 }
 
-/// 내 최고 판 고스트. 이 Mac에만 저장한다.
+/// 난이도별 내 최고 판 고스트. 이 Mac에만 저장한다.
 enum GhostStore {
-    private static var url: URL {
+    /// 보통은 난이도가 생기기 전 고스트 파일을 그대로 쓴다.
+    private static func url(_ difficulty: RunDifficulty) -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("RunTime/ghost.json")
+            .appendingPathComponent(difficulty == .normal ? "RunTime/ghost.json" : "RunTime/ghost-\(difficulty.rawValue).json")
     }
 
     /// 남의 고스트를 확인할 때 돌려 보는 상한 (1시간).
@@ -32,8 +33,8 @@ enum GhostStore {
     }
 
     /// 지금 규칙으로 다시 돌릴 수 있는 고스트만.
-    static func load(for game: RunnerGame) -> GhostRecord? {
-        guard let data = try? Data(contentsOf: url),
+    static func load(for game: RunnerGame, difficulty: RunDifficulty) -> GhostRecord? {
+        guard let data = try? Data(contentsOf: url(difficulty)),
               let record = try? JSONDecoder().decode(GhostRecord.self, from: data),
               record.layout == layout(of: game), record.seedValue != nil
         else { return nil }
@@ -46,7 +47,8 @@ enum GhostStore {
     }
 
     /// 방금 끝난 판을 내 고스트로 남긴다.
-    static func save(_ record: GhostRecord) -> Bool {
+    static func save(_ record: GhostRecord, difficulty: RunDifficulty) -> Bool {
+        let url = url(difficulty)
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(record).write(to: url, options: .atomic)

@@ -900,6 +900,8 @@ final class DesignSync: ObservableObject {
         let names = picked.prefix(3).map { $0.title.isEmpty ? $0.screenID : $0.title }
         let body = names.joined(separator: ", ") + (picked.count > 3 ? " 외 \(picked.count - 3)건" : "")
         Notifier.shared.send(title: title, body: body, opens: .design)
+        MenuBarNews.post(.init(title: title, items: names + (picked.count > 3 ? ["외 \(picked.count - 3)건"] : []),
+                               actionTitle: "디자인 변경 보기", action: { MenuBarNews.open(.design) }))
     }
 
     func shouldAlert(_ event: DesignEvent) -> Bool {

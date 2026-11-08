@@ -585,6 +585,39 @@ if CommandLine.arguments.contains("--hosts-check") {
     RunLoop.main.run()
 }
 
+// 업데이트 말풍선 점검: 커밋 제목 몇 줄(표준 입력)로 메뉴바 아래 말풍선을 띄우고 PNG로 남긴 뒤 종료.
+if let index = CommandLine.arguments.firstIndex(of: "--update-bubble-check") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let file = URL(fileURLWithPath: CommandLine.arguments.dropFirst(index + 1).first ?? "update-bubble.png")
+    let lines = (readLine(strippingNewline: true).map { [$0] } ?? []) + Array(sequence(first: "", next: { _ in readLine() }).dropFirst())
+    do {
+        let items = UpdateDigest.make(lines.filter { !$0.isEmpty })
+        print(items.map { "· \($0)" }.joined(separator: "\n"))
+        let screen = NSScreen.main?.frame ?? .zero
+        MenuBarBubble.shared.show(.init(title: "새 버전이 있어요", items: items, actionTitle: "지금 업데이트", action: {}),
+                                  below: NSRect(x: screen.maxX - 300, y: screen.maxY - 30, width: 40, height: 30))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            MenuBarBubble.shared.snapshot(to: file)
+            MenuBarBubble.shared.hide()
+            exit(items.isEmpty ? 1 : 0)
+        }
+    }
+    app.run()
+}
+
+// 꺼낸 펫 점검: 실제 창을 띄워 걷기·키·끌기를 보고 마지막 모습을 PNG로 남긴 뒤 종료.
+if let index = CommandLine.arguments.firstIndex(of: "--desktop-pet-check") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let file = URL(fileURLWithPath: CommandLine.arguments.dropFirst(index + 1).first ?? "desktop-pet.png")
+    DesktopPetCheck.run(to: file) { ok in
+        print(ok ? "모두 통과" : "실패")
+        exit(ok ? 0 : 1)
+    }
+    app.run()
+}
+
 if CommandLine.arguments.contains("--diagnose") {
     _ = NSApplication.shared
     print(Diagnostics.report())

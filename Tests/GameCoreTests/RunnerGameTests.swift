@@ -20,8 +20,10 @@ private func catalog() -> [RunnerGame.ObstacleKind] {
 /// 앱의 판정 상자 (GameSession.runnerWidth, runnerHeight).
 private let runnerSize = (width: 24.0, height: 40.0)
 
-private func makeGame(seed: UInt64 = 7, best: Int = 0, catalog: [RunnerGame.ObstacleKind] = catalog()) -> RunnerGame {
+private func makeGame(seed: UInt64 = 7, best: Int = 0, catalog: [RunnerGame.ObstacleKind] = catalog(),
+                      difficulty: RunDifficulty = .normal) -> RunnerGame {
     var tuning = RunnerGame.Tuning()
+    difficulty.apply(to: &tuning)
     tuning.catalog = catalog
     return RunnerGame(tuning: tuning, runnerWidth: runnerSize.width, runnerHeight: runnerSize.height, best: best,
                       seed: seed)
@@ -170,6 +172,27 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         #expect(game.score == Int(game.distance * game.tuning.scorePerPoint))
     }
 
+    /// 이어 먹을수록 코인 점수가 오르고, 하나라도 지나치면 콤보가 처음부터 다시 시작한다.
+    @Test func coinComboGrowsAndBreaksOnMiss() {
+        let game = makeGame(seed: 5)
+        game.ignoresCollisions = true
+        game.press()
+        game.release()
+        var gains: [(points: Int, combo: Int)] = []
+        var broke = false
+        for _ in 0..<6_000 {
+            let before = game.coinCombo
+            game.advance(by: 1.0 / 120)
+            for case let .coin(_, points, combo) in game.drainEvents() { gains.append((points, combo)) }
+            if before > 0, game.coinCombo == 0 { broke = true }
+        }
+        #expect(!gains.isEmpty)
+        for gain in gains { #expect(gain.points == game.tuning.coinValue * min(gain.combo, game.tuning.maxCoinCombo)) }
+        #expect(gains.contains { $0.combo >= 2 })
+        #expect(broke)
+        #expect(game.coinPoints == gains.map(\.points).reduce(0, +))
+    }
+
     @Test func sameSeedSamePattern() {
         let a = makeGame(seed: 42), b = makeGame(seed: 42)
         a.press(); b.press()
@@ -230,6 +253,20 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         autoplay(game, seconds: 120)
         let hit = game.obstacles.first { $0.id == game.crashedInto }
         #expect(game.elapsed > 60, "crashed at \(game.elapsed)s speed \(game.speed) into \(hit.map { "\($0.kind.id)×\($0.count) y\($0.y)" } ?? "-") runnerY \(game.runnerY)")
+    }
+
+    /// 쉬움·어려움도 넘을 수 없는 배치가 없고, 제때 뛰면 오래 버틴다.
+    @Test(arguments: [RunDifficulty.easy, .hard])
+    func everyDifficultyIsPassableAndSurvivable(difficulty: RunDifficulty) {
+        for seed in [UInt64(3), 11, 29] {
+            let game = makeGame(seed: seed, difficulty: difficulty)
+            game.press()
+            game.release()
+            autoplay(game, seconds: 120)
+            #expect(game.elapsed > 60, "\(difficulty) seed \(seed) crashed at \(game.elapsed)s speed \(game.speed)")
+        }
+        let easy = makeGame(difficulty: .easy), hard = makeGame(difficulty: .hard), normal = makeGame()
+        #expect(easy.tuning.maxSpeed < normal.tuning.maxSpeed && normal.tuning.maxSpeed < hard.tuning.maxSpeed)
     }
 
     /// 내리찍는 상자는 러너가 닿기 전에 땅에 내려와, 내려온 걸 보고 뛸 시간이 남는다.
@@ -402,7 +439,7 @@ private func meetings(seed: UInt64, seconds: Double) -> [(time: Double, obstacle
         #expect(moving.runnerBox.minX - still.runnerBox.minX == moving.runnerOffset)
         #expect(moving.runnerOffset == moving.tuning.maxAdvance)
         // 코인을 더 먹었을 수 있으니 거리 점수만 비교한다
-        let distanceScore = { (g: RunnerGame) in g.score - g.coinsTaken * g.tuning.coinValue }
+        let distanceScore = { (g: RunnerGame) in g.score - g.coinPoints }
         #expect(distanceScore(moving) == distanceScore(still))
     }
 

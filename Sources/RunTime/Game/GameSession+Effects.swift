@@ -86,8 +86,10 @@ extension GameSession {
         let running = game.phase == .playing
         // 보폭 50pt마다 한 걸음, 서 있으면 숨 쉬기
         let phase = running ? CGFloat(game.distance / 50) : CGFloat(time / 2.4)
+        // 오를 때는 도약, 내려올 때는 착지 준비 자세로 러너와 같은 점프 줄을 쓴다
+        let rising = buddyHeights.count > 1 && buddyHeights[1].height > buddyHeights[0].height
         GameFX.drawCompanion(companion, feet: CGPoint(x, groundY - lift), height: 24, phase: phase, moving: running,
-                             jump: lift > 2 ? 0.5 : nil, cg)
+                             jump: lift > 2 ? (rising ? 0.3 : 0.7) : nil, cg)
     }
 
     // MARK: 화면 효과

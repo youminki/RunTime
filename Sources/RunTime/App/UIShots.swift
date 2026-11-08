@@ -306,9 +306,12 @@ enum UIShots {
                 if !previews.isEmpty { PetFactory.shared.showProgressForShots(previews: previews) }
                 return runnersTab(.pets, engine: engine)
             }()),
-            ("main-runners-game", .darkAqua, nil, runnersTab(.game, engine: engine)),
-            ("main-runners-playing", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .game,
-                                                                         rehearseGame: true, layout: .runnersPage)
+            ("main-runners-choose", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .pets,
+                                                                        stageRehearsal: .chooseRun, layout: .runnersPage)
+                .environment(\.colorScheme, .dark)
+                .frame(width: mainSize.width - MainWindowView.railWidth - 1, height: mainSize.height))),
+            ("main-runners-playing", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .decor,
+                                                                         stageRehearsal: .rehearsal, layout: .runnersPage)
                 .environment(\.colorScheme, .dark)
                 .frame(width: mainSize.width - MainWindowView.railWidth - 1, height: mainSize.height))),
             ("main-worklog", .aqua, nil, mainPage(.workLog, engine: engine)),

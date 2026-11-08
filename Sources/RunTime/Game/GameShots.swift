@@ -48,8 +48,6 @@ enum GameShots {
         try shot("0-entrance")
         step(0.6, autoplay: false)
         try shot("1-ready")
-        // 능력을 단 모습 (보호막 방울, 능력 표시)
-        game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 3, glide: true))
         session.press()
         session.release()
         for k in 1...12 {
@@ -117,7 +115,7 @@ enum GameShots {
     }
 }
 
-/// 그리기 시간 재기 (`--game-bench`). 팝오버 무대와 같은 코드로 무대만, 게임(꾸미기·능력·고스트 포함)을
+/// 그리기 시간 재기 (`--game-bench`). 팝오버 무대와 같은 코드로 무대만, 게임(꾸미기·고스트 포함)을
 /// 2배 크기 비트맵에 여러 장 그려 한 장면에 드는 시간을 낸다. 1초 60장이면 장면마다 16.7ms 안이어야 한다.
 enum GameBench {
     @MainActor
@@ -143,12 +141,34 @@ enum GameBench {
         }
 
         measure("무대", StageModel())
+        // 앱 창 무대: 기본 창에서 폭 1119pt, 높이 311pt를 2배 화면에 그린다 (장면은 높이 150 기준으로 늘려 그린다)
+        let zoom = 311 / RunnerStage.height
+        if let big = CGContext(data: nil, width: Int(1119 * 2), height: Int(311 * 2), bitsPerComponent: 8, bytesPerRow: 0,
+                               space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            big.scaleBy(x: 2 * zoom, y: 2 * zoom)
+            let model = StageModel(), scene = CGSize(width: 1119 / zoom, height: RunnerStage.height)
+            let start = Date()
+            for _ in 0..<frames {
+                date = date.addingTimeInterval(1.0 / 60)
+                model.draw(big, size: scene, date: date, display: .normal(.dashing), character: character,
+                           theme: character.theme(.natural))
+            }
+            let ms = Date().timeIntervalSince(start) * 1000 / Double(frames)
+            print(String(format: "창 무대: 장면마다 %.2fms (60fps의 %.0f%%)", ms, ms / (1000.0 / 60) * 100))
+            let sky = Sky.at(hour: 12, space: false)
+            let backStart = Date()
+            for k in 0..<frames {
+                Backdrop.draw(big, size: scene, sky: sky, time: CGFloat(k) / 60, groundY: scene.height - 15, scroll: CGFloat(k) * 2,
+                              speed: 88, track: nil)
+            }
+            let back = Date().timeIntervalSince(backStart) * 1000 / Double(frames)
+            print(String(format: "  그중 배경: %.2fms", back))
+        }
 
         let model = StageModel()
         model.startGame(character: character, rehearsal: true)
         guard let session = model.game else { return }
         let game = session.game
-        game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 3, glide: true))
         GameDecor.shared.preview = [.rainbowStarTrail, .starDust, .starburstCrash]
         let pilot = Autopilot(game: game)
         session.press()
@@ -208,9 +228,8 @@ enum GameFrames {
         step(0.6)
         session.savedGhost = GhostStore.record(of: game, runner: Runner.dino.rawValue)
 
-        // 꾸미기와 능력을 달고 고스트와 겨룬다. 앞뒤로 움직여 고스트와 겹치지 않게 한다
+        // 꾸미기를 달고 고스트와 겨룬다. 앞뒤로 움직여 고스트와 겹치지 않게 한다
         GameDecor.shared.preview = [.sunnyHillsTrack, .sparkleDust, .heartCrash, .rainbowStarTrail]
-        game.setAbilities(.init(airJumps: 1, shields: 2, magnet: 2))
         session.startRace(session.savedGhost)
         step(1.2)
         var index = 0

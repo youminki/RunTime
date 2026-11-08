@@ -10,7 +10,8 @@ final class AppSettings: ObservableObject {
 
     private enum Key: String {
         case officialEnabled, sensitivity, pollInterval, limitAlertsEnabled, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, globalHotKeyEnabled, spriteTheme
-        case menuBarLabel, menuBarLabelLast, runner, smoothness, tricksEnabled, customRunner, runnerSize
+        case menuBarLabel, menuBarLabelLast, runner, smoothness, tricksEnabled, customRunner, runnerSize, desktopPet
+        case desktopPetSize, desktopPetEdges, desktopPetMode, desktopPetSpot
     }
 
     private let defaults = UserDefaults.standard
@@ -76,6 +77,29 @@ final class AppSettings: ObservableObject {
     /// 가끔 혼자 장난치기 (점프, 하트, 춤 등). 끄면 상태가 바뀔 때만 움직임이 달라진다.
     @Published var tricksEnabled: Bool { didSet { save(tricksEnabled, .tricksEnabled) } }
 
+    /// 펫을 화면 위로 꺼내 두었는지. 다시 켤 때 그대로 꺼낸다.
+    @Published var desktopPet: Bool { didSet { save(desktopPet, .desktopPet) } }
+    /// 꺼낸 펫 크기 배율 (0.6~2, 1이 보통).
+    @Published var desktopPetSize: Double {
+        didSet {
+            save(desktopPetSize, .desktopPetSize)
+            DesktopPet.shared.resize()
+        }
+    }
+    /// 꺼낸 펫이 혼자 있을 때 움직이는 방식.
+    @Published var desktopPetMode: DesktopPet.Mode { didSet { save(desktopPetMode.rawValue, .desktopPetMode) } }
+    /// '놓은 자리에 두기'로 둔 발 자리 (화면 좌표).
+    var desktopPetSpot: CGPoint? {
+        get {
+            guard let values = UserDefaults.standard.array(forKey: Key.desktopPetSpot.rawValue) as? [Double], values.count == 2
+            else { return nil }
+            return CGPoint(x: values[0], y: values[1])
+        }
+        set {
+            if let newValue { save([Double(newValue.x), Double(newValue.y)], .desktopPetSpot) }
+        }
+    }
+
     /// 메뉴바 러너 크기 (기본 크게).
     @Published var runnerSize: RunnerSize { didSet { save(runnerSize.rawValue, .runnerSize) } }
 
@@ -139,6 +163,12 @@ final class AppSettings: ObservableObject {
         customRunnerID = known ? savedCustom : nil
         smoothness = SpriteSmoothness(rawValue: string(.smoothness)) ?? .smooth
         tricksEnabled = bool(.tricksEnabled, true)
+        desktopPet = bool(.desktopPet, false)
+        let size = d.double(forKey: Key.desktopPetSize.rawValue)
+        desktopPetSize = size > 0 ? min(max(size, 0.6), 2) : 1
+        // 예전 '모서리 따라 돌아다니기' 켜기·끄기를 이어 받는다
+        desktopPetMode = DesktopPet.Mode(saved: string(.desktopPetMode))
+            ?? (d.object(forKey: Key.desktopPetEdges.rawValue) as? Bool == false ? .floor : .roam)
         let label = MenuBarLabel(rawValue: string(.menuBarLabel)) ?? .off
         menuBarLabel = label
         // 이 키가 생기기 전에 고른 값도 끄고 다시 켰을 때 돌아오게 (init에서는 didSet이 불리지 않는다)

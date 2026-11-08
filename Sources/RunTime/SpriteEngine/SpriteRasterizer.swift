@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 
 /// drawingHandler 기반 NSImage를 비트맵으로 1회 래스터라이즈.
 /// 프레임은 Core Animation 레이어에 넘겨 재생하므로 그리기는 상태가 바뀔 때 한 번만 일어난다 (§4 성능 예산).
@@ -26,10 +27,35 @@ enum SpriteRasterizer {
             draw()
         }
         NSGraphicsContext.restoreGraphicsState()
+        // 1배율 화면에서는 큰 그림을 22px 안팎으로 줄여 뭉개져서, 줄인 뒤 한 번 가볍게 또렷하게 한다
+        if canvas.backing < 1.5 { sharpen(cg) }
         if let halo, let pixels = cg.data?.bindMemory(to: UInt8.self, capacity: width * height * 4) {
             addHalo(pixels, width: width, height: height, color: halo, radius: canvas.haloRadius)
         }
         return cg.makeImage()
+    }
+
+    private static let context = CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+
+    /// 언샤프 마스크를 걸어 같은 판에 다시 그린다. 투명한 바깥은 건드리지 않게 원래 알파를 남긴다.
+    private static func sharpen(_ cg: CGContext) {
+        guard let image = cg.makeImage(),
+              let filter = CIFilter(name: "CIUnsharpMask") else { return }
+        let input = CIImage(cgImage: image)
+        filter.setValue(input, forKey: kCIInputImageKey)
+        filter.setValue(0.8, forKey: kCIInputRadiusKey)
+        filter.setValue(0.6, forKey: kCIInputIntensityKey)
+        guard let output = filter.outputImage?.cropped(to: input.extent),
+              let sharp = context.createCGImage(output, from: input.extent) else { return }
+        let rect = CGRect(x: 0, y: 0, width: cg.width, height: cg.height)
+        cg.saveGState()
+        cg.resetClip()
+        cg.concatenate(cg.ctm.inverted())
+        cg.clear(rect)
+        // 바깥 테두리가 어둡게 번지지 않게 원래 그림의 알파로 잘라 그린다
+        cg.clip(to: rect, mask: image)
+        cg.draw(sharp, in: rect)
+        cg.restoreGState()
     }
 
     /// 그림 바깥으로 `radius` 픽셀 안에 있는 투명한 자리에 `color`를 깐다 (프리멀티플라이드 RGBA).

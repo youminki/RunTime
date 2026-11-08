@@ -48,9 +48,11 @@ struct MenuBarCanvas: Equatable {
     private static var standingCenter: CGFloat { Stage.size.height - (standing.top + standing.bottom) / 2 }
 
     /// 설계 칸(36×22)을 출력 칸에 놓는 사각형 (y 위, 설계 pt 단위). 가로는 키운 만큼 칸이 넓다.
+    /// 아래끝을 화면 픽셀 경계에 맞춘다. 1배율 화면에서 반 픽셀 어긋나면 모든 프레임이 번져 흐려 보였다.
     var designRect: CGRect {
-        CGRect(x: 0, y: Stage.size.height / 2 - Self.standingCenter * zoom,
-               width: Stage.size.width * zoom, height: Stage.size.height * zoom)
+        let y = Stage.size.height / 2 - Self.standingCenter * zoom
+        return CGRect(x: 0, y: (y * pixelsPerPoint).rounded() / pixelsPerPoint,
+                      width: Stage.size.width * zoom, height: Stage.size.height * zoom)
     }
 
     /// 출력 칸에 보이는 설계 y 범위 (아래로). 테두리가 칸에 닿지 않게 그 두께만큼 안쪽이다.
@@ -58,7 +60,7 @@ struct MenuBarCanvas: Equatable {
         let margin = Self.margin(haloRadius: haloRadius, pixelsPerPoint: pixelsPerPoint)
         // 출력 높이(아래에서) o를 설계 y로
         func y(_ o: CGFloat) -> CGFloat {
-            Stage.size.height - (Self.standingCenter + (o - Stage.size.height / 2) / zoom)
+            Stage.size.height - (o - designRect.minY) / zoom
         }
         return y(Stage.size.height - margin)...y(margin)
     }

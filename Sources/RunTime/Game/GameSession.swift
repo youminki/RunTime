@@ -2,17 +2,29 @@ import AppKit
 import GameCore
 import SwiftUI
 
-/// 최고 점수와 판 수. 이 Mac에만 저장한다.
+/// 난이도별 최고 점수, 판 수, 고른 난이도. 이 Mac에만 저장한다.
 enum GameRecords {
     static let bestKey = "gameBest"
     static let playsKey = "gamePlays"
+    private static let difficultyKey = "gameDifficulty"
 
-    static var best: Int { UserDefaults.standard.integer(forKey: bestKey) }
+    static var difficulty: RunDifficulty {
+        get { UserDefaults.standard.string(forKey: difficultyKey).flatMap(RunDifficulty.init(rawValue:)) ?? .normal }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: difficultyKey) }
+    }
+
+    /// 보통은 난이도가 생기기 전 기록을 그대로 잇는다.
+    private static func key(_ difficulty: RunDifficulty) -> String {
+        difficulty == .normal ? bestKey : "\(bestKey).\(difficulty.rawValue)"
+    }
+
+    static var best: Int { best(difficulty) }
+    static func best(_ difficulty: RunDifficulty) -> Int { UserDefaults.standard.integer(forKey: key(difficulty)) }
     static var plays: Int { UserDefaults.standard.integer(forKey: playsKey) }
 
-    static func finish(score: Int) {
+    static func finish(_ difficulty: RunDifficulty, score: Int) {
         let defaults = UserDefaults.standard
-        defaults.set(max(best, score), forKey: bestKey)
+        defaults.set(max(best(difficulty), score), forKey: key(difficulty))
         defaults.set(plays + 1, forKey: playsKey)
     }
 }
@@ -88,15 +100,20 @@ final class GameSession {
     /// 고스트와 겨루는 판. 코스를 미리 알고 하는 판이라 기록과 순위에 넣지 않는다.
     private(set) var isRace = false
 
+    /// 이 판의 난이도. 점검 도구의 판은 늘 보통이다.
+    let difficulty: RunDifficulty
+
     init(character: RunnerCharacter, live: Bool = true) {
         self.character = character
         self.live = live
+        difficulty = live ? GameRecords.difficulty : .normal
         var tuning = RunnerGame.Tuning()
+        difficulty.apply(to: &tuning)
         tuning.catalog = GameAssets.catalog(runnerHeight: Self.runnerHeight)
         game = RunnerGame(tuning: tuning, runnerWidth: Self.runnerWidth, runnerHeight: Self.runnerHeight,
-                          best: live ? GameRecords.best : 0)
+                          best: live ? GameRecords.best(difficulty) : 0)
         if live {
-            savedGhost = GhostStore.load(for: game)
+            savedGhost = GhostStore.load(for: game, difficulty: difficulty)
             installKeys()
         }
     }
@@ -116,7 +133,6 @@ final class GameSession {
         if game.phase != .playing {
             isRace = false
             ghost = nil
-            if live { game.setAbilities(GameDecor.shared.abilities) }
         }
         game.press()
         // 부딪힌 직후라 다시 시작되지 않았으면 끝난 고스트 판 화면을 그대로 둔다
@@ -133,7 +149,6 @@ final class GameSession {
         game.countsTowardBest = false
         ghost = GhostRunner(tuning: game.tuning, runnerWidth: Self.runnerWidth, runnerHeight: Self.runnerHeight,
                             seed: seed, inputs: record.inputs, abilities: record.abilities ?? RunnerGame.Abilities())
-        if live { game.setAbilities(GameDecor.shared.abilities) }
         isRace = true
         raceTarget = record
         ghostCharacter = AppSettings.character(forRunnerID: record.runner) ?? Runner.jack.character
@@ -264,20 +279,22 @@ final class GameSession {
         case .landed:
             dust(at: feet, landing: true)
             landBounce = 1
-        case .coin(let id):
+        case .coin(let id, let value, let combo):
             play(.coin)
             if let coin = game.coins.first(where: { $0.id == id }) {
                 let point = CGPoint(screenX(coin.x), CGFloat(coin.y))
-                burst(at: point, count: 3, shape: .sprite("plasmaSparkle"), speed: 50, life: 0.45, drift: 0.6, size: 1.2...1.6)
+                // 콤보가 오를수록 반짝임이 커져 이어 먹는 맛이 난다
+                burst(at: point, count: 2 + min(combo, 5), shape: .sprite("plasmaSparkle"), speed: 50 + CGFloat(min(combo, 5)) * 8,
+                      life: 0.45, drift: 0.6, size: 1.2...1.6)
                 coinFlyers.append(CoinFlyer(from: CGPoint(screenX(coin.x), groundY - CGFloat(coin.y))))
                 // 이어서 먹은 코인은 떠 있는 팝업 하나에 더해 글자가 겹치지 않게 한다
-                let value = game.tuning.coinValue
+                let tag = combo >= 2 ? " ×\(min(combo, game.tuning.maxCoinCombo))" : ""
                 if let i = popups.lastIndex(where: { $0.coins > 0 && $0.life > 0.35 }) {
                     popups[i].coins += value
-                    popups[i].text = "+\(popups[i].coins)"
+                    popups[i].text = "+\(popups[i].coins)" + tag
                     popups[i].life = 0.8
                 } else {
-                    popups.append(Popup(text: "+\(value)", position: point, life: 0.8, coins: value))
+                    popups.append(Popup(text: "+\(value)" + tag, position: point, life: 0.8, coins: value))
                 }
             }
         case .milestone:
@@ -329,10 +346,10 @@ final class GameSession {
             if !finished, !isRace {
                 finished = true
                 if live {
-                    GameRecords.finish(score: game.score)
+                    GameRecords.finish(difficulty, score: game.score)
                     if game.score > savedGhost?.score ?? 0 {
                         let record = GhostStore.record(of: game, runner: AppSettings.shared.runnerID)
-                        if GhostStore.save(record) { savedGhost = record }
+                        if GhostStore.save(record, difficulty: difficulty) { savedGhost = record }
                     }
                 }
                 onFinish(game)

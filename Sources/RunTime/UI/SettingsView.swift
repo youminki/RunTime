@@ -229,6 +229,24 @@ struct SettingsView: View {
                 GroupedRow("러너와 꾸미기", icon: "hare.fill", tint: Palette.orange) {
                     Button("러너 화면 열기", action: openRunners)
                 }
+                PetMakerStorageRow()
+            }
+
+            GroupedSection("화면에 꺼낸 펫", footer: "펫을 끌어다 놓으면 그 자리에 머물러요(다른 모니터로도 옮겨져요). 펫을 한 번 누르면 방향키로 움직여요. 펫을 오른쪽 클릭하면 앱의 각 화면으로 바로 가거나 크기를 바꿀 수 있어요.") {
+                ToggleRow(title: "펫을 화면에 꺼내 두기", icon: "macwindow.on.rectangle", tint: Palette.blue,
+                          isOn: Binding(get: { settings.desktopPet },
+                                        set: { $0 ? DesktopPet.shared.show() : DesktopPet.shared.hide() }))
+                GroupedRow("펫 크기", icon: "arrow.up.left.and.arrow.down.right", tint: Palette.indigo) {
+                    HStack(spacing: 8) {
+                        Slider(value: $settings.desktopPetSize, in: 0.6...2).frame(width: 160)
+                        Text("\(Int((settings.desktopPetSize * 100).rounded()))%").monospacedDigit().frame(width: 44, alignment: .trailing)
+                    }
+                }
+                GroupedRow("움직이는 방식", icon: "figure.walk", tint: Palette.teal) {
+                    menu("움직이는 방식", Binding(get: { settings.desktopPetMode },
+                                         set: { DesktopPet.shared.setMode($0) ; settings.desktopPetMode = $0 }),
+                         DesktopPet.Mode.allCases) { $0.title }
+                }
             }
         }
     }
@@ -612,3 +630,21 @@ private struct AccountSection: View {
         "Claude Code에서 /login으로 들어간 계정이 여기에 쌓입니다. 바꾸기를 누르면 열려 있는 세션도 곧 그 계정을 씁니다. 자동으로 바꾸기를 켜면 사용률이 \(Int(AccountSwitcher.autoSwitchLimit))%에 닿을 때 여유가 가장 많은 계정으로 바꿉니다. 로그인 정보는 이 Mac의 키체인에만 둡니다."
     }
 }
+
+/// 펫 만들기 모델이 차지하는 자리와 지우기. 다음에 만들 때 다시 받는다.
+private struct PetMakerStorageRow: View {
+    @ObservedObject private var factory = PetFactory.shared
+
+    var body: some View {
+        if factory.isPrepared {
+            GroupedRow("펫 만들기 모델", icon: "externaldrive.fill", tint: Palette.purple) {
+                Button("지우기 (\(ByteCountFormatter.string(fromByteCount: factory.storageSize, countStyle: .file)))") {
+                    factory.removeTools()
+                }
+                .disabled(factory.isWorking)
+                .tip("다음에 펫을 만들 때 다시 받아요. 만든 펫은 남아요")
+            }
+        }
+    }
+}
+

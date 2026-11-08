@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UsageCore
 
-/// 펫 고르기. 맨 위 '펫 만들기' 카드는 늘 새로 그리고, 그 아래 '내 펫'은 가진 펫을 찾고 고른다.
+/// 펫 고르기. '펫 만들기'는 늘 새로 그리고, '내 펫'은 가진 펫을 찾고 고른다. 앱 창에서는 둘을 왼쪽·오른쪽 칸에 나란히 둔다.
 /// Petdex에서 받기는 내 펫 쪽에 둔다 (만들기와 섞이면 무엇을 하는지 헷갈린다).
 /// 고른 펫과 마우스를 올린 펫은 실시간으로 달리고, 칸마다 호감도 하트와 같이 달리는 동료 표시가 붙는다.
 /// 오른쪽 클릭으로 동료로 데려가기, 이름 바꾸기, 삭제를 한다.
@@ -28,17 +28,47 @@ struct RunnerPicker: View {
     private var columns: [GridItem] { [GridItem(.adaptive(minimum: large ? 104 : 72), spacing: 8)] }
 
     var body: some View {
+        if large {
+            // 만들기는 왼쪽에 늘 보이고, 내 펫은 오른쪽에서 따로 스크롤한다
+            HStack(alignment: .top, spacing: RunnerHubLayout.gap) {
+                SlimScrollView(keepsGutter: true) {
+                    makePanel.padding(.trailing, 6).padding(.bottom, 4)
+                }
+                .frame(width: RunnerHubLayout.sideWidth)
+                VStack(alignment: .leading, spacing: 10) {
+                    myPetsHeader
+                    SlimScrollView(keepsGutter: true) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            petGroups
+                            extraLinks
+                        }
+                        .padding(.trailing, 6)
+                        .padding(.bottom, 4)
+                    }
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                makeCard
+                myPetsHeader.padding(.top, 4)
+                petGroups
+                extraLinks
+            }
+        }
+    }
+
+    /// 가진 펫을 내가 만든 펫, Petdex 펫, 기본 펫으로 나눠 보인다.
+    @ViewBuilder
+    private var petGroups: some View {
         let pets = petdex.pets.filter { filter.matches($0.name, $0.slug) }
         let made = pets.filter(\.isLocal)
         let downloaded = pets.filter { !$0.isLocal }
         let builtIns = Runner.allCases.filter { filter.matches($0.displayName, $0.rawValue) }
         let customs = store.runners.filter { filter.matches($0.name, "") }
-        VStack(alignment: .leading, spacing: 10) {
-            makeCard
-            myPetsHeader
+        Group {
             found
             if !made.isEmpty || !customs.isEmpty {
-                groupTitle("내가 만든 펫")
+                groupTitle("내가 만든 펫", count: made.count + customs.count)
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(made) { petTile($0) }
                     // 내 그림 id는 UUID라 이름으로만 찾는다
@@ -57,13 +87,13 @@ struct RunnerPicker: View {
                 }
             }
             if !downloaded.isEmpty {
-                groupTitle("Petdex 펫")
+                groupTitle("Petdex 펫", count: downloaded.count)
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(downloaded) { petTile($0) }
                 }
             }
             if !builtIns.isEmpty {
-                groupTitle("기본 펫")
+                groupTitle("기본 펫", count: builtIns.count)
                 LazyVGrid(columns: columns, spacing: 8) {
                     ForEach(builtIns, id: \.self) { runner in
                         let selected = settings.customRunnerID == nil && settings.runner == runner
@@ -81,24 +111,115 @@ struct RunnerPicker: View {
             if let message = importState.message {
                 Text(message).font(.system(size: 12)).foregroundStyle(importState.isError ? .orange : Theme.secondary)
             }
-            // 만들기·찾기 말고 드물게 쓰는 길은 맨 아래에 글자로만 둔다
-            HStack(spacing: 14) {
-                textLink("내 그림(GIF·PNG)으로 만들기") {
-                    if let importInPlace { importInPlace() } else { RunnerImport.choose(settings: settings, report: importState.show) }
-                }
-                textLink("펫 폴더·zip 가져오기") { chooseFolder() }
-                if factory.isPrepared, !factory.isWorking {
-                    textLink("펫 만들기 모델 지우기 (\(ByteCountFormatter.string(fromByteCount: factory.storageSize, countStyle: .file)))") {
-                        factory.removeTools()
-                    }
-                    .tip("다음에 펫을 만들 때 다시 받아요. 만든 펫은 남아요")
-                }
-            }
-            .padding(.top, 2)
         }
     }
 
-    /// 펫 만들기 카드: 설명, 참고 그림(세 장까지), 만들기 단추. 만드는 중이면 진행 화면이 이 자리를 쓴다.
+    /// 만들기·찾기 말고 드물게 쓰는 길은 맨 아래에 글자로만 둔다.
+    private var extraLinks: some View {
+        HStack(spacing: 14) {
+            textLink("내 그림(GIF·PNG)으로 만들기") {
+                if let importInPlace { importInPlace() } else { RunnerImport.choose(settings: settings, report: importState.show) }
+            }
+            textLink("펫 폴더·zip 가져오기") { chooseFolder() }
+        }
+        .padding(.top, 2)
+    }
+
+    // MARK: 넓은 화면의 만들기 칸
+
+    /// 눌러서 설명 칸을 채우는 예시. 생김새(색·옷·소품)를 함께 적는 꼴을 보여 준다.
+    private static let examples = ["분홍 리본 고양이", "하늘색 꼬리 여우", "우주복 햄스터", "딸기 모자 토끼"]
+
+    /// 펫 만들기: 무엇을 만들지 적고(예시를 눌러 채워도 된다), 원하면 그림을 넣고, 만들기를 누른다.
+    /// 만드는 중이면 진행 화면이 이 자리를 쓴다. 글자를 크게, 한 화면에 할 일만 둔다.
+    private var makePanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("새 펫 만들기").font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.primary)
+                Text("어떤 펫인지 적고 만들기를 누르세요").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+            }
+            if factory.isWorking {
+                progressView
+            } else {
+                TextField("예: 분홍 리본을 단 고양이", text: $maker.text, axis: .vertical)
+                    .lineLimit(2...3)
+                    .textFieldStyle(.plain).font(.system(size: 15))
+                    .onSubmit(make)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.black.opacity(0.25)))
+                    .onPasteCommand(of: [.fileURL, .image]) { maker.take($0) }
+                FlowLayout(spacing: 6) {
+                    ForEach(Self.examples, id: \.self) { example in
+                        Button { maker.text = example } label: {
+                            Text(example).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.secondary)
+                                .padding(.horizontal, 10).frame(height: 26)
+                                .background(Capsule().fill(Color.white.opacity(0.07)))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .tip("설명 칸에 넣기")
+                    }
+                }
+                referenceStrip
+                Button(action: make) {
+                    Label("만들기", systemImage: "sparkles").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryGameButtonStyle(height: 44, fontSize: 15))
+                .disabled(maker.text.trimmingCharacters(in: .whitespaces).isEmpty && maker.references.isEmpty)
+                Text(factory.isPrepared ? "이 Mac에서 무료로 그려요. 6~8분쯤 걸려요."
+                     : "처음 한 번 그림 모델(약 5GB)을 받아요. 그 뒤로는 6~8분이면 그려요.")
+                    .font(.system(size: 13)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+                factoryStatus
+            }
+        }
+        .padding(14)
+        .slotFrame(radius: 12)
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(GameKit.gold.opacity(maker.dropping ? 0.9 : 0), lineWidth: 2))
+        .onDrop(of: [.fileURL, .image], isTargeted: $maker.dropping) { providers in
+            maker.take(providers)
+            return true
+        }
+    }
+
+    /// 참고 그림 줄: 넣은 그림과 넣기 단추. 원작 캐릭터를 똑같이 그리고 싶을 때만 쓴다.
+    /// 그림은 칸 아무 데나 끌어다 놓거나 붙여 넣어도 된다.
+    private var referenceStrip: some View {
+        HStack(spacing: 8) {
+            ForEach(Array(maker.references.enumerated()), id: \.offset) { index, url in
+                referenceThumb(url, index: index, size: 44)
+            }
+            if maker.references.count < 3 {
+                Button(action: chooseReference) {
+                    Label(maker.references.isEmpty ? "그림 넣기 (선택)" : "더 넣기", systemImage: "photo.on.rectangle.angled")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .tip("원작 캐릭터를 똑같이 그리고 싶을 때 그림을 넣어요 (세 장까지, 끌어다 놓거나 붙여 넣어도 돼요)")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func referenceThumb(_ url: URL, index: Int, size: CGFloat) -> some View {
+        ZStack(alignment: .topTrailing) {
+            PreviewImage(url: url)
+                .frame(width: size, height: size)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06)))
+            Button { maker.references.remove(at: index) } label: {
+                Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.white, .black.opacity(0.6))
+            }
+            .buttonStyle(.plain).offset(x: 4, y: -4).accessibilityLabel("이 그림 빼기")
+        }
+    }
+
+    /// 팝오버의 펫 만들기 카드: 설명, 참고 그림(세 장까지), 만들기 단추. 만드는 중이면 진행 화면이 이 자리를 쓴다.
     private var makeCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -109,15 +230,8 @@ struct RunnerPicker: View {
             if factory.isWorking {
                 progressView
             } else {
-                if large {
-                    HStack(spacing: 8) {
-                        describeField
-                        makeButton
-                    }
-                } else {
-                    describeField
-                    makeButton
-                }
+                describeField
+                makeButton
                 referenceRow
                 factoryStatus
             }
@@ -136,15 +250,7 @@ struct RunnerPicker: View {
     private var referenceRow: some View {
         HStack(spacing: 8) {
             ForEach(Array(maker.references.enumerated()), id: \.offset) { index, url in
-                ZStack(alignment: .topTrailing) {
-                    PreviewImage(url: url)
-                        .frame(width: 40, height: 40)
-                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06)))
-                    Button { maker.references.remove(at: index) } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.white, .black.opacity(0.6))
-                    }
-                    .buttonStyle(.plain).offset(x: 4, y: -4).accessibilityLabel("이 그림 빼기")
-                }
+                referenceThumb(url, index: index, size: 40)
             }
             if maker.references.count < 3 {
                 Button(action: chooseReference) {
@@ -216,32 +322,32 @@ struct RunnerPicker: View {
         return left < 60 ? "곧 끝나요" : "약 \(Int((left / 60).rounded(.up)))분 남음"
     }
 
-    /// 내 펫 머리: 이름 찾기와 Petdex에서 받기.
+    /// 내 펫 머리: 이름과 찾기. Petdex에서 받기는 화면 머리줄(팝오버는 아래 줄)에 둔다.
     private var myPetsHeader: some View {
-        HStack(spacing: 8) {
-            Text("내 펫").font(.system(size: 13.5, weight: .bold)).foregroundStyle(Theme.primary)
+        HStack(spacing: 10) {
+            Text("내 펫").font(.system(size: large ? 17 : 13.5, weight: .bold)).foregroundStyle(Theme.primary)
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.tertiary)
-                TextField("내 펫 찾기", text: $filter.query)
-                    .textFieldStyle(.plain).font(.system(size: 12.5))
+                Image(systemName: "magnifyingglass").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                TextField("이름으로 찾기", text: $filter.query)
+                    .textFieldStyle(.plain).font(.system(size: large ? 14 : 12.5))
                 if !filter.query.isEmpty {
                     Button { filter.query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(Theme.tertiary).accessibilityLabel("지우기")
                 }
             }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .frame(maxWidth: large ? 260 : .infinity)
-            .slotFrame(radius: 7)
+            .padding(.horizontal, 10)
+            .frame(height: large ? 32 : 28)
+            .frame(maxWidth: large ? 280 : .infinity)
+            .slotFrame(radius: 8)
             if large { Spacer(minLength: 4) }
-            findButton
         }
-        .padding(.top, 4)
+        // 넓은 화면에서는 오른쪽 스크롤 막대 자리만큼 비워 아래 칸과 오른쪽 끝을 맞춘다
+        .padding(.trailing, large ? SlimScroller.width + 6 : 0)
     }
 
     /// 설명 칸. 붙여 넣은 그림은 참고 그림으로 받는다.
     private var describeField: some View {
-        TextField(large ? "예: 분홍 리본 고양이, 하늘색 꼬리 여우, 맹구(그림을 넣으면 똑같이)" : "어떤 펫을 만들까요?", text: $maker.text)
+        TextField("어떤 펫을 만들까요?", text: $maker.text)
             .textFieldStyle(.plain).font(.system(size: 13.5))
             .onSubmit(make)
             .padding(.horizontal, 10)
@@ -261,24 +367,12 @@ struct RunnerPicker: View {
                 }
                 Text("만들기")
             }
-            .frame(maxWidth: large ? nil : .infinity)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(PrimaryGameButtonStyle(height: 36))
         .disabled((maker.text.trimmingCharacters(in: .whitespaces).isEmpty && maker.references.isEmpty) || factory.isWorking)
         .tip(factory.isPrepared ? "이 Mac에서 새로 그려요 (6~8분, 무료)"
              : "처음 한 번 그림 도구와 모델(약 5GB)을 받고 이 Mac에서 그려요. 무료이고 그림은 밖으로 보내지 않아요")
-    }
-
-    private var findButton: some View {
-        Button { PetdexWindow.shared.show(settings: settings) } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "square.and.arrow.down").font(.system(size: 11.5, weight: .bold))
-                Text(large ? "Petdex에서 받기" : "Petdex")
-            }
-        }
-        .buttonStyle(GameButtonStyle(height: 28))
-        .fixedSize()
-        .tip("petdex.dev에 올라온 펫 수천 개 중에서 골라 받기")
     }
 
     private func textLink(_ title: String, action: @escaping () -> Void) -> some View {
@@ -437,9 +531,9 @@ struct RunnerPicker: View {
     }
 
     @ViewBuilder
-    private func groupTitle(_ text: String) -> some View {
+    private func groupTitle(_ text: String, count: Int) -> some View {
         if gameStyle {
-            GameSectionHeader(title: text).padding(.top, 4)
+            GameSectionHeader(title: text, count: "\(count)", large: large).padding(.top, 6)
         } else {
             Text(text)
                 .font(.system(size: 12, weight: .semibold))
@@ -462,7 +556,7 @@ struct RunnerPicker: View {
                 }
             }
             .frame(height: large ? 76 : 56)
-            TileName(name: character.name, key: key, selected: selected, rename: rename)
+            TileName(name: character.name, key: key, selected: selected, rename: rename, size: large ? 13 : 12)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
@@ -776,6 +870,7 @@ struct TileName: View {
     let key: String
     let selected: Bool
     @ObservedObject var rename: RenameState
+    var size: CGFloat = 12
 
     var body: some View {
         if rename.id == key {
@@ -787,7 +882,7 @@ struct TileName: View {
                 .padding(.horizontal, 6)
         } else {
             Text(name)
-                .font(.system(size: 12, weight: selected ? .bold : .medium))
+                .font(.system(size: size, weight: selected ? .bold : .medium))
                 .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
         }
