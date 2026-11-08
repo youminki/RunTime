@@ -2,8 +2,9 @@
 /// 키는 소문자 이름이나 낱말, 한자 이름이다. 창작 펫은 원래 이름이 없어 여기에 없고 소리대로 적는다.
 enum KoreanOfficialNames {
     /// 키가 겹치면 뒤의 것을 쓴다 (딕셔너리 글자표기는 겹치면 실행 중에 죽어서 배열로 둔다).
-    static let table: [String: String] = Dictionary(pairs, uniquingKeysWith: { _, last in last })
+    static let table: [String: String] = Dictionary(pairs + pairs2 + pairs3, uniquingKeysWith: { _, last in last })
 
+    // 한 배열이 길면 CI에서 타입 추론이 300ms를 넘겨 셋으로 나눈다
     private static let pairs: [(String, String)] = [
         // 짱구·도라에몽 등 정식 더빙 이름
         ("crayon shin-chan", "짱구"), ("shinchan", "짱구"), ("xiaoxin q", "짱구"), ("小新", "짱구"),
@@ -77,6 +78,9 @@ enum KoreanOfficialNames {
         ("雪乃", "유키노시타 유키노"), ("制服雪乃", "유키노시타 유키노"), ("yukino(春物  雪乃)", "유키노시타 유키노"), ("由比滨结衣", "유이가하마 유이"),
         ("古见硝子·像素q版", "코미 쇼코"), ("古见硝子·动漫版", "코미 쇼코"), ("古见硝子·圆眼q版", "코미 쇼코"), ("古见硝子·漫画原作版", "코미 쇼코"),
         ("tadano hitohito", "타다노 히토히토"), ("小埋-umaru", "우마루"), ("umaru", "우마루"), ("康娜", "칸나"), ("香风智乃", "카후 치노"),
+    ]
+
+    private static let pairs2: [(String, String)] = [
         ("renge（喵帕斯）", "미야우치 렌게"), ("面码 menma", "멘마"), ("楪祈inori", "유즈리하 이노리"), ("栗山未来", "쿠리야마 미라이"),
         ("薇尔莉特", "바이올렛 에버가든"), ("violet", "바이올렛"), ("chtholly", "크톨리"), ("chtholly2", "크톨리"), ("nephren", "네프렌"),
         ("schwi", "슈비"), ("illya", "이리야"), ("ikaros", "이카로스"), ("taiga", "아이사카 타이가"), ("tenshi kanade", "타치바나 카나데"),
@@ -149,6 +153,9 @@ enum KoreanOfficialNames {
         ("leatherface", "레더페이스"), ("jack torrance", "잭 토런스"), ("samara morgan", "사마라 모건"), ("billy the puppet", "직쏘 인형"), ("pinhead plush", "핀헤드"),
         ("gandalf", "간달프"), ("mini gandalf the grey", "회색의 간달프"), ("gollum", "골룸"), ("dobby", "도비"), ("mandalorian", "만달로리안"), ("star trooper", "스타 트루퍼"),
         ("toothless v3", "투슬리스"), ("simba", "심바"), ("shifu", "시푸 사부"), ("buzz", "버즈"), ("captain america", "캡틴 아메리카"), ("spawn", "스폰"), ("the mask", "마스크"),
+    ]
+
+    private static let pairs3: [(String, String)] = [
         ("invincible", "인빈시블"), ("invincible mark", "인빈시블"), ("invincible-mark", "인빈시블"), ("omni-man", "옴니맨"), ("thragg", "스래그"), ("homelander", "홈랜더"), ("祖国人", "홈랜더"),
         ("soldier boy", "솔저 보이"), ("士兵男孩", "솔저 보이"), ("optimus prime", "옵티머스 프라임"), ("bumblebee", "범블비"), ("megatron", "메가트론"), ("robocop", "로보캅"),
         ("godzilla", "고질라"), ("godzilla fire", "고질라"), ("pacific rim jaeger", "퍼시픽 림 예거"), ("eve", "이브"), ("weeping angel（哭泣天使）", "우는 천사"), ("dalek（戴立克）", "달렉"),
