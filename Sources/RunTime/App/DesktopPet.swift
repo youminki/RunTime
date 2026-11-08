@@ -1,10 +1,12 @@
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import UsageCore
 
 /// 화면 위로 꺼낸 펫. 늘 위에 뜬 투명한 창에서 화면 네 모서리(바닥·오른쪽 벽·천장·왼쪽 벽)를 따라 걷는다.
 /// 메뉴바 러너와 같은 상태(Claude 사용량)로 걷고 달리며, 메뉴바가 하는 동작을 함께 한다. 혼자 둘 때는 가끔 돌아서거나 쉬고,
 /// 벽이나 천장에서 뛰어내리기도 한다. 누르면 쓰다듬고 키를 받아 ←→(벽에서는 ↑↓)로 걷고 스페이스로 뛰거나 뛰어내린다.
+/// 어느 앱을 쓰고 있든 ⌃⌥+방향키로 움직인다 (`PetKeys`). 사용자가 다른 모니터로 끌어 놓기 전에는 지금 화면을 벗어나지 않는다.
 /// 끌어 옮기면 놓은 자리에 머문다 (다른 모니터로도). 오른쪽 클릭 '움직임'에서 다시 돌아다니게 한다. 펫 몸 위가 아니면 클릭이 뒤 창으로 지나간다. 메인 스레드에서만 쓴다.
 final class DesktopPet {
     static let shared = DesktopPet()
@@ -149,12 +151,14 @@ final class DesktopPet {
         panel.contentView = view
         self.panel = panel
         self.view = view
-        // 놓아 둔 자리가 있으면 그 자리에, 아니면 오른쪽 위에서 톡 떨어지며 나온다
-        let screen = area
+        // 놓아 둔 자리가 있으면 그 자리에, 아니면 지금 화면 오른쪽 위에서 톡 떨어지며 나온다
         if modeProvider() == .pinned, let spot = pinnedProvider(), NSScreen.screens.contains(where: { $0.frame.contains(spot) }) {
+            moveHome(to: spot)
             free = spot
         } else {
-            free = CGPoint(screen.maxX - 220, screen.minY + 160)
+            homeID = NSScreen.main.flatMap(Self.id(of:))
+            refreshHome()
+            free = CGPoint(homeArea.maxX - 220, homeArea.minY + 160)
         }
         fallSpeed = 0
         dropHeight = 160
@@ -166,6 +170,8 @@ final class DesktopPet {
         place()
         panel.orderFrontRegardless()
         tricks = SpriteAnimator.performed.sink { [weak self] trick in self?.play(trick) }
+        PetKeys.shared.handler = { [weak self] code, down in _ = self?.key(code, down: down, repeated: false) }
+        PetKeys.shared.register()
         schedule(fps: 60)
         onChange(true)
     }
@@ -174,6 +180,7 @@ final class DesktopPet {
         timer?.invalidate()
         timer = nil
         tricks = nil
+        PetKeys.shared.unregister()
         panel?.orderOut(nil)
         panel = nil
         view = nil
@@ -185,11 +192,8 @@ final class DesktopPet {
 
     /// 크기를 바꾸면 창을 새 크기로 다시 잡는다.
     func resize() {
-        guard let panel, let view else { return }
-        let size = NSSize(width: side, height: side)
-        panel.setContentSize(size)
-        view.frame = NSRect(origin: .zero, size: size)
         place()
+        view?.needsDisplay = true
     }
 
     private func schedule(fps: Double) {
@@ -204,13 +208,37 @@ final class DesktopPet {
     // MARK: 화면 테두리
 
     /// 걷는 화면 (메뉴바와 Dock을 뺀 자리).
-    private var area: NSRect {
-        let point = free ?? lastFeet
-        let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
-        return screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
+    private var area: NSRect { homeArea }
+
+    /// 펫이 사는 화면. 자리로 짐작하면 오른쪽 벽(maxX)이 옆 모니터의 시작점이라 프레임마다 화면이 뒤바뀌어,
+    /// 사용자가 끌어 놓을 때만 바꾼다.
+    private var homeID: CGDirectDisplayID?
+    private(set) var homeFrame = NSRect.zero
+    private(set) var homeArea = NSRect(x: 0, y: 0, width: 800, height: 600)
+    /// 그릴 때 돌리는 가운데 (창 안, y 아래로). 창을 화면 안으로 자르면 창 가운데와 달라진다.
+    private var drawCenter = CGPoint.zero
+
+    private static func id(of screen: NSScreen) -> CGDirectDisplayID? {
+        screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 
-    private var lastFeet = CGPoint.zero
+    /// 살던 화면의 지금 크기를 읽는다. 모니터를 뺐으면 주 화면으로 옮긴다.
+    private func refreshHome() {
+        guard let screen = NSScreen.screens.first(where: { Self.id(of: $0) == homeID }) ?? NSScreen.main ?? NSScreen.screens.first
+        else { return }
+        homeID = Self.id(of: screen)
+        homeFrame = screen.frame
+        homeArea = screen.visibleFrame
+    }
+
+    /// 점이 든 화면(없으면 가장 가까운 화면)을 살 곳으로 삼는다.
+    private func moveHome(to point: CGPoint) {
+        func distance(_ rect: NSRect) -> CGFloat {
+            hypot(max(rect.minX - point.x, 0, point.x - rect.maxX), max(rect.minY - point.y, 0, point.y - rect.maxY))
+        }
+        if let screen = NSScreen.screens.min(by: { distance($0.frame) < distance($1.frame) }) { homeID = Self.id(of: screen) }
+        refreshHome()
+    }
     private var perimeter: CGFloat { 2 * (area.width + area.height) }
 
     private var edge: Edge { edge(of: along) }
@@ -269,6 +297,7 @@ final class DesktopPet {
         lastControl = Date()
     }
     var hasKeyboard: Bool { panel?.isKeyWindow == true }
+    func releaseKeysForCheck() { releaseKeyboard() }
 
     fileprivate func clicked() {
         lastControl = Date()
@@ -355,6 +384,7 @@ final class DesktopPet {
         lastControl = Date()
         // 끌어 놓은 자리에 둔다. 돌아다니던 중이었으면 '놓은 자리에 두기'로 바꾼다
         if modeProvider() != .pinned { onMode(.pinned) }
+        moveHome(to: free)
         onPin(free)
     }
 
@@ -392,6 +422,9 @@ final class DesktopPet {
         let move = NSMenuItem(title: "움직이는 방식", action: nil, keyEquivalent: "")
         move.submenu = modes
         menu.addItem(move)
+        if let label = PetKeys.shared.label {
+            menu.addItem(withTitle: "어느 앱에서든 \(label)+방향키로 움직여요", action: nil, keyEquivalent: "").isEnabled = false
+        }
         menu.addItem(.separator())
         let put = NSMenuItem(title: "펫 넣기 (화면에서 치우기)", action: #selector(PetView.putBack), keyEquivalent: "")
         put.target = view
@@ -437,6 +470,14 @@ final class DesktopPet {
         let now = Date()
         let dt = CGFloat(min(max(now.timeIntervalSince(lastTick ?? now), 0), 0.1))
         lastTick = now
+        refreshHome()
+        // 전역 단축키는 보조키를 먼저 떼면 놓임 알림이 안 올 수 있어 실제 키 상태로 한 번 더 본다
+        if held.left || held.right || held.up || held.down, !panelHasKeys {
+            held.left = held.left && PetKeys.isDown(123)
+            held.right = held.right && PetKeys.isDown(124)
+            held.down = held.down && PetKeys.isDown(125)
+            held.up = held.up && PetKeys.isDown(126)
+        }
         let display = displayProvider()
         let a = area
         var velocity: CGFloat = 0   // 테두리를 따라 (반시계 +)
@@ -444,8 +485,10 @@ final class DesktopPet {
             let target = CGPoint(drag.point.x - drag.grab.width, drag.point.y - drag.grab.height)
             let current = free ?? target
             velocity = (target.x - current.x) / max(dt, 0.001)
+            // 끄는 동안에는 손 밑 화면의 Dock 아래로만 내려가지 않게 한다
+            let floor = NSScreen.screens.first { $0.frame.contains(target) }?.visibleFrame.minY ?? -.greatestFiniteMagnitude
             free = CGPoint(current.x + (target.x - current.x) * min(1, dt * 20),
-                           max(a.minY, current.y + (target.y - current.y) * min(1, dt * 20)))
+                           max(floor, current.y + (target.y - current.y) * min(1, dt * 20)))
         } else if var spot = free, modeProvider() == .pinned {
             // 머무는 자리: 방향키로 조금씩 옮기고, 스페이스로 그 자리에서 뛴다
             let x: CGFloat = (held.right ? 1 : 0) - (held.left ? 1 : 0)
@@ -471,7 +514,6 @@ final class DesktopPet {
             if falling.y <= a.minY {
                 free = nil
                 along = falling.x - a.minX
-                lastFeet = CGPoint(falling.x, a.minY)
                 if dropHeight > 30 {
                     liftSpeed = min(dropHeight * 2.2, 420)
                     lift = 0.01
@@ -510,7 +552,6 @@ final class DesktopPet {
                     liftSpeed = 0
                 }
             }
-            lastFeet = point(along: along)
         }
         if let trick, now.timeIntervalSince(trick.start) >= trick.kind.duration { self.trick = nil }
         // 모서리를 돌 때 기울기를 짧은 쪽으로 부드럽게 맞춘다. 떨어지는 동안은 바로 선다
@@ -525,7 +566,8 @@ final class DesktopPet {
         place()
         view?.needsDisplay = true
         // 방향키를 4초 넘게 쓰지 않으면 키 입력을 돌려준다
-        if panel?.isKeyWindow == true, now.timeIntervalSince(lastControl) > 4, drag == nil { releaseKeyboard() }
+        let holding = held.left || held.right || held.up || held.down
+        if panelHasKeys, !holding, now.timeIntervalSince(lastControl) > 4, drag == nil { releaseKeyboard() }
         // 펫 몸 위에서만 클릭을 받고, 나머지는 뒤 창으로 지나가게 한다
         updateHover(now: now)
         panel?.ignoresMouseEvents = drag == nil && !pressing && !hovering
@@ -594,12 +636,23 @@ final class DesktopPet {
     }
 
     /// 발이 화면의 그 자리에 오게 창을 놓는다. 그릴 때 창 가운데를 기준으로 돌리므로, 돌린 발 자리만큼 창을 옮긴다.
+    /// 끄는 중이 아니면 창을 사는 화면 안으로 잘라 옆 모니터에 걸치지 않게 한다. 걸치면 펫이 양쪽에 나뉘어 보인다.
     private func place() {
         guard let panel else { return }
         let feet = feetOnScreen
         let offset = feetOffset
-        panel.setFrameOrigin(NSPoint(x: (feet.x - offset.x - side / 2).rounded(), y: (feet.y + offset.y - side / 2).rounded()))
+        let ideal = NSRect(x: (feet.x - offset.x - side / 2).rounded(), y: (feet.y + offset.y - side / 2).rounded(),
+                           width: side, height: side)
+        var frame = ideal
+        if drag == nil {
+            let inside = ideal.intersection(homeFrame)
+            if !inside.isNull, inside.width >= 1, inside.height >= 1 { frame = inside }
+        }
+        drawCenter = CGPoint(ideal.midX - frame.minX, frame.maxY - ideal.midY)
+        if panel.frame != frame { panel.setFrame(frame, display: false) }
     }
+
+    private var panelHasKeys: Bool { panel?.isKeyWindow == true }
 
     /// 창 가운데에서 발까지 (그리는 좌표, y 아래로 +). 발은 돌리기 전 가운데에서 `drop`만큼 아래.
     private var feetOffset: CGPoint {
@@ -628,7 +681,7 @@ final class DesktopPet {
         if airborne { frame.pose.jump = drag != nil ? 0.45 : (fallSpeed > 0 || liftSpeed > 0 ? 0.3 : 0.7) }
         frame.transform.scaleX = abs(frame.transform.scaleX) * (free == nil || pinned ? heading : 1)
         let scale = scale
-        let center = CGPoint(size.width / 2, size.height / 2)
+        let center = drawCenter
         cg.saveGState()
         cg.translateBy(x: center.x, y: center.y)
         cg.rotate(by: angle)
@@ -657,7 +710,7 @@ final class DesktopPet {
         cg.restoreGState()
         // 누른 뒤 방향키를 받는 동안에는 위에 조작법을 띄운다
         if panel?.isKeyWindow == true {
-            let text = NSAttributedString(string: "방향키로 움직이기 · 스페이스로 점프", attributes: [
+            let text = NSAttributedString(string: "방향키로 움직이기 · 스페이스로 뛰기", attributes: [
                 .font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white,
             ])
             let box = CGRect(x: (size.width - text.size().width) / 2 - 8, y: 4, width: text.size().width + 16, height: 20)
@@ -801,6 +854,17 @@ enum DesktopPetCheck {
             try? task.run()
             task.waitUntilExit()
         }
+        // 합성 키로는 Carbon 단축키가 발동하지 않아, 처리기에 눌림·놓임 이벤트를 직접 넣는다
+        func hotKey(down: Bool) {
+            var event: EventRef?
+            CreateEvent(nil, OSType(kEventClassKeyboard), UInt32(down ? kEventHotKeyPressed : kEventHotKeyReleased), 0, 0, &event)
+            guard let event else { return }
+            var id = EventHotKeyID(signature: PetKeys.checkSignature, id: 123)
+            SetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              MemoryLayout<EventHotKeyID>.size, &id)
+            SendEventToEventTarget(event, GetApplicationEventTarget())
+            ReleaseEvent(event)
+        }
         // 진짜 마우스 이벤트를 창에 보낸다 (커서는 움직이지 않는다)
         func mouse(_ type: NSEvent.EventType, at point: CGPoint) {
             guard let window = pet.panelWindow,
@@ -818,6 +882,7 @@ enum DesktopPetCheck {
         }
         pet.companionProvider = { Runner.dog.character }
         pet.show()
+        PetKeys.assumesDown = true
         var start = pet.position
         let steps: [(Double, () -> Void)] = [
             (1.5, {
@@ -841,6 +906,7 @@ enum DesktopPetCheck {
             (2.0, { check("커서가 떠나면 다시 걷는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) > 20) }),
             (0.1, {
                 display = .normal(.sleeping)
+                pet.takeKeyboardForCheck()
                 _ = pet.key(123, down: true, repeated: false)
             }),
             (0.8, {
@@ -850,22 +916,35 @@ enum DesktopPetCheck {
             }),
             (0.15, { check("스페이스로 뛴다 (높이 \(Int(pet.position.lift)))", pet.position.lift > 10) }),
             (1.0, {
+                // 펫 창이 키를 쥐지 않은 채 시스템에 ⌃⌥←를 보낸다. 어느 앱이 앞에 있든 펫이 움직여야 한다
+                pet.releaseKeysForCheck()
+                check("전역 단축키를 잡는다 (\(PetKeys.shared.label ?? "없음"))", PetKeys.shared.label != nil && !pet.hasKeyboard)
+                start = pet.position
+                hotKey(down: true)
+            }),
+            (0.6, {
+                check("단축키 눌림이 오면 펫 창 없이도 걷는다 (\(Int(start.x - pet.position.x))pt)", start.x - pet.position.x > 30)
+                hotKey(down: false)
+            }),
+            (0.3, { start = pet.position }),
+            (0.5, { check("단축키를 놓으면 멈춘다", abs(pet.position.x - start.x) < 1) }),
+            (1.0, {
                 check("뛰고 나면 내린다", pet.position.lift == 0)
                 // 바닥 오른쪽 끝 바로 앞에서 오른쪽으로 걸으면 오른쪽 벽을 탄다
                 display = .normal(.dashing)
-                let area = NSScreen.main?.visibleFrame ?? .zero
-                pet.place(along: area.width - 40, heading: 1)
+                pet.place(along: pet.homeArea.width - 40, heading: 1)
             }),
             (1.5, {
                 check("바닥 끝에서 오른쪽 벽으로 올라간다 (\(pet.edgeName))", pet.edgeName == "right")
+                check("벽을 걸어도 창이 옆 모니터로 넘어가지 않는다", pet.homeFrame.contains(pet.panelFrame))
                 capture("wall")
                 // 천장 바로 앞으로 옮겨 천장을 걷는 모습도 찍는다
-                let area = NSScreen.main?.visibleFrame ?? .zero
-                pet.place(along: area.width + area.height - 30, heading: 1)
+                pet.place(along: pet.homeArea.width + pet.homeArea.height - 30, heading: 1)
             }),
             (1.2, {
                 check("벽 끝에서 천장으로 넘어간다 (\(pet.edgeName))", pet.edgeName == "top")
                 capture("top")
+                display = .normal(.sleeping)
                 _ = pet.key(49, down: true, repeated: false)
             }),
             // 천장에서 떨어지면 바닥까지 멀어 튀고 멈출 때까지 넉넉히 기다린다
@@ -888,7 +967,7 @@ enum DesktopPetCheck {
                 check("누르고 있으면 펫이 멈추고 클릭을 계속 받는다 (\(Int(abs(pet.position.x - start.x)))pt)",
                       pet.takesClicks && abs(pet.position.x - start.x) < 1)
                 // 다른 모니터가 있으면 그 화면 가운데로, 없으면 같은 화면 위쪽으로 끈다
-                let target = NSScreen.screens.first { $0 != NSScreen.main } ?? NSScreen.main
+                let target = NSScreen.screens.first { $0.frame != pet.homeFrame } ?? NSScreen.main
                 let frame = target?.visibleFrame ?? .zero
                 destination = CGPoint(frame.midX, frame.midY)
                 for k in 1...10 {
@@ -941,5 +1020,73 @@ enum DesktopPetCheck {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: step)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.2) { done(failures == 0) }
+    }
+}
+
+/// 어느 앱이 앞에 있든 펫을 움직이는 전역 단축키. 그냥 방향키는 앞에 있는 앱의 것이라 펫 창이 키를 쥔 동안에만 받는다.
+/// Carbon 단축키는 권한 없이 동작하고 누름과 놓임을 모두 알려 준다. 기본은 ⌃⌥이고, 다른 앱이 먼저 잡았으면 ⌃⌥⇧으로 물러난다.
+final class PetKeys {
+    static let shared = PetKeys()
+    /// 키 번호(NSEvent.keyCode와 같다), 누름 여부.
+    var handler: (UInt16, Bool) -> Void = { _, _ in }
+    /// 등록한 보조키 이름. 등록하지 못했으면 nil.
+    private(set) var label: String?
+    private var refs: [EventHotKeyRef] = []
+    private var installed: EventHandlerRef?
+    private static let signature = OSType(0x5254_5054)   // 'RTPT'
+    static var checkSignature: OSType { signature }
+    /// 점검 도구는 키를 실제로 누르지 않아 눌린 것으로 친다.
+    static var assumesDown = false
+    private static let codes: [UInt16] = [123, 124, 125, 126, 49]
+
+    /// 지금 그 키가 실제로 눌려 있는지. 수를 세거나 내용을 읽지 않아 권한이 필요 없다.
+    static func isDown(_ code: UInt16) -> Bool {
+        assumesDown || CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
+    }
+
+    func register() {
+        guard refs.isEmpty else { return }
+        install()
+        let choices: [(UInt32, String)] = [(UInt32(controlKey | optionKey), "⌃⌥"), (UInt32(controlKey | optionKey | shiftKey), "⌃⌥⇧")]
+        for (modifiers, name) in choices {
+            if take(modifiers) {
+                label = name
+                return
+            }
+            unregister()
+        }
+    }
+
+    func unregister() {
+        refs.forEach { UnregisterEventHotKey($0) }
+        refs = []
+        label = nil
+    }
+
+    /// 다섯 키를 모두 잡으면 true. 하나라도 다른 앱이 쥐고 있으면 false.
+    private func take(_ modifiers: UInt32) -> Bool {
+        for code in Self.codes {
+            var ref: EventHotKeyRef?
+            let id = EventHotKeyID(signature: Self.signature, id: UInt32(code))
+            guard RegisterEventHotKey(UInt32(code), modifiers, id, GetApplicationEventTarget(), 0, &ref) == noErr, let ref else { return false }
+            refs.append(ref)
+        }
+        return true
+    }
+
+    private func install() {
+        guard installed == nil else { return }
+        var specs = [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+                     EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))]
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            var pressed = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &pressed)
+            guard pressed.signature == PetKeys.signature else { return OSStatus(eventNotHandledErr) }
+            let down = GetEventKind(event) == UInt32(kEventHotKeyPressed)
+            let code = UInt16(pressed.id)
+            DispatchQueue.main.async { PetKeys.shared.handler(code, down) }
+            return noErr
+        }, specs.count, &specs, nil, &installed)
     }
 }

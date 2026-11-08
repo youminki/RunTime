@@ -107,6 +107,8 @@ final class GlobalHotKey {
             var pressed = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &pressed)
+            // 꺼낸 펫의 단축키처럼 다른 처리기의 것은 넘긴다
+            guard pressed.signature == OSType(0x5254_494D) else { return OSStatus(eventNotHandledErr) }
             let quick = pressed.id == 2
             DispatchQueue.main.async { quick ? GlobalHotKey.shared.quickAction() : GlobalHotKey.shared.action() }
             return noErr

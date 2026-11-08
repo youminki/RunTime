@@ -232,7 +232,7 @@ struct SettingsView: View {
                 PetMakerStorageRow()
             }
 
-            GroupedSection("화면에 꺼낸 펫", footer: "펫을 끌어다 놓으면 그 자리에 머물러요(다른 모니터로도 옮겨져요). 펫을 한 번 누르면 방향키로 움직여요. 펫을 오른쪽 클릭하면 앱의 각 화면으로 바로 가거나 크기를 바꿀 수 있어요.") {
+            GroupedSection("화면에 꺼낸 펫", footer: "펫을 끌어다 놓으면 그 자리에 머물러요(다른 모니터로도 옮겨져요). 어느 앱을 쓰든 ⌃⌥+방향키로 움직이고 ⌃⌥+스페이스로 뛰어요. 다른 앱이 이 키를 쓰고 있으면 ⌃⌥⇧으로 바뀌어요. 펫을 오른쪽 클릭하면 앱의 각 화면으로 바로 가거나 크기를 바꿀 수 있어요.") {
                 ToggleRow(title: "펫을 화면에 꺼내 두기", icon: "macwindow.on.rectangle", tint: Palette.blue,
                           isOn: Binding(get: { settings.desktopPet },
                                         set: { $0 ? DesktopPet.shared.show() : DesktopPet.shared.hide() }))

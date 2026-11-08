@@ -154,21 +154,19 @@ struct PopoverView: View {
     /// 장면 폭(높이 150 기준 540)이 장애물을 미리 까는 거리(러너 x 44 + lookAhead 520)보다 좁아야
     /// 장애물이 화면 안에서 갑자기 생기지 않는다.
     static let windowStageRatio: CGFloat = 3.6
-    /// 무대가 차지할 수 있는 높이 비율. 큰 모니터에서는 이 높이에 맞춰 폭을 줄이고 가운데 둔다.
-    private static let maxStageShare: CGFloat = 0.46
+    /// 무대 아래 탭에 남길 높이. 아주 넓은 창에서는 무대 높이가 여기서 멈추고 폭은 그대로 창을 채운다.
+    private static let minHubHeight: CGFloat = 320
 
     /// 창의 러너 화면: 위에 고정 비율 무대, 아래에 펫·꾸미기 탭. 게임은 무대 안에서 고르고 하며, 그동안에도 탭은 그대로 둔다.
     private var runnersPage: some View {
         GeometryReader { geo in
             let full = geo.size.width - Self.pagePadding.width * 2
             let room = geo.size.height - Self.pagePadding.height * 2
-            let height = max(RunnerStage.height, min(full / Self.windowStageRatio, room * Self.maxStageShare))
-            // 큰 모니터에서 무대 폭이 줄면 아래 탭도 같은 폭으로 맞춰 가운데 둔다
+            let height = max(RunnerStage.height, min(full / Self.windowStageRatio, room - Self.minHubHeight))
             VStack(spacing: Self.columnGap) {
                 stage(height: height)
                 runnerPage
             }
-            .frame(width: min(full, height * Self.windowStageRatio))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, Self.pagePadding.width)
             .padding(.vertical, Self.pagePadding.height)
