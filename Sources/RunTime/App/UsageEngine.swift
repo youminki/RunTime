@@ -52,8 +52,6 @@ final class UsageEngine: ObservableObject {
     static let officialRefreshThrottle: TimeInterval = 30
     /// 조회가 실패해도 이 시간 안의 공식 값은 계속 쓴다. 일시적 실패로 게이지가 비지 않게.
     static let officialGrace: TimeInterval = 15 * 60
-    /// 429를 받으면 이만큼 조회를 쉰다.
-    static let rateLimitBackoff: TimeInterval = 10 * 60
     /// 공식 창이 초기화된 뒤 새 값을 받을 때까지 다시 조회하는 간격.
     static let rolloverRefetchInterval: TimeInterval = 30
 
@@ -101,7 +99,10 @@ final class UsageEngine: ObservableObject {
     /// 마지막으로 맞춘 계정. 처음 읽기 전에는 `accountChecked`가 false다.
     private var knownAccount: ClaudeAccountInfo?
     private var accountChecked = false
-    private var officialBackoffUntil: Date?
+    /// 요청 제한이 풀린 뒤 다시 조회하도록 잡아 둔 때. 같은 때를 두 번 잡지 않는다.
+    private var retryScheduledFor: Date?
+    /// 토큰 문제(만료·갱신 제한·토큰 없음)로 실패 중인지. 그동안 Claude Code를 쓰면 Claude Code가 새로 받은 토큰을 바로 읽는다.
+    private var tokenStalled = false
     private var lastOfficialFailure = ""
     /// 켠 뒤 공식 조회 결과를 한 번이라도 받았는지. 그 전에는 주간 경계를 모른다.
     private var officialAnswered = false
@@ -196,13 +197,16 @@ final class UsageEngine: ObservableObject {
         log.info("Claude 계정 바뀜")
         officialValue = nil
         sessionTrend = OfficialTrend()
-        officialBackoffUntil = nil
+        // 요청 제한은 계정이 아니라 이 기기에 걸려 있어 쉬기를 지우지 않는다 (지우고 바로 보내면 다시 429)
+        tokenStalled = false
         lastOfficialFailure = ""
         knownWeeklyReset = nil
         // 새 계정의 주간 경계는 그 계정 응답을 받은 뒤에 안다
         officialAnswered = false
         publishOfficial(nil, status: config.officialEnabled ? .waiting : .disabled)
-        fetchOfficial(minInterval: 0)
+        if !fetchOfficial(minInterval: 0), config.officialEnabled, let until = RateLimitGate.usage.blockedUntil() {
+            publishOfficial(nil, status: .failed(reason: Self.limitReason(until: until)))
+        }
         if !force { DispatchQueue.main.async { self.accountSwitched.send() } }
     }
 
@@ -320,6 +324,13 @@ final class UsageEngine: ObservableObject {
             DispatchQueue.main.async { self.limitReached.send(hit) }
             // 게이지도 100%로 바로 맞춘다
             fetchOfficial(minInterval: 5)
+        }
+        // 토큰 문제로 막힌 동안 Claude Code가 요청을 보냈으면 Claude Code가 토큰을 새로 받았을 수 있다.
+        // 다음 정기 조회(최대 3분)를 기다리지 않고 키체인을 다시 읽는다
+        // 토큰이 계속 거절되면 이 조회도 요청이라 1분에 한 번까지만 한다
+        if tokenStalled, !scanned.isEmpty, now.timeIntervalSince(lastOfficialAttempt ?? .distantPast) >= 60 {
+            provider.invalidateCachedToken()
+            fetchOfficial(minInterval: 60)
         }
         let finished = turnDetector.finishedTurns(in: scanned, now: now)
         store.add(scanned)
@@ -483,7 +494,10 @@ final class UsageEngine: ObservableObject {
         let now = Date()
         // 키체인 프롬프트가 응답을 기다리는 동안 다음 폴링이 겹치지 않게 한다.
         guard !officialInFlight else { return true }
-        if let until = officialBackoffUntil, now < until { return false }
+        if let until = RateLimitGate.usage.blockedUntil(now: now) {
+            scheduleRetry(at: until)
+            return false
+        }
         if minInterval > 0, let last = lastOfficialAttempt, now.timeIntervalSince(last) < minInterval { return false }
         lastOfficialAttempt = now
         officialInFlight = true
@@ -513,7 +527,7 @@ final class UsageEngine: ObservableObject {
         officialAnswered = true
         switch result {
         case .success(let usage):
-            officialBackoffUntil = nil
+            tokenStalled = false
             if !lastOfficialFailure.isEmpty { Diagnostics.record("사용량", "공식 조회 다시 됨") }
             lastOfficialFailure = ""
             log.info("공식 조회 성공: 세션 \(usage.sessionPercent ?? -1)% 주간 \(usage.weeklyPercent ?? -1)%")
@@ -526,9 +540,12 @@ final class UsageEngine: ObservableObject {
             publishOfficial(usage, status: .live)
         case .failure(let error):
             // 실패해도 앱은 죽지 않는다 (§8). 유예 시간 동안은 직전 값, 그 뒤로는 게이지를 비운다.
-            if case OAuthUsageProvider.ProviderError.http(429) = error {
-                officialBackoffUntil = Date().addingTimeInterval(Self.rateLimitBackoff)
+            // 풀리는 때에 맞춰 다시 받는다. 그새 풀렸으면 정기 조회가 받는다
+            if case OAuthUsageProvider.ProviderError.http(429) = error, let until = RateLimitGate.usage.blockedUntil() {
+                scheduleRetry(at: until)
             }
+            if case OAuthUsageProvider.ProviderError.refreshLimited(let until) = error { scheduleRetry(at: until) }
+            tokenStalled = Self.isTokenProblem(error)
             let reason = Self.describe(error)
             // 실패가 이어지는 동안은 까닭이 바뀔 때만 남긴다
             if reason != lastOfficialFailure { Diagnostics.record("사용량", "공식 조회 실패: \(reason)") }
@@ -544,16 +561,48 @@ final class UsageEngine: ObservableObject {
         }
     }
 
+    /// 팝오버 상태 줄은 한 줄이라 짧게 쓴다.
+    static func limitReason(until: Date) -> String { "요청 제한 · \(clock(until))에 다시" }
+
+    private static func clock(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "H:mm"
+        return formatter.string(from: date)
+    }
+
+    static func isTokenProblem(_ error: Error) -> Bool {
+        switch error as? OAuthUsageProvider.ProviderError {
+        // /login을 다시 하면 저장소 토큰이 바뀌어 다음 조회에서 풀린다
+        case .http(401)?, .http(403)?, .refreshLimited?, .tokenNotFound?, .loginRequired?: return true
+        default: return false
+        }
+    }
+
+    /// workQueue 전용. 요청 제한이 풀리면 다음 정기 조회(최대 3분)를 기다리지 않고 바로 다시 받는다.
+    private func scheduleRetry(at until: Date) {
+        guard retryScheduledFor != until else { return }
+        retryScheduledFor = until
+        workQueue.asyncAfter(deadline: .now() + max(until.timeIntervalSinceNow, 0) + 1) { [weak self] in
+            guard let self, self.retryScheduledFor == until else { return }
+            self.retryScheduledFor = nil
+            self.fetchOfficial(minInterval: 0)
+        }
+    }
+
     static func describe(_ error: Error) -> String {
         switch error {
         case let error as OAuthUsageProvider.ProviderError:
             switch error {
             case .tokenNotFound: return "로그인 정보 없음"
             case .http(401), .http(403): return "인증 만료"
-            case .http(429): return "요청 제한, 10분 뒤 재시도"
+            case .http(429): return RateLimitGate.usage.blockedUntil().map { limitReason(until: $0) } ?? "요청 제한"
             case .http(let code): return "HTTP \(code)"
             case .badResponse: return "응답 형식이 바뀜"
             case .loginRequired: return "로그인이 풀림, Claude Code에서 /login"
+            case .refreshLimited(let until):
+                // Claude Code를 쓰면 Claude Code가 받은 토큰으로 그 전에 풀린다
+                return "토큰 갱신 제한 · \(clock(until))에 다시"
             }
         case is URLError:
             return "네트워크 오류"

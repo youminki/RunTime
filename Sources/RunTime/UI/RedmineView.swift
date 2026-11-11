@@ -1344,7 +1344,7 @@ struct RedmineIssueSheet: View {
                         .buttonStyle(TextLinkButtonStyle())
                 }
                 Spacer(minLength: 8)
-                if state.subjectDrafts[issue.id] == nil {
+                if state.subjectDrafts[issue.id] == nil, !store.cannotEdit(issue) {
                     Button("제목 고치기") { state.subjectDrafts[issue.id] = issue.subject }.buttonStyle(TextLinkButtonStyle())
                 }
             }
@@ -1410,7 +1410,7 @@ struct RedmineIssueSheet: View {
             HStack {
                 Text("설명").font(WL.section)
                 Spacer()
-                if state.descriptionDrafts[issue.id] == nil {
+                if state.descriptionDrafts[issue.id] == nil, !store.cannotEdit(issue) {
                     Button("고치기") { state.descriptionDrafts[issue.id] = RedmineNote.editable(html) ?? html }
                     .buttonStyle(TextLinkButtonStyle())
                 }
@@ -1453,77 +1453,88 @@ struct RedmineIssueSheet: View {
 
     private func fields(_ issue: Redmine.Issue) -> some View {
         let busy = store.isBusy(issue.id)
-        return HStack(alignment: .top, spacing: 28) {
-            VStack(spacing: 0) {
-                fieldRow("상태") {
-                    menu(issue.status.name) {
-                        ForEach(store.statuses) { status in
-                            let blocked = store.isBlocked(from: issue.status.id, to: status.id)
-                            Button(status.name + (blocked ? " (전에 막힘)" : "")) { change(issue.id, "상태를 \(status.name)(으)로 바꿀까요?", Redmine.Change(statusID: status.id)) }
-                                .disabled(status.id == issue.status.id)
-                        }
-                    }
-                }
-                fieldRow("우선순위") {
-                    menu(issue.priority.name) {
-                        ForEach(store.priorities) { priority in
-                            Button(priority.name) { change(issue.id, "우선순위를 \(priority.name)(으)로 바꿀까요?", Redmine.Change(priorityID: priority.id)) }
-                                .disabled(priority.id == issue.priority.id)
-                        }
-                    }
-                }
-                fieldRow("담당자") {
-                    menu(issue.assignedTo?.name ?? "없음") {
-                        Button("나에게") { assignToMe(issue) }.disabled(store.me.map { $0.id == issue.assignedTo?.id } ?? false)
-                        Divider()
-                        ForEach(store.people[issue.project.id] ?? []) { person in
-                            Button(person.name) { change(issue.id, "담당자를 \(person.name)(으)로 바꿀까요?", Redmine.Change(assignedToID: person.id)) }
-                                .disabled(person.id == issue.assignedTo?.id)
-                        }
-                        Divider()
-                        Button("비우기") { change(issue.id, "담당자를 비울까요?", Redmine.Change(assignedToID: 0)) }.disabled(issue.assignedTo == nil)
-                    }
-                }
-                fieldRow("트래커") {
-                    menu(issue.tracker.name) {
-                        ForEach(store.projects.first { $0.id == issue.project.id }?.trackers ?? store.trackers) { tracker in
-                            Button(tracker.name) { change(issue.id, "트래커를 \(tracker.name)(으)로 바꿀까요?", Redmine.Change(trackerID: tracker.id)) }
-                                .disabled(tracker.id == issue.tracker.id)
-                        }
-                    }
-                }
-                if let watchers = issue.watchers, !watchers.isEmpty {
-                    fieldRow("지켜보는 사람") { Text(watchers.map(\.name).joined(separator: ", ")).font(WL.meta).lineLimit(2) }
-                }
+        // 레드마인 웹도 이 권한이 없으면 칸 없이 댓글 칸만 보인다. 보내도 레드마인이 칸을 버린다
+        let locked = store.cannotEdit(issue)
+        return VStack(alignment: .leading, spacing: 0) {
+            if locked {
+                Text("\(issue.project.name)에서 내 역할에 일감 편집 권한이 없어 칸을 고칠 수 없습니다. 댓글과 시간 기록은 됩니다")
+                    .font(WL.caption).foregroundStyle(WL.waiting).padding(.top, 8)
             }
-            VStack(spacing: 0) {
-                fieldRow("시작일") { dateMenu(issue, value: issue.startDate, key: "start") }
-                fieldRow("완료 기한") { dateMenu(issue, value: issue.dueDate, key: "due") }
-                fieldRow("진척률") {
-                    HStack(spacing: 10) {
-                        RatioBar(ratio: issue.doneRatio).frame(width: 90)
-                        menu("\(issue.doneRatio)%") {
-                            ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { ratio in
-                                Button("\(ratio)%") { change(issue.id, "진척률을 \(ratio)%로 바꿀까요?", Redmine.Change(doneRatio: ratio)) }
-                                    .disabled(ratio == issue.doneRatio)
+            HStack(alignment: .top, spacing: 28) {
+                VStack(spacing: 0) {
+                    fieldRow("상태") {
+                        menu(issue.status.name) {
+                            ForEach(store.statuses) { status in
+                                let blocked = store.isBlocked(from: issue.status.id, to: status.id)
+                                Button(status.name + (blocked ? " (전에 막힘)" : "")) { change(issue.id, "상태를 \(status.name)(으)로 바꿀까요?", Redmine.Change(statusID: status.id)) }
+                                    .disabled(status.id == issue.status.id)
                             }
                         }
                     }
-                }
-                fieldRow("시간") {
-                    menu(issue.estimatedHours.flatMap { $0 > 0 ? "추정 \(hours($0))" : nil } ?? "추정 없음") {
-                        ForEach([1.0, 2, 4, 8, 16, 24, 40], id: \.self) { value in
-                            Button(hours(value)) { change(issue.id, "추정 시간을 \(hours(value))으로 바꿀까요?", Redmine.Change(estimatedHours: value)) }
-                                .disabled(issue.estimatedHours == value)
+                    fieldRow("우선순위") {
+                        menu(issue.priority.name) {
+                            ForEach(store.priorities) { priority in
+                                Button(priority.name) { change(issue.id, "우선순위를 \(priority.name)(으)로 바꿀까요?", Redmine.Change(priorityID: priority.id)) }
+                                    .disabled(priority.id == issue.priority.id)
+                            }
                         }
-                        Divider()
-                        Button("비우기") { change(issue.id, "추정 시간을 비울까요?", Redmine.Change(estimatedHours: 0)) }.disabled(issue.estimatedHours == nil)
                     }
-                    Text(issue.spentHours.flatMap { $0 > 0 ? "소요 \(hours($0))" : nil } ?? "소요 없음")
-                        .font(WL.meta).foregroundStyle(WL.muted)
-                    Button("시간 기록") { state.loggingTime = true }
-                        .buttonStyle(TextLinkButtonStyle())
-                        .popover(isPresented: $state.loggingTime) { TimeEntryForm(store: store, issue: issue.id) }
+                    fieldRow("담당자") {
+                        menu(issue.assignedTo?.name ?? "없음") {
+                            Button("나에게") { assignToMe(issue) }.disabled(store.me.map { $0.id == issue.assignedTo?.id } ?? false)
+                            Divider()
+                            ForEach(store.people[issue.project.id] ?? []) { person in
+                                Button(person.name) { change(issue.id, "담당자를 \(person.name)(으)로 바꿀까요?", Redmine.Change(assignedToID: person.id)) }
+                                    .disabled(person.id == issue.assignedTo?.id)
+                            }
+                            Divider()
+                            Button("비우기") { change(issue.id, "담당자를 비울까요?", Redmine.Change(assignedToID: 0)) }.disabled(issue.assignedTo == nil)
+                        }
+                    }
+                    fieldRow("트래커") {
+                        menu(issue.tracker.name) {
+                            ForEach(store.projects.first { $0.id == issue.project.id }?.trackers ?? store.trackers) { tracker in
+                                Button(tracker.name) { change(issue.id, "트래커를 \(tracker.name)(으)로 바꿀까요?", Redmine.Change(trackerID: tracker.id)) }
+                                    .disabled(tracker.id == issue.tracker.id)
+                            }
+                        }
+                    }
+                    if let watchers = issue.watchers, !watchers.isEmpty {
+                        fieldRow("지켜보는 사람") { Text(watchers.map(\.name).joined(separator: ", ")).font(WL.meta).lineLimit(2) }
+                    }
+                }
+                .disabled(locked)
+                VStack(spacing: 0) {
+                    fieldRow("시작일") { dateMenu(issue, value: issue.startDate, key: "start") }.disabled(locked)
+                    fieldRow("완료 기한") { dateMenu(issue, value: issue.dueDate, key: "due") }.disabled(locked)
+                    fieldRow("진척률") {
+                        HStack(spacing: 10) {
+                            RatioBar(ratio: issue.doneRatio).frame(width: 90)
+                            menu("\(issue.doneRatio)%") {
+                                ForEach(Array(stride(from: 0, through: 100, by: 10)), id: \.self) { ratio in
+                                    Button("\(ratio)%") { change(issue.id, "진척률을 \(ratio)%로 바꿀까요?", Redmine.Change(doneRatio: ratio)) }
+                                        .disabled(ratio == issue.doneRatio)
+                                }
+                            }
+                        }
+                    }
+                    .disabled(locked)
+                    fieldRow("시간") {
+                        menu(issue.estimatedHours.flatMap { $0 > 0 ? "추정 \(hours($0))" : nil } ?? "추정 없음") {
+                            ForEach([1.0, 2, 4, 8, 16, 24, 40], id: \.self) { value in
+                                Button(hours(value)) { change(issue.id, "추정 시간을 \(hours(value))으로 바꿀까요?", Redmine.Change(estimatedHours: value)) }
+                                    .disabled(issue.estimatedHours == value)
+                            }
+                            Divider()
+                            Button("비우기") { change(issue.id, "추정 시간을 비울까요?", Redmine.Change(estimatedHours: 0)) }.disabled(issue.estimatedHours == nil)
+                        }
+                        .disabled(locked)
+                        Text(issue.spentHours.flatMap { $0 > 0 ? "소요 \(hours($0))" : nil } ?? "소요 없음")
+                            .font(WL.meta).foregroundStyle(WL.muted)
+                        Button("시간 기록") { state.loggingTime = true }
+                            .buttonStyle(TextLinkButtonStyle())
+                            .popover(isPresented: $state.loggingTime) { TimeEntryForm(store: store, issue: issue.id) }
+                    }
                 }
             }
         }
@@ -1944,7 +1955,9 @@ struct RedmineIssueSheet: View {
                     if on { state.privateNotes.insert(issue.id) } else { state.privateNotes.remove(issue.id) }
                 }))
                 .toggleStyle(.checkbox).font(WL.caption)
-                .tip("권한이 있는 사람에게만 보이는 댓글")
+                // 권한 없이 보내면 레드마인이 비공개 표시만 버리고 공개로 올린다
+                .disabled(store.cannotWritePrivate(issue))
+                .tip(store.cannotWritePrivate(issue) ? "내 역할에 비공개 댓글 권한이 없습니다" : "권한이 있는 사람에게만 보이는 댓글")
                 Text("[작업 내용]처럼 대괄호 머리를 쓰면 단락이 나뉩니다").font(WL.caption).foregroundStyle(WL.quiet)
                 Spacer()
                 Button(store.sending.contains(issue.id) ? "보내는 중…" : "댓글 남기기") {

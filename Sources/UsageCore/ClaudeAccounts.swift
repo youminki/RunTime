@@ -185,6 +185,8 @@ public enum ClaudeLogin {
         case refreshed(Data, owner: String?)
         /// 리프레시 토큰이 더는 통하지 않는다. 그 계정으로 /login을 다시 해야 한다
         case rejected
+        /// 토큰 서버가 이 기기의 요청을 막았다 (429). 토큰은 살아 있고, 풀린 뒤 다시 하면 된다
+        case rateLimited
         case unknown
     }
 
@@ -197,7 +199,10 @@ public enum ClaudeLogin {
 
     /// 쓰지 않는 계정의 리프레시 토큰으로 새 토큰을 받는다. 리프레시 토큰도 바뀌므로 받은 값은 꼭 저장해야 한다.
     /// 지금 Claude Code가 쓰는 계정에는 부르지 않는다 (Claude Code가 가진 리프레시 토큰이 무효가 된다).
-    public static func refresh(_ part: Data, clientVersion: String? = nil, now: Date = Date()) async -> RefreshResult {
+    public static func refresh(_ part: Data, clientVersion: String? = nil, now: Date = Date(),
+                               gate: RateLimitGate = .token) async -> RefreshResult {
+        // 막힌 동안 또 보내면 제한이 풀리지 않는다
+        if gate.blockedUntil(now: now) != nil { return .rateLimited }
         guard let oauth = ((try? JSONSerialization.jsonObject(with: part)) as? [String: Any])?["claudeAiOauth"] as? [String: Any],
               let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty
         else { return .rejected }
@@ -212,7 +217,12 @@ public enum ClaudeLogin {
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse
         else { return .unknown }
+        if http.statusCode == 429 {
+            gate.hit(retryAfter: RateLimitGate.retryAfter(http, now: now), now: now)
+            return .rateLimited
+        }
         guard http.statusCode == 200 else { return refreshRejected(status: http.statusCode, body: data) ? .rejected : .unknown }
+        gate.cleared()
         return applying(tokenResponse: data, to: part, now: now).map { .refreshed($0.part, owner: $0.owner) } ?? .unknown
     }
 

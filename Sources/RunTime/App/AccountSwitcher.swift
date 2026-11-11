@@ -329,7 +329,11 @@ final class AccountSwitcher: ObservableObject {
         willActivate()
         DispatchQueue.main.sync {
             self.activatedAt = activatedAt
-            if let old = self.activeID, old != id { self.leftAt[old] = activatedAt }
+            if let old = self.activeID, old != id {
+                self.leftAt[old] = activatedAt
+                // 떠난 계정 값은 방금까지 엔진이 받던 값이다. 바꾼 직후 그 계정을 또 조회해 요청 제한을 앞당기지 않는다
+                self.othersFetchedAt[old] = activatedAt
+            }
             self.leftAt[id] = nil
             self.activeID = id
             self.persist()
@@ -353,7 +357,8 @@ final class AccountSwitcher: ObservableObject {
 
     /// 쓰지 않는 계정의 사용률을 저장해 둔 토큰으로 받는다. 토큰이 곧 만료되면 먼저 새로 받아 둔다.
     func refreshOthers(now: Date = Date()) {
-        guard !keychainOff else { return }
+        // 요청 제한은 계정이 아니라 이 기기에 걸려, 막힌 동안 다른 계정을 조회하면 지금 계정도 늦게 풀린다
+        guard !keychainOff, RateLimitGate.usage.blockedUntil(now: now) == nil else { return }
         let due = others.filter { now.timeIntervalSince(othersFetchedAt[$0.id] ?? .distantPast) >= Self.othersRefreshInterval }
         guard !due.isEmpty else { return }
         for account in due { othersFetchedAt[account.id] = now }
@@ -478,8 +483,15 @@ final class AccountSwitcher: ObservableObject {
         let refresh = ClaudeLogin.refreshToken(in: part)
         if refresh == nil || ClaudeLogin.liveCredentials().flatMap(ClaudeLogin.refreshToken(in:)) == refresh { return .usable(part) }
         if !retryNow, let failed = refreshFailedAt[id], Date().timeIntervalSince(failed) < Self.refreshRetryDelay { return .usable(part) }
+        // 토큰 서버가 이 기기를 막은 동안은 보내지 않는다. 보내지 않았으니 실패로 적지 않고 풀리면 바로 다시 한다
+        if RateLimitGate.token.blockedUntil() != nil { return .usable(part) }
         let result = Self.wait({ await ClaudeLogin.refresh(part) })
-        if case .unknown = result { refreshFailedAt[id] = Date() } else { refreshFailedAt[id] = nil }
+        switch result {
+        case .unknown: refreshFailedAt[id] = Date()
+        // 다시 할 때는 관문이 정한다
+        case .rateLimited: break
+        default: refreshFailedAt[id] = nil
+        }
         switch result {
         case .refreshed(let updated, let owner):
             // 저장 자리가 섞였으면 받은 토큰은 그 주인 것이다
@@ -494,7 +506,7 @@ final class AccountSwitcher: ObservableObject {
         case .rejected:
             DispatchQueue.main.sync { self.setNeedsLogin(id, true) }
             return .rejected
-        case .unknown:
+        case .unknown, .rateLimited:
             return .unavailable
         }
     }

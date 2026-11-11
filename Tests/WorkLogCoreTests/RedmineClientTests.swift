@@ -180,6 +180,57 @@ private let issueJSON = #"""
         #expect(Redmine.Change(assignedToID: 0).applied(to: issue, statuses: [], priorities: [], people: []).assignedTo == nil)
     }
 
+    @Test func findsFieldsTheServerDropped() throws {
+        let before = try Redmine.issue(Data(issueJSON.utf8))
+        let change = Redmine.Change(statusID: 4, doneRatio: 100, assignedToID: 0, subject: "새 제목")
+        // 권한 없이 보내면 204인데 칸이 그대로다
+        #expect(change.unapplied(before: before, after: before) == ["상태", "진척률", "담당자", "제목"])
+        var applied = before
+        applied.status = Redmine.Ref(id: 4, name: "테스트")
+        applied.doneRatio = 100
+        applied.assignedTo = nil
+        applied.subject = "새 제목"
+        #expect(change.unapplied(before: before, after: applied).isEmpty)
+        // 그 사이 다른 사람이 다른 값으로 고쳤으면 버렸다고 보지 않는다
+        var other = before
+        other.doneRatio = 60
+        #expect(Redmine.Change(doneRatio: 100).unapplied(before: before, after: other).isEmpty)
+        // 이미 그 값이었으면 바뀐 것이 없어도 버린 것이 아니다
+        #expect(Redmine.Change(doneRatio: 30).unapplied(before: before, after: before).isEmpty)
+        // 레드마인이 줄바꿈을 다듬어 저장한 설명
+        var trimmed = before
+        trimmed.description = "<p>새 설명</p>\r\n"
+        #expect(Redmine.Change(description: "<p>새 설명</p>", descriptionRaw: true).unapplied(before: before, after: trimmed).isEmpty)
+        #expect(Redmine.Change(estimatedHours: 2.5).unapplied(before: before, after: before) == ["추정 시간"])
+        #expect(Redmine.Change(dueDate: "").unapplied(before: before, after: before).isEmpty)
+        #expect(!Redmine.Change(notes: "댓글", privateNotes: true).editsFields)
+        #expect(Redmine.Change(estimatedHours: 0).editsFields)
+    }
+
+    @Test func readsRolePermissions() throws {
+        let issue = try Redmine.issue(Data(issueJSON.utf8))
+        let me = #"{"user":{"id":9,"admin":false,"memberships":[{"project":{"id":7,"name":"예시"},"roles":[{"id":5,"name":"보고자"}]},{"project":{"id":7,"name":"예시"},"roles":[{"id":6,"name":"기획자","inherited":true}]},{"project":{"id":8,"name":"다른"},"roles":[{"id":4,"name":"개발자"}]}]}}"#
+        let account = try Redmine.account(Data(me.utf8))
+        #expect(!account.admin && account.roles == [7: [5, 6], 8: [4]])
+        let role = #"{"role":{"id":5,"name":"보고자","permissions":["view_issues","add_issue_notes"]}}"#
+        let reporter = try Redmine.rolePermissions(Data(role.utf8))
+        var permissions = Redmine.Permissions(roles: account.roles, granted: [5: reporter], loaded: true)
+        // 역할 하나라도 아직 못 받았으면 모른다
+        #expect(permissions.canEditFields(issue, me: 9) == nil)
+        permissions.granted[6] = ["view_issues"]
+        #expect(permissions.canEditFields(issue, me: 9) == false)
+        #expect(permissions.allows("set_notes_private", project: 7) == false)
+        permissions.granted[6] = ["edit_own_issues"]
+        #expect(permissions.canEditFields(issue, me: 9) == true)
+        #expect(permissions.canEditFields(issue, me: 3) == false)
+        permissions.granted[6] = ["edit_issues"]
+        #expect(permissions.canEditFields(issue, me: 3) == true)
+        // 구성원이 아닌 프로젝트와 관리자
+        #expect(permissions.allows("edit_issues", project: 99) == nil)
+        #expect(Redmine.Permissions(admin: true, loaded: true).allows("edit_issues", project: 99) == true)
+        #expect(Redmine.Permissions().allows("edit_issues", project: 7) == nil)
+    }
+
     @Test func readsListsAndAccount() throws {
         let page = #"{"issues":[],"total_count":179,"offset":0,"limit":100}"#
         #expect(try Redmine.issues(Data(page.utf8)).total == 179)

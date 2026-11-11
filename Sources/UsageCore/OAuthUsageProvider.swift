@@ -53,6 +53,9 @@ public final class OAuthUsageProvider {
         case badResponse
         /// 리프레시 토큰까지 거절됐다. Claude Code에서 /login을 다시 해야 한다
         case loginRequired
+        /// 액세스 토큰을 새로 받아야 하는데 토큰 서버가 이 기기의 요청을 막았다. 풀리는 때까지 받지 않는다.
+        /// 그 사이 Claude Code를 쓰면 Claude Code가 새로 받아, 다음 조회부터 그 토큰을 쓴다
+        case refreshLimited(until: Date)
     }
 
     static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
@@ -85,6 +88,8 @@ public final class OAuthUsageProvider {
     /// credentialQueue 전용. 새로 받았더니 `~/.claude.json`과 다른 계정 것이던 액세스 토큰과 그 주인.
     /// 저장소를 다시 읽어도 이 토큰이 나오므로, 그 계정으로 바뀌기 전에는 이 토큰으로 사용률을 받지 않는다.
     private var foreignToken: (token: String, owner: String)?
+    /// credentialQueue 전용. 마지막으로 401을 받은 액세스 토큰. 저장소가 이 토큰을 그대로 주는 동안은 다시 보내지 않는다.
+    private var rejectedAccessToken: String?
     /// 새로 받은 토큰도 401이면 토큰 문제가 아니다. 그동안은 401만으로 리프레시 토큰을 다시 돌리지 않는다.
     static let refreshOn401Cooldown: TimeInterval = 30 * 60
 
@@ -97,6 +102,7 @@ public final class OAuthUsageProvider {
     var currentAccountID: () -> String? = { ClaudeLogin.currentAccount()?.uuid }
     var lockPaths: () -> [URL] = { ClaudeRefreshLock.defaultPaths() }
     var clock: () -> Date = { Date() }
+    var tokenGate: RateLimitGate = .token
     var send: (_ token: String, _ userAgent: String) async throws -> OfficialUsage = { token, userAgent in
         try await OAuthUsageProvider.fetch(token: token, userAgent: userAgent)
     }
@@ -112,21 +118,31 @@ public final class OAuthUsageProvider {
 
     private func fetchRetrying(clientVersion: String?) async throws -> OfficialUsage {
         let userAgent = Self.userAgent(clientVersion: clientVersion)
+        var sent: String?
+        let known = await onCredentialQueue { self.rejectedAccessToken }
         do {
-            return try await fetchOnce(userAgent: userAgent, clientVersion: clientVersion)
+            return try await fetchOnce(userAgent: userAgent, clientVersion: clientVersion, sent: &sent, skipping: known)
         } catch ProviderError.http(401) {
             // 토큰 만료/회전. 다른 곳(Claude Code, /login)이 새로 받았을 수 있어 캐시를 버리고 다시 읽는다
             invalidateCachedToken()
+            let rejected = sent ?? known
             do {
-                return try await fetchOnce(userAgent: userAgent, clientVersion: clientVersion)
+                return try await fetchOnce(userAgent: userAgent, clientVersion: clientVersion, sent: &sent, skipping: rejected)
             } catch ProviderError.http(401) {
                 // 다시 읽어도 막히면 아무도 새로 받지 않은 것이다. Claude Code를 쓰지 않는 동안에도 바로 보이게 직접 받는다
                 guard let token = await refreshLiveToken(rejectedToken: nil, clientVersion: clientVersion) else {
-                    throw await onCredentialQueue { self.loginRequired } ? ProviderError.loginRequired : ProviderError.http(401)
+                    throw await refreshFailure()
                 }
-                return try await send(token, userAgent)
+                return try await sendRemembering(token, userAgent)
             }
         }
+    }
+
+    /// 새로 받지 못했을 때 보일 까닭. 토큰 서버가 막았으면 인증 만료가 아니라 그 사실을 알린다.
+    private func refreshFailure() async -> ProviderError {
+        if await onCredentialQueue({ self.loginRequired }) { return .loginRequired }
+        if let until = tokenGate.blockedUntil(now: clock()) { return .refreshLimited(until: until) }
+        return .http(401)
     }
 
     /// 버전 문자열은 로그 파일에서 온 값이라 숫자와 점으로만 된 경우에만 헤더에 넣는다.
@@ -140,7 +156,9 @@ public final class OAuthUsageProvider {
         return "claude-code/\(valid ?? fallbackClientVersion)"
     }
 
-    private func fetchOnce(userAgent: String, clientVersion: String?) async throws -> OfficialUsage {
+    /// - skipping: 방금 401을 받은 토큰. 다시 읽어도 같으면 같은 요청을 또 보내지 않는다 (요청 제한을 아낀다).
+    private func fetchOnce(userAgent: String, clientVersion: String?, sent: inout String?,
+                           skipping: String? = nil) async throws -> OfficialUsage {
         guard let loaded = await accessToken() else { throw ProviderError.tokenNotFound }
         // 401로 끝내면 위에서 이 토큰을 또 새로 받으려 해서 토큰 없음으로 끝낸다
         if await onCredentialQueue({ self.isForeign(loaded.token) }) { throw ProviderError.tokenNotFound }
@@ -149,11 +167,29 @@ public final class OAuthUsageProvider {
         if loaded.expiresAt <= Date() {
             // 새로 받지 못했으면(실패 쉬는 중, Claude Code가 받는 중) 보내지 않아 사용량 요청 한도를 아낀다
             guard let fresh = await refreshLiveToken(rejectedToken: loaded.token, clientVersion: clientVersion) else {
+                // 토큰 서버가 막았으면 다시 읽고 또 받으려 하지 않고 바로 알린다
+                let failure = await refreshFailure()
+                if case .refreshLimited = failure { throw failure }
                 throw ProviderError.http(401)
             }
             token = fresh
+        } else if token == skipping {
+            throw ProviderError.http(401)
         }
-        return try await send(token, userAgent)
+        sent = token
+        return try await sendRemembering(token, userAgent)
+    }
+
+    /// 401을 받은 토큰을 기억하고, 통하면 잊는다.
+    private func sendRemembering(_ token: String, _ userAgent: String) async throws -> OfficialUsage {
+        do {
+            let usage = try await send(token, userAgent)
+            credentialQueue.async { if self.rejectedAccessToken == token { self.rejectedAccessToken = nil } }
+            return usage
+        } catch ProviderError.http(401) {
+            credentialQueue.async { self.rejectedAccessToken = token }
+            throw ProviderError.http(401)
+        }
     }
 
     /// 주어진 액세스 토큰으로 한 번 조회한다. 계정 점검에서 저장해 둔 다른 계정 토큰으로도 쓴다.
@@ -165,9 +201,13 @@ public final class OAuthUsageProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
+        // 막힌 동안 또 보내면 제한이 풀리지 않는다. 쓰지 않는 계정 조회도 같은 관문을 지난다
+        if RateLimitGate.usage.blockedUntil() != nil { throw ProviderError.http(429) }
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ProviderError.badResponse }
+        if http.statusCode == 429 { RateLimitGate.usage.hit(retryAfter: RateLimitGate.retryAfter(http)) }
         guard http.statusCode == 200 else { throw ProviderError.http(http.statusCode) }
+        RateLimitGate.usage.cleared()
         guard let usage = parse(data: data, fetchedAt: Date()) else { throw ProviderError.badResponse }
         return usage
     }
@@ -211,6 +251,7 @@ public final class OAuthUsageProvider {
         let plan: Plan = await onCredentialQueue {
             let now = self.clock()
             if let failed = self.liveRefreshFailedAt, now.timeIntervalSince(failed) < Self.liveRefreshRetryDelay { return .skip }
+            if self.tokenGate.blockedUntil(now: now) != nil { return .skip }
             guard let lock = ClaudeRefreshLock.acquire(paths: self.lockPaths(), now: now) else {
                 Self.log.info("지금 계정 토큰 새로 받기 건너뜀: 다른 곳이 받는 중")
                 return .skip
@@ -275,6 +316,10 @@ public final class OAuthUsageProvider {
                     self.rejectedRefreshToken = ClaudeLogin.refreshToken(in: part)
                     self.loginRequired = true
                     return nil
+                case .rateLimited:
+                    if self.tokenGate.blockedUntil(now: self.clock()) == nil { self.tokenGate.hit(now: self.clock()) }
+                    self.liveRefreshFailedAt = self.clock()
+                    return nil
                 case .unknown:
                     self.liveRefreshFailedAt = self.clock()
                     return nil
@@ -289,6 +334,7 @@ public final class OAuthUsageProvider {
         switch result {
         case .refreshed: return "받음"
         case .rejected: return "거절됨(다시 로그인 필요)"
+        case .rateLimited: return "토큰 서버 요청 제한"
         case .unknown: return "못 받음(네트워크·요청 제한)"
         }
     }
@@ -308,6 +354,7 @@ public final class OAuthUsageProvider {
             self.liveRefreshFailedAt = nil
             self.liveRefreshedAt = nil
             self.liveRefreshedToken = nil
+            self.rejectedAccessToken = nil
             self.loginRequired = false
         }
     }

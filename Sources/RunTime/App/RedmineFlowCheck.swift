@@ -27,7 +27,8 @@ enum RedmineFlowCheck {
             "trackers.json": #"{"trackers":[{"id":1,"name":"작업"}]}"#,
             "issue_statuses.json": #"{"issue_statuses":[{"id":1,"name":"할일","is_closed":false},{"id":2,"name":"완료","is_closed":true}]}"#,
             "enumerations_issue_priorities.json": #"{"issue_priorities":[{"id":2,"name":"보통"}]}"#,
-            "users_current.json": #"{"user":{"id":7,"login":"me","firstname":"나","lastname":""}}"#,
+            "users_current.json": #"{"user":{"id":7,"login":"me","firstname":"나","lastname":"","memberships":[{"project":{"id":1,"name":"시험"},"roles":[{"id":5,"name":"개발자"}]}]}}"#,
+            "roles_5.json": #"{"role":{"id":5,"name":"개발자","permissions":["view_issues","add_issue_notes","edit_issues","set_notes_private"]}}"#,
             "memberships.json": #"{"memberships":[],"total_count":0,"offset":0,"limit":100}"#,
             "search.json": #"{"results":[{"id":10,"title":"작업 #10: 일감","type":"issue","url":"u"}],"total_count":1}"#,
         ]
@@ -171,6 +172,37 @@ enum RedmineFlowCheck {
         store.load()
         store.loadMyCounts()
         await settle()
+
+        // 권한이나 워크플로가 막은 칸: 레드마인은 204를 주고 그 칸만 버린다
+        RedmineStore.fixtureDrops = ["assigned_to_id"]
+        var dropped: Bool?
+        store.update(10, Redmine.Change(assignedToID: 0)) { dropped = $0 }
+        check("먼저 비워 보인다", store.details[10]?.assignedTo == nil)
+        await settle()
+        check("버린 칸은 실패로 알리고 레드마인 값으로 돌린다", dropped == false && store.details[10]?.assignedTo?.id == 7
+              && store.flash?.contains("담당자") == true && writes() == ["PUT issues/10.json"] && !store.isBusy(10))
+        RedmineStore.fixtureDrops = []
+
+        // 역할에 일감 편집 권한이 없으면 보내지 않는다 (댓글은 된다)
+        let roleFile = folder.appendingPathComponent("roles_5.json")
+        let fullRole = (try? Data(contentsOf: roleFile)) ?? Data()
+        try? Data(#"{"role":{"id":5,"name":"보고자","permissions":["view_issues","add_issue_notes"]}}"#.utf8).write(to: roleFile)
+        store.refresh()
+        await settle()
+        _ = writes()
+        var refused: Bool?
+        store.update(10, Redmine.Change(doneRatio: 90)) { refused = $0 }
+        let issue10 = store.details[10]
+        check("편집 권한이 없으면 칸을 막고 보내지 않는다", refused == false && issue10.map(store.cannotEdit) == true
+              && store.details[10]?.doneRatio == 50 && writes().isEmpty)
+        var secret: Bool?
+        store.comment(10, text: "비밀", files: [], isPrivate: true) { secret = $0 }
+        await settle()
+        check("비공개 권한이 없으면 공개로 새지 않게 보내지 않는다", secret == false && writes().isEmpty)
+        try? fullRole.write(to: roleFile)
+        store.refresh()
+        await settle()
+        check("권한을 다시 받으면 칸이 열린다", issue10.map(store.cannotEdit) == false)
 
         var sent: Bool?
         store.comment(10, text: "댓글", files: []) { sent = $0 }

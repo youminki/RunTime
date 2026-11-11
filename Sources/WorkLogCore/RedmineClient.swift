@@ -199,6 +199,65 @@ public enum Redmine {
         return Ref(id: user.id, name: name.isEmpty ? user.login ?? "#\(user.id)" : name)
     }
 
+    /// 내 계정의 관리자 여부와 프로젝트별 역할 (`users/current.json?include=memberships`).
+    public static func account(_ data: Data) throws -> (admin: Bool, roles: [Int: Set<Int>]) {
+        struct Membership: Decodable { let project: Ref?; let roles: [Ref]? }
+        struct User: Decodable { let admin: Bool?; let memberships: [Membership]? }
+        struct Root: Decodable { let user: User }
+        let user = try decoder.decode(Root.self, from: data).user
+        var roles: [Int: Set<Int>] = [:]
+        // 그룹으로 받은 역할도 같은 프로젝트 줄로 와서 합친다
+        for membership in user.memberships ?? [] {
+            guard let project = membership.project else { continue }
+            roles[project.id, default: []].formUnion((membership.roles ?? []).map(\.id))
+        }
+        return (user.admin ?? false, roles)
+    }
+
+    /// 역할 하나의 권한 이름 (`edit_issues` 같은).
+    public static func rolePermissions(_ data: Data) throws -> Set<String> {
+        struct Role: Decodable { let permissions: [String]? }
+        struct Root: Decodable { let role: Role }
+        return Set(try decoder.decode(Root.self, from: data).role.permissions ?? [])
+    }
+
+    /// 프로젝트마다 내 역할이 가진 권한. 레드마인은 권한 없는 칸을 오류 없이 버리고 204를 주어,
+    /// 보내기 전에 웹 편집 화면과 같은 기준으로 막는다. 모르면(구성원이 아닌 공개 프로젝트, 역할을 아직 못 받음) 막지 않는다.
+    public struct Permissions: Equatable {
+        public var admin = false
+        /// 프로젝트 → 역할 번호.
+        public var roles: [Int: Set<Int>] = [:]
+        /// 역할 번호 → 권한 이름.
+        public var granted: [Int: Set<String>] = [:]
+        public var loaded = false
+
+        public init(admin: Bool = false, roles: [Int: Set<Int>] = [:], granted: [Int: Set<String>] = [:], loaded: Bool = false) {
+            (self.admin, self.roles, self.granted, self.loaded) = (admin, roles, granted, loaded)
+        }
+
+        /// 그 프로젝트에서 권한이 있는지. 알 수 없으면 nil.
+        public func allows(_ permission: String, project: Int) -> Bool? {
+            guard loaded else { return nil }
+            if admin { return true }
+            guard let ids = roles[project], !ids.isEmpty else { return nil }
+            var all = Set<String>()
+            for id in ids {
+                guard let names = granted[id] else { return nil }
+                all.formUnion(names)
+            }
+            return all.contains(permission)
+        }
+
+        /// 일감 칸(상태·담당자·진척률 포함)을 고칠 수 있는지. 웹도 이 권한이 없으면 편집 화면에 댓글 칸만 보인다.
+        public func canEditFields(_ issue: Issue, me: Int?) -> Bool? {
+            guard let all = allows("edit_issues", project: issue.project.id) else { return nil }
+            if all { return true }
+            // 자기가 등록한 일감만 고치는 권한 (레드마인 4.1부터)
+            if allows("edit_own_issues", project: issue.project.id) == true, let me, issue.author?.id == me { return true }
+            return false
+        }
+    }
+
     /// 레드마인이 거절한 까닭 (`{"errors":[…]}`).
     public static func errors(_ data: Data?) -> [String] {
         guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
@@ -272,7 +331,10 @@ public enum Redmine {
     }
 
     public static func statusesRequest(base: URL, key: String) -> URLRequest { request(base, "issue_statuses.json", key: key) }
-    public static func currentUserRequest(base: URL, key: String) -> URLRequest { request(base, "users/current.json", key: key) }
+    public static func currentUserRequest(base: URL, key: String) -> URLRequest {
+        request(base, "users/current.json", key: key, query: [URLQueryItem(name: "include", value: "memberships")])
+    }
+    public static func roleRequest(base: URL, key: String, id: Int) -> URLRequest { request(base, "roles/\(id).json", key: key) }
     public static func trackersRequest(base: URL, key: String) -> URLRequest { request(base, "trackers.json", key: key) }
     public static func prioritiesRequest(base: URL, key: String) -> URLRequest {
         request(base, "enumerations/issue_priorities.json", key: key)
@@ -355,6 +417,37 @@ public enum Redmine {
             if let descriptionValue { copy.description = descriptionValue.isEmpty ? nil : descriptionValue }
             if let estimatedHours { copy.estimatedHours = estimatedHours > 0 ? estimatedHours : nil }
             return copy
+        }
+
+        /// 댓글·첨부 말고 일감 칸을 고치는지. 칸을 고칠 권한을 볼 때 쓴다.
+        public var editsFields: Bool {
+            statusID != nil || doneRatio != nil || priorityID != nil || assignedToID != nil || startDate != nil || dueDate != nil
+                || subject != nil || description != nil || trackerID != nil || estimatedHours != nil
+        }
+
+        /// 204를 받았는데 레드마인이 버린 칸의 이름. 다시 받은 값이 고치기 전과 같고 보낸 값과 다를 때만 센다.
+        /// 다른 사람이 그 사이 다른 값으로 고쳤거나, 레드마인이 글을 다듬어 저장한 것은 버린 것으로 보지 않는다.
+        public func unapplied(before: Issue, after: Issue) -> [String] {
+            var names: [String] = []
+            func check<T: Equatable>(_ name: String, _ sent: T?, _ old: T, _ now: T) {
+                if let sent, sent != old, now == old, now != sent { names.append(name) }
+            }
+            func text(_ value: String?) -> String? {
+                value.map { $0.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .flatMap { $0.isEmpty ? nil : $0 }
+            }
+            func hours(_ value: Double?) -> Int? { value.flatMap { $0 > 0 ? Int(($0 * 100).rounded()) : nil } }
+            check("상태", statusID, before.status.id, after.status.id)
+            check("진척률", doneRatio, before.doneRatio, after.doneRatio)
+            check("우선순위", priorityID, before.priority.id, after.priority.id)
+            check("트래커", trackerID, before.tracker.id, after.tracker.id)
+            check("담당자", assignedToID.map { $0 == 0 ? nil : $0 }, before.assignedTo?.id, after.assignedTo?.id)
+            check("시작일", startDate.map { $0.isEmpty ? nil : $0 }, before.startDate, after.startDate)
+            check("완료 기한", dueDate.map { $0.isEmpty ? nil : $0 }, before.dueDate, after.dueDate)
+            check("제목", subject.map(text), text(before.subject), text(after.subject))
+            check("설명", descriptionValue.map(text), text(before.description), text(after.description))
+            check("추정 시간", estimatedHours.map { hours($0) }, hours(before.estimatedHours), hours(after.estimatedHours))
+            return names
         }
     }
 

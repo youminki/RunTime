@@ -153,7 +153,8 @@ struct LiveTokenRefreshTests {
         let box = Box(Self.credentials(token: "revoked", expiresIn: 3600))
         let provider = try provider(box, accepts: ["new"], refresh: refreshed("new"))
         _ = try await provider.fetch()
-        #expect(box.sent == ["revoked", "revoked", "new"])
+        // 다시 읽어도 같은 토큰이면 또 보내지 않고 바로 새로 받는다 (요청 제한을 아낀다)
+        #expect(box.sent == ["revoked", "new"])
         #expect(box.refreshCalls == 1)
     }
 
@@ -223,6 +224,13 @@ struct LiveTokenRefreshTests {
         _ = try? await provider.fetch()
         _ = try? await provider.fetch()
         #expect(box.refreshCalls == 1)
+        // 거절된 토큰이 저장소에 그대로 있으면 다음 조회에서도 보내지 않는다
+        #expect(box.sent == ["t0", "t1"])
+        // 저장소 토큰이 바뀌면(Claude Code가 새로 받음) 바로 보낸다
+        box.credentials = Self.credentials(token: "t2", expiresIn: 3600)
+        provider.invalidateCachedToken()
+        _ = try? await provider.fetch()
+        #expect(box.sent.contains("t2"))
     }
 }
 
@@ -277,6 +285,43 @@ struct LiveTokenRefreshEdgeTests {
         box.credentials = LiveTokenRefreshTests.credentials(token: "b", expiresIn: -60, refresh: "rb")
         answer = .rejected
         provider.resetForAccountChange()
+        _ = try? await provider.fetch()
+        #expect(box.refreshCalls == 2)
+    }
+
+    @Test func rateLimitedRefreshSaysSoAndWaits() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        var answer: ClaudeLogin.RefreshResult = .rateLimited
+        let provider = try provider(box, clock: clock, refresh: { answer })
+        provider.tokenGate = RateLimitGate(first: 120, maximum: 1800)
+        do {
+            _ = try await provider.fetch()
+            Issue.record("성공하면 안 된다")
+        } catch OAuthUsageProvider.ProviderError.refreshLimited(let until) {
+            // 인증 만료가 아니라 토큰 서버가 막았다고 알리고, 풀리는 때를 준다
+            #expect(abs(until.timeIntervalSince(clock.now) - 120) < 1)
+        }
+        #expect(box.sent.isEmpty)   // 만료된 토큰은 보내지 않는다
+        #expect(box.refreshCalls == 1)
+        // 막힌 동안의 정기 조회는 토큰 서버를 다시 두드리지 않는다
+        clock.now = clock.now.addingTimeInterval(90)
+        do {
+            _ = try await provider.fetch()
+            Issue.record("성공하면 안 된다")
+        } catch OAuthUsageProvider.ProviderError.refreshLimited {
+        }
+        #expect(box.refreshCalls == 1)
+        // 그 사이 Claude Code가 새로 받아 두었으면 그 토큰을 바로 쓴다
+        box.credentials = LiveTokenRefreshTests.credentials(token: "by-claude", expiresIn: 3600)
+        provider.invalidateCachedToken()
+        _ = try? await provider.fetch()
+        #expect(box.sent.contains("by-claude"))
+        // 풀린 뒤에는 다시 받는다
+        box.credentials = LiveTokenRefreshTests.credentials(token: "old2", expiresIn: -60, refresh: "r-3")
+        provider.invalidateCachedToken()
+        clock.now = clock.now.addingTimeInterval(200)
+        answer = .unknown
         _ = try? await provider.fetch()
         #expect(box.refreshCalls == 2)
     }
@@ -405,5 +450,59 @@ struct LiveTokenRefreshLockHoldTests {
         #expect(box.sent == ["new"])
         #expect(box.refreshCalls == 1)
         #expect(provider.lockPaths().allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+    }
+}
+
+struct RateLimitGateTests {
+    @Test func blockedGateRefreshesWithoutSending() async {
+        let gate = RateLimitGate(first: 120, maximum: 600)
+        gate.hit()
+        let part = Data(#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":0}}"#.utf8)
+        // 막힌 동안은 토큰 서버에 보내지 않고 바로 돌아온다
+        #expect(await ClaudeLogin.refresh(part, gate: gate) == .rateLimited)
+    }
+
+    @Test func burstOfRejectionsCountsOnce() {
+        let gate = RateLimitGate(first: 120, maximum: 600)
+        let now = Date()
+        gate.hit(now: now)
+        // 함께 나갔던 요청이 잇달아 막혀도 쉬는 시간이 늘지 않는다
+        #expect(gate.hit(now: now.addingTimeInterval(1)) == now.addingTimeInterval(120))
+        // 서버가 더 기다리라고 하면 따른다
+        #expect(gate.hit(retryAfter: 3600, now: now.addingTimeInterval(2)) == now.addingTimeInterval(3602))
+    }
+
+    @Test func waitsLongerEachTimeAndClears() {
+        let gate = RateLimitGate(first: 120, maximum: 600)
+        let now = Date()
+        #expect(gate.blockedUntil(now: now) == nil)
+        #expect(gate.hit(now: now) == now.addingTimeInterval(120))
+        #expect(gate.blockedUntil(now: now.addingTimeInterval(60)) != nil)
+        #expect(gate.blockedUntil(now: now.addingTimeInterval(121)) == nil)
+        // 풀리자마자 또 막히면 두 배, 최대에서 멈춘다
+        #expect(gate.hit(now: now.addingTimeInterval(121)) == now.addingTimeInterval(121 + 240))
+        #expect(gate.hit(now: now.addingTimeInterval(400)) == now.addingTimeInterval(400 + 480))
+        #expect(gate.hit(now: now.addingTimeInterval(900)) == now.addingTimeInterval(900 + 600))
+        gate.cleared()
+        #expect(gate.blockedUntil(now: now.addingTimeInterval(900)) == nil)
+        #expect(gate.hit(now: now) == now.addingTimeInterval(120))
+    }
+
+    @Test func followsRetryAfterWithinBounds() throws {
+        let gate = RateLimitGate(first: 120, maximum: 600)
+        let now = Date()
+        #expect(gate.hit(retryAfter: 45, now: now) == now.addingTimeInterval(45))
+        #expect(RateLimitGate(first: 120, maximum: 600).hit(retryAfter: 1, now: now) == now.addingTimeInterval(30))
+        #expect(RateLimitGate(first: 120, maximum: 600).hit(retryAfter: 9999, now: now) == now.addingTimeInterval(9999))
+        #expect(RateLimitGate(first: 120, maximum: 600).hit(retryAfter: 99999, now: now) == now.addingTimeInterval(6 * 3600))
+        let url = try #require(URL(string: "https://example.com"))
+        let seconds = try #require(HTTPURLResponse(url: url, statusCode: 429, httpVersion: nil, headerFields: ["Retry-After": "90"]))
+        #expect(RateLimitGate.retryAfter(seconds) == 90)
+        let date = try #require(HTTPURLResponse(url: url, statusCode: 429, httpVersion: nil,
+                                                headerFields: ["Retry-After": "Wed, 11 Nov 2026 02:00:00 GMT"]))
+        let base = try #require(ISO8601DateFormatter().date(from: "2026-11-11T01:58:00Z"))
+        #expect(RateLimitGate.retryAfter(date, now: base) == 120)
+        let none = try #require(HTTPURLResponse(url: url, statusCode: 429, httpVersion: nil, headerFields: [:]))
+        #expect(RateLimitGate.retryAfter(none) == nil)
     }
 }

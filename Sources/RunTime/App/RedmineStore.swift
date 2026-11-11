@@ -151,6 +151,8 @@ final class RedmineStore: ObservableObject {
     @Published private(set) var activities: [RedmineAPI.Activity] = []
     /// 내 계정 ("나에게" 담당자로 둘 때).
     @Published private(set) var me: Redmine.Ref?
+    /// 프로젝트마다 내 역할의 권한. 권한 없는 칸은 레드마인이 오류 없이 버려, 보내기 전에 이것으로 막는다.
+    @Published private(set) var permissions = Redmine.Permissions()
     /// 프로젝트별 담당자로 고를 수 있는 사람.
     @Published private(set) var people: [Int: [Redmine.Ref]] = [:]
     @Published var flash: String?
@@ -269,6 +271,7 @@ final class RedmineStore: ObservableObject {
         activityLoading = false
         // 옛 서버의 메타·진행 중 표시가 남으면 "나에게"가 엉뚱한 사람을 고르거나 버튼이 막힌 채 남는다
         me = nil
+        permissions = Redmine.Permissions()
         projects = []
         queries = []
         statuses = []
@@ -510,6 +513,30 @@ final class RedmineStore: ObservableObject {
 
     /// 점검용: 가짜 응답으로 답한 쓰기 요청.
     static var fixtureWrites: [String] = []
+    /// 점검용: 권한 없는 칸처럼 204를 주고 버릴 칸 (`status_id` 같은 요청 이름).
+    static var fixtureDrops: Set<String> = []
+
+    /// 점검용: 레드마인처럼 받은 칸을 일감 응답 파일에 반영한다. 버릴 칸은 건너뛴다.
+    private static func applyFixture(_ request: URLRequest, path: String, folder: String) {
+        let file = (folder as NSString).appendingPathComponent(path.replacingOccurrences(of: "/", with: "_"))
+        guard path.hasPrefix("issues/"), let body = request.httpBody,
+              let sent = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["issue"] as? [String: Any],
+              let data = FileManager.default.contents(atPath: file),
+              var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              var issue = root["issue"] as? [String: Any] else { return }
+        let refs = ["status_id": "status", "priority_id": "priority", "tracker_id": "tracker", "assigned_to_id": "assigned_to"]
+        for (name, value) in sent where !fixtureDrops.contains(name) {
+            if let field = refs[name] {
+                let id = (value as? Int) ?? Int("\(value)")
+                issue[field] = id.map { ["id": $0, "name": "#\($0)"] }
+            } else if ["done_ratio", "start_date", "due_date", "subject", "description", "estimated_hours"].contains(name) {
+                let text = value as? String
+                issue[name] = text == "" ? nil : name == "estimated_hours" ? text.flatMap(Double.init) ?? value : value
+            }
+        }
+        root["issue"] = issue
+        try? JSONSerialization.data(withJSONObject: root).write(to: URL(fileURLWithPath: file))
+    }
 
     /// 점검용: 레드마인 대신 폴더의 응답 파일로 답한다 (`issues/101.json` → `issues_101.json`, 없으면 끝 이름).
     /// 고치기(PUT)는 받은 것으로 친다. 사내망 밖에서도 화면과 고치기 흐름을 볼 수 있다.
@@ -521,6 +548,7 @@ final class RedmineStore: ObservableObject {
             fflush(stdout)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            if request.httpMethod == "PUT" { applyFixture(request, path: path, folder: folder) }
             if request.httpMethod == "PUT" || request.httpMethod == "DELETE" { return done(Data(), 204, nil) }
             if request.httpMethod == "POST" {
                 let name = path == "issues.json" ? "created.json" : path
@@ -559,8 +587,42 @@ final class RedmineStore: ObservableObject {
             if let data, let list = try? RedmineAPI.parseActivities(data) { self?.activities = list }
         }
         fetch(Redmine.currentUserRequest(base: base, key: key)) { [weak self] data, _, _ in
-            if let data, let user = try? Redmine.currentUser(data) { self?.me = user }
+            guard let self, let data else { return }
+            if let user = try? Redmine.currentUser(data) { self.me = user }
+            if let account = try? Redmine.account(data) { self.loadPermissions(admin: account.admin, roles: account.roles) }
         }
+    }
+
+    /// 역할마다 권한을 받는다. 하나라도 못 받으면 그 역할이 든 프로젝트는 모르는 채로 두어 막지 않는다.
+    private func loadPermissions(admin: Bool, roles: [Int: Set<Int>]) {
+        // 다시 받는 동안 칸이 열렸다 닫히지 않게 받아 둔 역할 권한은 새 값이 올 때까지 둔다
+        let kept = permissions.granted.filter { role in roles.values.contains { $0.contains(role.key) } }
+        permissions = Redmine.Permissions(admin: admin, roles: roles, granted: kept, loaded: true)
+        guard !admin, let (base, key) = credentials else { return }
+        for role in Set(roles.values.flatMap { $0 }) {
+            fetch(Redmine.roleRequest(base: base, key: key, id: role)) { [weak self] data, status, _ in
+                guard let self, status == 200, let data, let names = try? Redmine.rolePermissions(data) else { return }
+                self.permissions.granted[role] = names
+            }
+        }
+    }
+
+    /// 권한이 없다고 확실히 아는 일이면 까닭을 돌려준다. 모르면 nil이라 보내 보고 받은 값으로 가린다.
+    func denied(_ issue: Redmine.Issue, _ change: Redmine.Change) -> String? {
+        if change.editsFields, permissions.canEditFields(issue, me: me?.id) == false {
+            return "#\(issue.id) 칸을 고칠 권한이 없습니다 (\(issue.project.name) 역할에 일감 편집 권한 없음)"
+        }
+        // 레드마인은 이 권한이 없으면 비공개 표시만 버리고 댓글을 공개로 올린다
+        if change.privateNotes, permissions.allows("set_notes_private", project: issue.project.id) == false {
+            return "#\(issue.id)에 비공개 댓글을 남길 권한이 없습니다"
+        }
+        return nil
+    }
+
+    /// 일감 창에서 칸을 막을지. 권한을 모르면 열어 둔다.
+    func cannotEdit(_ issue: Redmine.Issue) -> Bool { permissions.canEditFields(issue, me: me?.id) == false }
+    func cannotWritePrivate(_ issue: Redmine.Issue) -> Bool {
+        permissions.allows("set_notes_private", project: issue.project.id) == false
     }
 
     /// 지금 보기의 일감을 모두 받는다 (100개씩 이어서, 500개까지).
@@ -722,6 +784,11 @@ final class RedmineStore: ObservableObject {
             return
         }
         let before = details[id] ?? issues.first { $0.id == id }
+        if let before, let reason = denied(before, change) {
+            flash = reason
+            done?(false)
+            return
+        }
         if let before {
             let after = change.applied(to: before, statuses: statuses, priorities: priorities, people: people[before.project.id] ?? [])
             if details[id] != nil { details[id] = after }
@@ -730,8 +797,8 @@ final class RedmineStore: ObservableObject {
         saving.insert(id)
         fetch(request) { [weak self] data, status, failure in
             guard let self else { return }
-            self.saving.remove(id)
             guard (200..<300).contains(status) else {
+                self.saving.remove(id)
                 if let before {
                     if self.details[id] != nil { self.details[id] = before }
                     self.replaceInList(before)
@@ -747,9 +814,36 @@ final class RedmineStore: ObservableObject {
                 done?(false)
                 return
             }
-            // 여러 건을 고칠 때는 건마다 다시 받지 않고 끝에 한 번 받는다
-            if !batch { self.reflected([id]) }
-            done?(true)
+            self.confirmApplied(id, change, before: before) { ok, fresh in
+                // 여러 건을 고칠 때는 건마다 다시 받지 않고 끝에 한 번 받는다
+                if !batch { self.reflected([id], fresh: fresh) }
+                done?(ok)
+            }
+        }
+    }
+
+    /// 204를 받은 뒤 일감을 다시 받아 보낸 칸이 실제로 바뀌었는지 본다. 레드마인은 권한이나 워크플로가 막은 칸을
+    /// 오류 없이 버려, 보지 않으면 먼저 바꿔 둔 화면 값이 고친 것처럼 남는다. 다시 받지 못하면 가리지 못해 된 것으로 둔다.
+    private func confirmApplied(_ id: Int, _ change: Redmine.Change, before: Redmine.Issue?,
+                                done: @escaping (_ ok: Bool, _ fresh: Bool) -> Void) {
+        guard change.editsFields, let before, let (base, key) = credentials else {
+            saving.remove(id)
+            return done(true, false)
+        }
+        detailTokens[id, default: 0] += 1
+        let token = detailTokens[id]
+        fetch(Redmine.issueRequest(base: base, key: key, id: id)) { [weak self] data, status, _ in
+            guard let self else { return }
+            self.saving.remove(id)
+            guard status == 200, let data, let issue = try? Redmine.issue(data) else { return done(true, false) }
+            if self.detailTokens[id] == token, self.details[id] != nil || self.selected == id { self.details[id] = issue }
+            self.replaceInList(issue)
+            let dropped = change.unapplied(before: before, after: issue)
+            guard dropped.isEmpty else {
+                self.flash = "#\(id)의 \(dropped.joined(separator: ", "))은(는) 레드마인이 받지 않았습니다. 권한·워크플로에서 막혔거나 하위 일감이나 상태로 정해지는 칸입니다"
+                return done(false, true)
+            }
+            done(true, true)
         }
     }
 
@@ -965,6 +1059,13 @@ final class RedmineStore: ObservableObject {
     func comment(_ id: Int, text: String, files: [URL], isPrivate: Bool = false, done: @escaping (Bool) -> Void) {
         // 올리는 동안 또 누르면 같은 댓글과 파일이 두 번 올라간다
         guard let (base, key) = credentials, sending.insert(id).inserted else { return done(false) }
+        // 막힐 댓글이면 파일을 올리기 전에 멈춘다
+        if let issue = details[id] ?? issues.first(where: { $0.id == id }),
+           let reason = denied(issue, Redmine.Change(privateNotes: isPrivate)) {
+            sending.remove(id)
+            flash = reason
+            return done(false)
+        }
         func finish(_ ok: Bool) {
             sending.remove(id)
             done(ok)
@@ -1019,8 +1120,9 @@ final class RedmineStore: ObservableObject {
 
     /// 레드마인에 반영된 뒤 그 일감이 보이는 곳을 모두 새로 받는다. 상세만 받으면 목록의 거르기·정렬, 작업 내역,
     /// 왼쪽 내 일감 수, 업무 일지 보고서의 진척률이 앱을 다시 열 때까지 옛 값으로 남는다.
-    private func reflected(_ ids: [Int]) {
-        for id in ids where details[id] != nil || selected == id { loadDetail(id) }
+    private func reflected(_ ids: [Int], fresh: Bool = false) {
+        // 고친 뒤 대조하며 이미 받은 상세는 다시 받지 않는다
+        if !fresh { for id in ids where details[id] != nil || selected == id { loadDetail(id) } }
         load()
         if layout == .activity { loadActivity() }
         loadMyCounts()
