@@ -223,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         pet.themeProvider = { [weak self] in self?.engine.settings.spriteTheme ?? .auto }
         pet.companionProvider = { GameDecor.shared.companion }
         pet.sizeProvider = { [weak self] in CGFloat(self?.engine.settings.desktopPetSize ?? 1) }
-        pet.modeProvider = { [weak self] in self?.engine.settings.desktopPetMode ?? .roam }
+        pet.modeProvider = { [weak self] in self?.engine.settings.desktopPetMode ?? .pinned }
         pet.pinnedProvider = { [weak self] in self?.engine.settings.desktopPetSpot }
         pet.onSize = { [weak self] in self?.engine.settings.desktopPetSize = Double($0) }
         pet.onMode = { [weak self] in self?.engine.settings.desktopPetMode = $0 }
@@ -309,18 +309,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func watchUpdateNews() {
         // 레드마인 새 일감, 디자인 변경 같은 소식도 같은 말풍선으로 띄운다. 사용량 창이 열려 있으면 가리지 않게 넘긴다
         MenuBarNews.open = { [weak self] page in self?.showMain(page) }
-        MenuBarNews.post = { [weak self] content in
-            guard let self, self.popover?.isShown != true, let anchor = self.statusItem.button?.window?.frame else { return }
-            MenuBarBubble.shared.show(content, below: anchor)
+        MenuBarNews.post = { [weak self] content in self?.postBubble(content) }
+        // 펫을 꺼내 두었으면 다른 화면의 알림도 시스템 알림 대신 펫 위 말풍선으로 띄운다
+        Notifier.shared.bubble = { [weak self] title, body, destination in
+            guard let self, DesktopPet.shared.isShown else { return false }
+            self.postBubble(.init(title: title, items: body.split(separator: "\n").map(String.init),
+                                  actionTitle: "열기", action: { Notifier.shared.onOpen(destination) }))
+            return true
         }
         let updater = AppUpdater.shared
         let shownKey = "menuBarNewsShown"
         func showOnce(_ key: String, title: String, lines: [String], action: (String, () -> Void)?) {
             let items = UpdateDigest.make(lines)
-            guard UserDefaults.standard.string(forKey: shownKey) != key, !items.isEmpty, self.popover?.isShown != true,
-                  let anchor = self.statusItem.button?.window?.frame else { return }
+            guard UserDefaults.standard.string(forKey: shownKey) != key, !items.isEmpty,
+                  self.postBubble(.init(title: title, items: items, actionTitle: action?.0, action: action?.1)) else { return }
             UserDefaults.standard.set(key, forKey: shownKey)
-            MenuBarBubble.shared.show(.init(title: title, items: items, actionTitle: action?.0, action: action?.1), below: anchor)
         }
         // 업데이트하고 처음 켜졌을 때: 러너가 자리 잡은 뒤에 바뀐 점을 보인다
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -338,6 +341,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                          action: ("지금 업데이트", { updater.update() }))
             }
             .store(in: &cancellables)
+    }
+
+    /// 말풍선은 꺼낸 펫 위에, 펫이 없으면 메뉴바 러너 아래에 띄운다. 펫을 넣으면 메뉴바 아래로 옮겨 간다.
+    /// 메뉴바 아래에 띄울 때 사용량 창이 열려 있으면 가리지 않게 넘긴다. 띄웠으면 true.
+    @discardableResult
+    private func postBubble(_ content: MenuBarBubble.Content) -> Bool {
+        let menuBar = { [weak self] in self?.statusItem.button?.window?.frame }
+        guard DesktopPet.shared.bodyFrame != nil || (popover?.isShown != true && menuBar() != nil) else { return false }
+        MenuBarBubble.shared.show(content) {
+            if let body = DesktopPet.shared.bodyFrame { return (body, true) }
+            return menuBar().map { ($0, false) }
+        }
+        // 말풍선만 뜨면 다른 창을 보다 놓치기 쉬워 펫이 손을 흔든다
+        if DesktopPet.shared.isShown { _ = animator.perform(.greet) }
+        return true
     }
 
     @objc private func statusItemClicked() {

@@ -16,6 +16,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     let available = Bundle.main.bundleIdentifier != nil
     /// 알림을 누르면 부른다. 메인 스레드에서 부른다.
     var onOpen: (Destination) -> Void = { _ in }
+    /// 시스템 알림 대신 말풍선으로 보일 수 있으면 보이고 true를 돌려준다 (화면에 펫을 꺼내 두었을 때). 메인 스레드에서 부른다.
+    var bubble: (_ title: String, _ body: String, _ destination: Destination) -> Bool = { _, _, _ in false }
     private static let destinationKey = "open"
 
     private override init() {}
@@ -29,6 +31,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func send(title: String, body: String, opens destination: Destination = .usage) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { self.send(title: title, body: body, opens: destination) }
+            return
+        }
+        if bubble(title, body, destination) { return }
         guard available else {
             NSLog("[RunTime] (알림 비활성 — 번들 앱 아님) %@ %@", title, body)
             return

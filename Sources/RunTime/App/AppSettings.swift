@@ -168,7 +168,7 @@ final class AppSettings: ObservableObject {
         desktopPetSize = size > 0 ? min(max(size, 0.6), 2) : 1
         // 예전 '모서리 따라 돌아다니기' 켜기·끄기를 이어 받는다
         desktopPetMode = DesktopPet.Mode(saved: string(.desktopPetMode))
-            ?? (d.object(forKey: Key.desktopPetEdges.rawValue) as? Bool == false ? .floor : .roam)
+            ?? (d.object(forKey: Key.desktopPetEdges.rawValue) as? Bool == false ? .floor : .pinned)
         let label = MenuBarLabel(rawValue: string(.menuBarLabel)) ?? .off
         menuBarLabel = label
         // 이 키가 생기기 전에 고른 값도 끄고 다시 켰을 때 돌아오게 (init에서는 didSet이 불리지 않는다)

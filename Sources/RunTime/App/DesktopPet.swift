@@ -43,7 +43,7 @@ final class DesktopPet {
     var companionProvider: () -> RunnerCharacter? = { nil }
     /// 크기 배율 (1이 보통, 펫 키 약 70pt).
     var sizeProvider: () -> CGFloat = { 1 }
-    var modeProvider: () -> Mode = { .roam }
+    var modeProvider: () -> Mode = { .pinned }
     /// '놓은 자리에 두기'에서 둔 발 자리 (화면 좌표). 다음에 켜도 그 자리에서 나온다.
     var pinnedProvider: () -> CGPoint? = { nil }
     /// 쓰다듬기·뛰기를 메뉴바 러너에 보낸다. 메뉴바가 하면 `SpriteAnimator.performed`로 돌아와 이 펫도 한다.
@@ -111,6 +111,8 @@ final class DesktopPet {
     var groundY: CGFloat { area.minY }
     var panelFrame: NSRect { panel?.frame ?? .zero }
     var bodyCenter: CGPoint { CGPoint(bodyOnScreen.midX, bodyOnScreen.midY) }
+    /// 화면에 나와 있으면 펫 몸 자리 (화면 좌표). 말풍선을 이 위에 띄운다.
+    var bodyFrame: CGRect? { isShown && bodyOnScreen.width > 0 ? bodyOnScreen : nil }
     var takesClicks: Bool { panel?.ignoresMouseEvents == false }
     /// 점검 도구가 커서를 움직이지 않고 '커서가 여기 있다'고 알릴 때.
     var pointerForCheck: CGPoint?
@@ -688,14 +690,16 @@ final class DesktopPet {
         // 돌린 좌표에서 발은 가운데 아래
         let feet = CGPoint(0, Stage.size.height * scale / 2)
         let origin = CGPoint(feet.x - Stage.size.width / 2 * scale, feet.y - Stage.ground * scale)
-        // 데려간 동료는 뒤에서 따라 걷는다
+        let scene = CharacterScene(rig: character.rig, pose: frame.pose, transform: frame.transform)
+        // 데려간 동료는 몸 바로 뒤에서 따라 걷는다. 무대 폭이 아니라 몸 폭으로 재야 캐릭터와 붙어 보인다
         if let companion = companionProvider() {
             let facing = free == nil ? heading : 1
-            GameFX.drawCompanion(companion, feet: CGPoint(feet.x - facing * (Stage.size.width / 2 * scale + 14), feet.y),
+            let body = scene.placedBounds
+            let x = origin.x + (body.midX - facing * (body.width / 2 + 5)) * scale
+            GameFX.drawCompanion(companion, feet: CGPoint(x, feet.y),
                                  height: 10 * scale, phase: buddyGait, moving: Self.walkSpeed(display) > 0 && !resting,
                                  facing: facing, theme: themeProvider(), cg)
         }
-        let scene = CharacterScene(rig: character.rig, pose: frame.pose, transform: frame.transform)
         cg.saveGState()
         cg.translateBy(x: origin.x, y: origin.y)
         cg.scaleBy(x: scale, y: scale)
@@ -1009,6 +1013,23 @@ enum DesktopPetCheck {
             }),
             (4.6, {
                 check("4초 동안 방향키를 쓰지 않으면 키 입력을 돌려준다", !pet.hasKeyboard)
+                mode = .pinned
+                let anchor = { pet.bodyFrame.map { ($0, true) } }
+                MenuBarBubble.shared.show(.init(title: "레드마인 새 일감 2건", items: ["#101 로그인 화면 수정", "#102 목록 정렬"],
+                                                actionTitle: "열기", action: {}), at: anchor)
+                MenuBarBubble.shared.show(.init(title: "호스트", items: ["‘개발’ 묶음을 켰습니다"]), at: anchor)
+                MenuBarBubble.shared.show(.init(title: "호스트", items: ["‘개발’ 묶음을 켰습니다"]), at: anchor)
+                check("같은 소식은 겹쳐 쌓지 않고 줄을 세운다 (\(MenuBarBubble.shared.pending)건)", MenuBarBubble.shared.pending == 2)
+            }),
+            (3.0, {
+                let bubble = MenuBarBubble.shared.frame ?? .zero, body = pet.bodyFrame ?? .zero
+                check("말풍선이 펫 바로 위에 뜬다 (틈 \(Int(bubble.minY - body.maxY))pt)",
+                      bubble.minY >= body.maxY && bubble.minY - body.maxY < 20 && bubble.minX < body.midX && bubble.maxX > body.midX)
+                check("말풍선은 저절로 닫히지 않는다", MenuBarBubble.shared.frame != nil)
+                MenuBarBubble.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("bubble.png"))
+                capture("bubble-on-pet")
+                MenuBarBubble.shared.hide()
+                check("모두 닫으면 사라진다", MenuBarBubble.shared.frame == nil && MenuBarBubble.shared.pending == 0)
                 pet.snapshot(to: file)
                 pet.hide()
                 check("넣으면 창이 사라진다", !pet.isShown)
