@@ -8,7 +8,8 @@ public final class RateLimitGate: @unchecked Sendable {
     /// 사용량 조회 (`/api/oauth/usage`). 지금 계정과 쓰지 않는 계정 조회가 함께 쓴다.
     public static let usage = RateLimitGate(first: 10 * 60, maximum: 30 * 60)
     /// 토큰 새로 받기 (`/v1/oauth/token`). Claude Code도 같은 곳에 받으러 가니 짧게 시작한다.
-    public static let token = RateLimitGate(first: 2 * 60, maximum: 30 * 60)
+    /// 이 곳은 `Retry-After`를 주지 않고, 우리가 쉬는 동안에도 Claude Code는 몇 분 만에 받아 간다(2026-11-11 실측). 그래서 짧게 끊는다.
+    public static let token = RateLimitGate(first: 2 * 60, maximum: 10 * 60)
 
     private let lock = NSLock()
     private var until: Date?
@@ -40,6 +41,8 @@ public final class RateLimitGate: @unchecked Sendable {
             if let retryAfter { self.until = max(until, now.addingTimeInterval(min(max(retryAfter, 30), Self.serverMaximum))) }
             return self.until ?? until
         }
+        // 풀린 뒤 한참 막히지 않았으면 지난 일이다. 몇 시간 전 429까지 세면 한 번 막혀도 최대로 쉰다
+        if let until, now.timeIntervalSince(until) > maximum { streak = 0 }
         streak += 1
         let doubled = first * pow(2, Double(min(streak - 1, 8)))
         // 서버가 알려 준 시간은 우리 한도보다 길어도 따른다. 그 전에 보내면 제한이 풀리지 않는다

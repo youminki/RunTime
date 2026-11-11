@@ -488,6 +488,24 @@ struct RateLimitGateTests {
         #expect(gate.hit(now: now) == now.addingTimeInterval(120))
     }
 
+    @Test func forgetsOldStreak() {
+        let gate = RateLimitGate(first: 120, maximum: 600)
+        let now = Date()
+        gate.hit(now: now)
+        gate.hit(now: now.addingTimeInterval(121))
+        // 풀린 뒤 최대 쉬는 시간보다 오래 막히지 않았으면 처음부터 센다
+        let later = now.addingTimeInterval(121 + 240 + 601)
+        #expect(gate.hit(now: later) == later.addingTimeInterval(120))
+    }
+
+    @Test func chosenAccountGoesThroughClosedGate() async {
+        let gate = RateLimitGate(first: 120, maximum: 600)
+        gate.hit()
+        // 리프레시 토큰이 없으니 보내기 전에 거절로 끝난다. 관문에 막혔다면 rateLimited다
+        let part = Data(#"{"claudeAiOauth":{"accessToken":"a","expiresAt":0}}"#.utf8)
+        #expect(await ClaudeLogin.refresh(part, gate: gate, throughGate: true) == .rejected)
+    }
+
     @Test func followsRetryAfterWithinBounds() throws {
         let gate = RateLimitGate(first: 120, maximum: 600)
         let now = Date()

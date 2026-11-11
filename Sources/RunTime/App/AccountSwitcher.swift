@@ -483,9 +483,10 @@ final class AccountSwitcher: ObservableObject {
         let refresh = ClaudeLogin.refreshToken(in: part)
         if refresh == nil || ClaudeLogin.liveCredentials().flatMap(ClaudeLogin.refreshToken(in:)) == refresh { return .usable(part) }
         if !retryNow, let failed = refreshFailedAt[id], Date().timeIntervalSince(failed) < Self.refreshRetryDelay { return .usable(part) }
-        // 토큰 서버가 이 기기를 막은 동안은 보내지 않는다. 보내지 않았으니 실패로 적지 않고 풀리면 바로 다시 한다
-        if RateLimitGate.token.blockedUntil() != nil { return .usable(part) }
-        let result = Self.wait({ await ClaudeLogin.refresh(part) })
+        // 토큰 서버가 이 기기를 막은 동안은 보내지 않는다. 보내지 않았으니 실패로 적지 않고 풀리면 바로 다시 한다.
+        // 고른 계정은 예외다. 쉬지 않던 계정의 갱신이 닫은 관문 때문에 만료된 토큰으로 바꾸면 풀릴 때까지 사용량을 못 받는다
+        if !forSwitch, RateLimitGate.token.blockedUntil() != nil { return .usable(part) }
+        let result = Self.wait({ await ClaudeLogin.refresh(part, throughGate: forSwitch) })
         switch result {
         case .unknown: refreshFailedAt[id] = Date()
         // 다시 할 때는 관문이 정한다

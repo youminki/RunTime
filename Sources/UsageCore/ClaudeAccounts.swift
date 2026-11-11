@@ -199,10 +199,11 @@ public enum ClaudeLogin {
 
     /// 쓰지 않는 계정의 리프레시 토큰으로 새 토큰을 받는다. 리프레시 토큰도 바뀌므로 받은 값은 꼭 저장해야 한다.
     /// 지금 Claude Code가 쓰는 계정에는 부르지 않는다 (Claude Code가 가진 리프레시 토큰이 무효가 된다).
+    /// - throughGate: 사용자가 계정을 고른 때. 관문이 닫혀 있어도 한 번은 보낸다
     public static func refresh(_ part: Data, clientVersion: String? = nil, now: Date = Date(),
-                               gate: RateLimitGate = .token) async -> RefreshResult {
+                               gate: RateLimitGate = .token, throughGate: Bool = false) async -> RefreshResult {
         // 막힌 동안 또 보내면 제한이 풀리지 않는다
-        if gate.blockedUntil(now: now) != nil { return .rateLimited }
+        if !throughGate, gate.blockedUntil(now: now) != nil { return .rateLimited }
         guard let oauth = ((try? JSONSerialization.jsonObject(with: part)) as? [String: Any])?["claudeAiOauth"] as? [String: Any],
               let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty
         else { return .rejected }
