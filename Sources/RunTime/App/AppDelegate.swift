@@ -205,8 +205,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                       // 무대가 보이면 러너가 말풍선으로 알리니 알림은 보내지 않는다
                       !(self.mainWindow?.isVisible == true && self.navigator.page.hasStage) else { return }
                 let minutes = Int((turn.duration / 60).rounded())
-                Notifier.shared.send(title: "Claude 작업이 끝났어요",
-                                     body: [turn.project, "\(minutes)분 걸림"].compactMap { $0 }.joined(separator: " · "))
+                let body = [turn.project, "\(minutes)분 걸림"].compactMap { $0 }.joined(separator: " · ")
+                // 일하던 앱을 찾았을 때만 '열기'를 둔다. 세션을 닫았으면 열어 볼 곳이 없다
+                DispatchQueue.global(qos: .utility).async {
+                    let host = turn.project.flatMap(ClaudeHost.find(project:))
+                    Notifier.shared.send(title: "Claude 작업이 끝났어요", body: body,
+                                         opens: host == nil ? nil : .claude, context: turn.project,
+                                         actionTitle: host.map { "\($0.app.localizedName ?? "작업하던 앱")에서 보기" })
+                }
             }
             .store(in: &cancellables)
 
@@ -253,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .store(in: &cancellables)
 
         // 알림을 누르면 그 내용을 볼 수 있는 화면을 연다
-        Notifier.shared.onOpen = { [weak self] destination in
+        Notifier.shared.onOpen = { [weak self] destination, context in
             guard let self else { return }
             switch destination {
             case .usage:
@@ -280,6 +286,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.showMain(.design)
             case .hosts:
                 self.showMain(.hosts)
+            case .claude:
+                // Claude가 일하던 터미널·편집기를 앞으로 가져온다 (Orca면 그 터미널 탭까지). 그새 닫았으면 아무것도 열지 않는다
+                DispatchQueue.global(qos: .userInitiated).async {
+                    if let host = context.flatMap(ClaudeHost.find(project:)) { ClaudeHost.open(host) }
+                }
             }
         }
         // 설정 창을 열어 둔 채 시스템 설정에서 자동 시작을 바꾸고 돌아와도 맞게 보이게
@@ -311,18 +322,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         MenuBarNews.open = { [weak self] page in self?.showMain(page) }
         MenuBarNews.post = { [weak self] content in self?.postBubble(content) }
         // 펫을 꺼내 두었으면 다른 화면의 알림도 시스템 알림 대신 펫 위 말풍선으로 띄운다
-        Notifier.shared.bubble = { [weak self] title, body, destination in
+        Notifier.shared.bubble = { [weak self] title, body, destination, context, actionTitle in
             guard let self, DesktopPet.shared.isShown else { return false }
-            self.postBubble(.init(title: title, items: body.split(separator: "\n").map(String.init),
-                                  actionTitle: "열기", action: { Notifier.shared.onOpen(destination) }))
+            let items = body.split(separator: "\n").map(String.init)
+            if let destination {
+                self.postBubble(.init(title: title, items: items,
+                                      actionTitle: actionTitle ?? "열기", action: { Notifier.shared.onOpen(destination, context) },
+                                      link: "notify:\(destination.rawValue)" + (context.map { ":\($0)" } ?? "")))
+            } else {
+                self.postBubble(.init(title: title, items: items))
+            }
             return true
         }
         let updater = AppUpdater.shared
         let shownKey = "menuBarNewsShown"
-        func showOnce(_ key: String, title: String, lines: [String], action: (String, () -> Void)?) {
+        // 다시 켠 뒤 되살린 말풍선의 단추를 잇는다
+        MenuBarBubble.resolve = { link in
+            let parts = link.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return nil }
+            switch parts[0] {
+            case "page": return MainPage(rawValue: parts[1]).map { page in { MenuBarNews.open(page) } }
+            case "notify":
+                // "notify:<화면>" 또는 "notify:<화면>:<값>"
+                let rest = parts[1].split(separator: ":", maxSplits: 1).map(String.init)
+                let context = rest.count == 2 ? rest[1] : nil
+                // 예전에 남긴 사용량 단추는 열어 볼 게 없어 단추 없이 되살린다
+                guard let destination = Notifier.Destination(rawValue: rest[0]), destination != .usage else { return nil }
+                return { Notifier.shared.onOpen(destination, context) }
+            default: return nil
+            }
+        }
+        // 러너와 꺼낸 펫이 자리 잡은 뒤에 지난번에 닫지 않은 소식을 다시 띄운다
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self else { return }
+            MenuBarBubble.shared.restore(at: self.bubbleAnchor)
+        }
+        func showOnce(_ key: String, title: String, lines: [String], action: (String, () -> Void)?, keeps: Bool = true) {
             let items = UpdateDigest.make(lines)
             guard UserDefaults.standard.string(forKey: shownKey) != key, !items.isEmpty,
-                  self.postBubble(.init(title: title, items: items, actionTitle: action?.0, action: action?.1)) else { return }
+                  self.postBubble(.init(title: title, items: items, actionTitle: action?.0, action: action?.1, keeps: keeps))
+            else { return }
             UserDefaults.standard.set(key, forKey: shownKey)
         }
         // 업데이트하고 처음 켜졌을 때: 러너가 자리 잡은 뒤에 바뀐 점을 보인다
@@ -338,7 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { target, _ in
                 guard let target, updater.hasPendingUpdate else { return }
                 showOnce("pending-\(target)", title: "새 버전이 있어요", lines: updater.incomingLines,
-                         action: ("지금 업데이트", { updater.update() }))
+                         action: ("지금 업데이트", { updater.update() }), keeps: false)
             }
             .store(in: &cancellables)
     }
@@ -347,15 +386,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 메뉴바 아래에 띄울 때 사용량 창이 열려 있으면 가리지 않게 넘긴다. 띄웠으면 true.
     @discardableResult
     private func postBubble(_ content: MenuBarBubble.Content) -> Bool {
-        let menuBar = { [weak self] in self?.statusItem.button?.window?.frame }
-        guard DesktopPet.shared.bodyFrame != nil || (popover?.isShown != true && menuBar() != nil) else { return false }
-        MenuBarBubble.shared.show(content) {
-            if let body = DesktopPet.shared.bodyFrame { return (body, true) }
-            return menuBar().map { ($0, false) }
-        }
+        guard DesktopPet.shared.bubbleTarget != nil || (popover?.isShown != true && statusItem.button?.window != nil) else { return false }
+        MenuBarBubble.shared.show(content, at: bubbleAnchor)
         // 말풍선만 뜨면 다른 창을 보다 놓치기 쉬워 펫이 손을 흔든다
         if DesktopPet.shared.isShown { _ = animator.perform(.greet) }
         return true
+    }
+
+    /// 말풍선 자리: 꺼낸 펫 위, 없으면 메뉴바 러너 아래.
+    private var bubbleAnchor: () -> (rect: NSRect, above: Bool)? {
+        { [weak self] in
+            if let target = DesktopPet.shared.bubbleTarget { return (target, true) }
+            guard let frame = self?.statusItem.button?.window?.frame else { return nil }
+            return (frame, false)
+        }
     }
 
     @objc private func statusItemClicked() {
@@ -461,8 +505,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 item.representedObject = MenuAction {
                     MainActor.assumeIsolated {
                         store.quickToggle(section, turnOn) { failure in
+                            // 직접 켜고 끈 결과는 열어 볼 게 없고, 실패했을 때만 호스트 화면을 연다
                             Notifier.shared.send(title: "호스트", body: failure ?? "‘\(title)’ 묶음을 \(turnOn ? "켰습니다" : "껐습니다")",
-                                                 opens: .hosts)
+                                                 opens: failure == nil ? nil : .hosts)
                         }
                     }
                 }

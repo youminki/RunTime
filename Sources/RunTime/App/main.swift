@@ -618,6 +618,15 @@ if let index = CommandLine.arguments.firstIndex(of: "--desktop-pet-check") {
     app.run()
 }
 
+// 작업 끝 알림의 '열기' 점검 (`--claude-host <작업 폴더 이름>`): 앞으로 가져올 앱만 보이고 가져오지는 않는다
+if let index = CommandLine.arguments.firstIndex(of: "--claude-host") {
+    let project = CommandLine.arguments.dropFirst(index + 1).first ?? ""
+    let host = ClaudeHost.find(project: project)
+    print(host.map { "\($0.app.localizedName ?? "?") (\($0.app.bundleIdentifier ?? "?")) \($0.folder)" } ?? "못 찾음")
+    if let host, let tab = ClaudeHost.orcaTabTitle(for: host) { print("Orca 탭: \(tab)") }
+    exit(host == nil ? 1 : 0)
+}
+
 if CommandLine.arguments.contains("--diagnose") {
     _ = NSApplication.shared
     print(Diagnostics.report())

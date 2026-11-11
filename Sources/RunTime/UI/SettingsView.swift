@@ -317,7 +317,7 @@ struct SettingsView: View {
                 }
             }
 
-            GroupedSection("알림", footer: "한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
+            GroupedSection("알림", footer: "펫을 화면에 꺼내 두면 알림이 펫 위 말풍선으로 뜨고, 직접 닫을 때까지 남습니다. 한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
                 ToggleRow(title: "한도 임박 알림", icon: "bell.badge.fill", tint: Palette.red, isOn: $settings.limitAlertsEnabled)
                 ToggleRow(title: "세션 초기화 알림", icon: "arrow.clockwise", tint: Palette.green,
                           isOn: $settings.newSessionAlertEnabled)
@@ -336,6 +336,7 @@ struct SettingsView: View {
                     .disabled(!Notifier.shared.available)
                 }
                 .tip("알림이 오지 않으면 시스템 설정 > 알림 > RunTime에서 허용을 확인하세요.")
+                if Notifier.shared.available { NotificationStyleRow() }
             }
             if !Notifier.shared.available { devOnlyNote("알림") }
         }
@@ -416,6 +417,44 @@ struct SettingsView: View {
 }
 
 /// 문제 기록 묶음. 새 기록이 생기면 바로 다시 읽는다.
+/// macOS 알림이 배너(잠깐 뜨고 사라짐)인지 알림(직접 닫을 때까지)인지 보이고, 바꿀 곳을 연다.
+/// 스타일은 사용자만 바꿀 수 있어 앱이 정해 둘 수 없다.
+private struct NotificationStyleRow: View {
+    private final class Model: ObservableObject { @Published var style: Notifier.Style? }
+    @StateObject private var model = Model()
+
+    var body: some View {
+        GroupedRow("펫을 넣어 두었을 때 알림", icon: "rectangle.stack.badge.person.crop", tint: Palette.purple) {
+            HStack(spacing: 8) {
+                Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
+                Button("바꾸기") {
+                    let id = Bundle.main.bundleIdentifier ?? ""
+                    let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)")
+                    if let url { NSWorkspace.shared.open(url) }
+                }
+                .controlSize(.small)
+            }
+        }
+        .tip("직접 닫을 때까지 남기려면 시스템 설정에서 RunTime의 알림 스타일을 '알림'으로 고르세요.")
+        .onAppear(perform: load)
+        // 시스템 설정에서 바꾸고 돌아오면 다시 읽는다
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in load() }
+    }
+
+    private var label: String {
+        switch model.style {
+        case .alert: "직접 닫을 때까지 남아요"
+        case .banner: "잠깐 뜨고 사라져요"
+        case .off: "꺼져 있어요"
+        case nil: ""
+        }
+    }
+
+    private func load() {
+        Notifier.shared.style { [model] in model.style = $0 }
+    }
+}
+
 private struct DiagnosticsRows: View {
     let usage: () -> String
     @StateObject private var model = DiagnosticsModel()

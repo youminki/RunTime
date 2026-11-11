@@ -899,9 +899,10 @@ final class DesignSync: ObservableObject {
             + (completed > 0 && completed < picked.count ? " · 완료 \(completed)건" : "")
         let names = picked.prefix(3).map { $0.title.isEmpty ? $0.screenID : $0.title }
         let body = names.joined(separator: ", ") + (picked.count > 3 ? " 외 \(picked.count - 3)건" : "")
-        Notifier.shared.send(title: title, body: body, opens: .design)
+        // 말풍선은 아래에서 따로 띄우니, 펫을 꺼내 두었을 때 알림까지 말풍선으로 돌리면 두 번 뜬다
+        Notifier.shared.send(title: title, body: body, opens: .design, bubbles: false)
         MenuBarNews.post(.init(title: title, items: names + (picked.count > 3 ? ["외 \(picked.count - 3)건"] : []),
-                               actionTitle: "디자인 변경 보기", action: { MenuBarNews.open(.design) }))
+                               actionTitle: "디자인 변경 보기", action: { MenuBarNews.open(.design) }, link: "page:design"))
     }
 
     func shouldAlert(_ event: DesignEvent) -> Bool {

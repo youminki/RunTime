@@ -76,6 +76,16 @@ final class DesktopPet {
     private var angle: CGFloat = 0
     private var gait: CGFloat = 0
     private var buddyGait: CGFloat = 0
+    /// 동료가 펫의 어느 쪽 뒤에 있는지 (-1…1, 펫이 보는 쪽의 반대가 1). 펫이 돌아서면 반대편으로 달려간다.
+    private var buddySide: CGFloat = 1
+    /// 동료가 바닥에서 뛴 높이. 펫보다 늦고 낮게 뛴다.
+    private var buddyLift: CGFloat = 0
+    /// 동료가 펫보다 뒤처진 거리 (펫 기준 가로, pt). 펫이 걸으면 늘고 멈추면 따라붙어 0으로 돌아온다.
+    private var buddyLag: CGFloat = 0
+    /// 조작 안내가 떠 있는 자리 (화면 좌표). 말풍선이 가리지 않게 피한다.
+    private var hintOnScreen: CGRect?
+    /// 동료가 반대편으로 달려가는 빠르기 (buddySide가 1초에 바뀌는 양). 0이 아니면 가는 쪽을 본다.
+    private var buddyShift: CGFloat = 0
     private var trick: (kind: Trick, start: Date)?
     /// 누르고 있는 키 (화면 방향).
     private var held: (left: Bool, right: Bool, up: Bool, down: Bool) = (false, false, false, false)
@@ -113,11 +123,15 @@ final class DesktopPet {
     var bodyCenter: CGPoint { CGPoint(bodyOnScreen.midX, bodyOnScreen.midY) }
     /// 화면에 나와 있으면 펫 몸 자리 (화면 좌표). 말풍선을 이 위에 띄운다.
     var bodyFrame: CGRect? { isShown && bodyOnScreen.width > 0 ? bodyOnScreen : nil }
+    /// 말풍선이 피할 자리: 몸과, 떠 있으면 조작 안내까지.
+    var bubbleTarget: CGRect? { bodyFrame.map { body in hintOnScreen.map(body.union) ?? body } }
     var takesClicks: Bool { panel?.ignoresMouseEvents == false }
     /// 점검 도구가 커서를 움직이지 않고 '커서가 여기 있다'고 알릴 때.
     var pointerForCheck: CGPoint?
     var panelWindow: NSWindow? { panel }
     var edgeName: String { free == nil ? edge.rawValue : "free" }
+    /// 점검 도구가 읽는 동료 자리 (어느 쪽 뒤인지, 뛴 높이).
+    var buddyForCheck: (side: CGFloat, lift: CGFloat, lag: CGFloat) { (buddySide, buddyLift, buddyLag) }
 
     /// 점검 도구가 지금 모습을 PNG로 남긴다.
     func snapshot(to file: URL) {
@@ -564,7 +578,22 @@ final class DesktopPet {
         angle += diff * min(1, dt * 12)
         let moving = abs(velocity) > 8 && drag == nil && free == nil
         gait += moving ? dt * abs(velocity) / 110 : dt / CGFloat(display.cycle)
-        buddyGait += dt * (moving ? abs(velocity) : 20) / 60
+        // 동료는 펫이 보는 쪽 뒤에 선다. 펫이 돌아서면 순간이동하지 않고 반대편으로 달려가고,
+        // 펫이 뛰면 조금 늦게 낮게 뛴다 (같이 붙어 떠오르면 매달린 것처럼 보인다). 끌거나 떨어질 때는 붙어 다닌다
+        let follows = free == nil || (drag == nil && modeProvider() == .pinned)
+        let side = follows ? heading : 1
+        // 반대편까지(2) 약 0.3초에 고르게 달려간다
+        let gap = side - buddySide
+        buddyShift = gap == 0 ? 0 : (gap > 0 ? 6 : -6)
+        buddySide += gap > 0 ? min(gap, 6 * dt) : max(gap, -6 * dt)
+        buddyLift = follows ? buddyLift + (lift * 0.6 - buddyLift) * min(1, dt * 10) : lift
+        // 펫이 걸으면 동료는 제자리에 남았다가 뒤따라 달려온다. 1초에 남은 거리의 4배씩 줄여 걸을 때 약 0.25초 늦게 따라온다
+        if follows, drag == nil { buddyLag -= velocity * dt }
+        buddyLag -= buddyLag * min(1, dt * 4)
+        let room = 12 * scale
+        buddyLag = min(max(buddyLag, -room), room)
+        let catching = abs(buddyLag * 4) > 8
+        buddyGait += dt * (moving || catching || buddyShift != 0 ? max(abs(velocity), 90) : 20) / 60
         place()
         view?.needsDisplay = true
         // 방향키를 4초 넘게 쓰지 않으면 키 입력을 돌려준다
@@ -693,12 +722,17 @@ final class DesktopPet {
         let scene = CharacterScene(rig: character.rig, pose: frame.pose, transform: frame.transform)
         // 데려간 동료는 몸 바로 뒤에서 따라 걷는다. 무대 폭이 아니라 몸 폭으로 재야 캐릭터와 붙어 보인다
         if let companion = companionProvider() {
-            let facing = free == nil ? heading : 1
             let body = scene.placedBounds
-            let x = origin.x + (body.midX - facing * (body.width / 2 + 5)) * scale
-            GameFX.drawCompanion(companion, feet: CGPoint(x, feet.y),
-                                 height: 10 * scale, phase: buddyGait, moving: Self.walkSpeed(display) > 0 && !resting,
-                                 facing: facing, theme: themeProvider(), cg)
+            let x = origin.x + (body.midX - buddySide * (body.width / 2 + 5)) * scale + buddyLag
+            // 반대편으로 달려가는 동안은 가는 쪽을, 아니면 펫과 같은 쪽을 본다
+            let facing: CGFloat = buddyShift != 0 ? (buddyShift > 0 ? -1 : 1) : (buddySide >= 0 ? 1 : -1)
+            let height = lift - buddyLift
+            let hop = buddyLift > 2 ? (lift * 0.6 > buddyLift ? CGFloat(0.3) : 0.7) : nil
+            GameFX.drawCompanion(companion, feet: CGPoint(x, feet.y + max(height, 0)),
+                                 height: 10 * scale, phase: buddyGait,
+                                 moving: buddyShift != 0 || abs(buddyLag * 4) > 8
+                                    || (Self.walkSpeed(display) > 0 && !resting) || held.left || held.right,
+                                 jump: hop, facing: facing, theme: themeProvider(), cg)
         }
         cg.saveGState()
         cg.translateBy(x: origin.x, y: origin.y)
@@ -712,18 +746,6 @@ final class DesktopPet {
         for effect in frame.effects { effect.draw(in: cg, around: scene.placedBounds, tint: .white) }
         cg.restoreGState()
         cg.restoreGState()
-        // 누른 뒤 방향키를 받는 동안에는 위에 조작법을 띄운다
-        if panel?.isKeyWindow == true {
-            let text = NSAttributedString(string: "방향키로 움직이기 · 스페이스로 뛰기", attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white,
-            ])
-            let box = CGRect(x: (size.width - text.size().width) / 2 - 8, y: 4, width: text.size().width + 16, height: 20)
-            NSGraphicsContext.saveGraphicsState()
-            NSColor.black.withAlphaComponent(0.6).setFill()
-            NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10).fill()
-            text.draw(at: CGPoint(box.minX + 8, box.minY + 3))
-            NSGraphicsContext.restoreGraphicsState()
-        }
         // 몸 자리를 화면 좌표로 남겨 클릭을 가린다 (돌린 사각형을 감싸는 사각형)
         let body = scene.placedBounds
         let local = CGRect(x: origin.x + body.minX * scale, y: origin.y + body.minY * scale,
@@ -732,6 +754,26 @@ final class DesktopPet {
         if let panel {
             bodyOnScreen = CGRect(x: panel.frame.minX + inView.minX, y: panel.frame.maxY - inView.maxY,
                                   width: inView.width, height: inView.height)
+        }
+        hintOnScreen = nil
+        // 누른 뒤 방향키를 받는 동안에는 머리 바로 위에 조작법을 띄운다. 창은 펫보다 훨씬 커서 창 위쪽에 두면 펫과 떨어져 보인다.
+        // 위에 자리가 없으면(천장, 화면 위 끝) 발 아래에 둔다
+        if panel?.isKeyWindow == true {
+            let text = NSAttributedString(string: "방향키로 움직이기 · 스페이스로 뛰기", attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white,
+            ])
+            let width = text.size().width + 16, height: CGFloat = 20
+            let x = min(max(inView.midX - width / 2, 2), size.width - width - 2)
+            let y = inView.minY - height - 6 >= 2 ? inView.minY - height - 6 : min(inView.maxY + 6, size.height - height - 2)
+            let box = CGRect(x: x, y: y, width: width, height: height)
+            if let panel {
+                hintOnScreen = CGRect(x: panel.frame.minX + box.minX, y: panel.frame.maxY - box.maxY, width: width, height: height)
+            }
+            NSGraphicsContext.saveGraphicsState()
+            NSColor.black.withAlphaComponent(0.6).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 10, yRadius: 10).fill()
+            text.draw(at: CGPoint(box.minX + 8, box.minY + 3))
+            NSGraphicsContext.restoreGraphicsState()
         }
     }
 }
@@ -916,9 +958,15 @@ enum DesktopPetCheck {
             (0.8, {
                 _ = pet.key(123, down: false, repeated: false)
                 check("←를 누르면 왼쪽으로 걷는다", pet.position.facing < 0)
+                check("동료도 돌아서 펫 뒤(오른쪽)로 간다 (\(String(format: "%.2f", pet.buddyForCheck.side)))", pet.buddyForCheck.side == -1)
+                check("걷는 동안 동료가 조금 늦게 따라온다 (\(Int(pet.buddyForCheck.lag))pt 뒤)", pet.buddyForCheck.lag > 5)
                 _ = pet.key(49, down: true, repeated: false)
             }),
-            (0.15, { check("스페이스로 뛴다 (높이 \(Int(pet.position.lift)))", pet.position.lift > 10) }),
+            (0.15, {
+                check("스페이스로 뛴다 (높이 \(Int(pet.position.lift)))", pet.position.lift > 10)
+                check("동료는 펫보다 낮게 뛴다 (\(Int(pet.buddyForCheck.lift))pt)", pet.buddyForCheck.lift < pet.position.lift)
+                pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("jump.png"))
+            }),
             (1.0, {
                 // 펫 창이 키를 쥐지 않은 채 시스템에 ⌃⌥←를 보낸다. 어느 앱이 앞에 있든 펫이 움직여야 한다
                 pet.releaseKeysForCheck()
@@ -1007,29 +1055,80 @@ enum DesktopPetCheck {
             }),
             (1.5, {
                 check("달리는 상태여도 머무는 자리를 옮기지 않는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) < 2)
+                _ = pet.key(124, down: true, repeated: false)
+            }),
+            (0.6, {
+                _ = pet.key(124, down: false, repeated: false)
+                check("한 자리에 머물 때 →로 돌면 동료도 왼쪽 뒤로 간다 (\(String(format: "%.2f", pet.buddyForCheck.side)))",
+                      pet.buddyForCheck.side == 1)
+                _ = pet.key(123, down: true, repeated: false)
+            }),
+            (0.6, {
+                _ = pet.key(123, down: false, repeated: false)
+                check("한 자리에 머물 때 ←로 돌면 동료도 오른쪽 뒤로 간다 (\(String(format: "%.2f", pet.buddyForCheck.side)))",
+                      pet.buddyForCheck.side == -1)
+                pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("pinned-left.png"))
+            }),
+            (0.2, {
                 mode = .roam
                 pet.takeKeyboardForCheck()
                 check("누르면 방향키를 받는다", pet.hasKeyboard)
             }),
-            (4.6, {
+            (0.3, {
+                // 조작 안내가 머리 바로 위에 붙는지 눈으로 본다
+                pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("keys.png"))
+                MenuBarBubble.shared.show(.init(title: "호스트", items: ["‘개발’ 묶음을 켰습니다"]),
+                                          at: { pet.bubbleTarget.map { ($0, true) } })
+            }),
+            (0.2, {
+                let bubble = MenuBarBubble.shared.frame ?? .zero, body = pet.bodyFrame ?? .zero, target = pet.bubbleTarget ?? .zero
+                check("조작 안내가 떠 있으면 말풍선이 안내 위로 비켜 뜬다 (몸에서 \(Int(bubble.minY - body.maxY))pt)",
+                      target.maxY > body.maxY + 10 && bubble.minY >= target.maxY)
+                capture("bubble-over-hint")
+                MenuBarBubble.shared.hide()
+            }),
+            (3.8, {
                 check("4초 동안 방향키를 쓰지 않으면 키 입력을 돌려준다", !pet.hasKeyboard)
                 mode = .pinned
-                let anchor = { pet.bodyFrame.map { ($0, true) } }
+                let anchor = { pet.bubbleTarget.map { ($0, true) } }
                 MenuBarBubble.shared.show(.init(title: "레드마인 새 일감 2건", items: ["#101 로그인 화면 수정", "#102 목록 정렬"],
                                                 actionTitle: "열기", action: {}), at: anchor)
                 MenuBarBubble.shared.show(.init(title: "호스트", items: ["‘개발’ 묶음을 켰습니다"]), at: anchor)
                 MenuBarBubble.shared.show(.init(title: "호스트", items: ["‘개발’ 묶음을 켰습니다"]), at: anchor)
                 check("같은 소식은 겹쳐 쌓지 않고 줄을 세운다 (\(MenuBarBubble.shared.pending)건)", MenuBarBubble.shared.pending == 2)
+                MenuBarBubble.shared.turn(1)
+                let second = MenuBarBubble.shared.currentTitle
+                MenuBarBubble.shared.turn(1)
+                check("앞뒤로 넘겨 보고 끝에서 처음으로 돈다", second == "호스트" && MenuBarBubble.shared.currentTitle == "레드마인 새 일감 2건")
             }),
-            (3.0, {
+            (16.0, {
                 let bubble = MenuBarBubble.shared.frame ?? .zero, body = pet.bodyFrame ?? .zero
                 check("말풍선이 펫 바로 위에 뜬다 (틈 \(Int(bubble.minY - body.maxY))pt)",
                       bubble.minY >= body.maxY && bubble.minY - body.maxY < 20 && bubble.minX < body.midX && bubble.maxX > body.midX)
-                check("말풍선은 저절로 닫히지 않는다", MenuBarBubble.shared.frame != nil)
+                check("말풍선은 16초가 지나도 저절로 닫히지 않는다", MenuBarBubble.shared.frame != nil)
                 MenuBarBubble.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("bubble.png"))
                 capture("bubble-on-pet")
                 MenuBarBubble.shared.hide()
-                check("모두 닫으면 사라진다", MenuBarBubble.shared.frame == nil && MenuBarBubble.shared.pending == 0)
+                check("모두 닫으면 사라지고 남긴 소식도 지운다", MenuBarBubble.shared.frame == nil && MenuBarBubble.shared.pending == 0
+                      && UserDefaults.standard.data(forKey: "menuBarBubbleQueue") == nil)
+                // 화면 오른쪽 위 끝: 위에 자리가 없어 아래로 뒤집히고, 밀려도 꼬리는 대상을 가리킨다
+                let screen = NSScreen.main?.visibleFrame ?? .zero
+                let corner = NSRect(x: screen.maxX - 40, y: screen.maxY - 60, width: 30, height: 50)
+                MenuBarBubble.shared.show(.init(title: "호스트", items: ["‘개발’ 묶음을 켰습니다"]), at: { (corner, true) })
+                let flipped = MenuBarBubble.shared.frame ?? .zero
+                check("위에 자리가 없으면 아래로 뒤집혀 뜬다", !MenuBarBubble.shared.isAbove && flipped.maxY <= corner.minY
+                      && flipped.maxX <= screen.maxX)
+                MenuBarBubble.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("edge.png"))
+                MenuBarBubble.shared.hide()
+                // 끄기 전에 닫지 않은 소식: 다시 켜면 단추까지 살아난다
+                let saved = ##"[{"title":"레드마인 새 일감 1건","items":["#101 로그인 화면 수정"],"actionTitle":"레드마인 열기","link":"page:redmine"}]"##
+                UserDefaults.standard.set(Data(saved.utf8), forKey: "menuBarBubbleQueue")
+                MenuBarBubble.resolve = { $0 == "page:redmine" ? {} : nil }
+                MenuBarBubble.shared.restore(at: { pet.bodyFrame.map { ($0, true) } })
+                check("다시 켜면 닫지 않은 소식을 되살린다 (\(MenuBarBubble.shared.pending)건)",
+                      MenuBarBubble.shared.pending == 1 && MenuBarBubble.shared.isAbove)
+                MenuBarBubble.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("restored.png"))
+                MenuBarBubble.shared.hide()
                 pet.snapshot(to: file)
                 pet.hide()
                 check("넣으면 창이 사라진다", !pet.isShown)

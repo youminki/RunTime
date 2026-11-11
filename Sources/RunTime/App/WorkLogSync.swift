@@ -854,7 +854,8 @@ final class WorkLogSync: ObservableObject {
                             MenuBarNews.post(.init(title: "레드마인 새 일감 \(fresh.count)건",
                                                    items: fresh.prefix(3).map { "#\($0.id) \($0.subject)" }
                                                        + (fresh.count > 3 ? ["외 \(fresh.count - 3)건"] : []),
-                                                   actionTitle: "레드마인 열기", action: { MenuBarNews.open(.redmine) }))
+                                                   actionTitle: "레드마인 열기", action: { MenuBarNews.open(.redmine) },
+                                                   link: "page:redmine"))
                         }
                     }
                     if assigned { self.issuesLoadedAt = Date() }
