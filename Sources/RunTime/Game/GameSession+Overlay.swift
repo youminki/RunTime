@@ -3,10 +3,10 @@ import SwiftUI
 
 /// 점수판과 시작·끝 화면 글자.
 extension GameSession {
-    /// 점수판의 간식 아이콘 (사탕 그림, 원래 색 그대로).
+    /// 점수판의 간식 아이콘 (길 위 사탕과 같은 도트 사탕). 점이 번지지 않게 그림 크기의 배수로 둔다.
     static let candyIcon: Image = {
-        let image = GameFX.image("lollipop_pink", folder: "FX/candy").map { NSImage(cgImage: $0, size: NSSize(width: 11, height: 11)) }
-        return Image(nsImage: image ?? NSImage())
+        let image = PixelFX.frame("candyPink", progress: 0, time: 0).map { NSImage(cgImage: $0.image, size: NSSize(width: 7, height: 10)) }
+        return Image(nsImage: image ?? NSImage()).interpolation(.none)
     }()
 
     // MARK: 점수판

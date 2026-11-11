@@ -432,8 +432,37 @@ final class TeamsWeb: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
     if (!flat(box.innerText).includes(want)) { await clear(); return 'fail:입력 칸에 붙지 않았습니다'; }
     const button = document.querySelector('[data-tid="newMessageCommands-send"], [data-tid="sendMessageCommands-send"]');
     if (!button) { await clear(); return 'fail:보내기 단추를 찾지 못했습니다'; }
+    // 입력 칸이 비었다고 보낸 것은 아니다. 팀즈는 보내지 않은 글을 초안으로 옮기며 입력 칸을 비우기도 한다(2026-11-11 실측).
+    // 입력 칸 밖(대화 목록)에 첫 줄이 새로 나타나야 보낸 것으로 본다
+    const outside = () => {
+      let n = 0;
+      const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      while (walk.nextNode()) {
+        const node = walk.currentNode;
+        if (!box.contains(node) && flat(node.textContent).includes(want)) n++;
+      }
+      return n;
+    };
+    const seen = outside();
+    // 붙여 넣은 글을 편집기가 받아들이기 전에는 단추가 꺼져 있어 눌러도 아무 일이 없다
+    const off = () => button.disabled || button.getAttribute('aria-disabled') === 'true';
+    for (let i = 0; i < 30 && off(); i++) await sleep(100);
+    if (off()) { await clear(); return 'fail:보내기 단추가 켜지지 않았습니다'; }
     button.click();
-    for (let i = 0; i < 50; i++) { await sleep(100); if (empty()) return 'sent:' + document.title; }
-    return 'unsure:보내기를 눌렀지만 확인하지 못했습니다. 다시 보내기 전에 팀즈에서 올라갔는지 보세요';
+    for (let i = 0; i < 100; i++) {
+      await sleep(100);
+      if (empty() && outside() > seen) return 'sent:' + document.title;
+    }
+    if (!empty()) {
+      // 단추 누르기가 먹지 않았으면 입력 칸에서 Enter로 한 번 더 보낸다
+      box.focus();
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      for (let i = 0; i < 50; i++) {
+        await sleep(100);
+        if (empty() && outside() > seen) return 'sent:' + document.title;
+      }
+      if (!empty()) { await clear(); return 'fail:보내기를 눌렀지만 나가지 않았습니다'; }
+    }
+    return 'unsure:보내기를 눌렀지만 대화에 올라온 것을 보지 못했습니다 (화면 ' + document.visibilityState + '). 팀즈에서 초안으로 남았는지 보세요';
     """
 }

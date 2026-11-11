@@ -20,8 +20,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     var onOpen: (Destination, _ context: String?) -> Void = { _, _ in }
     /// 시스템 알림 대신 말풍선으로 보일 수 있으면 보이고 true를 돌려준다 (화면에 펫을 꺼내 두었을 때). 메인 스레드에서 부른다.
     /// `destination`이 nil이면 열어 볼 곳이 없는 알림이라 단추 없이 띄운다.
-    var bubble: (_ title: String, _ body: String, _ destination: Destination?, _ context: String?, _ actionTitle: String?) -> Bool
-        = { _, _, _, _, _ in false }
+    /// `closesAfter`가 있으면 그만큼 지나 저절로 닫힌다.
+    var bubble: (_ title: String, _ body: String, _ destination: Destination?, _ context: String?, _ actionTitle: String?,
+                 _ closesAfter: TimeInterval?) -> Bool
+        = { _, _, _, _, _, _ in false }
+    /// 열어 볼 곳이 없는 안내는 읽을 만큼 두고 저절로 닫는다.
+    static let infoLifetime: TimeInterval = 10
     private static let destinationKey = "open"
     private static let contextKey = "context"
 
@@ -55,14 +59,17 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// `destination`은 눌렀을 때 열 곳. 한도·초기화처럼 열어 볼 게 없는 알림은 비워 두면 단추도 없다.
     /// `context`는 열 곳에 넘길 값 (Claude 작업 끝 알림의 작업 폴더 이름), `actionTitle`은 말풍선 단추 이름.
     func send(title: String, body: String, opens destination: Destination? = nil, context: String? = nil,
-              actionTitle: String? = nil, bubbles: Bool = true) {
+              actionTitle: String? = nil, bubbles: Bool = true, stays: Bool = false, closesAfter: TimeInterval? = nil) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async {
-                self.send(title: title, body: body, opens: destination, context: context, actionTitle: actionTitle, bubbles: bubbles)
+                self.send(title: title, body: body, opens: destination, context: context, actionTitle: actionTitle, bubbles: bubbles,
+                          stays: stays, closesAfter: closesAfter)
             }
             return
         }
-        if bubbles, bubble(title, body, destination, context, actionTitle) { return }
+        // 할 일이 남은 알림(한도, 실패)은 사람이 닫을 때까지 둔다
+        let lifetime = stays ? nil : closesAfter ?? (destination == nil ? Self.infoLifetime : nil)
+        if bubbles, bubble(title, body, destination, context, actionTitle, lifetime) { return }
         guard available else {
             NSLog("[RunTime] (알림 비활성 — 번들 앱 아님) %@ %@", title, body)
             return

@@ -5,9 +5,9 @@ import GameCore
 /// 미니게임 러너에 다는 꾸미기. 그림만 바뀌고 판정과 점수는 같다.
 /// 이름·색·그림은 아래 `info` 표 한 곳에서 정한다. 동료는 꾸미기가 아니라 Petdex 펫을 데려간다 (`GameDecor.companionID`).
 enum Cosmetic: String, CaseIterable, Identifiable {
-    case rainbowStarTrail, heartTrail, gemTrail, coinTrail, candyTrail, swirlTrail, fireTrail, smokeTrail, magicTrail
-    case bubbleTrail, waterTrail, cometTrail
-    case puffDust, smokeDust, heartDust, starDust, sparkleDust, coinDust, candyDust, bubbleDust
+    case rainbowStarTrail, heartTrail, noteTrail, petalTrail, leafTrail, snowTrail, bubbleTrail, rainbowTrail, fireTrail
+    case fireflyTrail, coinTrail, candyTrail
+    case puffDust, smokeDust, leafDust, petalDust, starDust, heartDust, dropDust, snowDust, sparkleDust
     case cloudWoodsTrack, mintForestTrack, greenForestTrack, mistForestTrack, tallForestTrack, bushForestTrack
     case jungleTrack, redForestTrack, amberForestTrack, frostForestTrack, snowPinesTrack, xmasPeaksTrack
     case greenHillsTrack, flowerHillsTrack, sunnyHillsTrack, springFieldTrack, hillTownTrack, greenVillageTrack
@@ -18,10 +18,18 @@ enum Cosmetic: String, CaseIterable, Identifiable {
     case pinkCloudsTrack, pinkSunsetTrack, duskPeaksTrack, cherryBridgeTrack, trainBridgeTrack, palaceTrack
     case greenCityTrack, mistCityTrack, harborNightTrack, starCityTrack, violetCityTrack, fullMoonTrack
     case pinkCaveTrack, crystalCaveTrack, violetCaveTrack, mossCaveTrack, lavaCaveTrack
-    case starburstCrash, ringCrash, boomCrash, fireCrash, candyCrash, heartCrash, gemCrash, coinCrash, magicCrash
+    case starburstCrash, heartCrash, petalCrash, coinCrash, fireCrash, magicCrash, snowCrash, boomCrash, candyCrash
+    case butterflyAura, glitterAura, heartPopAura, petalAura, snowAura, fireflyAura, bubbleAura, starAura, noteAura
+
+    /// 꾸미기를 도트 효과로 바꾸며 빠진 것. 쓰던 사람은 가장 비슷한 새 꾸미기로 옮긴다.
+    static let renamed: [String: Cosmetic] = [
+        "gemTrail": .heartTrail, "swirlTrail": .candyTrail, "smokeTrail": .bubbleTrail, "magicTrail": .rainbowStarTrail,
+        "waterTrail": .bubbleTrail, "cometTrail": .rainbowStarTrail, "coinDust": .starDust, "candyDust": .heartDust, "bubbleDust": .sparkleDust, "ringCrash": .magicCrash,
+        "gemCrash": .heartCrash, "heartAura": .heartPopAura,
+    ]
 
     enum Slot: CaseIterable {
-        case track, trail, dust, crash
+        case track, trail, aura, dust, crash
 
         var title: String {
             switch self {
@@ -29,6 +37,7 @@ enum Cosmetic: String, CaseIterable, Identifiable {
             case .trail: "꼬리"
             case .dust: "발먼지"
             case .crash: "부딪힘"
+            case .aura: "주변 효과"
             }
         }
     }
@@ -38,7 +47,7 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         let name: String
         /// 목록 칸의 빛.
         let color: NSColor
-        /// 꼬리·발먼지의 입자 그림 (Assets/FX).
+        /// 입자·장식 그림 이름 (`PixelFX`).
         var fx: GameFX.Shape? = nil
     }
 
@@ -108,38 +117,49 @@ enum Cosmetic: String, CaseIterable, Identifiable {
         .violetCaveTrack: row(.track, "보랏빛 동굴", 0xAF4CC5),
         .mossCaveTrack: row(.track, "이끼 동굴", 0x1E3F4A),
         .lavaCaveTrack: row(.track, "용암 동굴", 0xA43C23),
-        // 꼬리
-        .rainbowStarTrail: row(.trail, "무지개 별", 0xFFD45E, fx: .sprite("rainbowStar")),
-        .heartTrail: row(.trail, "콩닥 하트", 0xFF6F7F, fx: .sprite("pumpingHeart")),
-        .gemTrail: row(.trail, "보석 하트", 0xFF8FB8, fx: .sprite("gemHeart")),
-        .coinTrail: row(.trail, "코인", 0xFFD45E, fx: .sprite("coin")),
-        .candyTrail: row(.trail, "무지개 사탕", 0xFF6FA8, fx: .candy("lollipop_rainbow")),
-        .swirlTrail: row(.trail, "소용돌이 사탕", 0xFFB7D5, fx: .candy("swirl_pink")),
-        .fireTrail: row(.trail, "불꽃", 0xFF7A2F, fx: .sprite("firePlume")),
-        .smokeTrail: row(.trail, "구름", 0xE8EEF5, fx: .sprite("puff")),
-        .magicTrail: row(.trail, "마법 가루", 0xC68CFF, fx: .sprite("plasmaSparkle")),
-        .bubbleTrail: row(.trail, "분홍 방울", 0xFF9AE0, fx: .sprite("plasmaBubble")),
-        .waterTrail: row(.trail, "물빛", 0x5CA8FF, fx: .sprite("water")),
-        .cometTrail: row(.trail, "혜성", 0xE8F4FF, fx: .sprite("pure")),
+        // 꼬리: 모두 같은 결의 도트 그림 (PixelFX)
+        .rainbowStarTrail: row(.trail, "별가루", 0xFFD84A, fx: .sprite("star|sparkle")),
+        .heartTrail: row(.trail, "콩닥 하트", 0xFF5C7A, fx: .sprite("heart")),
+        .noteTrail: row(.trail, "음표", 0x7A95FF, fx: .sprite("note")),
+        .petalTrail: row(.trail, "벚꽃잎", 0xFFB7CF, fx: .sprite("petal")),
+        .leafTrail: row(.trail, "나뭇잎", 0x86D96F, fx: .sprite("leaf")),
+        .snowTrail: row(.trail, "눈송이", 0xBFE2FF, fx: .sprite("snow")),
+        .bubbleTrail: row(.trail, "비눗방울", 0x8FDFFF, fx: .sprite("bubble")),
+        .rainbowTrail: row(.trail, "무지개", 0xFFA24A, fx: .sprite("rainbow")),
+        .fireTrail: row(.trail, "불꽃", 0xFF8A2A, fx: .sprite("flame")),
+        .fireflyTrail: row(.trail, "반딧불", 0xE2FF7A, fx: .sprite("firefly")),
+        .coinTrail: row(.trail, "코인", 0xFFD84A, fx: .sprite("coin")),
+        .candyTrail: row(.trail, "막대사탕", 0xFF7FB3, fx: .sprite("candyPink|candyBlue|candyYellow|candyTeal")),
         // 발먼지
-        .puffDust: row(.dust, "퐁퐁 구름", 0xE8EEF5, fx: .sprite("puff")),
-        .smokeDust: row(.dust, "흙먼지", 0xB8B0A8, fx: .sprite("smokePoff")),
-        .heartDust: row(.dust, "하트", 0xFF6F7F, fx: .sprite("pumpingHeart")),
-        .starDust: row(.dust, "무지개 별", 0xFFD45E, fx: .sprite("rainbowStar")),
-        .sparkleDust: row(.dust, "반짝이", 0xC68CFF, fx: .sprite("plasmaSparkle")),
-        .coinDust: row(.dust, "코인", 0xFFD45E, fx: .sprite("coin")),
-        .candyDust: row(.dust, "젤리", 0xFF8FB8, fx: .candy("jelly_pink")),
-        .bubbleDust: row(.dust, "보라 방울", 0xB48CFF, fx: .sprite("plasmaPuff")),
+        .puffDust: row(.dust, "퐁퐁 구름", 0xE8EEF5, fx: .sprite("cloud")),
+        .smokeDust: row(.dust, "흙먼지", 0xD8C3A5, fx: .sprite("dust")),
+        .leafDust: row(.dust, "풀잎", 0x86D96F, fx: .sprite("leaf")),
+        .petalDust: row(.dust, "꽃잎", 0xFFB7CF, fx: .sprite("petal")),
+        .starDust: row(.dust, "별", 0xFFD84A, fx: .sprite("star")),
+        .heartDust: row(.dust, "하트", 0xFF5C7A, fx: .sprite("heart")),
+        .dropDust: row(.dust, "물방울", 0x6CC4FF, fx: .sprite("drop")),
+        .snowDust: row(.dust, "눈", 0xBFE2FF, fx: .sprite("snow")),
+        .sparkleDust: row(.dust, "반짝이", 0xD9C6FF, fx: .sprite("sparkle")),
         // 부딪힘
-        .starburstCrash: row(.crash, "별 터짐", 0xBFE6FF),
-        .ringCrash: row(.crash, "링 폭발", 0xFFB03D),
-        .boomCrash: row(.crash, "쾅!", 0xFF8A3D),
-        .fireCrash: row(.crash, "불꽃 펑", 0xFF7A2F),
-        .candyCrash: row(.crash, "사탕 펑", 0xFF6FA8),
-        .heartCrash: row(.crash, "하트 펑", 0xFF6F7F),
-        .gemCrash: row(.crash, "보석 비", 0xFF8FB8),
-        .coinCrash: row(.crash, "코인 비", 0xFFD45E),
-        .magicCrash: row(.crash, "마법", 0xC68CFF),
+        .starburstCrash: row(.crash, "별 터짐", 0xFFE15A),
+        .heartCrash: row(.crash, "하트 펑", 0xFF5C7A),
+        .petalCrash: row(.crash, "꽃잎 펑", 0xFFB7CF),
+        .coinCrash: row(.crash, "코인 비", 0xFFD84A),
+        .fireCrash: row(.crash, "불꽃 펑", 0xFF8A2A),
+        .magicCrash: row(.crash, "마법 링", 0xB48CFF),
+        .snowCrash: row(.crash, "눈송이 펑", 0x9CD3FF),
+        .boomCrash: row(.crash, "연기 펑", 0xC9D3E0),
+        .candyCrash: row(.crash, "사탕 펑", 0xFF7FB3),
+        // 주변 효과: 서 있어도 몸 둘레를 늘 은은하게 감돈다. 정신없지 않게 몇 개만 둔다
+        .butterflyAura: row(.aura, "나비 한 쌍", 0xF7B6E0, fx: .sprite("butterfly")),
+        .glitterAura: row(.aura, "반짝반짝", 0xFFE3F1, fx: .sprite("glitter")),
+        .heartPopAura: row(.aura, "하트 뿅", 0xFF8FA8, fx: .sprite("tinyHeart")),
+        .petalAura: row(.aura, "꽃비", 0xFFB7CF, fx: .sprite("petal")),
+        .snowAura: row(.aura, "눈 오는 날", 0xBFE2FF, fx: .sprite("snow")),
+        .fireflyAura: row(.aura, "반딧불", 0xE2FF7A, fx: .sprite("firefly")),
+        .bubbleAura: row(.aura, "방울방울", 0x8FDFFF, fx: .sprite("bubble")),
+        .starAura: row(.aura, "별 궤도", 0xFFD84A, fx: .sprite("star|sparkle")),
+        .noteAura: row(.aura, "콧노래", 0x7A95FF, fx: .sprite("note")),
     ]
 
     var id: String { rawValue }
@@ -176,7 +196,7 @@ final class GameDecor: ObservableObject {
     @Published var tryingOn: Cosmetic?
 
     private init() {
-        equipped = Set((defaults.stringArray(forKey: Key.equipped) ?? []).compactMap(Cosmetic.init(rawValue:)))
+        equipped = Set((defaults.stringArray(forKey: Key.equipped) ?? []).compactMap { Cosmetic(rawValue: $0) ?? Cosmetic.renamed[$0] })
         companionID = defaults.string(forKey: Key.companion)
     }
 

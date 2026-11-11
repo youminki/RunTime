@@ -13,7 +13,12 @@ final class StageExtras {
         let worldX: CGFloat
         /// 땅에서 위로 띄운 높이.
         let height: CGFloat
+        /// 뛰어넘지 않고 부딪힐 장애물. 부딪힘 꾸미기를 달면 게임 밖에서도 그 효과를 보게 가끔 섞는다.
+        var bumps = false
     }
+
+    /// 러너가 장애물에 부딪혔다. 무대가 비틀거리는 동작을 붙인다.
+    var onBump: () -> Void = {}
 
     private struct Puff {
         let spray: GameFX.Spray
@@ -64,7 +69,8 @@ final class StageExtras {
         if active, speed > 70, let due = nextHurdle, time >= due {
             let sprite: GameSprite = [.mushroom, .cactus, .spikes].randomElement() ?? .mushroom
             let x = right + 10
-            props.append(Prop(kind: .hurdle(sprite), worldX: x, height: 0))
+            props.append(Prop(kind: .hurdle(sprite), worldX: x, height: 0,
+                              bumps: GameDecor.shared.equipped(.crash) != nil && Double.random(in: 0...1) < 0.4))
             nextHurdle = time + .random(in: 4.5...9)
         } else if speed <= 70, let due = nextHurdle, due < time {
             nextHurdle = time + .random(in: 1...3)
@@ -72,6 +78,16 @@ final class StageExtras {
 
         props.removeAll { prop in
             prop.worldX - scroll < -40
+        }
+        // 부딪힐 장애물에 몸 앞이 닿으면 고른 부딪힘이 터지고 장애물은 사라진다
+        if body.width > 0, let index = props.firstIndex(where: { $0.bumps && $0.worldX - scroll <= body.maxX - body.width * 0.15 }) {
+            let prop = props.remove(at: index)
+            let height: CGFloat = if case .hurdle(let sprite) = prop.kind { sprite.size.height } else { 10 }
+            for part in GameFX.crash(GameDecor.shared.equipped(.crash)) {
+                puffs.append(Puff(spray: part.spray, worldX: prop.worldX + part.offset.x, y: body.maxY - height / 2 - part.offset.y,
+                                  at: time, zoom: 1))
+            }
+            onBump()
         }
         puffs.removeAll { time - $0.at > Double($0.spray.life) + 0.1 }
 
@@ -93,7 +109,7 @@ final class StageExtras {
     /// 앞에 있는 장애물을 넘는 높이. 몸 앞이 장애물에 닿기 조금 전에 떠서 몸 뒤가 지나면 내려온다.
     private func hop(scroll: CGFloat) -> CGFloat {
         guard body.width > 0 else { return 0 }
-        for prop in props {
+        for prop in props where !prop.bumps {
             guard case .hurdle(let sprite) = prop.kind else { continue }
             let x = prop.worldX - scroll
             let half = sprite.size.width / 2
@@ -113,7 +129,8 @@ final class StageExtras {
             lastStep = step
             wasAirborne = airborne
         }
-        let dust = GameDecor.shared.equipped(.dust)
+        // 발먼지를 고르지 않았으면 먼지를 일으키지 않는다
+        guard let dust = GameDecor.shared.equipped(.dust) else { return }
         if wasAirborne && !airborne {
             puffs.append(Puff(spray: GameFX.dust(dust, landing: true), worldX: scroll + feet.x, y: feet.y, at: time,
                               zoom: 1.6))
@@ -124,7 +141,7 @@ final class StageExtras {
                           zoom: 1.3))
     }
 
-    /// 꼬리를 달았으면 등 자리를 땅 좌표로 남긴다.
+    /// 이번 장면의 러너 몸 (화면 좌표). 꼬리를 달았으면 등 자리를 땅 좌표로 남긴다.
     func record(back: CGPoint, scroll: CGFloat, speed: CGFloat, body: CGRect) {
         self.body = body
         guard GameDecor.shared.equipped(.trail) != nil, speed > 12 else {

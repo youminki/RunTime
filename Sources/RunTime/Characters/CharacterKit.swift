@@ -39,6 +39,9 @@ struct CharacterPose {
     var review: CGFloat?
     /// 앉은 자세에서 고개를 떨군다 (한도 경고). 그림 러너는 시트의 슬픔 줄로 그린다.
     var sad = false
+    /// 왼쪽을 보고 있다. 장면이 좌우를 뒤집기 전에 정한다. 그림 러너는 시트에 왼쪽 달리기 줄이 있으면 그 줄로 그린다
+    /// (뒤집은 그림은 든 물건·무늬가 거울처럼 바뀐다).
+    var leftward = false
 
     var cycle: CGFloat { phase - floor(phase) }
 }
@@ -128,6 +131,8 @@ struct Part {
     var image: CGImage?
     var imageRect = CGRect.zero
     var imageRotation: CGFloat = 0
+    /// 그림을 좌우로 뒤집어 그린다. 장면이 왼쪽을 보며 뒤집을 때, 이미 왼쪽을 보는 그림을 원래대로 보이게 한다.
+    var imageMirrored = false
 }
 
 final class Sketch {

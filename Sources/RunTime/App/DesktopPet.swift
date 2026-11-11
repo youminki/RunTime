@@ -30,6 +30,23 @@ final class DesktopPet {
             }
         }
 
+        /// 옵션 창 카드에 붙는 한 줄 설명과 그림.
+        var detail: String {
+            switch self {
+            case .roam: "바닥·벽·천장을 따라 한 바퀴씩 돌아요"
+            case .floor: "화면 아래를 오가며 걸어요"
+            case .pinned: "놓은 자리에서 쉬고, 끌어서 옮겨요"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .roam: "arrow.triangle.2.circlepath"
+            case .floor: "arrow.left.and.right"
+            case .pinned: "pin.fill"
+            }
+        }
+
         /// 예전에 저장한 '제자리에서 뛰기'는 '한 자리에 머물기'로 잇는다.
         init?(saved raw: String) {
             if raw == "stay" { self = .pinned } else if let mode = Mode(rawValue: raw) { self = mode } else { return nil }
@@ -91,6 +108,9 @@ final class DesktopPet {
     private var held: (left: Bool, right: Bool, up: Bool, down: Bool) = (false, false, false, false)
     private var lastControl = Date.distantPast
     private var lastTick: Date?
+    /// 화면 크기를 마지막으로 읽은 때. 프레임마다 화면 목록을 다시 만들지 않고 1초에 한 번과 화면이 바뀔 때만 읽는다.
+    private var homeReadAt = Date.distantPast
+    private var screenObserver: NSObjectProtocol?
     private var drag: (grab: CGSize, point: CGPoint)?
     /// 마우스를 누르고 있는지. 누른 채 끌기 시작하기 전에 펫이 걸어서 마우스 밑을 벗어나면 끌기를 놓쳐서,
     /// 누르는 동안은 멈추고 클릭을 계속 받는다.
@@ -99,7 +119,38 @@ final class DesktopPet {
     private var hovering = false
     private var hoverEnded = Date.distantPast
     /// 커서가 이만큼(pt) 가까이 오면 멈추고 클릭을 받는다.
-    private static let reach: CGFloat = 20
+    private static let reach: CGFloat = 28
+    /// 커서가 떠난 뒤에도 이만큼은 기다린다. 오른쪽 클릭하려고 손을 옮기는 사이에 걸어가 버리지 않게 한다.
+    private static let hoverLinger: TimeInterval = 1.5
+    /// 오른쪽 클릭 메뉴가 떠 있는지. 메뉴를 고르는 동안 펫이 걸어가면 무엇을 고른 건지 헷갈려 멈춘다.
+    private var menuOpen = false
+    /// 발먼지 (화면 좌표의 발 자리, 난 때, 그 자리의 기울기, 크기). 무대처럼 고른 발먼지를 쓰고, 없으면 연기다.
+    private var puffs: [(spray: GameFX.Spray, at: CGPoint, born: Double, angle: CGFloat, zoom: CGFloat)] = []
+    private var lastStep = 0
+    private var wasAirborne = false
+    private var buddyWasUp = false
+    private var buddyStep = 0
+    private var decorWatch: AnyCancellable?
+    /// 꾸미기를 바꾼 직후 꼬리를 보여 주는 때. 머무는 펫은 걷지 않아 꼬리가 생길 일이 없다.
+    private var showcaseUntil = Date.distantPast
+    /// 고른 꼬리가 끌린 자리 (화면 좌표). 걷는 동안만 남긴다.
+    private var trail: [CGPoint] = []
+    private var wearing: Set<Cosmetic> = []
+    /// 쓰다듬은 때와 누구를 쓰다듬었는지. 머리 위로 하트가 피어오른다.
+    private var pats: [(at: Double, buddy: Bool)] = []
+    /// 동료를 눌러 뛰게 한 높이와 빠르기.
+    private var buddyHop: CGFloat = 0
+    private var buddyHopSpeed: CGFloat = 0
+    /// 동료 몸과 발 자리 (화면 좌표). 몸을 누르면 동료가 반응한다.
+    private var buddyOnScreen = CGRect.zero
+    private var buddyGround: CGPoint?
+    /// 이번 프레임 걷는 빠르기 (꼬리를 남길지 본다).
+    private var speedNow: CGFloat = 0
+    /// 발이 화면 양 끝에서 떨어져 있을 거리. 넓은 그림 펫은 앞으로 내민 머리·몸이 30pt보다 길어
+    /// 끝에서 돌아설 때 화면 밖으로 잘렸다 (2026-11-12). 몸 폭의 반에 조금 더 둔다.
+    private var edgeMargin: CGFloat { max(30, bodyOnScreen.width / 2 + 6) }
+    /// 효과 그림은 무대 크기에 맞춰 그려져 있어 펫 크기만큼 키운다.
+    private var effectZoom: CGFloat { scale / 3 }
     private var dropHeight: CGFloat = 0
     private var bodyOnScreen = CGRect.zero
     /// 혼자 둘 때 다음에 무엇을 할지 정할 때와, 그때까지 쉬는지.
@@ -110,7 +161,8 @@ final class DesktopPet {
     private static let baseScale: CGFloat = 4
     private var scale: CGFloat { Self.baseScale * min(max(sizeProvider(), 0.5), 2.5) }
     /// 회전해도 잘리지 않게 정사각형 창을 쓴다. 펫과 뒤따르는 동료가 들어가는 폭.
-    private var side: CGFloat { (Stage.size.width * scale + 130).rounded() }
+    /// 회전한 몸, 뒤따르는 동료, 등 뒤로 끌리는 꼬리(몸 뒤 150pt), 머리 위로 오르는 하트가 잘리지 않을 만큼.
+    private var side: CGFloat { (Stage.size.width * scale * 2 + 160).rounded() }
 
     var isShown: Bool { panel != nil }
     /// 점검 도구가 읽는 자리. `lift`는 바닥 위 높이.
@@ -132,6 +184,20 @@ final class DesktopPet {
     var edgeName: String { free == nil ? edge.rawValue : "free" }
     /// 점검 도구가 읽는 동료 자리 (어느 쪽 뒤인지, 뛴 높이).
     var buddyForCheck: (side: CGFloat, lift: CGFloat, lag: CGFloat) { (buddySide, buddyLift, buddyLag) }
+    /// 점검 도구가 읽는 발 자리(화면 좌표)와 지금 기울기.
+    var feetForCheck: CGPoint { feetOnScreen }
+    var tiltForCheck: CGFloat { angle }
+    var playingForCheck: Bool { trick != nil }
+    /// 점검 도구가 읽는 효과: 발먼지·하트 수, 동료가 뛰는지(높이나 오르는 빠르기), 동료 몸과 발 자리.
+    var effectsForCheck: (puffs: Int, pats: Int, buddyHop: CGFloat, buddyBox: CGRect, buddyGround: CGPoint?, trail: Int) {
+        (puffs.count, pats.count, max(buddyHop, buddyHopSpeed), buddyOnScreen, buddyGround, trail.count)
+    }
+    fileprivate func playForCheck(_ kind: Trick) { play(kind) }
+    /// 점검 도구가 옵션 창의 움직임 카드를 누른 것처럼 고른다.
+    fileprivate func optionsForCheck(_ mode: Mode) {
+        PetOptions.shared.model?.mode = mode
+        choose(mode)
+    }
 
     /// 점검 도구가 지금 모습을 PNG로 남긴다.
     func snapshot(to file: URL) {
@@ -186,6 +252,13 @@ final class DesktopPet {
         place()
         panel.orderFrontRegardless()
         tricks = SpriteAnimator.performed.sink { [weak self] trick in self?.play(trick) }
+        wearing = GameDecor.shared.equipped
+        decorWatch = GameDecor.shared.$equipped.combineLatest(GameDecor.shared.$companionID)
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] equipped, _ in self?.showcase(equipped) }
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                                                object: nil, queue: .main) { [weak self] _ in self?.homeReadAt = .distantPast }
         PetKeys.shared.handler = { [weak self] code, down in _ = self?.key(code, down: down, repeated: false) }
         PetKeys.shared.register()
         schedule(fps: 60)
@@ -193,9 +266,13 @@ final class DesktopPet {
     }
 
     func hide() {
+        PetOptions.shared.close()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = nil
         timer?.invalidate()
         timer = nil
         tricks = nil
+        decorWatch = nil
         PetKeys.shared.unregister()
         panel?.orderOut(nil)
         panel = nil
@@ -203,6 +280,11 @@ final class DesktopPet {
         held = (false, false, false, false)
         drag = nil
         pressing = false
+        menuOpen = false
+        puffs = []
+        pats = []
+        trail = []
+        NSCursor.arrow.set()
         onChange(false)
     }
 
@@ -288,12 +370,48 @@ final class DesktopPet {
         }
     }
 
+    /// 모서리를 도는 둥근 길의 반지름. 꺾이는 자리에서 펫이 제자리에서 홱 돌거나 몸이 화면 밖으로 삐져나가지 않게
+    /// 모서리 조금 앞에서부터 안쪽으로 둥글게 돈다.
+    private var cornerRadius: CGFloat { min(Stage.size.height * scale * 0.4, area.width / 4, area.height / 4) }
+
+    /// 테두리 위 모서리 (테두리를 잰 자리, 꼭짓점, 들어오는 쪽, 나가는 쪽, 들어올 때 기울기). 0과 한 바퀴 끝은 같은 모서리다.
+    private var corners: [(along: CGFloat, point: CGPoint, into: CGVector, out: CGVector, angle: CGFloat)] {
+        let a = area
+        return [(0, CGPoint(a.minX, a.minY), CGVector(dx: 0, dy: -1), CGVector(dx: 1, dy: 0), .pi / 2),
+                (a.width, CGPoint(a.maxX, a.minY), CGVector(dx: 1, dy: 0), CGVector(dx: 0, dy: 1), 0),
+                (a.width + a.height, CGPoint(a.maxX, a.maxY), CGVector(dx: 0, dy: 1), CGVector(dx: -1, dy: 0), -.pi / 2),
+                (2 * a.width + a.height, CGPoint(a.minX, a.maxY), CGVector(dx: -1, dy: 0), CGVector(dx: 0, dy: -1), .pi),
+                (perimeter, CGPoint(a.minX, a.minY), CGVector(dx: 0, dy: -1), CGVector(dx: 1, dy: 0), .pi / 2)]
+    }
+
+    /// 모서리를 도는 중이면 얼마나 돌았는지 (0…1).
+    private func cornerTurn(along p: CGFloat) -> CGFloat? {
+        guard modeProvider() == .roam else { return nil }
+        let r = cornerRadius
+        guard r > 1, let corner = corners.first(where: { abs(p - $0.along) < r }) else { return nil }
+        return (p - corner.along + r) / (2 * r)
+    }
+
+    /// 테두리 위 자리의 화면 좌표와 그 자리의 기울기. 모서리 근처에서는 꼭짓점 안쪽 사분원을 따라가며 기울기도 고르게 바뀐다.
+    private func path(along p: CGFloat) -> (point: CGPoint, angle: CGFloat) {
+        let r = cornerRadius
+        if modeProvider() == .roam, r > 1, let c = corners.first(where: { abs(p - $0.along) < r }) {
+            let t = (p - c.along + r) / (2 * r)
+            let phi = t * .pi / 2
+            let center = CGPoint(c.point.x + (c.out.dx - c.into.dx) * r, c.point.y + (c.out.dy - c.into.dy) * r)
+            let point = CGPoint(center.x + r * (c.into.dx * sin(phi) - c.out.dx * cos(phi)),
+                                center.y + r * (c.into.dy * sin(phi) - c.out.dy * cos(phi)))
+            return (point, c.angle - t * .pi / 2)
+        }
+        return (point(along: p), Self.angle(for: edge(of: p)))
+    }
+
     private var feetOnScreen: CGPoint {
         if var free {
             if modeProvider() == .pinned, drag == nil { free.y += lift }
             return free
         }
-        var feet = point(along: along)
+        var feet = path(along: along).point
         feet.y += edge == .bottom ? lift : 0
         return feet
     }
@@ -301,7 +419,8 @@ final class DesktopPet {
     // MARK: 동작
 
     private func play(_ kind: Trick) {
-        guard lift == 0, drag == nil, free == nil else { return }
+        // 머무는 펫도 자리(free)를 갖고 있어, 그때는 떨어지는 중이 아니라 서 있는 것이다
+        guard lift == 0, drag == nil, free == nil || modeProvider() == .pinned else { return }
         // 이 펫이 메뉴바에 보낸 동작이 돌아올 때 이미 하는 중이면 처음부터 다시 하지 않는다
         if let trick, trick.kind == kind, Date().timeIntervalSince(trick.start) < 0.4 { return }
         trick = (kind, Date())
@@ -315,8 +434,21 @@ final class DesktopPet {
     var hasKeyboard: Bool { panel?.isKeyWindow == true }
     func releaseKeysForCheck() { releaseKeyboard() }
 
-    fileprivate func clicked() {
+    /// 눌렀다 뗐다 (끌지 않음). 동료 몸을 눌렀으면 동료가 뛰고, 아니면 펫을 쓰다듬는다. 둘 다 머리 위로 하트가 핀다.
+    fileprivate func clicked(at point: CGPoint? = nil) {
         lastControl = Date()
+        // 쉬는 동안은 프레임을 드물게 그려, 누른 즉시 반응하게 바로 올린다
+        schedule(fps: 60)
+        let clock = Date().timeIntervalSinceReferenceDate
+        // 기운 펫의 몸 상자는 돌린 몸을 감싸 커서 곁의 동료를 덮기도 한다. 동료 상자 안이고 동료 쪽이 더 가까우면 동료다
+        func distance(_ rect: CGRect) -> CGFloat { point.map { hypot($0.x - rect.midX, $0.y - rect.midY) } ?? .infinity }
+        if let point, buddyOnScreen.insetBy(dx: -6, dy: -6).contains(point),
+           !bodyOnScreen.contains(point) || distance(buddyOnScreen) < distance(bodyOnScreen) {
+            if buddyHop == 0 { buddyHopSpeed = 330 }
+            pats.append((clock, true))
+            return
+        }
+        pats.append((clock, false))
         perform(Trick.petting.randomElement() ?? .greet)
     }
 
@@ -404,48 +536,26 @@ final class DesktopPet {
         onPin(free)
     }
 
-    /// 오른쪽 클릭 메뉴: 앱의 화면으로 바로 가기, 펫 크기, 움직이는 방식, 넣기.
-    fileprivate func menu() -> NSMenu {
-        let menu = NSMenu()
-        let pages: [(String, MainPage)] = [("사용량 보기", .usage), ("펫 바꾸기·꾸미기", .runners), ("업무 일지", .workLog),
-                                          ("레드마인", .redmine), ("디자인 변경", .design), ("설정", .settings)]
-        for (title, page) in pages {
-            let item = NSMenuItem(title: title, action: #selector(PetView.menuPage(_:)), keyEquivalent: "")
-            item.target = view
-            item.representedObject = page.rawValue
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-        let sizes = NSMenu()
-        for (title, value) in [("작게", 0.7), ("보통", 1.0), ("크게", 1.4), ("아주 크게", 2.0)] as [(String, CGFloat)] {
-            let item = NSMenuItem(title: title, action: #selector(PetView.menuSize(_:)), keyEquivalent: "")
-            item.target = view
-            item.representedObject = value
-            item.state = abs(sizeProvider() - value) < 0.05 ? .on : .off
-            sizes.addItem(item)
-        }
-        let size = NSMenuItem(title: "펫 크기", action: nil, keyEquivalent: "")
-        size.submenu = sizes
-        menu.addItem(size)
-        let modes = NSMenu()
-        for mode in Mode.allCases {
-            let item = NSMenuItem(title: mode.title, action: #selector(PetView.menuMode(_:)), keyEquivalent: "")
-            item.target = view
-            item.representedObject = mode.rawValue
-            item.state = modeProvider() == mode ? .on : .off
-            modes.addItem(item)
-        }
-        let move = NSMenuItem(title: "움직이는 방식", action: nil, keyEquivalent: "")
-        move.submenu = modes
-        menu.addItem(move)
-        if let label = PetKeys.shared.label {
-            menu.addItem(withTitle: "어느 앱에서든 \(label)+방향키로 움직여요", action: nil, keyEquivalent: "").isEnabled = false
-        }
-        menu.addItem(.separator())
-        let put = NSMenuItem(title: "펫 넣기 (화면에서 치우기)", action: #selector(PetView.putBack), keyEquivalent: "")
-        put.target = view
-        menu.addItem(put)
-        return menu
+    /// 오른쪽 클릭 옵션 창. 떠 있는 동안 펫은 멈추고, 다시 오른쪽 클릭하면 닫는다.
+    fileprivate func showOptions() {
+        let options = PetOptions.shared
+        if options.isShown { return options.close() }
+        menu(open: true)
+        options.show(near: bodyOnScreen, mode: modeProvider(), size: sizeProvider(), keys: PetKeys.shared.label,
+                     actions: .init(mode: { [weak self] in self?.choose($0) },
+                                    size: { [weak self] in self?.chooseSize($0) },
+                                    page: { [weak self] in self?.openPage($0) },
+                                    report: { DailyReportBubble.showOrExplain($0) },
+                                    putBack: { [weak self] in self?.hide() },
+                                    closed: { [weak self] in self?.menu(open: false) }))
+    }
+
+    /// 옵션 창이 뜨고 닫힐 때. 닫힌 뒤에도 잠깐 멈춰 고른 결과(크기, 움직임)를 보게 한다.
+    fileprivate func menu(open: Bool) {
+        menuOpen = open
+        trick = nil
+        lastControl = Date()
+        if !open { hoverEnded = Date() }
     }
 
     fileprivate func chooseSize(_ value: CGFloat) {
@@ -486,7 +596,10 @@ final class DesktopPet {
         let now = Date()
         let dt = CGFloat(min(max(now.timeIntervalSince(lastTick ?? now), 0), 0.1))
         lastTick = now
-        refreshHome()
+        if now.timeIntervalSince(homeReadAt) >= 1 {
+            homeReadAt = now
+            refreshHome()
+        }
         // 전역 단축키는 보조키를 먼저 떼면 놓임 알림이 안 올 수 있어 실제 키 상태로 한 번 더 본다
         if held.left || held.right || held.up || held.down, !panelHasKeys {
             held.left = held.left && PetKeys.isDown(123)
@@ -510,7 +623,7 @@ final class DesktopPet {
             let x: CGFloat = (held.right ? 1 : 0) - (held.left ? 1 : 0)
             let y: CGFloat = (held.up ? 1 : 0) - (held.down ? 1 : 0)
             if x != 0 || y != 0 {
-                spot.x = min(max(spot.x + x * 150 * dt, a.minX + 20), a.maxX - 20)
+                spot.x = min(max(spot.x + x * 150 * dt, a.minX + edgeMargin), a.maxX - edgeMargin)
                 spot.y = min(max(spot.y + y * 150 * dt, a.minY), a.maxY - 20)
                 free = spot
                 onPin(spot)
@@ -526,7 +639,7 @@ final class DesktopPet {
             // 떨어지는 중: 바닥에 닿으면 바닥 위로 돌아가고, 높이서 떨어졌으면 한 번 통 튄다
             fallSpeed -= 1500 * dt
             falling.y += fallSpeed * dt
-            falling.x = min(max(falling.x, a.minX + 20), a.maxX - 20)
+            falling.x = min(max(falling.x, a.minX + edgeMargin), a.maxX - edgeMargin)
             if falling.y <= a.minY {
                 free = nil
                 along = falling.x - a.minX
@@ -534,7 +647,11 @@ final class DesktopPet {
                     liftSpeed = min(dropHeight * 2.2, 420)
                     lift = 0.01
                 }
-                if dropHeight > 150 { perform(.dizzy) }
+                if dropHeight > 150 {
+                    perform(.dizzy)
+                    // 높이서 쿵 내려앉으면 고른 부딪힘이 터진다. 게임 밖에서 그 효과를 보는 자리다
+                    burst(at: CGPoint(falling.x, a.minY))
+                }
                 dropHeight = 0
             } else {
                 free = falling
@@ -542,21 +659,23 @@ final class DesktopPet {
         } else {
             let mode = modeProvider()
             // 누르고 있거나 커서가 가까이 있으면 멈춘다. 커서가 떠나도 잠깐은 기다려 다시 잡으려는 손을 피하지 않는다
-            let waiting = pressing || hovering || now.timeIntervalSince(hoverEnded) < 0.8
-            velocity = pressing ? 0 : control(edge: edge) * 150
+            let waiting = pressing || hovering || menuOpen || now.timeIntervalSince(hoverEnded) < Self.hoverLinger
+            velocity = pressing || menuOpen ? 0 : control(edge: edge) * 150
             if velocity == 0, !waiting, trick == nil, !resting, now.timeIntervalSince(lastControl) > 2 {
                 // 직접 움직이지 않으면 상태 빠르기대로 테두리를 따라 걷는다
                 velocity = heading * Self.walkSpeed(display)
             }
             if velocity != 0 { heading = velocity > 0 ? 1 : -1 }
-            wander(now: now, display: display)
+            if !waiting { wander(now: now, display: display) }
+            // 모서리 가운데서는 조금 늦춰 발을 디디며 도는 것처럼 보이게 한다
+            if let turn = cornerTurn(along: along) { velocity *= 1 - 0.4 * sin(turn * .pi) }
             var next = along + velocity * dt
             if mode == .roam {
                 next = next.truncatingRemainder(dividingBy: perimeter)
                 if next < 0 { next += perimeter }
-            } else if next < 30 || next > a.width - 30 {
+            } else if next < edgeMargin || next > a.width - edgeMargin {
                 // 바닥에서만 걸을 때는 양끝에서 돌아선다
-                next = min(max(next, 30), a.width - 30)
+                next = min(max(next, edgeMargin), a.width - edgeMargin)
                 heading = -heading
             }
             along = next
@@ -570,14 +689,22 @@ final class DesktopPet {
             }
         }
         if let trick, now.timeIntervalSince(trick.start) >= trick.kind.duration { self.trick = nil }
-        // 모서리를 돌 때 기울기를 짧은 쪽으로 부드럽게 맞춘다. 떨어지는 동안은 바로 선다
-        let target = free == nil ? Self.angle(for: edge) : 0
+        // 기울기를 짧은 쪽으로 부드럽게 맞춘다. 모서리에서는 둥근 길의 기울기를 따라가고, 떨어지는 동안은 바로 선다
+        let target = free == nil ? path(along: along).angle : 0
         var diff = (target - angle).truncatingRemainder(dividingBy: 2 * .pi)
         if diff > .pi { diff -= 2 * .pi }
         if diff < -.pi { diff += 2 * .pi }
         angle += diff * min(1, dt * 12)
         let moving = abs(velocity) > 8 && drag == nil && free == nil
         gait += moving ? dt * abs(velocity) / 110 : dt / CGFloat(display.cycle)
+        speedNow = moving ? abs(velocity) : 0
+        emitDust(moving: moving, buddyMoving: abs(buddyLag * 4) > 8 || buddyShift != 0 || moving,
+                 clock: now.timeIntervalSinceReferenceDate)
+        if buddyHop > 0 || buddyHopSpeed > 0 {
+            buddyHopSpeed -= 1500 * dt
+            buddyHop += buddyHopSpeed * dt
+            if buddyHop <= 0 { buddyHop = 0; buddyHopSpeed = 0 }
+        }
         // 동료는 펫이 보는 쪽 뒤에 선다. 펫이 돌아서면 순간이동하지 않고 반대편으로 달려가고,
         // 펫이 뛰면 조금 늦게 낮게 뛴다 (같이 붙어 떠오르면 매달린 것처럼 보인다). 끌거나 떨어질 때는 붙어 다닌다
         let follows = free == nil || (drag == nil && modeProvider() == .pinned)
@@ -601,10 +728,132 @@ final class DesktopPet {
         if panelHasKeys, !holding, now.timeIntervalSince(lastControl) > 4, drag == nil { releaseKeyboard() }
         // 펫 몸 위에서만 클릭을 받고, 나머지는 뒤 창으로 지나가게 한다
         updateHover(now: now)
-        panel?.ignoresMouseEvents = drag == nil && !pressing && !hovering
-        let busy = drag != nil || free != nil || lift > 0 || hovering || held.left || held.right || held.up || held.down || trick != nil
-            || moving || abs(diff) > 0.01
+        panel?.ignoresMouseEvents = drag == nil && !pressing && !hovering && !menuOpen
+        // 머무는 펫은 늘 자리(free)를 갖고 있어, 떨어지거나 끄는 중일 때만 바쁘게 그린다
+        let floating = free != nil && !(drag == nil && modeProvider() == .pinned)
+        let busy = drag != nil || floating || lift > 0 || hovering || held.left || held.right || held.up || held.down || trick != nil
+            || moving || abs(diff) > 0.01 || !puffs.isEmpty || !pats.isEmpty || !trail.isEmpty || buddyHop > 0
+            || now < showcaseUntil
         schedule(fps: busy ? 60 : AppSettings.shared.smoothness.fps)
+    }
+
+    /// 무대처럼 발을 디딜 때마다(한 주기에 두 번) 발먼지가 일고, 뛰거나 떨어졌다 내려오면 크게 인다. 동료가 내려와도 인다.
+    private func emitDust(moving: Bool, buddyMoving: Bool, clock: Double) {
+        let pinned = drag == nil && modeProvider() == .pinned
+        let airborne = lift > 1 || (free != nil && !pinned)
+        let step = Int(floor(gait * 2))
+        defer {
+            lastStep = step
+            wasAirborne = airborne
+            buddyWasUp = buddyHop > 1
+        }
+        // 발먼지를 고르지 않았으면 먼지를 일으키지 않는다. 걸음·착지 셈은 위 defer가 이어 간다
+        guard let dust = GameDecor.shared.equipped(.dust) else {
+            puffs.removeAll { clock - $0.born > Double($0.spray.life) + 0.1 }
+            return
+        }
+        if drag == nil, free == nil || pinned {
+            let ground = free ?? path(along: along).point
+            let tilt = free == nil ? angle : 0
+            if wasAirborne && !airborne {
+                puffs.append((GameFX.dust(dust, landing: true), ground, clock, tilt, 1.6))
+            } else if !airborne, moving, step != lastStep {
+                puffs.append((GameFX.dust(dust, landing: false), ground, clock, tilt, 1.2))
+            }
+        }
+        if let ground = buddyGround {
+            // 동료도 같은 발먼지를 일으킨다. 몸이 작아 조금 작게
+            let step = Int(floor(buddyGait * 2))
+            if buddyWasUp, buddyHop <= 1 {
+                puffs.append((GameFX.dust(dust, landing: true), ground, clock, free == nil ? angle : 0, 1.2))
+            } else if buddyMoving, buddyHop <= 1, drag == nil, step != buddyStep {
+                puffs.append((GameFX.dust(dust, landing: false), ground, clock, free == nil ? angle : 0, 0.9))
+            }
+            buddyStep = step
+        }
+        puffs.removeAll { clock - $0.born > Double($0.spray.life) + 0.1 }
+        pats.removeAll { clock - $0.at > 1.6 }
+    }
+
+    /// 동료가 펫을 따라 할 자세. 펫이 손을 흔들면 조금 늦게 따라 흔들고, 지쳐 앉거나 시무룩하거나 자면 곁에서 같이 한다.
+    /// 따라잡느라 달리는 중이면 달리기를 먼저 한다.
+    static func gesture(following pet: CharacterPose, moving: Bool, phase: CGFloat) -> CharacterPose? {
+        guard !moving else { return nil }
+        if let wave = pet.wave {
+            var pose = CharacterPose(activity: .stand, phase: phase)
+            pose.wave = max(0, wave - 0.25)
+            return pose
+        }
+        switch pet.activity {
+        case .sit:
+            var pose = CharacterPose(activity: .sit, phase: pet.phase, eyes: pet.eyes)
+            pose.sad = pet.sad
+            return pose
+        case .sleep:
+            return CharacterPose(activity: .sleep, phase: pet.phase, eyes: .closed)
+        default:
+            return pet.review.map { review in
+                var pose = CharacterPose(activity: .stand, phase: phase)
+                pose.review = review
+                return pose
+            }
+        }
+    }
+
+    /// 꾸미기를 바꾸면 바로 보여 준다. 발먼지는 폴짝 뛰어 일으키고, 부딪힘은 그 자리에서 터지고,
+    /// 주변 효과는 늘 보이니 손을 흔들어 알린다. 동료를 바꾸면 펫이 반긴다.
+    private func showcase(_ equipped: Set<Cosmetic>) {
+        let added = equipped.subtracting(wearing)
+        wearing = equipped
+        lastControl = Date()
+        schedule(fps: 60)
+        if added.isEmpty {
+            perform(.greet)
+            return
+        }
+        for item in added {
+            switch item.slot {
+            case .trail: showcaseUntil = Date().addingTimeInterval(1.4)
+            case .aura: perform(.greet)
+            case .dust:
+                if lift == 0, drag == nil, free == nil || modeProvider() == .pinned { jump() }
+            case .crash: burst(at: free ?? path(along: along).point, lifted: bodyOnScreen.height / 2)
+            case .track: break
+            }
+        }
+    }
+
+    /// 고른 부딪힘을 화면의 그 자리에서 터뜨린다. 고르지 않았으면 아무것도 하지 않는다.
+    private func burst(at ground: CGPoint, lifted: CGFloat = 0) {
+        guard let item = GameDecor.shared.equipped(.crash) else { return }
+        let clock = Date().timeIntervalSinceReferenceDate
+        let inward = CGVector(dx: sin(free == nil ? angle : 0), dy: cos(free == nil ? angle : 0))
+        let at = CGPoint(ground.x + inward.dx * lifted, ground.y + inward.dy * lifted)
+        for part in GameFX.crash(item) {
+            puffs.append((part.spray, CGPoint(at.x + part.offset.x, at.y - part.offset.y), clock, free == nil ? angle : 0, 1))
+        }
+    }
+
+    /// 화면 좌표를 창 안 좌표(y 아래로)로.
+    private func inPanel(_ point: CGPoint) -> CGPoint {
+        guard let panel else { return point }
+        return CGPoint(point.x - panel.frame.minX, panel.frame.maxY - point.y)
+    }
+
+    /// 머리 위로 피어오르는 하트 세 개 (무대와 같은 그림). `up`은 창 안 좌표의 위쪽.
+    private func drawHearts(from top: CGPoint, up: CGVector, age: CGFloat, seed: Int, clock: Double, _ cg: CGContext) {
+        let zoom = effectZoom
+        let side = CGVector(dx: -up.dy, dy: up.dx)
+        for k in 0..<3 {
+            let life = age - CGFloat(k) * 0.14
+            guard life > 0, life < 1.2 else { continue }
+            let rise = life / 1.2
+            let sway = (CGFloat((seed * 3 + k) % 5) - 2) * 7 + sin(life * 7 + CGFloat(k)) * 4
+            let distance = (8 + rise * 46) * zoom
+            let at = CGPoint(top.x + up.dx * distance + side.dx * sway * zoom, top.y + up.dy * distance + side.dy * sway * zoom)
+            GameFX.drawSprite("pumpingHeart", at: at, height: (9 + CGFloat(k) * 2) * min(1, life / 0.18) * zoom, progress: 0,
+                              time: clock + Double(k) * 0.2, alpha: 1 - rise * rise, cg)
+        }
     }
 
     /// 누른 키를 지금 모서리의 걷는 방향(반시계 +)으로 바꾼다.
@@ -637,7 +886,10 @@ final class DesktopPet {
 
     /// 커서가 펫 둘레 `reach` 안에 들어왔는지 보고 커서 모양을 바꾼다. 펫 밖에서는 클릭이 뒤 창으로 지나간다.
     private func updateHover(now: Date) {
-        let near = bodyOnScreen.insetBy(dx: -Self.reach, dy: -Self.reach).contains(pointerForCheck ?? NSEvent.mouseLocation)
+        let pointer = pointerForCheck ?? NSEvent.mouseLocation
+        // 동료도 누를 수 있어 동료 둘레에서도 멈추고 클릭을 받는다
+        let near = bodyOnScreen.insetBy(dx: -Self.reach, dy: -Self.reach).contains(pointer)
+            || (!buddyOnScreen.isEmpty && buddyOnScreen.insetBy(dx: -8, dy: -8).contains(pointer))
         if near != hovering {
             hovering = near
             if !near { hoverEnded = now }
@@ -713,27 +965,145 @@ final class DesktopPet {
         frame.transform.scaleX = abs(frame.transform.scaleX) * (free == nil || pinned ? heading : 1)
         let scale = scale
         let center = drawCenter
-        cg.saveGState()
-        cg.translateBy(x: center.x, y: center.y)
-        cg.rotate(by: angle)
+        let clock = now.timeIntervalSinceReferenceDate
+        let zoom = effectZoom
         // 돌린 좌표에서 발은 가운데 아래
         let feet = CGPoint(0, Stage.size.height * scale / 2)
         let origin = CGPoint(feet.x - Stage.size.width / 2 * scale, feet.y - Stage.ground * scale)
         let scene = CharacterScene(rig: character.rig, pose: frame.pose, transform: frame.transform)
-        // 데려간 동료는 몸 바로 뒤에서 따라 걷는다. 무대 폭이 아니라 몸 폭으로 재야 캐릭터와 붙어 보인다
-        if let companion = companionProvider() {
-            let body = scene.placedBounds
-            let x = origin.x + (body.midX - buddySide * (body.width / 2 + 5)) * scale + buddyLag
-            // 반대편으로 달려가는 동안은 가는 쪽을, 아니면 펫과 같은 쪽을 본다
-            let facing: CGFloat = buddyShift != 0 ? (buddyShift > 0 ? -1 : 1) : (buddySide >= 0 ? 1 : -1)
-            let height = lift - buddyLift
-            let hop = buddyLift > 2 ? (lift * 0.6 > buddyLift ? CGFloat(0.3) : 0.7) : nil
-            GameFX.drawCompanion(companion, feet: CGPoint(x, feet.y + max(height, 0)),
-                                 height: 10 * scale, phase: buddyGait,
-                                 moving: buddyShift != 0 || abs(buddyLag * 4) > 8
-                                    || (Self.walkSpeed(display) > 0 && !resting) || held.left || held.right,
-                                 jump: hop, facing: facing, theme: themeProvider(), cg)
+        let body = scene.placedBounds
+        /// 돌린 좌표의 점을 창 안 좌표로.
+        let toView = { (p: CGPoint) in p.applying(CGAffineTransform(translationX: center.x, y: center.y).rotated(by: self.angle)) }
+
+        // 꼬리: 등 자리를 화면 좌표로 남겨 두고, 걸어온 길을 따라 끌리게 그린다
+        let facing: CGFloat = frame.transform.scaleX < 0 ? -1 : 1
+        let backLocal = CGPoint(origin.x + (facing > 0 ? body.minX + body.width * 0.18 : body.maxX - body.width * 0.18) * scale,
+                                origin.y + (body.midY + body.height * 0.08) * scale)
+        let showing = now < showcaseUntil
+        if let item = GameDecor.shared.equipped(.trail), let panel {
+            if speedNow > 12 || showing {
+                // 막 단 꼬리는 걷지 않아도 몸 둘레를 한 바퀴 휘감아 보인다
+                let view: CGPoint
+                if showing {
+                    let middle = toView(CGPoint(origin.x + body.midX * scale, origin.y + body.midY * scale))
+                    let radius = max(body.width, body.height) * scale * 0.65, turn = CGFloat(clock * 7)
+                    view = CGPoint(middle.x + cos(turn) * radius, middle.y + sin(turn) * radius)
+                } else {
+                    view = toView(backLocal)
+                }
+                let back = CGPoint(panel.frame.minX + view.x, panel.frame.maxY - view.y)
+                trail.append(back)
+                trail.removeAll { hypot($0.x - back.x, $0.y - back.y) > 150 * zoom }
+                if trail.count > 40 { trail.removeFirst(trail.count - 40) }
+            } else if !trail.isEmpty {
+                trail.removeFirst()
+            }
+            // 멈춘 뒤에도 남은 꼬리는 줄어드는 동안 그린다. 다 줄어들면 서 있는 동안 등 뒤에서 살랑이는 꼬리를 그려,
+            // 걷지 않는 머무는 펫에서도 고른 꼬리가 늘 보인다 (꾸미기 칸 미리보기와 같은 모양)
+            let points: [CGPoint]
+            if trail.isEmpty, !showing, drag == nil {
+                points = (0..<18).map { i -> CGPoint in
+                    let back = CGFloat(17 - i)
+                    let local = CGPoint(backLocal.x - facing * back * 3.4 * zoom,
+                                        backLocal.y + CGFloat(sin(clock * 3 - Double(i) * 0.35)) * back * 0.35 * zoom)
+                    return toView(local)
+                }
+            } else {
+                points = trail.map(inPanel)
+            }
+            cg.saveGState()
+            cg.scaleBy(x: zoom, y: zoom)
+            GameFX.drawTrail(item, points: points.map { CGPoint($0.x / zoom, $0.y / zoom) }, time: clock, cg)
+            cg.restoreGState()
+        } else if !trail.isEmpty {
+            trail.removeAll()
         }
+        // 발먼지: 난 자리의 기울기대로 돌려 벽·천장에서도 바닥 쪽에서 일어 화면 안쪽으로 퍼진다
+        for puff in puffs {
+            let at = inPanel(puff.at)
+            cg.saveGState()
+            cg.translateBy(x: at.x, y: at.y)
+            cg.rotate(by: puff.angle)
+            cg.scaleBy(x: puff.zoom * zoom, y: puff.zoom * zoom)
+            GameFX.drawSpray(puff.spray, from: .zero, age: CGFloat(clock - puff.born), time: clock, cg)
+            cg.restoreGState()
+        }
+
+        // 발밑 그림자: 무대처럼 땅에 붙어 있게 보이고, 뛰면 작고 옅어진다. 떨어지거나 들려 있을 때는 그리지 않는다
+        if free == nil || (drag == nil && modeProvider() == .pinned) {
+            let ground = inPanel(free ?? path(along: along).point)
+            let shrink = max(0.4, 1 - lift / 120)
+            let width = body.width * scale * 0.7 * shrink
+            cg.saveGState()
+            cg.translateBy(x: ground.x, y: ground.y)
+            cg.rotate(by: free == nil ? angle : 0)
+            cg.setFillColor(NSColor.black.withAlphaComponent(0.22 * shrink).cgColor)
+            cg.fillEllipse(in: CGRect(x: -width / 2, y: -2 * zoom, width: width, height: 4 * zoom))
+            cg.restoreGState()
+        }
+        // 데려간 동료는 몸 바로 뒤에서 따라 걷는다. 무대 폭이 아니라 몸 폭으로 재야 캐릭터와 붙어 보인다
+        let companion = companionProvider()
+        let buddyHeight = 10 * scale
+        let buddyOffset = origin.x + (body.midX - buddySide * (body.width / 2 + 5)) * scale + buddyLag
+        // 반대편으로 달려가는 동안은 가는 쪽을, 아니면 펫과 같은 쪽을 본다
+        let buddyFacing: CGFloat = buddyShift != 0 ? (buddyShift > 0 ? -1 : 1) : (buddySide >= 0 ? 1 : -1)
+        let buddyMoving = buddyShift != 0 || abs(buddyLag * 4) > 8 || (Self.walkSpeed(display) > 0 && !resting) || held.left || held.right
+        let rise = buddyLift + buddyHop
+        let buddyJump: CGFloat? = rise > 2 ? (buddyHopSpeed > 0 || lift * 0.6 > buddyLift ? 0.3 : 0.7) : nil
+        // 펫은 장난하는 동안 멈춰 있어, 동료가 따라잡는 중이거나 펫이 실제로 움직일 때만 따라 하지 않는다
+        let busyBuddy = buddyShift != 0 || abs(buddyLag * 4) > 8 || speedNow > 0 || held.left || held.right
+        let buddyGesture = buddyJump == nil ? Self.gesture(following: frame.pose, moving: busyBuddy, phase: buddyGait) : nil
+        var buddyInFrame = false
+        if let companion, free == nil {
+            // 테두리 위에서는 동료도 둥근 길을 따라 선다. 펫 몸 축으로 곧게 두면 모서리에서 화면 밖으로 떠 보인다
+            var p = along + buddyOffset
+            if modeProvider() == .roam {
+                p = p.truncatingRemainder(dividingBy: perimeter)
+                if p < 0 { p += perimeter }
+            } else {
+                p = min(max(p, 0), area.width)
+            }
+            let spot = path(along: p)
+            // 화면 안쪽 (화면 좌표, 위로 +)
+            let inward = CGVector(dx: sin(spot.angle), dy: cos(spot.angle))
+            let ground = spot.point
+            let feetOnScreen = CGPoint(ground.x + inward.dx * rise, ground.y + inward.dy * rise)
+            let at = inPanel(feetOnScreen)
+            cg.saveGState()
+            cg.translateBy(x: at.x, y: at.y)
+            cg.rotate(by: spot.angle)
+            GameFX.drawCompanion(companion, feet: .zero, height: buddyHeight, phase: buddyGait, moving: buddyMoving,
+                                 jump: buddyJump, facing: buddyFacing, theme: themeProvider(), gesture: buddyGesture, cg)
+            cg.restoreGState()
+            buddyGround = ground
+            let middle = CGPoint(feetOnScreen.x + inward.dx * buddyHeight / 2, feetOnScreen.y + inward.dy * buddyHeight / 2)
+            buddyOnScreen = CGRect(x: middle.x - buddyHeight / 2, y: middle.y - buddyHeight / 2, width: buddyHeight, height: buddyHeight)
+        } else if companion != nil {
+            buddyInFrame = true
+        } else {
+            buddyOnScreen = .zero
+            buddyGround = nil
+        }
+
+        cg.saveGState()
+        cg.translateBy(x: center.x, y: center.y)
+        cg.rotate(by: angle)
+        // 들려 있거나 머무는 펫은 바로 서 있어, 동료도 펫 좌표에서 곁에 붙여 그린다
+        if buddyInFrame, let companion, let panel {
+            let height = max(lift - buddyLift, 0) - buddyHop
+            let local = CGPoint(buddyOffset, feet.y + height)
+            GameFX.drawCompanion(companion, feet: local, height: buddyHeight, phase: buddyGait, moving: buddyMoving,
+                                 jump: buddyJump, facing: buddyFacing, theme: themeProvider(), gesture: buddyGesture, cg)
+            let view = toView(local)
+            let onScreen = CGPoint(panel.frame.minX + view.x, panel.frame.maxY - view.y)
+            buddyGround = drag == nil ? CGPoint(onScreen.x, onScreen.y - buddyHop) : nil
+            buddyOnScreen = CGRect(x: onScreen.x - buddyHeight / 2, y: onScreen.y, width: buddyHeight, height: buddyHeight)
+        }
+        // 주변 효과는 펫 좌표에서 그려 벽·천장에서도 몸을 따라 돈다. 뒤로 지나가는 것은 몸 뒤, 앞으로 오는 것은 몸 앞에
+        let aura = GameDecor.shared.equipped(.aura)
+        let auraBody = CGRect(x: origin.x + body.minX * scale, y: origin.y + body.minY * scale,
+                              width: body.width * scale, height: body.height * scale)
+        if let aura { GameFX.drawAura(aura, around: auraBody, time: clock, front: false, size: auraBody.height * 0.2, cg) }
         cg.saveGState()
         cg.translateBy(x: origin.x, y: origin.y)
         cg.scaleBy(x: scale, y: scale)
@@ -745,15 +1115,28 @@ final class DesktopPet {
         display.drawLoopEffects(in: cg, scene: scene, phase: gait - floor(gait), tint: .white, front: true)
         for effect in frame.effects { effect.draw(in: cg, around: scene.placedBounds, tint: .white) }
         cg.restoreGState()
+        if let aura { GameFX.drawAura(aura, around: auraBody, time: clock, front: true, size: auraBody.height * 0.2, cg) }
         cg.restoreGState()
         // 몸 자리를 화면 좌표로 남겨 클릭을 가린다 (돌린 사각형을 감싸는 사각형)
-        let body = scene.placedBounds
         let local = CGRect(x: origin.x + body.minX * scale, y: origin.y + body.minY * scale,
                            width: body.width * scale, height: body.height * scale)
         let inView = local.applying(CGAffineTransform(translationX: center.x, y: center.y).rotated(by: angle))
         if let panel {
             bodyOnScreen = CGRect(x: panel.frame.minX + inView.minX, y: panel.frame.maxY - inView.maxY,
                                   width: inView.width, height: inView.height)
+        }
+        // 쓰다듬은 하트는 머리 쪽(화면 안쪽)으로 피어오른다
+        let up = CGVector(dx: sin(angle), dy: -cos(angle))
+        for (n, pat) in pats.enumerated() {
+            let age = CGFloat(clock - pat.at)
+            if pat.buddy {
+                let top = inPanel(CGPoint(buddyOnScreen.midX, buddyOnScreen.midY))
+                drawHearts(from: CGPoint(top.x + up.dx * buddyHeight / 2, top.y + up.dy * buddyHeight / 2), up: up, age: age, seed: n,
+                           clock: clock, cg)
+            } else {
+                let middle = CGPoint(inView.midX, inView.midY), half = body.height * scale / 2
+                drawHearts(from: CGPoint(middle.x + up.dx * half, middle.y + up.dy * half), up: up, age: age, seed: n, clock: clock, cg)
+            }
         }
         hintOnScreen = nil
         // 누른 뒤 방향키를 받는 동안에는 머리 바로 위에 조작법을 띄운다. 창은 펫보다 훨씬 커서 창 위쪽에 두면 펫과 떨어져 보인다.
@@ -839,15 +1222,12 @@ private final class PetView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         pet?.press(false)
-        if moved { pet?.endDrag() } else { pet?.clicked() }
+        if moved { pet?.endDrag() } else { pet?.clicked(at: screenPoint(event)) }
         down = nil
         moved = false
     }
 
-    override func rightMouseDown(with event: NSEvent) {
-        guard let menu = pet?.menu() else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
-    }
+    override func rightMouseDown(with event: NSEvent) { pet?.showOptions() }
 
     // 받지 않는 키는 경고음을 내지 않고 키 입력을 돌려준다
     override func keyDown(with event: NSEvent) {
@@ -856,18 +1236,6 @@ private final class PetView: NSView {
 
     override func keyUp(with event: NSEvent) {
         _ = pet?.key(event.keyCode, down: false, repeated: false)
-    }
-
-    @objc func putBack() { pet?.hide() }
-    @objc func menuPage(_ item: NSMenuItem) {
-        if let raw = item.representedObject as? String, let page = MainPage(rawValue: raw) { pet?.openPage(page) }
-    }
-
-    @objc func menuMode(_ item: NSMenuItem) {
-        if let raw = item.representedObject as? String, let mode = DesktopPet.Mode(rawValue: raw) { pet?.choose(mode) }
-    }
-    @objc func menuSize(_ item: NSMenuItem) {
-        if let value = item.representedObject as? CGFloat { pet?.chooseSize(value) }
     }
 }
 
@@ -884,6 +1252,7 @@ enum DesktopPetCheck {
         var display = SpriteDisplay.normal(.running)
         var mode = DesktopPet.Mode.roam
         var grabbed = CGPoint.zero, destination = CGPoint.zero
+        var worn: Set<Cosmetic> = []
         pet.displayProvider = { display }
         pet.modeProvider = { mode }
         pet.onMode = { mode = $0 }
@@ -927,6 +1296,11 @@ enum DesktopPetCheck {
             }
         }
         pet.companionProvider = { Runner.dog.character }
+        // RUNTIME_PET_SHEET에 --petdex-extract로 자른 폴더를 주면 그 그림 펫으로 본다 (왼쪽 달리기 줄 점검)
+        if let folder = ProcessInfo.processInfo.environment["RUNTIME_PET_SHEET"], let rig = SheetRig(folder: URL(fileURLWithPath: folder)) {
+            let character = RunnerCharacter(key: "sheet:" + folder, name: "시트", sound: "시트", rig: FittedRig(rig), fixedTheme: .natural)
+            pet.characterProvider = { character }
+        }
         pet.show()
         PetKeys.assumesDown = true
         var start = pet.position
@@ -935,7 +1309,13 @@ enum DesktopPetCheck {
                 check("떨어져 내려와 바닥에 선다", pet.position.lift == 0 && pet.edgeName == "bottom")
                 start = pet.position
             }),
-            (1.0, { check("달리는 상태면 테두리를 따라 걷는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) > 20) }),
+            (1.0, {
+                check("달리는 상태면 테두리를 따라 걷는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) > 20)
+                // 발먼지는 고른 것만 인다. 고르지 않았으면 먼지가 없어야 한다
+                let chosen = GameDecor.shared.equipped(.dust) != nil
+                check("걸으면 고른 발먼지만 인다 (\(chosen ? "고름" : "고르지 않음"), \(pet.effectsForCheck.puffs)개)",
+                      chosen ? pet.effectsForCheck.puffs > 0 : pet.effectsForCheck.puffs == 0)
+            }),
             (0.1, {
                 // 걷는 펫 옆으로 커서를 가져가면 멈춰서 잡기 쉬워야 한다
                 let body = pet.bodyCenter
@@ -949,13 +1329,14 @@ enum DesktopPetCheck {
                 pet.pointerForCheck = nil
                 start = pet.position
             }),
-            (2.0, { check("커서가 떠나면 다시 걷는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) > 20) }),
+            (2.5, { check("커서가 떠나면 다시 걷는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) > 20) }),
             (0.1, {
                 display = .normal(.sleeping)
                 pet.takeKeyboardForCheck()
                 _ = pet.key(123, down: true, repeated: false)
             }),
             (0.8, {
+                pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("walk-left.png"))
                 _ = pet.key(123, down: false, repeated: false)
                 check("←를 누르면 왼쪽으로 걷는다", pet.position.facing < 0)
                 check("동료도 돌아서 펫 뒤(오른쪽)로 간다 (\(String(format: "%.2f", pet.buddyForCheck.side)))", pet.buddyForCheck.side == -1)
@@ -1000,7 +1381,88 @@ enum DesktopPetCheck {
                 _ = pet.key(49, down: true, repeated: false)
             }),
             // 천장에서 떨어지면 바닥까지 멀어 튀고 멈출 때까지 넉넉히 기다린다
-            (3.0, { check("천장에서 스페이스를 누르면 바닥으로 떨어진다 (\(pet.edgeName))", pet.edgeName == "bottom" && pet.position.lift == 0) }),
+            (3.0, { check("천장에서 스페이스를 누르면 바닥으로 떨어진다 (\(pet.edgeName), 높이 \(Int(pet.position.lift)))", pet.edgeName == "bottom" && pet.position.lift == 0) }),
+            (0.1, {
+                // 모서리 한가운데에 세워 둥근 길을 따라 비스듬히 서는지 본다
+                display = .normal(.sleeping)
+                pet.place(along: pet.homeArea.width, heading: 1)
+            }),
+            (0.6, {
+                let feet = pet.feetForCheck, area = pet.homeArea
+                check("모서리는 안쪽으로 둥글게 돌며 비스듬히 선다 (기울기 \(Int((pet.tiltForCheck * 180 / .pi).rounded()))도)",
+                      feet.x < area.maxX - 5 && feet.y > area.minY + 5 && abs(pet.tiltForCheck + .pi / 4) < 0.1)
+                capture("corner")
+                let ground = pet.effectsForCheck.buddyGround ?? CGPoint(-1, -1)
+                check("모서리에서도 동료가 화면 안 길 위에 선다 (발 \(Int(ground.x - area.maxX)), \(Int(ground.y - area.minY)))",
+                      ground.x <= area.maxX + 1 && ground.y >= area.minY - 1 && ground.x >= area.minX)
+                // 동료를 누르면 뛰고 하트가 핀다
+                let buddy = pet.effectsForCheck.buddyBox
+                let tap = CGPoint(buddy.midX, buddy.midY)
+                pet.pointerForCheck = tap
+                mouse(.leftMouseDown, at: tap)
+                mouse(.leftMouseUp, at: tap)
+            }),
+            (0.12, {
+                check("동료를 누르면 뛰고 하트가 핀다 (\(Int(pet.effectsForCheck.buddyHop)), 하트 \(pet.effectsForCheck.pats))",
+                      pet.effectsForCheck.buddyHop > 5 && pet.effectsForCheck.pats == 1)
+                let body = pet.bodyCenter
+                pet.pointerForCheck = body
+                mouse(.leftMouseDown, at: body)
+                mouse(.leftMouseUp, at: body)
+                check("펫을 누르면 쓰다듬고 하트가 핀다 (하트 \(pet.effectsForCheck.pats))", pet.effectsForCheck.pats == 2)
+                // 동료는 펫을 따라 손 흔들고, 지쳐 앉고, 시무룩하고, 잔다. 따라잡느라 달리는 중이면 달리기를 먼저 한다
+                var waving = CharacterPose(activity: .stand, phase: 0)
+                waving.wave = 1.5
+                var down = CharacterPose(activity: .sit, phase: 0, eyes: .closed)
+                down.sad = true
+                let follows = DesktopPet.gesture(following: waving, moving: false, phase: 0)?.wave != nil
+                    && DesktopPet.gesture(following: down, moving: false, phase: 0).map { $0.activity == .sit && $0.sad } == true
+                    && DesktopPet.gesture(following: CharacterPose(activity: .sleep, phase: 0), moving: false, phase: 0)?.activity == .sleep
+                    && DesktopPet.gesture(following: waving, moving: true, phase: 0) == nil
+                check("동료가 펫의 손 흔들기·앉기·시무룩·잠을 따라 한다", follows)
+            }),
+            (0.3, {
+                pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("hearts.png"))
+                pet.pointerForCheck = nil
+                pet.menu(open: true)
+                display = .normal(.dashing)
+                pet.place(along: 300, heading: 1)
+                start = pet.position
+            }),
+            (0.6, {
+                check("오른쪽 클릭 메뉴가 떠 있는 동안은 걷지 않는다 (\(Int(abs(pet.position.x - start.x)))pt)",
+                      abs(pet.position.x - start.x) < 1 && pet.takesClicks)
+                pet.menu(open: false)
+                // 오른쪽 클릭: 펫 옆에 옵션 창이 뜨고, 떠 있는 동안 멈추고, 움직임을 고르면 닫히지 않고 바로 바뀐다
+                display = .normal(.dashing)
+                pet.showOptions()
+                start = pet.position
+            }),
+            (0.6, {
+                let options = PetOptions.shared.frame ?? .zero, body = pet.bodyFrame ?? .zero
+                check("오른쪽 클릭하면 펫 옆에 옵션 창이 뜬다 (\(Int(options.width))×\(Int(options.height)), 몸과 \(Int(min(abs(options.minX - body.maxX), abs(body.minX - options.maxX))))pt)",
+                      PetOptions.shared.isShown && min(abs(options.minX - body.maxX), abs(body.minX - options.maxX)) < 20
+                        && options.minY <= body.midY && options.maxY >= body.midY)
+                check("옵션 창이 떠 있는 동안 펫은 걷지 않는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) < 1)
+                pet.optionsForCheck(.floor)
+                check("옵션 창에서 움직임을 고르면 바로 바뀌고 창은 남는다", mode == .floor && PetOptions.shared.isShown
+                      && PetOptions.shared.model?.mode == .floor)
+                capture("options")
+                PetOptions.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("options.png"))
+                pet.showOptions()
+                check("다시 오른쪽 클릭하면 옵션 창이 닫힌다", !PetOptions.shared.isShown)
+                mode = .roam
+                // 열어 볼 곳이 없는 안내는 때가 되면 저절로 닫히고, 할 일이 남은 소식은 남는다
+                MenuBarBubble.shared.show(.init(title: "호스트", items: ["‘개발’ 묶음을 켰습니다"], keeps: false, closesAfter: 0.5),
+                                          at: { pet.bubbleTarget.map { ($0, true) } })
+                MenuBarBubble.shared.show(.init(title: "세션 사용량 95%", items: ["곧 한도에 닿습니다"]),
+                                          at: { pet.bubbleTarget.map { ($0, true) } })
+            }),
+            (1.2, {
+                check("안내 말풍선은 저절로 닫히고 남은 소식이 보인다 (\(MenuBarBubble.shared.pending)건, \(MenuBarBubble.shared.currentTitle ?? "없음"))",
+                      MenuBarBubble.shared.pending == 1 && MenuBarBubble.shared.currentTitle == "세션 사용량 95%")
+                MenuBarBubble.shared.hide()
+            }),
             (0.1, {
                 // 달리는 펫을 눌러 끈다. 누른 동안 펫이 걸어서 마우스 밑을 벗어나도 클릭을 놓지 않아야 한다
                 display = .normal(.dashing)
@@ -1068,6 +1530,31 @@ enum DesktopPetCheck {
                 check("한 자리에 머물 때 ←로 돌면 동료도 오른쪽 뒤로 간다 (\(String(format: "%.2f", pet.buddyForCheck.side)))",
                       pet.buddyForCheck.side == -1)
                 pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("pinned-left.png"))
+                pet.playForCheck(.greet)
+                check("한 자리에 머무는 펫도 누르거나 소식이 오면 반응한다", pet.playingForCheck)
+                // 머무는 펫은 걷지 않아 꼬리·발먼지가 생기지 않는다. 꾸미기를 바꾸면 바로 보여 줘야 한다
+                worn = GameDecor.shared.equipped
+                GameDecor.shared.choose(.heartTrail)
+                if GameDecor.shared.equipped(.dust) == nil { GameDecor.shared.choose(.heartDust) }
+                GameDecor.shared.choose(.starburstCrash)
+                GameDecor.shared.choose(.butterflyAura)
+            }),
+            (0.4, {
+                let effects = pet.effectsForCheck
+                check("꾸미기를 바꾸면 머무는 펫에도 바로 보인다 (꼬리 \(effects.trail), 효과 \(effects.puffs))",
+                      effects.trail > 3 && effects.puffs > 0)
+                pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("showcase.png"))
+                let body = pet.bodyFrame ?? .zero, panel = pet.panelFrame
+                check("펫 창이 꼬리·하트·동료가 들어가게 넉넉하다 (창 \(Int(panel.width)), 몸 \(Int(body.width)))",
+                      panel.width >= body.width * 3 || panel.height >= body.height * 3)
+            }),
+            (1.6, {
+                // 보여 주기가 끝난 뒤에도 서 있는 펫 등 뒤에 꼬리가, 몸 둘레에 주변 효과가 남는다
+                pet.snapshot(to: file.deletingPathExtension().appendingPathExtension("idle-decor.png"))
+                check("꼬리·주변 효과는 머무는 펫에 늘 남는다", GameDecor.shared.equipped(.trail) == .heartTrail
+                      && GameDecor.shared.equipped(.aura) == .butterflyAura && pet.isShown)
+                GameDecor.shared.equipped.subtracting(worn).forEach { GameDecor.shared.choose($0) }
+                worn.subtracting(GameDecor.shared.equipped).forEach { GameDecor.shared.choose($0) }
             }),
             (0.2, {
                 mode = .roam
@@ -1129,9 +1616,31 @@ enum DesktopPetCheck {
                       MenuBarBubble.shared.pending == 1 && MenuBarBubble.shared.isAbove)
                 MenuBarBubble.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("restored.png"))
                 MenuBarBubble.shared.hide()
+                // 일일보고 말풍선: 글을 그대로 보이고 복사·보내기 단추를 둔다
+                let report = "[11/11 금일 진행 사항]\n1. UxHub\n- 로그인 화면 마크업 (100%)\n- 목록 API 연동 (50%)"
+                let copy = MenuBarBubble.Choice(title: "복사", icon: "doc.on.doc") { $0("복사했습니다", false) }
+                let send = MenuBarBubble.Choice(title: "팀즈 나에게 보내기", icon: "paperplane.fill", primary: true) { $0("보냈습니다", true) }
+                MenuBarBubble.shared.show(.init(title: "오늘 진행 사항", items: [], actionTitle: "업무 일지에서 고치기", action: {},
+                                                keeps: false, report: report, buttons: [copy, send]),
+                                          at: { pet.bodyFrame.map { ($0, true) } })
+                let reportFrame = MenuBarBubble.shared.frame ?? .zero
+                check("일일보고 말풍선은 글과 단추가 들어가게 넓게 뜬다 (\(Int(reportFrame.width))×\(Int(reportFrame.height)))",
+                      reportFrame.width >= 320 && reportFrame.height > 150)
+                MenuBarBubble.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("report.png"))
+                MenuBarBubble.shared.hide()
+                check("일일보고 말풍선은 다시 켜도 낡은 글을 되살리지 않는다", UserDefaults.standard.data(forKey: "menuBarBubbleQueue") == nil)
                 pet.snapshot(to: file)
                 pet.hide()
                 check("넣으면 창이 사라진다", !pet.isShown)
+                // 앱 창 머리줄의 펫 단추에 붙는 러너 얼굴
+                let icon = MainToolbar.runnerIcon(pet.characterProvider(), size: 64)
+                if let tiff = icon.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
+                    try? rep.representation(using: .png, properties: [:])?.write(to: file.deletingPathExtension().appendingPathExtension("toolbar-icon.png"))
+                    let filled = (0..<rep.pixelsWide).contains { x in (0..<rep.pixelsHigh).contains { y in (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5 } }
+                    check("머리줄 펫 단추에 러너 얼굴이 그려진다", filled)
+                } else {
+                    check("머리줄 펫 단추에 러너 얼굴이 그려진다", false)
+                }
             }),
         ]
         var delay = 0.0

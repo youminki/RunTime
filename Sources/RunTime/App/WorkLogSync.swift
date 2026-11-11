@@ -20,6 +20,8 @@ final class WorkLogSettings: ObservableObject {
     @Published var reminderEnabled: Bool { didSet { defaults.set(reminderEnabled, forKey: "workLog.reminder") } }
     /// 평일 이 시각(분)에 오늘 기록과 보낼 일감을 알린다. 기본 18:00.
     @Published var reminderMinutes: Int { didSet { defaults.set(reminderMinutes, forKey: "workLog.reminderMinutes") } }
+    /// 펫을 꺼내 두었으면 평일 10시에 진행 예정, 18시에 진행 사항을 펫 위 말풍선으로 띄운다.
+    @Published var petReportBubble: Bool { didSet { defaults.set(petReportBubble, forKey: "workLog.petReportBubble") } }
     @Published private(set) var hasRedmineKey: Bool
     @Published private(set) var hasTeamsWebhook: Bool
     @Published private(set) var hasTeamsMeWebhook: Bool
@@ -57,6 +59,7 @@ final class WorkLogSettings: ObservableObject {
         redmineURL = defaults.string(forKey: "workLog.redmineURL") ?? ""
         reminderEnabled = defaults.object(forKey: "workLog.reminder") as? Bool ?? false
         reminderMinutes = defaults.object(forKey: "workLog.reminderMinutes") as? Int ?? 18 * 60
+        petReportBubble = defaults.object(forKey: "workLog.petReportBubble") as? Bool ?? true
         // 값을 읽지 않고 있는지만 본다 (값을 읽으면 다른 서명의 빌드에서 키체인 창이 뜬다)
         hasRedmineKey = !Self.keychainOff && Keychain.exists(Self.keyAccount)
         hasTeamsWebhook = !Self.keychainOff && Keychain.exists(TeamsTarget.chat.account)
@@ -99,7 +102,14 @@ final class WorkLogSettings: ObservableObject {
     func teamsHint(_ target: TeamsTarget) -> String? { target == .me ? teamsMeHint : teamsHint }
 
     /// 열 채팅. 나에게는 넣지 않아도 나와의 채팅이다.
-    func teamsLink(_ target: TeamsTarget) -> String? { teamsLinks[target] ?? (target == .me ? TeamsLink.notes : nil) }
+    func teamsLink(_ target: TeamsTarget) -> String? {
+        // 보고 채팅 자리에 나와의 채팅 링크가 들어가 있으면 보고서가 나에게만 가서 없는 것으로 본다
+        if target == .chat, chatLinkIsNotes { return nil }
+        return teamsLinks[target] ?? (target == .me ? TeamsLink.notes : nil)
+    }
+
+    /// 보고 채팅으로 넣은 링크가 나와의 채팅인지. 링크 복사를 잘못 눌렀거나 자동으로 받은 링크가 나와의 채팅일 때.
+    var chatLinkIsNotes: Bool { teamsLinks[.chat].flatMap(TeamsLink.conversationID) == "48:notes" }
 
     /// 웹훅으로 앱 밖에서 바로 보낼 수 있는지. 회사 계정 인증 주소면 채팅을 여는 길로 간다.
     func teamsDirect(_ target: TeamsTarget) -> Bool {
@@ -127,6 +137,9 @@ final class WorkLogSettings: ObservableObject {
     func setTeams(_ text: String, target: TeamsTarget) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if TeamsLink.isValid(trimmed) {
+            if target == .chat, TeamsLink.conversationID(trimmed) == "48:notes" {
+                return "나와의 채팅 링크입니다. 보고를 올릴 채팅에서 ⋯ > ‘링크 복사’를 눌러 주세요."
+            }
             // 다른 채팅이면 기억해 둔 채팅 이름도 잊는다
             if teamsLinks[target] != trimmed { defaults.removeObject(forKey: "workLog.teamsTitle.\(target.rawValue)") }
             teamsLinks[target] = trimmed
@@ -469,6 +482,7 @@ final class WorkLogSync: ObservableObject {
         // 자정을 넘기면 그날 고정 업무를 넣는다 (가져오기를 꺼 두었거나 창을 켜 둔 채여도). 이미 있으면 아무것도 하지 않는다
         store.applyRecurringToday()
         remindIfDue()
+        DailyReportBubble.showIfDue()
         TeamsWeb.shared.refreshIfDue()
     }
 
@@ -1123,6 +1137,7 @@ final class WorkLogSync: ObservableObject {
                 self.postingTeams = false
                 switch outcome {
                 case .sent:
+                    Diagnostics.record("팀즈", "\(target.name) 웹: 대화에 올라온 것을 봄")
                     done("\(target.name) 보냈습니다", false)
                 case .unsure(let message):
                     // 늦게 나갔을 수 있어 다시 보내지 않게 실패로 보이지 않는다
@@ -1652,6 +1667,8 @@ final class WorkLogSync: ObservableObject {
             let entries = self.store.log.entries(on: today)
             guard !entries.isEmpty else { return }
             let waiting = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
+            // 펫 위에 진행 사항 말풍선이 뜨면 같은 때 같은 말을 두 번 하지 않는다
+            if waiting == 0, DailyReportBubble.coversEvening { return }
             Notifier.shared.send(title: "오늘 업무 일지 \(entries.count)줄",
                                  body: waiting > 0 ? "레드마인에 보낼 일감 \(waiting)개. 눌러서 확인하고 보내세요."
                                                    : "눌러서 일일보고를 복사하세요.",

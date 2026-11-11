@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var mainWindow: NSWindow?
     private let navigator = MainNavigator()
     private var mainToolbar: MainToolbar?
-    private let workLogPage = WorkLogPage()
+    private let workLogPage = WorkLogPage.shared
     private var welcomeWindow: NSWindow?
     private var cancellables: Set<AnyCancellable> = []
     private let settingsTab = SettingsTabState(.general)
@@ -211,7 +211,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     let host = turn.project.flatMap(ClaudeHost.find(project:))
                     Notifier.shared.send(title: "Claude 작업이 끝났어요", body: body,
                                          opens: host == nil ? nil : .claude, context: turn.project,
-                                         actionTitle: host.map { "\($0.app.localizedName ?? "작업하던 앱")에서 보기" })
+                                         actionTitle: host.map { "\($0.app.localizedName ?? "작업하던 앱")에서 보기" },
+                                         closesAfter: 20)
                 }
             }
             .store(in: &cancellables)
@@ -322,15 +323,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         MenuBarNews.open = { [weak self] page in self?.showMain(page) }
         MenuBarNews.post = { [weak self] content in self?.postBubble(content) }
         // 펫을 꺼내 두었으면 다른 화면의 알림도 시스템 알림 대신 펫 위 말풍선으로 띄운다
-        Notifier.shared.bubble = { [weak self] title, body, destination, context, actionTitle in
+        Notifier.shared.bubble = { [weak self] title, body, destination, context, actionTitle, lifetime in
             guard let self, DesktopPet.shared.isShown else { return false }
             let items = body.split(separator: "\n").map(String.init)
+            // 저절로 닫히는 소식은 다시 켰을 때 되살리지 않는다
             if let destination {
                 self.postBubble(.init(title: title, items: items,
                                       actionTitle: actionTitle ?? "열기", action: { Notifier.shared.onOpen(destination, context) },
-                                      link: "notify:\(destination.rawValue)" + (context.map { ":\($0)" } ?? "")))
+                                      link: "notify:\(destination.rawValue)" + (context.map { ":\($0)" } ?? ""),
+                                      keeps: lifetime == nil, closesAfter: lifetime))
             } else {
-                self.postBubble(.init(title: title, items: items))
+                self.postBubble(.init(title: title, items: items, keeps: lifetime == nil, closesAfter: lifetime))
             }
             return true
         }
@@ -357,10 +360,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             guard let self else { return }
             MenuBarBubble.shared.restore(at: self.bubbleAnchor)
         }
-        func showOnce(_ key: String, title: String, lines: [String], action: (String, () -> Void)?, keeps: Bool = true) {
+        func showOnce(_ key: String, title: String, lines: [String], action: (String, () -> Void)?, keeps: Bool = true,
+                      closesAfter: TimeInterval? = nil) {
             let items = UpdateDigest.make(lines)
             guard UserDefaults.standard.string(forKey: shownKey) != key, !items.isEmpty,
-                  self.postBubble(.init(title: title, items: items, actionTitle: action?.0, action: action?.1, keeps: keeps))
+                  self.postBubble(.init(title: title, items: items, actionTitle: action?.0, action: action?.1,
+                                        keeps: keeps && closesAfter == nil, closesAfter: closesAfter))
             else { return }
             UserDefaults.standard.set(key, forKey: shownKey)
         }
@@ -368,7 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             let notes = updater.patchSource
             guard notes.at > 0 else { return }
-            showOnce("notes-\(Int(notes.at))", title: "업데이트했어요", lines: notes.lines, action: nil)
+            showOnce("notes-\(Int(notes.at))", title: "업데이트했어요", lines: notes.lines, action: nil, closesAfter: 30)
         }
         // 자동으로 받지 못한 새 버전: 무엇이 바뀌는지와 함께 바로 받을 단추를 둔다
         updater.$target
@@ -557,7 +562,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .store(in: &cancellables)
         switcher.onExhausted = { account, resetsAt in
             let when = resetsAt.map { " \(Self.clockFormatter.string(from: $0))에 \(account?.email ?? "")부터 다시 쓸 수 있습니다." } ?? ""
-            Notifier.shared.send(title: "모든 Claude 계정이 한도에 닿았습니다", body: "바꿀 계정이 없습니다." + when)
+            Notifier.shared.send(title: "모든 Claude 계정이 한도에 닿았습니다", body: "바꿀 계정이 없습니다." + when, stays: true)
         }
         switcher.onSwitched = { account, automatic in
             Notifier.shared.send(title: automatic ? "Claude 계정을 자동으로 바꿨습니다" : "Claude 계정을 바꿨습니다",

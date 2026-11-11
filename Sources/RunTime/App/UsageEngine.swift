@@ -423,7 +423,7 @@ final class UsageEngine: ObservableObject {
     private func notify(threshold: LimitAlertTracker.Threshold, kind: String, remaining: String?) {
         let title = "\(kind) 사용량 \(threshold.rawValue)%"
         let body = remaining ?? "Claude Code에서 /usage로 남은 양을 확인할 수 있습니다."
-        DispatchQueue.main.async { Notifier.shared.send(title: title, body: body) }
+        DispatchQueue.main.async { Notifier.shared.send(title: title, body: body, stays: true) }
     }
 
     /// 5시간 블록 리셋 감지 → "새 세션 시작!" (옵션, 기본 off).

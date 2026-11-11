@@ -370,8 +370,20 @@ extension MotionEffect {
         case .exclaim(let alpha):
             Emote.animate("balloonExclaim", in: cg, around: bounds, progress: alpha, alpha: alpha)
         case .burst(let t):
-            GameFX.drawSprite("starburst", at: CGPoint(bounds.midX, bounds.midY - bounds.height * 0.1),
-                              height: max(bounds.width, bounds.height) * 1.2, progress: t, time: 0, cg)
+            let center = CGPoint(bounds.midX, bounds.midY - bounds.height * 0.1)
+            // 부딪힘을 골랐으면 축하하며 터질 때도 그 효과로 터진다. 무대의 부딪힘은 러너 키 40pt 기준이라 몸 키에 맞춰 줄인다
+            if let item = GameDecor.shared.equipped(.crash) {
+                let k = bounds.height / 60
+                cg.saveGState()
+                cg.translateBy(x: center.x, y: center.y)
+                cg.scaleBy(x: k, y: k)
+                for part in GameFX.crash(item) {
+                    GameFX.drawSpray(part.spray, from: CGPoint(part.offset.x, -part.offset.y), age: t * 0.9, time: 0, cg)
+                }
+                cg.restoreGState()
+            } else {
+                GameFX.drawSprite("starburst", at: center, height: max(bounds.width, bounds.height) * 1.2, progress: t, time: 0, cg)
+            }
         case .ring(let t, let from, let to):
             let fill = smoothstep((t - 0.12) / 0.38)
             let alpha = smoothstep(t / 0.1) * (1 - smoothstep((t - 0.8) / 0.2))

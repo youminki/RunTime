@@ -146,10 +146,11 @@ struct RunnerStage: View {
         .accessibilityAction { onPet(model.pet(character: character, display: display)) }
     }
 
-    /// 오른쪽 위 작은 단추: 게임 고르기, 게임 중에는 소리와 나가기.
+    /// 오른쪽 위 작은 단추: 펫 꺼내기, 게임 고르기, 게임 중에는 소리와 나가기.
     private var controls: some View {
         HStack(spacing: 4) {
             if !model.isPlaying {
+                PetChip()
                 StageButton(systemImage: "figure.run", title: "달리기", selected: model.chooser == .game) {
                     model.chooser = model.chooser == .game ? nil : .game
                 }
@@ -308,8 +309,24 @@ private struct SpeechBubble: View {
 }
 
 /// 무대 위 반투명 작은 단추. 고른 단추는 금색 테두리로 표시한다.
+/// 무대 머리줄의 펫 꺼내기·넣기. 지금 러너 얼굴을 붙여 무엇을 꺼내는지 보인다. 꺼내 둔 동안은 켜진 단추로 보인다.
+private struct PetChip: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        StageButton(systemImage: "macwindow.on.rectangle", icon: MainToolbar.runnerIcon(settings.character, size: 16),
+                    title: settings.desktopPet ? "넣기" : "꺼내기", selected: settings.desktopPet) {
+            DesktopPet.shared.toggle()
+        }
+        .tip(settings.desktopPet ? "화면에 꺼내 둔 펫을 넣어요"
+             : "펫을 화면에 꺼내요. 끌어다 놓으면 그 자리에 머물고, 오른쪽 클릭하면 옵션이 나와요")
+    }
+}
+
 private struct StageButton: View {
     let systemImage: String
+    /// 있으면 심볼 대신 이 그림을 붙인다 (러너 얼굴).
+    var icon: NSImage?
     var title: String?
     /// 화면 읽기 프로그램이 읽을 이름. 글자 없는 단추에 붙인다.
     var label: String?
@@ -320,7 +337,11 @@ private struct StageButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
+                if let icon {
+                    Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: systemImage).font(.system(size: 11, weight: .semibold))
+                }
                 if let title { Text(title).font(.system(size: 12, weight: .semibold)) }
             }
             .foregroundStyle(selected ? GameKit.gold : .white.opacity(hover.on ? 1 : 0.85))
@@ -831,6 +852,7 @@ final class StageModel: ObservableObject {
         let runnerX = base + roamX
         let clock = date.timeIntervalSinceReferenceDate
         // 길 위 물건은 달리기를 따라 생긴다. 장난 중이거나 지쳤으면 새로 놓지 않는다
+        extras.onBump = { [weak self] in self?.play(.dizzy, at: date) }
         let hop = extras.update(time: clock, scroll: scroll, speed: speed, size: size,
                                 active: playing == nil && !display.isLimited)
         let origin = CGPoint(runnerX - Stage.size.width / 2 * scale, groundY - Stage.ground * scale - hop - lift)
@@ -879,15 +901,6 @@ final class StageModel: ObservableObject {
         cg.fillEllipse(in: CGRect(x: origin.x + bounds.midX * scale - shadowW / 2, y: groundY - 2.5,
                                   width: shadowW, height: 5))
 
-        // 데려간 동료는 러너가 0.25초 전에 있던 자리 뒤를 따라 걷고 뛰며, 러너가 보는 쪽을 함께 본다
-        if let companion = companionOverride ?? GameDecor.shared.companion {
-            drawBuddy(companion, cg, feetX: origin.x + bounds.midX * scale, lift: lift + hop, bodyWidth: bounds.width * scale,
-                      groundY: groundY, dt: dt, clock: clock, theme: theme)
-        } else {
-            buddyTrail.removeAll()
-            buddyX = nil
-        }
-
         // 몸 자리(화면 좌표)를 넘겨 코인 줍기·장애물 넘기·꼬리·발먼지를 맞춘다
         let screenBody = CGRect(x: origin.x + bounds.minX * scale, y: origin.y + bounds.minY * scale,
                                 width: bounds.width * scale, height: bounds.height * scale)
@@ -900,6 +913,18 @@ final class StageModel: ObservableObject {
                         speed: max(speed, walking ? 60 : 0))
         }
         extras.drawGround(cg, groundY: groundY, scroll: scroll, time: clock)
+        // 데려간 동료는 러너가 0.25초 전에 있던 자리 뒤를 따라 걷고 뛰며, 러너가 보는 쪽을 함께 본다.
+        // 꼬리·발먼지를 그린 뒤에 그려, 뒤따르는 동료가 효과에 덮이지 않고 러너처럼 효과 앞에 선다
+        if let companion = companionOverride ?? GameDecor.shared.companion {
+            drawBuddy(companion, cg, feetX: origin.x + bounds.midX * scale, lift: lift + hop, bodyWidth: bounds.width * scale,
+                      groundY: groundY, dt: dt, clock: clock, theme: theme)
+        } else {
+            buddyTrail.removeAll()
+            buddyX = nil
+        }
+        // 주변 효과는 몸 뒤로 지나가는 것을 먼저, 앞으로 지나가는 것을 러너 다음에 그려 몸을 감싼다
+        let aura = GameDecor.shared.equipped(.aura)
+        if let aura { GameFX.drawAura(aura, around: screenBody, time: clock, front: false, size: screenBody.height * 0.2, cg) }
 
         cg.saveGState()
         cg.translateBy(x: origin.x, y: origin.y)
@@ -922,6 +947,7 @@ final class StageModel: ObservableObject {
             effect.draw(in: cg, around: bounds, tint: .white)
         }
         cg.restoreGState()
+        if let aura { GameFX.drawAura(aura, around: screenBody, time: clock, front: true, size: screenBody.height * 0.2, cg) }
         extras.drawFront(cg, groundY: groundY, scroll: scroll, time: clock)
 
     }
@@ -1007,8 +1033,9 @@ final class StageModel: ObservableObject {
         let time = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 10_000)
         scroll = CGFloat(flight.game.x)
         let sky = Sky.at(hour: Sky.hourOverride ?? Calendar.current.component(.hour, from: date), space: false)
+        // 배경은 고른 것만 쓴다. 구역이 바뀌어도 배경을 바꾸지 않는다
         Backdrop.draw(cg, size: size, sky: sky, time: CGFloat(time), groundY: groundY, scroll: scroll, speed: speed,
-                      track: GameDecor.shared.equipped(.track) ?? flight.zoneTrack)
+                      track: GameDecor.shared.equipped(.track))
         flight.draw(cg, size: size, groundY: groundY, theme: theme, time: time)
     }
 

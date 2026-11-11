@@ -120,22 +120,8 @@ enum SpriteDisplay: Equatable {
             if front, critical, !compact { Emote.draw("exclamation", in: cg, around: bounds, pop: 1) }
             return
         }
-        // 효과는 모두 도트 그림(Assets/FX)이다. 속도는 발밑 먼지와 뒤로 남는 구름·별로 보인다
-        let feet = CGPoint(bounds.minX + 4, Stage.ground - 1.2)
+        // 속도는 걸음 빠르기로 보인다. 발밑 먼지·뒤로 남는 구름·별은 고르지 않은 꾸미기처럼 보여 그리지 않는다 (고른 발먼지·꼬리만 그린다)
         switch (self, front) {
-        case (.normal(.rainbow), false) where !menuBar:
-            for k in 0..<3 {
-                let local = (phase + CGFloat(k) / 3).truncatingRemainder(dividingBy: 1)
-                GameFX.drawSprite("rainbowStar", at: CGPoint(bounds.minX - 1.5 - local * 7, bounds.midY - 1 + CGFloat(k - 1) * 1.6),
-                                  height: 3.4 * (1 - local * 0.5), progress: 0, time: Double(phase) + Double(k) * 0.3,
-                                  alpha: 1 - local, cg)
-            }
-        case (.normal(.dashing), false) where !menuBar:
-            GameFX.drawSprite("puff", at: CGPoint(bounds.minX - 1.5, bounds.maxY - 2.5), height: 4.5,
-                              progress: (phase * 2).truncatingRemainder(dividingBy: 1), time: 0, cg)
-        case (.normal(.running), false) where !menuBar:
-            GameFX.drawSprite("smokePoff", at: feet, height: 3.6, progress: (phase * 2).truncatingRemainder(dividingBy: 1),
-                              time: 0, cg)
         case (.normal(.sleeping), true) where !compact:
             Emote.draw(phase < 0.5 ? "sleep" : "sleeps", in: cg, around: bounds, pop: 1, bob: sin(phase * tau) * 0.3)
         case (.alert, true) where !compact:

@@ -10,7 +10,7 @@ struct RunnerDecorView: View {
     @StateObject private var hover = HoveredRunner()
     @StateObject private var filter = SceneFilter()
 
-    private static let slots: [Cosmetic.Slot] = [.track, .trail, .dust, .crash]
+    private static let slots: [Cosmetic.Slot] = [.track, .trail, .aura, .dust, .crash]
 
     var body: some View {
         Group {
@@ -54,7 +54,8 @@ struct RunnerDecorView: View {
 
     private var hintText: String {
         if filter.companion { return "고른 펫이 러너 뒤를 따라 달려요. 다시 누르면 혼자 달려요." }
-        return filter.kind == .track ? "마우스를 올리면 무대에서 미리 봐요. 고른 배경을 다시 누르면 기본 배경으로 돌아가요."
+        if filter.kind == .aura { return "서 있어도 펫 둘레를 늘 감돌아요. 무대와 꺼낸 펫에서 보여요. 다시 누르면 떼요." }
+        return filter.kind == .track ? "누르면 무대 배경이 바뀌어요. 고른 배경을 다시 누르면 기본 배경으로 돌아가요."
             : "고른 것을 다시 누르면 떼요. 달릴 때와 게임에서 보여요."
     }
 
@@ -145,6 +146,7 @@ struct RunnerDecorView: View {
         case .trail: "wind"
         case .dust: "smoke.fill"
         case .crash: "burst.fill"
+        case .aura: "sparkles"
         }
     }
 
@@ -235,11 +237,8 @@ struct RunnerDecorView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { inside in
-            hover.update(item.rawValue, inside)
-            guard item.slot == .track else { return }
-            decor.tryingOn = inside ? item : nil
-        }
+        // 마우스를 올리면 칸 안 미리보기만 돌린다. 무대 배경은 눌러 고를 때만 바꾼다
+        .onHover { inside in hover.update(item.rawValue, inside) }
         .tip(on ? "다시 누르면 떼요" : "\(item.name) 쓰기")
         .accessibilityLabel("\(item.name), \(on ? "쓰는 중" : "쓰지 않음")")
     }
@@ -326,6 +325,12 @@ struct ItemPreview: View {
                     }
                 }
                 drawRunner(cg, centerX: runnerX, ground: ground, height: 40, theme: .auto, time: time)
+            case .aura:
+                // 서 있는 러너 둘레를 감돈다
+                let body = CGRect(x: size.width / 2 - 13, y: ground - 34, width: 26, height: 32)
+                GameFX.drawAura(item, around: body, time: time, front: false, size: 9, cg)
+                drawRunner(cg, centerX: size.width / 2, ground: ground, height: 40, theme: .auto, time: time, activity: .stand)
+                GameFX.drawAura(item, around: body, time: time, front: true, size: 9, cg)
             case .crash:
                 // 장애물에 부딪혀 1.6초마다 터진다
                 let center = CGPoint(x: size.width / 2, y: ground - 18)

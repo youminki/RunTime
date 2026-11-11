@@ -2,24 +2,9 @@
 http://creativecommons.org/publicdomain/zero/1.0/
 프레임마다 그림 영역만 남기고, 큰 그림은 줄이고, 긴 애니메이션은 프레임을 골라 줄였다. fx.json에 프레임 수와 반복 여부를 적었다.
 
-starburst      Tiny Speck       https://opengameart.org/content/item-popup-starburst
-ringBoom       BenHickling      https://opengameart.org/content/ring-explosion
-boom           BenHickling      https://opengameart.org/content/explosion-7
-pixelBoom      9KeyStudio       https://opengameart.org/content/pixel-art-explosion-animation
-fireBlast, firePlume, smokePoff
-               Reactorcore      https://opengameart.org/content/fire-smoke-animations
-plasmaBubble, plasmaSparkle, plasmaPuff
-               Reactorcore      https://opengameart.org/content/plasma-electric-effect-animations
-puff           Aidan_Walker     https://opengameart.org/content/smoke-puff
-rainbowStar    Loel             https://opengameart.org/content/life-heart-and-rainbow-star-gifs
-pumpingHeart   Lyricsz          https://opengameart.org/content/pumping-heart-0
-gemHeart       AliHamieh        https://opengameart.org/content/gem-heartanimated
-coin           rzuf             https://opengameart.org/content/spinning-coin-anim
-water          Cethiel          https://opengameart.org/content/water-magic-effect
-pure           Cethiel          https://opengameart.org/content/pure-projectile-magic-effect
-candyPop_*, candy/
-               lumimae          https://opengameart.org/content/candy-pack-1
 balloon*       Game Dev Alliance https://opengameart.org/content/animated-emote-bubbles
 emote/         Kenney           https://opengameart.org/content/emotes-pack (Pixel Style 1)
 bird*          Mantis           https://opengameart.org/content/update-animated-birds-character-sheet
 slime          Graveheartart    https://opengameart.org/content/kawaii-slime-sprites
+
+꼬리·발먼지·부딪힘과 동작 효과(하트, 별, 연기, 사탕 등)는 이 앱이 직접 그린 도트 그림이다 (Game/PixelFX.swift).

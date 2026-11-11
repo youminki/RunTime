@@ -22,7 +22,7 @@ struct SheetRig: CharacterRig {
         // 원하는 줄이 비었으면 뒤의 줄을 쓴다
         let order: [String]
         switch pose.activity {
-        case .walk, .run: order = pose.jump == nil ? ["run", "idle"] : ["jump", "run", "idle"]
+        case .walk, .run: order = pose.jump != nil ? ["jump", "run", "idle"] : pose.leftward ? ["runLeft", "run", "idle"] : ["run", "idle"]
         case .stand:
             order = pose.wave != nil ? ["wave", "idle", "run"] : pose.review != nil ? ["review", "idle", "run"] : ["idle", "run"]
         // 한도 80%는 기다리는 줄(고개 갸웃), 95%는 슬픔 줄(고개 숙임)
@@ -43,7 +43,7 @@ struct SheetRig: CharacterRig {
         let unit = FittedRig.targetHeight / CGFloat(max(meta.h, 1))
         let base = CGRect(x: FittedRig.targetCenterX - CGFloat(meta.w) * unit / 2, y: Stage.ground - FittedRig.targetHeight,
                           width: CGFloat(meta.w) * unit, height: FittedRig.targetHeight)
-        let rect = meta.rects?[row].flatMap { r in
+        var rect = meta.rects?[row].flatMap { r in
             r.count == 4 ? CGRect(x: base.minX + CGFloat(r[0]) * unit, y: base.minY + CGFloat(r[1]) * unit,
                                   width: CGFloat(r[2]) * unit, height: CGFloat(r[3]) * unit) : nil
         } ?? base
@@ -51,8 +51,12 @@ struct SheetRig: CharacterRig {
         let c = frames.content
         let content = CGRect(x: rect.minX + c.minX * rect.width, y: rect.minY + c.minY * rect.height,
                              width: c.width * rect.width, height: c.height * rect.height)
+        // 왼쪽 달리기 줄은 이미 왼쪽을 본다. 장면이 그림 영역 가운데를 축으로 다시 뒤집으므로, 같은 축으로 미리 뒤집어
+        // 두면 시트에 그린 자리 그대로 나온다 (기준 칸 가운데로 뒤집으면 그 차이의 두 배만큼 옆으로 밀린다)
+        let mirrored = row == "runLeft"
+        if mirrored { rect.origin.x = 2 * content.midX - rect.maxX }
         s.add(Part(path: CGPath(rect: content, transform: nil), fill: false, stroke: 0, role: .body,
-                   image: image, imageRect: rect))
+                   image: image, imageRect: rect, imageMirrored: mirrored))
     }
 }
 
@@ -73,7 +77,7 @@ enum SheetFrames {
         let content: CGRect
     }
 
-    static let rows = ["idle", "run", "sad", "wait", "wave", "jump", "review"]
+    static let rows = ["idle", "run", "runLeft", "sad", "wait", "wave", "jump", "review"]
 
     private static var metas: [URL: Meta] = [:]
     private static var cache: [String: Row] = [:]
@@ -240,6 +244,17 @@ enum PetdexAtlas {
             }
         }
         guard var runBox = scanned["run"]?.box else { throw ExtractError.empty }
+        // 오른쪽 달리기(1줄)가 있으면 왼쪽 달리기(2줄)도 쓴다. 시트에 따라 2줄에 다른 자세(웅크리기 등)를 그려 둔 것이 있어
+        // 칸 수와 키·폭이 달리기와 비슷할 때만 쓴다 (2026-11-12 시트 6장 비교: 징크스·도라에몽은 왼쪽 달리기, 기유는 웅크린 자세)
+        if sources["run"]! == (1, false) {
+            let left = scan(2)
+            if let box = left.box, left.columns.count >= 4,
+               Double(box.height) >= Double(runBox.height) * 0.85,
+               (0.7...1.4).contains(Double(box.maxX - box.minX + 1) / Double(runBox.maxX - runBox.minX + 1)) {
+                sources["runLeft"] = (2, false)
+                scanned["runLeft"] = left
+            }
+        }
         if sources["run"]!.mirrored {
             runBox = Box(minX: cellW - 1 - runBox.maxX, minY: runBox.minY, maxX: cellW - 1 - runBox.minX, maxY: runBox.maxY)
         }
@@ -268,7 +283,7 @@ enum PetdexAtlas {
                 let k = CGFloat(frameH) / r.height
                 crops[name] = (r, CGSize(width: r.width * k, height: CGFloat(frameH)))
                 frameW = max(frameW, Int((r.width * k).rounded(.up)))
-            } else if !perRow, ["sad", "wait", "wave", "jump", "review"].contains(name), let rowBox {
+            } else if !perRow, ["runLeft", "sad", "wait", "wave", "jump", "review"].contains(name), let rowBox {
                 // 서 있기·달리기보다 넓게 그린 줄(누운 자세, 머리 위 표시, 든 손)은 칸을 넓히되 배율은 그대로 둔다
                 let r = padded(shared.union(rowBox))
                 crops[name] = (r, CGSize(width: (r.width * s).rounded(.up), height: (r.height * s).rounded(.up)))
@@ -315,6 +330,7 @@ enum PetdexAtlas {
         // 줄이 빈 시트도 본 것으로 남겨 다시 받지 않게 한다
         counts["jump"] = counts["jump"] ?? 0
         counts["review"] = counts["review"] ?? 0
+        counts["runLeft"] = counts["runLeft"] ?? 0
         let meta = SheetFrames.Meta(w: frameW, h: frameH, counts: counts, rects: rects.isEmpty ? nil : rects)
         try JSONEncoder().encode(meta).write(to: folder.appendingPathComponent("frames.json"))
     }

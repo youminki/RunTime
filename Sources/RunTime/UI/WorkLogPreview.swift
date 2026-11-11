@@ -212,8 +212,9 @@ struct WorkLogPreview: View {
             }
             if isPlan {
                 planEditor
-            } else if (page.mode == .day), let draft = progressDraft {
-                progressEditor(draft)
+            } else if page.mode == .day, !text.isEmpty {
+                // 진행 사항도 바로 고쳐 쓴다. 고치기 전과 고친 뒤가 같은 칸이라 글을 치는 도중에 칸이 바뀌지 않는다
+                progressEditor(progressDraft ?? (generatedProgress, false))
             } else {
                 ReportText(text: text.isEmpty ? "적은 일이 여기 보고서 꼴로 만들어집니다." : text, placeholder: text.isEmpty)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
@@ -282,18 +283,22 @@ struct WorkLogPreview: View {
                     .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
                     .textSelection(.enabled)
                 ReportText(text: draft.text, placeholder: false) { text in
-                    guard let edit = page.progressEdits[page.day] else { return }
-                    page.progressEdits[page.day] = (text, edit.base, edit.polished)
+                    page.editProgress(text, day: page.day, generated: generatedProgress)
                 }
                 .frame(minHeight: 140)
             }
             .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(WL.canvas))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(WL.border, lineWidth: 1))
             HStack(spacing: 10) {
-                Text(stale ? "다듬은 뒤 일지가 바뀌었습니다" : "다듬은 초안 · 올리기 전에 확인하세요")
+                let edit = page.progressEdits[page.day]
+                Text(edit == nil ? "눌러서 고쳐 쓸 수 있습니다 · 고치지 않으면 일지를 따라갑니다"
+                     : stale ? "고친 뒤 일지가 바뀌었습니다"
+                     : edit?.polished == edit?.base ? "고쳐 쓴 글 · 올리기 전에 확인하세요" : "다듬은 초안 · 올리기 전에 확인하세요")
                     .font(WL.caption).foregroundStyle(stale ? WL.waiting : .secondary)
                 Spacer()
-                Button("일지로 다시 만들기") { page.progressEdits[page.day] = nil }.buttonStyle(TextLinkButtonStyle())
+                if edit != nil {
+                    Button("일지로 다시 만들기") { page.progressEdits[page.day] = nil }.buttonStyle(TextLinkButtonStyle())
+                }
             }
         }
     }
@@ -357,12 +362,7 @@ struct WorkLogPreview: View {
                     .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, -9)
                     .textSelection(.enabled)
                 ReportText(text: savedPlan ?? generated, placeholder: false) { text in
-                    let base = page.planEdits[page.day]?.base ?? generated
-                    page.planEdits[page.day] = text == generated ? nil : (text, base)
-                    // 지난날을 고쳐도 그 뒤에 저장한 계획은 그대로 둔다
-                    if page.planTemplate.map({ $0.day <= page.day }) ?? true {
-                        page.planTemplate = text == generated ? nil : (page.day, text)
-                    }
+                    page.editPlan(text, day: page.day, generated: generated)
                 }
                 .frame(minHeight: 140)
             }

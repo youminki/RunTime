@@ -409,6 +409,39 @@ if let index = CommandLine.arguments.firstIndex(of: "--hero-gif") {
     exit(0)
 }
 
+// 좌우 점검 (`--sheet-facing <잘라 둔 폴더> <out.png>`): 달리기 네 장면을 오른쪽(윗줄)과 왼쪽(아랫줄)으로 그려,
+// 왼쪽 달리기 줄이 있는 시트가 뒤집은 그림이 아니라 그 줄로 그려지는지 본다
+if let index = CommandLine.arguments.firstIndex(of: "--sheet-facing") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    guard args.count >= 2, let rig = SheetRig(folder: URL(fileURLWithPath: args[0])) else {
+        print("usage: --sheet-facing <folder> <out.png>")
+        exit(1)
+    }
+    let fitted = FittedRig(rig), scale: CGFloat = 4, cell = CGSize(width: Stage.size.width * scale, height: Stage.size.height * scale)
+    let cg = CGContext(data: nil, width: Int(cell.width * 4), height: Int(cell.height * 2), bitsPerComponent: 8, bytesPerRow: 0,
+                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    cg.setFillColor(NSColor(white: 0.85, alpha: 1).cgColor)
+    cg.fill(CGRect(x: 0, y: 0, width: cell.width * 4, height: cell.height * 2))
+    // 장면은 y 아래 좌표로 그린다
+    cg.translateBy(x: 0, y: cell.height * 2)
+    cg.scaleBy(x: 1, y: -1)
+    for (row, facing) in [CGFloat(1), -1].enumerated() {
+        for k in 0..<4 {
+            var transform = CharacterTransform()
+            transform.scaleX = facing
+            let scene = CharacterScene(rig: fitted, pose: CharacterPose(activity: .run, phase: CGFloat(k) / 4), transform: transform)
+            cg.saveGState()
+            cg.translateBy(x: CGFloat(k) * cell.width, y: CGFloat(row) * cell.height)
+            cg.scaleBy(x: scale, y: scale)
+            scene.draw(in: cg, look: CharacterLook(rich: true, palette: rig.palette, tint: .white, outline: 0.36))
+            cg.restoreGState()
+        }
+    }
+    try? NSBitmapImageRep(cgImage: cg.makeImage()!).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: args[1]))
+    print("saved: \(args[1])")
+    exit(0)
+}
+
 // 효과 점검: 상태·반응마다 무대와 메뉴바 장면을 PNG로 저장하고 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--stage-shots") {
     let args = Array(CommandLine.arguments.dropFirst(index + 1))

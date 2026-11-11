@@ -37,6 +37,38 @@ final class WorkLogPage: ObservableObject {
         didSet { Self.saveEdits(progressEdits.mapValues { [$0.text, $0.base, $0.polished] }, "workLog.progressEdits") }
     }
 
+    /// 앱의 업무 일지 창과 펫 말풍선이 함께 쓴다. 한쪽에서 고친 보고서가 다른 쪽에도 바로 보인다.
+    static let shared = WorkLogPage()
+
+    /// 그날 올릴 진행 예정 사항. 고쳐 쓴 글, 앞선 날 저장한 계획 순으로 쓴다.
+    func savedPlan(for day: String) -> String? {
+        planEdits[day]?.text ?? planTemplate.flatMap { $0.day <= day ? $0.text : nil }
+    }
+
+    /// 그날 올릴 고쳐 쓴(다듬은) 진행 사항. 손대지 않은 초안이 일지보다 낡았으면 버린다.
+    func savedProgress(for day: String, generated: String) -> String? {
+        guard let edit = progressEdits[day] else { return nil }
+        return edit.base != generated && edit.text == edit.polished ? nil : edit.text
+    }
+
+    /// 진행 예정 사항을 고쳐 쓴다. 일지에서 만든 글과 같아지면 고친 글을 지운다.
+    func editPlan(_ text: String, day: String, generated: String) {
+        let base = planEdits[day]?.base ?? generated
+        planEdits[day] = text == generated ? nil : (text, base)
+        // 지난날을 고쳐도 그 뒤에 저장한 계획은 그대로 둔다
+        if planTemplate.map({ $0.day <= day }) ?? true {
+            planTemplate = text == generated ? nil : (day, text)
+        }
+    }
+
+    /// 진행 사항을 고쳐 쓴다. 다듬지 않고 처음 고치면 일지에서 만든 글을 다듬은 글 자리에 두어,
+    /// 고친 것을 다 되돌린 채 일지가 바뀌면 일지를 다시 따라가게 한다.
+    func editProgress(_ text: String, day: String, generated: String) {
+        let edit = progressEdits[day]
+        let base = edit?.base ?? generated, polished = edit?.polished ?? generated
+        progressEdits[day] = text == generated && polished == generated ? nil : (text, base, polished)
+    }
+
     /// 고쳐 쓴 글은 앱을 끄거나 자동 업데이트로 다시 켜도 남아야 한다.
     private static func savedEdits(_ key: String, fields: Int = 2) -> [String: [String]] {
         (UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] ?? [:]).filter { $0.value.count == fields }

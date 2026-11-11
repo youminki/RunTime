@@ -22,6 +22,8 @@ struct CharacterScene {
     private(set) var fit = CGAffineTransform.identity
 
     init(rig: CharacterRig, pose: CharacterPose, transform: CharacterTransform = .init()) {
+        var pose = pose
+        pose.leftward = transform.scaleX < 0
         let sketch = Sketch(pose: pose)
         rig.draw(sketch)
         parts = sketch.parts
@@ -85,7 +87,8 @@ struct CharacterScene {
         // 그림 러너의 맨 위는 귀·머리카락 끝이라 조금 내려 머리로 본다
         if let part = parts.first(where: { $0.image != nil }), let image = part.image, let found = ImageEyes.find(in: image) {
             let r = part.imageRect
-            let eye = CGPoint(x: r.minX + found.center.x * r.width, y: r.minY + found.center.y * r.height)
+            let eye = CGPoint(x: r.minX + (part.imageMirrored ? 1 - found.center.x : found.center.x) * r.width,
+                              y: r.minY + found.center.y * r.height)
             let top = CGPoint(x: eye.x, y: bounds.minY + bounds.height * 0.1)
             return HeadAnchor(eye: eye.applying(t), top: top.applying(t), width: bounds.width * 0.45 * scale, tilt: tilt,
                               eyeSpan: found.span * r.width * scale)
@@ -196,6 +199,10 @@ struct CharacterScene {
         cg.translateBy(x: rect.midX, y: rect.maxY)
         cg.rotate(by: part.imageRotation)
         cg.translateBy(x: -rect.width / 2, y: 0)
+        if part.imageMirrored {
+            cg.translateBy(x: rect.width, y: 0)
+            cg.scaleBy(x: -1, y: 1)
+        }
         cg.scaleBy(x: 1, y: -1)   // y 아래 좌표라 그림을 뒤집어 그린다
         // 작은 원본(도트 그림)은 부드럽게 키우면 뭉개진다
         cg.interpolationQuality = image.height < 80 ? .none : .high

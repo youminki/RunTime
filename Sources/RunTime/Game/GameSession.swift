@@ -223,9 +223,9 @@ final class GameSession {
         finished = false
         runID += 1
         particles.removeAll()
+        trail.removeAll()
         popups.removeAll()
         recordBanner = 0
-        trail.removeAll()
         skyTo = nil
         zoneBanner = nil
     }
@@ -249,8 +249,8 @@ final class GameSession {
         if let current = notice { notice = current.life > k ? (current.text, current.life - k) : nil }
         if let current = zoneBanner { zoneBanner = current.life > k ? (current.text, current.life - k) : nil }
         skyBlend = min(1, skyBlend + k / 1.5)
-        updateTrail(k)
         updateBuddy()
+        updateTrail(k)
         landBounce = max(0, landBounce - k * 7)
         for i in coinFlyers.indices { coinFlyers[i].t += k / 0.45 }
         coinFlyers.removeAll { $0.t >= 1 }

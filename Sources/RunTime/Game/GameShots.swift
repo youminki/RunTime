@@ -55,11 +55,11 @@ enum GameShots {
             try shot("2-play-\(k)")
             if game.phase == .over { break }
         }
-        // 꾸미기를 단 모습 (꼬리 셋, 발먼지)
+        // 꾸미기를 단 모습 (꼬리, 발먼지)
         let looks: [(trail: Cosmetic, dust: Cosmetic)] = [
-            (.rainbowStarTrail, .starDust), (.fireTrail, .smokeDust), (.heartTrail, .heartDust), (.gemTrail, .sparkleDust),
-            (.candyTrail, .candyDust), (.smokeTrail, .puffDust), (.coinTrail, .coinDust), (.magicTrail, .bubbleDust),
-            (.bubbleTrail, .sparkleDust), (.waterTrail, .puffDust), (.cometTrail, .starDust), (.swirlTrail, .candyDust),
+            (.rainbowStarTrail, .starDust), (.fireTrail, .smokeDust), (.heartTrail, .heartDust), (.noteTrail, .sparkleDust),
+            (.candyTrail, .heartDust), (.petalTrail, .petalDust), (.coinTrail, .starDust), (.leafTrail, .leafDust),
+            (.bubbleTrail, .dropDust), (.snowTrail, .snowDust), (.rainbowTrail, .puffDust), (.fireflyTrail, .sparkleDust),
         ]
         session.companionOverride = PetdexStore.shared.pets.first.flatMap(PetdexStore.shared.character(for:))
         for (item, dust) in looks where game.phase == .playing {

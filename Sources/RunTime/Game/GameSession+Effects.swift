@@ -23,9 +23,10 @@ extension GameSession {
 
     // MARK: 꾸미기
 
-    /// 발을 디딜 때 먼지. 발먼지를 고르면 그 색과 모양으로.
+    /// 발을 디딜 때 먼지. 고른 발먼지로만 인다.
     func dust(at feet: CGPoint, landing: Bool) {
-        spray(GameFX.dust(GameDecor.shared.equipped(.dust), landing: landing), at: feet)
+        guard let item = GameDecor.shared.equipped(.dust) else { return }
+        spray(GameFX.dust(item, landing: landing), at: feet)
     }
 
     /// 부딪힌 순간. 기본은 흰 점, 효과를 고르면 그 모양으로 터진다.
@@ -41,22 +42,6 @@ extension GameSession {
               spread: spray.spread, size: spray.size, gravity: -spray.gravity)
     }
 
-    func updateTrail(_ k: CGFloat) {
-        guard game.phase == .playing, GameDecor.shared.equipped(.trail) != nil else {
-            if !trail.isEmpty { trail.removeFirst() }
-            return
-        }
-        let shift = CGFloat(game.speed) * k
-        for i in trail.indices { trail[i].x -= shift }
-        let height = Self.runnerHeight * (game.isDucking ? 0.3 : 0.45)
-        trail.append(CGPoint(runnerLeft + 2, CGFloat(game.runnerY + height)))
-        if trail.count > 22 { trail.removeFirst(trail.count - 22) }
-    }
-
-    func drawTrail(_ cg: CGContext, groundY: CGFloat, time: Double) {
-        guard let item = GameDecor.shared.equipped(.trail) else { return }
-        GameFX.drawTrail(item, points: trail.map { CGPoint($0.x, groundY - $0.y) }, time: time, cg)
-    }
 
     // MARK: 동료
 
@@ -74,6 +59,23 @@ extension GameSession {
     }
 
     static let buddyDelay = 0.15
+
+    func updateTrail(_ k: CGFloat) {
+        guard game.phase == .playing, GameDecor.shared.equipped(.trail) != nil else {
+            if !trail.isEmpty { trail.removeFirst() }
+            return
+        }
+        let shift = CGFloat(game.speed) * k
+        for i in trail.indices { trail[i].x -= shift }
+        let height = Self.runnerHeight * (game.isDucking ? 0.3 : 0.45)
+        trail.append(CGPoint(runnerLeft + 2, CGFloat(game.runnerY + height)))
+        if trail.count > 22 { trail.removeFirst(trail.count - 22) }
+    }
+
+    func drawTrail(_ cg: CGContext, groundY: CGFloat, time: Double) {
+        guard let item = GameDecor.shared.equipped(.trail) else { return }
+        GameFX.drawTrail(item, points: trail.map { CGPoint($0.x, groundY - $0.y) }, time: time, cg)
+    }
 
     func drawBuddy(_ cg: CGContext, groundY: CGFloat, time: Double) {
         guard let companion, entrance >= 1 else { return }

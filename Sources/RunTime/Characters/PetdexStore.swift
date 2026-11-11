@@ -363,10 +363,10 @@ final class PetdexStore: ObservableObject {
         }
     }
 
-    /// 점프·검토 줄이 생기기 전에 받은 펫은 목록을 받을 때 한 번 다시 받아 새 줄을 채운다.
+    /// 점프·검토·왼쪽 달리기 줄이 생기기 전에 받은 펫은 목록을 받을 때 한 번 다시 받아 새 줄을 채운다.
     /// 옆 폴더에 풀어 두었다가 성공했을 때만 바꿔 끼워, 실패해도 쓰던 펫은 그대로 남는다.
     private func upgradeOldPets() {
-        for pet in pets where SheetFrames.meta(Self.folder(pet.slug))?.counts["review"] == nil
+        for pet in pets where SheetFrames.meta(Self.folder(pet.slug)).map({ $0.counts["review"] == nil || $0.counts["runLeft"] == nil }) ?? true
             && !installing.contains(pet.slug) {
             guard let entry = entries.first(where: { $0.slug == pet.slug }), let url = URL(string: entry.spritesheetUrl),
                   Self.isPetdexURL(url) else { continue }

@@ -43,14 +43,8 @@ final class FlightSession {
     /// 러너 왼쪽 끝의 화면 x. 앞을 멀리 보게 왼쪽에 둔다.
     static let runnerX: CGFloat = 46
     private static let tile: CGFloat = 16
-    /// 구역마다 바꾸는 블록 그림과 배경. 배경을 직접 고르지 않았을 때 쓴다.
+    /// 구역마다 바꾸는 블록 그림. 배경은 고른 것만 쓴다.
     private static let themes = ["spring", "beach", "autumn", "snow"]
-    private static let tracks: [Cosmetic] = {
-        let groups = SceneFilter.groups
-        return ["하늘", "바다", "숲·눈", "사막", "도시·밤", "언덕·마을"].compactMap { name in
-            groups.first { $0.name == name }?.items.first
-        }
-    }()
 
     init(difficulty: FlightDifficulty, character: RunnerCharacter, live: Bool = true) {
         game = FlightGame(difficulty: difficulty, best: live ? FlightRecords.best(difficulty) : 0)
@@ -67,7 +61,6 @@ final class FlightSession {
     func use(_ character: RunnerCharacter) { self.character = character }
 
     var isPlaying: Bool { game.phase == .playing }
-    var zoneTrack: Cosmetic? { Self.tracks.isEmpty ? nil : Self.tracks[(game.zoneNumber - 1) % Self.tracks.count] }
     private var theme: String { Self.themes[(game.zoneNumber - 1) % Self.themes.count] }
 
     func press() {
@@ -508,7 +501,7 @@ enum FlightShots {
             context.withCGContext { cg in
                 let sky = Sky.at(hour: 12, space: false)
                 Backdrop.draw(cg, size: size, sky: sky, time: 0, groundY: 135, scroll: CGFloat(session.game.x), speed: 0,
-                              track: GameDecor.shared.equipped(.track) ?? session.zoneTrack)
+                              track: GameDecor.shared.equipped(.track))
                 session.draw(cg, size: size, groundY: 135, theme: .auto, time: session.game.x / 200)
             }
             RunnerStage.drawOverlay(session.overlay(size: size), in: &context)
