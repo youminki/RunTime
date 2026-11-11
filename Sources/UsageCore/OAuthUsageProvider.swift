@@ -94,8 +94,10 @@ public final class OAuthUsageProvider {
     static let refreshOn401Cooldown: TimeInterval = 30 * 60
 
     // 바깥과 닿는 일. 시험에서 바꿔 끼운다.
-    var refreshLive: (_ credentials: Data, _ clientVersion: String?) async -> ClaudeLogin.RefreshResult = { part, version in
-        await ClaudeLogin.refresh(part, clientVersion: version)
+    /// 관문은 `tokenGate`를 넘긴다. 시험에서 바꿔 끼운 관문이 실제 갱신에도 쓰이게 한다.
+    var refreshLive: (_ credentials: Data, _ clientVersion: String?, _ gate: RateLimitGate) async -> ClaudeLogin.RefreshResult = {
+        part, version, gate in
+        await ClaudeLogin.refresh(part, clientVersion: version, gate: gate)
     }
     var readCredentials: () -> Data? = { OAuthUsageProvider.fileCredentials() ?? OAuthUsageProvider.keychainCredentials() }
     var writeCredentials: (Data) -> Bool = { ClaudeLogin.setLiveCredentials($0) }
@@ -287,7 +289,7 @@ public final class OAuthUsageProvider {
                 lock.release()
                 return nil
             }
-            let result = await refreshLive(part, clientVersion)
+            let result = await refreshLive(part, clientVersion, tokenGate)
             Self.log.info("지금 계정 토큰 새로 받기: \(Self.describe(result), privacy: .public)")
             return await onCredentialQueue {
                 defer { lock.release() }

@@ -110,7 +110,7 @@ struct LiveTokenRefreshTests {
         provider.writeCredentials = { box.written.append($0); box.credentials = $0; return true }
         provider.currentAccountID = { "acc" }
         provider.lockPaths = { [dir.appendingPathComponent("a.lock"), dir.appendingPathComponent("b.lock")] }
-        provider.refreshLive = { _, _ in box.refreshCalls += 1; return refresh }
+        provider.refreshLive = { _, _, _ in box.refreshCalls += 1; return refresh }
         provider.send = { token, _ in
             box.sent.append(token)
             guard accepts.contains(token) else { throw OAuthUsageProvider.ProviderError.http(401) }
@@ -253,7 +253,7 @@ struct LiveTokenRefreshEdgeTests {
         provider.currentAccountID = { "acc" }
         provider.lockPaths = { [dir.appendingPathComponent("a.lock"), dir.appendingPathComponent("b.lock")] }
         provider.clock = { clock.now }
-        provider.refreshLive = { _, _ in box.refreshCalls += 1; return refresh() }
+        provider.refreshLive = { _, _, _ in box.refreshCalls += 1; return refresh() }
         provider.send = { token, _ in box.sent.append(token); throw OAuthUsageProvider.ProviderError.http(401) }
         return provider
     }
@@ -400,7 +400,7 @@ struct LiveTokenRefreshLockHoldTests {
         }
         provider.currentAccountID = { "acc" }
         provider.lockPaths = { [dir.appendingPathComponent("a.lock"), dir.appendingPathComponent("b.lock")] }
-        provider.refreshLive = { _, _ in box.refreshCalls += 1; return await refresh() }
+        provider.refreshLive = { _, _, _ in box.refreshCalls += 1; return await refresh() }
         provider.send = { token, _ in
             box.sent.append(token)
             guard token == "new" else { throw OAuthUsageProvider.ProviderError.http(401) }
@@ -504,5 +504,42 @@ struct RateLimitGateTests {
         #expect(RateLimitGate.retryAfter(date, now: base) == 120)
         let none = try #require(HTTPURLResponse(url: url, statusCode: 429, httpVersion: nil, headerFields: [:]))
         #expect(RateLimitGate.retryAfter(none) == nil)
+    }
+}
+
+struct OfficialRetryTests {
+    typealias Failure = OAuthUsageProvider.ProviderError
+
+    @Test func tokenProblemsWaitForANewToken() {
+        for error in [Failure.http(401), .http(403), .tokenNotFound, .loginRequired, .refreshLimited(until: Date())] {
+            #expect(OfficialRetry.isTokenProblem(error))
+        }
+        for error: Error in [Failure.http(429), Failure.http(500), Failure.badResponse, URLError(.notConnectedToInternet)] {
+            #expect(!OfficialRetry.isTokenProblem(error))
+        }
+    }
+
+    @Test func activityRefetchesAtMostOncePerMinute() {
+        let now = Date()
+        #expect(OfficialRetry.shouldRefetchOnActivity(tokenStalled: true, newEvents: 3, lastAttempt: now.addingTimeInterval(-61), now: now))
+        #expect(OfficialRetry.shouldRefetchOnActivity(tokenStalled: true, newEvents: 1, lastAttempt: nil, now: now))
+        // 1분 안에 또 묻지 않는다 (거절된 토큰이면 이것도 요청이다)
+        #expect(!OfficialRetry.shouldRefetchOnActivity(tokenStalled: true, newEvents: 3, lastAttempt: now.addingTimeInterval(-30), now: now))
+        // 새 기록이 없거나 토큰 문제가 아니면 정기 조회를 기다린다
+        #expect(!OfficialRetry.shouldRefetchOnActivity(tokenStalled: true, newEvents: 0, lastAttempt: nil, now: now))
+        #expect(!OfficialRetry.shouldRefetchOnActivity(tokenStalled: false, newEvents: 3, lastAttempt: nil, now: now))
+    }
+
+    @Test func retriesWhenTheLimitLifts() {
+        let now = Date()
+        let gate = RateLimitGate(first: 600, maximum: 1800)
+        // 관문이 그새 풀렸으면 정기 조회가 받는다
+        #expect(OfficialRetry.retryAt(after: Failure.http(429), usageGate: gate, now: now) == nil)
+        let until = gate.hit(now: now)
+        #expect(OfficialRetry.retryAt(after: Failure.http(429), usageGate: gate, now: now) == until)
+        let lifted = now.addingTimeInterval(120)
+        #expect(OfficialRetry.retryAt(after: Failure.refreshLimited(until: lifted), usageGate: gate, now: now) == lifted)
+        #expect(OfficialRetry.retryAt(after: Failure.refreshLimited(until: now.addingTimeInterval(-1)), usageGate: gate, now: now) == nil)
+        #expect(OfficialRetry.retryAt(after: Failure.http(401), usageGate: gate, now: now) == nil)
     }
 }

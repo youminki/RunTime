@@ -327,10 +327,10 @@ final class UsageEngine: ObservableObject {
         }
         // 토큰 문제로 막힌 동안 Claude Code가 요청을 보냈으면 Claude Code가 토큰을 새로 받았을 수 있다.
         // 다음 정기 조회(최대 3분)를 기다리지 않고 키체인을 다시 읽는다
-        // 토큰이 계속 거절되면 이 조회도 요청이라 1분에 한 번까지만 한다
-        if tokenStalled, !scanned.isEmpty, now.timeIntervalSince(lastOfficialAttempt ?? .distantPast) >= 60 {
+        if OfficialRetry.shouldRefetchOnActivity(tokenStalled: tokenStalled, newEvents: scanned.count,
+                                                 lastAttempt: lastOfficialAttempt, now: now) {
             provider.invalidateCachedToken()
-            fetchOfficial(minInterval: 60)
+            fetchOfficial(minInterval: OfficialRetry.activityRefetchInterval)
         }
         let finished = turnDetector.finishedTurns(in: scanned, now: now)
         store.add(scanned)
@@ -540,12 +540,9 @@ final class UsageEngine: ObservableObject {
             publishOfficial(usage, status: .live)
         case .failure(let error):
             // 실패해도 앱은 죽지 않는다 (§8). 유예 시간 동안은 직전 값, 그 뒤로는 게이지를 비운다.
-            // 풀리는 때에 맞춰 다시 받는다. 그새 풀렸으면 정기 조회가 받는다
-            if case OAuthUsageProvider.ProviderError.http(429) = error, let until = RateLimitGate.usage.blockedUntil() {
-                scheduleRetry(at: until)
-            }
-            if case OAuthUsageProvider.ProviderError.refreshLimited(let until) = error { scheduleRetry(at: until) }
-            tokenStalled = Self.isTokenProblem(error)
+            // 요청 제한이면 풀리는 때에 맞춰 다시 받는다. 그새 풀렸으면 정기 조회가 받는다
+            if let until = OfficialRetry.retryAt(after: error) { scheduleRetry(at: until) }
+            tokenStalled = OfficialRetry.isTokenProblem(error)
             let reason = Self.describe(error)
             // 실패가 이어지는 동안은 까닭이 바뀔 때만 남긴다
             if reason != lastOfficialFailure { Diagnostics.record("사용량", "공식 조회 실패: \(reason)") }
@@ -569,14 +566,6 @@ final class UsageEngine: ObservableObject {
         formatter.locale = Locale(identifier: "ko_KR")
         formatter.dateFormat = "H:mm"
         return formatter.string(from: date)
-    }
-
-    static func isTokenProblem(_ error: Error) -> Bool {
-        switch error as? OAuthUsageProvider.ProviderError {
-        // /login을 다시 하면 저장소 토큰이 바뀌어 다음 조회에서 풀린다
-        case .http(401)?, .http(403)?, .refreshLimited?, .tokenNotFound?, .loginRequired?: return true
-        default: return false
-        }
     }
 
     /// workQueue 전용. 요청 제한이 풀리면 다음 정기 조회(최대 3분)를 기다리지 않고 바로 다시 받는다.
