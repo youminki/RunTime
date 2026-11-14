@@ -793,7 +793,8 @@ final class DesktopPet {
         if panelHasKeys, !holding, now.timeIntervalSince(lastControl) > 4, drag == nil { releaseKeyboard() }
         // 펫 몸 위에서만 클릭을 받고, 나머지는 뒤 창으로 지나가게 한다
         updateHover(now: now)
-        panel?.ignoresMouseEvents = drag == nil && !pressing && !hovering && !menuOpen
+        // 옵션 창이 떠 있어도 몸 밖 클릭은 뒤 앱으로 보낸다 (창 전체가 받으면 옆 단추가 눌리지 않고 쓰다듬기가 된다)
+        panel?.ignoresMouseEvents = drag == nil && !pressing && !hovering
         // 머무는 펫은 늘 자리(free)를 갖고 있어, 떨어지거나 끄는 중일 때만 바쁘게 그린다
         let floating = free != nil && !(drag == nil && modeProvider() == .pinned && !settling)
         let busy = drag != nil || floating || lift > 0 || hovering || held.left || held.right || held.up || held.down || trick != nil
@@ -1495,8 +1496,8 @@ enum DesktopPetCheck {
                 start = pet.position
             }),
             (0.6, {
-                check("오른쪽 클릭 메뉴가 떠 있는 동안은 걷지 않는다 (\(Int(abs(pet.position.x - start.x)))pt)",
-                      abs(pet.position.x - start.x) < 1 && pet.takesClicks)
+                check("오른쪽 클릭 메뉴가 떠 있는 동안은 걷지 않고 몸 밖 클릭은 뒤로 보낸다 (\(Int(abs(pet.position.x - start.x)))pt)",
+                      abs(pet.position.x - start.x) < 1 && !pet.takesClicks)
                 pet.menu(open: false)
                 // 오른쪽 클릭: 펫 옆에 옵션 창이 뜨고, 떠 있는 동안 멈추고, 움직임을 고르면 닫히지 않고 바로 바뀐다
                 display = .normal(.dashing)

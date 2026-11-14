@@ -75,3 +75,12 @@ struct UsageAlertsTests {
                 == [])
     }
 }
+
+@Suite struct LimitAlertAccountTests {
+    @Test func switchingAccountsDoesNotRefireTheSameWindow() {
+        var tracker = LimitAlertTracker()
+        #expect(tracker.alertsToFire(kind: .session, percent: 85, windowId: "w", account: "a") == [.eighty])
+        #expect(tracker.alertsToFire(kind: .session, percent: 85, windowId: "v", account: "b") == [.eighty])
+        #expect(tracker.alertsToFire(kind: .session, percent: 86, windowId: "w", account: "a").isEmpty)
+    }
+}

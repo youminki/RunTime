@@ -98,6 +98,8 @@ if let index = CommandLine.arguments.firstIndex(of: "--worklog") {
         }
         if result.changed {
             // 입력을 기다리는 사이 앱이 파일을 저장했으면 그 내용을 덮지 않게 앱 저장처럼 합친다
+            let lock = WorkLogFile.lock()
+            defer { WorkLogFile.unlock(lock) }
             let disk = try WorkLogFile.load()
             try WorkLogFile.save(disk == base ? log : WorkLog.merge(mine: log, base: base, disk: disk))
         }

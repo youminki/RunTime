@@ -85,6 +85,8 @@ final class WorkLogStore: ObservableObject {
         pendingSave?.cancel()
         pendingSave = nil
         guard loadError == nil else { return }
+        let lock = WorkLogFile.lock(url)
+        defer { WorkLogFile.unlock(lock) }
         // 저장을 기다리는 사이 명령이나 Claude가 파일을 고쳤으면, 그 내용 위에 이 창에서 고친 줄만 얹는다
         if modificationDate() != lastWritten {
             // 바깥에서 깨진 채로(또는 쓰는 도중에) 저장한 파일은 이 창의 옛 내용으로 덮어쓰지 않고, 고쳐질 때까지 다시 본다

@@ -12,6 +12,22 @@ public enum WorkLogFile {
     }
 
     /// 파일이 없으면 빈 일지. 깨진 파일은 덮어쓰지 않게 오류를 낸다.
+    /// 앱과 `--worklog` 명령이 같은 파일을 읽고 합쳐 쓰는 사이에 서로의 변경을 덮지 않게 옆 잠금 파일로 순서를 맞춘다.
+    /// 잠금을 못 잡아도(권한 등) 일은 그대로 하게 -1을 돌려준다.
+    public static func lock(_ url: URL = defaultURL) -> Int32 {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let descriptor = open(url.path + ".lock", O_CREAT | O_RDWR, 0o600)
+        guard descriptor >= 0 else { return -1 }
+        flock(descriptor, LOCK_EX)
+        return descriptor
+    }
+
+    public static func unlock(_ descriptor: Int32) {
+        guard descriptor >= 0 else { return }
+        flock(descriptor, LOCK_UN)
+        close(descriptor)
+    }
+
     public static func load(_ url: URL = defaultURL) throws -> WorkLog {
         guard FileManager.default.fileExists(atPath: url.path) else { return WorkLog() }
         return try decode(Data(contentsOf: url))

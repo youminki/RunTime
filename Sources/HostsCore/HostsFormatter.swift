@@ -44,9 +44,17 @@ public enum HostsFormatter {
             }
         }
         for loose in looseTitles {
-            let group = groups.first { $0.title.lowercased() == loose.title.lowercased() }
-            guard group.map({ $0.items.isEmpty && $0.notes.isEmpty && $0.leftovers.isEmpty }) ?? true else { continue }
-            groups[index(loose.previous ?? "기타")].leftovers.append(loose.raw)
+            guard let at = groups.firstIndex(where: { $0.title.lowercased() == loose.title.lowercased() }),
+                  groups[at].items.isEmpty, groups[at].leftovers.isEmpty else {
+                if !groups.contains(where: { $0.title.lowercased() == loose.title.lowercased() }) {
+                    groups[index(loose.previous ?? "기타")].leftovers.append(loose.raw)
+                }
+                continue
+            }
+            // 꺼 둔 줄이 이어지면 둘째 줄부터는 이 머리의 설명(notes)으로 읽힌다. 함께 앞 묶음 끝으로 옮긴다
+            let moved = [loose.raw] + groups[at].notes
+            groups[at].notes = []
+            groups[index(loose.previous ?? "기타")].leftovers.append(contentsOf: moved)
         }
 
         // 같은 줄: 하나라도 켜져 있었으면 켠 채로, 메모는 먼저 있던 것

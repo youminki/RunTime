@@ -412,14 +412,14 @@ final class UsageEngine: ObservableObject {
 
         if let session = result.session {
             for threshold in alertTracker.alertsToFire(kind: .session, percent: session.percent,
-                                                       windowId: sessionWindow) {
+                                                       windowId: sessionWindow, account: knownAccount?.uuid ?? "") {
                 notify(threshold: threshold, kind: "세션",
                        remaining: result.sessionMinutesLeft.map { "현재 속도로 약 \(Format.minutes($0)) 뒤 한도에 닿습니다." })
             }
         }
         if let weekly = result.weekly {
             for threshold in alertTracker.alertsToFire(kind: .weekly, percent: weekly.percent,
-                                                       windowId: weeklyWindow) {
+                                                       windowId: weeklyWindow, account: knownAccount?.uuid ?? "") {
                 notify(threshold: threshold, kind: "주간", remaining: nil)
             }
         }

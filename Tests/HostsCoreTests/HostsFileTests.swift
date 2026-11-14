@@ -365,3 +365,13 @@ private let sample = """
         #expect(HostsFormatter.organized(after).text == after.text)
     }
 }
+
+@Suite struct HostsOrganizeLooseRunTests {
+    @Test func twoDisabledLinesInARowStayAsTheyAre() {
+        let before = HostsFile("127.0.0.1 localhost\n## Dev\n10.0.0.1 api.dev.example.com\n#192.168.0.5 nas printer\n#192.168.0.6 cam door\n## Stg\n10.0.0.2 a.stg.example.com\n")
+        let after = HostsFormatter.organized(before)
+        #expect(after.text.contains("#192.168.0.5 nas printer\n#192.168.0.6 cam door"))
+        #expect(!after.text.contains("## 192.168.0.5"))
+        #expect(HostsFormatter.organized(after).text == after.text)
+    }
+}

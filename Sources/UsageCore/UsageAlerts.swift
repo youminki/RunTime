@@ -46,8 +46,10 @@ public struct LimitAlertTracker {
 
     /// 현재 사용률을 보고하고, 새로 발송해야 할 알림 임계값을 반환 (없으면 빈 배열).
     /// 70→96처럼 건너뛰면 95만 발송 (80은 함께 소진 처리해 스팸 방지).
-    public mutating func alertsToFire(kind: Kind, percent: Double, windowId: String) -> [Threshold] {
-        var record = sent[kind.rawValue] ?? (windowId, [])
+    /// `account`를 주면 계정마다 따로 기억한다. 계정을 오가도 같은 창에서 다시 알리지 않는다.
+    public mutating func alertsToFire(kind: Kind, percent: Double, windowId: String, account: String = "") -> [Threshold] {
+        let key = account.isEmpty ? kind.rawValue : kind.rawValue + "@" + account
+        var record = sent[key] ?? (windowId, [])
         if record.windowId != windowId { record = (windowId, []) }   // 창 리셋 → 기록 초기화
 
         var fired: [Threshold] = []
@@ -58,7 +60,7 @@ public struct LimitAlertTracker {
             record.thresholds.insert(80)
             fired.append(.eighty)
         }
-        sent[kind.rawValue] = record
+        sent[key] = record
         return fired
     }
 }
