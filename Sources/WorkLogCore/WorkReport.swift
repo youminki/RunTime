@@ -661,7 +661,9 @@ public enum WorkReport {
             // 댓글은 보내야 할 줄만으로 만든다 (시간만 남은 줄의 내용을 또 올리지 않게)
             let noteItems = items.filter(\.needsRedmine)
             let inProgress = ratio == nil && items.contains { $0.day == lastDay && $0.status == .inProgress }
-            return RedmineUpdate(issue: issue, doneRatio: ratio, note: comment(noteItems.isEmpty ? items : noteItems),
+            // 앱이 이미 올린 댓글에 있던 줄은 다시 싣지 않는다 (상태만 바꾼 줄, 다음 날로 이어 쓴 줄)
+            let posted = log.map { postedLines(issue: issue, in: $0) } ?? []
+            return RedmineUpdate(issue: issue, doneRatio: ratio, note: comment(noteItems.isEmpty ? items : noteItems, posted: posted),
                                  entryIDs: items.map(\.id), needsNote: !noteItems.isEmpty, timeEntries: timeEntries,
                                  days: Array(Set(items.map(\.day))).sorted(), inProgress: inProgress)
         }
@@ -805,7 +807,9 @@ public enum WorkReport {
     }
 
     /// 직접 쓴 댓글이 있으면 그대로 쓰고, 없으면 제목으로 [작업 내용]을 만든다.
-    public static func comment(_ entries: [WorkEntry]) -> String {
+    /// 여러 댓글을 모으면 같은 섹션은 하나로 합치고 같은 항목은 한 번만 남긴다.
+    /// `posted`(이미 올린 줄)에 든 항목은 뺀다. [비고]만 남으면 올릴 내용이 없는 것으로 보고 빈 글을 돌려준다.
+    public static func comment(_ entries: [WorkEntry], posted: Set<String> = []) -> String {
         // 이어 쓴 줄은 보내지 않은 댓글을 그대로 옮겨, 주간으로 보내면 같은 댓글이 둘 모인다
         var noted = Set<String>()
         let written = entries.map { $0.note.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -817,7 +821,78 @@ public enum WorkReport {
             let lines = untitled.map(\.title).filter { seen.insert(normalized($0)).inserted }.map { "- \($0)" }
             parts.insert((["[작업 내용]"] + lines).joined(separator: "\n"), at: 0)
         }
-        return parts.joined(separator: "\n\n")
+        return mergedNote(parts, posted: posted)
+    }
+
+    /// 같은 일을 가리키는 줄인지 볼 때 쓰는 열쇠. 글머리표·빈칸·문장부호를 뺀다.
+    static func lineKey(_ line: String) -> String {
+        let body = line.trimmingCharacters(in: .whitespaces).drop { "-·•*–".contains($0) || $0.isWhitespace }
+        return String(body.lowercased().unicodeScalars.filter {
+            !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.punctuationCharacters.contains($0)
+                && !CharacterSet.symbols.contains($0)
+        }.map(Character.init))
+    }
+
+    /// 이 일감에 앱이 올린(되돌리지 않은) 댓글의 줄 열쇠.
+    public static func postedLines(issue: Int, in log: WorkLog) -> Set<String> {
+        var keys = Set<String>()
+        for sent in log.sent where sent.issue == issue && sent.undoneAt == nil && !sent.note.isEmpty {
+            for line in RedmineNote.plain(sent.note).components(separatedBy: .newlines) where !RedmineNote.isHeading(line) {
+                let key = lineKey(line)
+                if key.count >= 2 { keys.insert(key) }
+            }
+        }
+        return keys
+    }
+
+    /// 섹션(`[작업 내용]` 등)별로 합치고 항목을 거른다. 들여 쓴 줄은 바로 위 항목에 딸린 것으로 보고 함께 다룬다.
+    /// HTML로 쓴 댓글은 꼴을 해칠 수 있어 손대지 않고 뒤에 붙인다.
+    static func mergedNote(_ parts: [String], posted: Set<String>) -> String {
+        var order: [String] = []
+        var blocks: [String: [[String]]] = [:]
+        var seen: [String: Set<String>] = [:]
+        var html: [String] = []
+        func add(_ block: [String], to heading: String) {
+            guard !block.isEmpty else { return }
+            let keys = block.map(lineKey).filter { !$0.isEmpty }
+            // [비고]는 늘 비슷한 말이라 이미 올린 줄로 거르지 않는다 (같은 댓글 안의 겹침만 거른다)
+            if heading != "[비고]", !posted.isEmpty, !keys.isEmpty, keys.allSatisfy(posted.contains) { return }
+            guard seen[heading, default: []].insert(keys.joined(separator: "\n")).inserted else { return }
+            blocks[heading, default: []].append(block)
+        }
+        for part in parts {
+            if part.range(of: #"^<(p|div)[\s>]"#, options: [.regularExpression, .caseInsensitive]) != nil {
+                html.append(part)
+                continue
+            }
+            var heading = ""
+            var block: [String] = []
+            func flush() { add(block, to: heading); block = [] }
+            for raw in part.components(separatedBy: .newlines) {
+                let line = raw.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty { continue }
+                if RedmineNote.isHeading(trimmed) {
+                    flush()
+                    heading = trimmed
+                    if !order.contains(heading) { order.append(heading) }
+                    continue
+                }
+                if !order.contains(heading) { order.append(heading) }
+                // 들여 쓴 줄은 위 항목에 딸린다
+                if line.first?.isWhitespace == true, !block.isEmpty { block.append(line) } else { flush(); block = [line] }
+            }
+            flush()
+        }
+        let sections: [String] = order.compactMap { heading in
+            guard let list = blocks[heading], !list.isEmpty else { return nil }
+            let body = list.flatMap { $0 }
+            return (heading.isEmpty ? body : [heading] + body).joined(separator: "\n")
+        }
+        // 올릴 일 없이 [비고]만 남았으면 보내지 않는다
+        let content = order.filter { $0 != "[비고]" }.contains { blocks[$0]?.isEmpty == false }
+        guard content || !html.isEmpty else { return "" }
+        return (sections + html).joined(separator: "\n\n")
     }
 
     /// Claude에게 그대로 붙여 넣는 글. git을 다시 훑지 않고 이 글만 보고 올리게 해 토큰을 아낀다.
@@ -836,7 +911,7 @@ public enum WorkReport {
             if let due = extra.dueDate { parts.append(due.isEmpty ? "완료 기한 비우기" : "완료 기한 \(due)") }
             if let assignee = extra.assignee { parts.append("담당자 \(assignee.name)(id \(assignee.id))") }
             // 카드에서 댓글을 뺀 일감은 여기서도 빼야 Claude가 같은 댓글을 또 올리지 않는다
-            if withoutNotes.contains(update.issue) { return "#\(update.issue) \(parts.joined(separator: " · ")) (댓글 없음)" }
+            if withoutNotes.contains(update.issue) || update.note.isEmpty { return "#\(update.issue) \(parts.joined(separator: " · ")) (댓글 없음)" }
             return "#\(update.issue) \(parts.joined(separator: " · "))\n\(html ? RedmineNote.html(update.note) : update.note)"
         }
         return ([head] + blocks).joined(separator: "\n\n---\n")

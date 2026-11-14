@@ -708,3 +708,47 @@ private let sample = """
         #expect(WorkReport.splitIssue("#333333 색 변경").issue == nil)
     }
 }
+
+@Suite struct RedmineDedupTests {
+    private func entry(_ day: String, _ title: String, note: String = "", status: WorkStatus = .done) -> WorkEntry {
+        WorkEntry(day: day, project: "P", title: title, status: status, issue: 7, note: note)
+    }
+
+    @Test func dropsLinesAlreadyPostedByTheApp() {
+        var log = WorkLog(projects: ["P"], entries: [entry("2026-11-03", "목록 연동"), entry("2026-11-04", "상세 연동")])
+        log.sent = [RedmineSent(issue: 7, entryIDs: [], note: "<p>[작업 내용]<br />\n- 목록 연동</p>", before: .init(), after: .init())]
+        let update = WorkReport.redmineUpdates(log.entries, log: log).first
+        #expect(update?.note == "[작업 내용]\n- 상세 연동")
+    }
+
+    @Test func allPostedLeavesEmptyNoteButKeepsRatio() {
+        var log = WorkLog(projects: ["P"], entries: [entry("2026-11-04", "목록 연동", status: .done)])
+        log.sent = [RedmineSent(issue: 7, entryIDs: [], note: "[작업 내용]\n- 목록 연동.", before: .init(), after: .init())]
+        let update = WorkReport.redmineUpdates(log.entries, log: log).first
+        #expect(update?.note == "")
+        #expect(update?.needsNote == true)
+        #expect(update?.doneRatio == 100)
+    }
+
+    @Test func undoneSendIsNotTreatedAsPosted() {
+        var log = WorkLog(projects: ["P"], entries: [entry("2026-11-04", "목록 연동")])
+        log.sent = [RedmineSent(issue: 7, entryIDs: [], note: "- 목록 연동", before: .init(), after: .init(), undoneAt: Date())]
+        #expect(WorkReport.redmineUpdates(log.entries, log: log).first?.note == "[작업 내용]\n- 목록 연동")
+    }
+
+    @Test func mergesSectionsAndDuplicateItemsAcrossNotes() {
+        let rows = [
+            entry("2026-11-03", "a", note: "[작업 내용]\n- 목록 연동\n[비고]\n- 없음"),
+            entry("2026-11-04", "b", note: "[작업 내용]\n- 목록 연동\n- 상세 연동\n  · 저장 단추\n[비고]\n- 없음"),
+            entry("2026-11-04", "목록 연동"),
+        ]
+        let note = WorkReport.redmineUpdates(rows).first?.note
+        #expect(note == "[작업 내용]\n- 목록 연동\n- 상세 연동\n  · 저장 단추\n\n[비고]\n- 없음")
+    }
+
+    @Test func onlyRemarksLeftMeansNothingToPost() {
+        var log = WorkLog(projects: ["P"], entries: [entry("2026-11-04", "x", note: "[작업 내용]\n- 목록 연동\n[비고]\n- 없음")])
+        log.sent = [RedmineSent(issue: 7, entryIDs: [], note: "[작업 내용]\n- 목록 연동\n[비고]\n- 없음", before: .init(), after: .init())]
+        #expect(WorkReport.redmineUpdates(log.entries, log: log).first?.note == "")
+    }
+}

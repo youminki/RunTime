@@ -134,6 +134,29 @@ enum WorkLogFlowCheck {
         result = await send(2)
         check("보내기가 실패하면 줄이 남고 까닭을 알린다", result.sent == 0 && !result.failures.isEmpty && waiting(row))
 
+        // 시간 초과로 끊겼지만 레드마인에는 댓글이 저장된 경우: 다시 보내면 같은 댓글을 또 올리지 않는다
+        let ledger = WorkLogStore.shared.log
+        if let pending = WorkReport.redmineUpdates(ledger.entries.filter { $0.issue == 2 && $0.needsRedmine }, log: ledger).first {
+            let stored = settings.redmineHTML ? RedmineNote.html(pending.note) : pending.note
+            let quoted = (try? JSONSerialization.data(withJSONObject: [stored])).flatMap { String(data: $0, encoding: .utf8) }
+                .map { String($0.dropFirst().dropLast()) } ?? "\"\""
+            let now = ISO8601DateFormatter().string(from: Date())
+            let body = #"{"issue":{"id":2,"subject":"일감","project":{"id":1,"name":"시험"},"tracker":{"id":1,"name":"작업"},"status":{"id":1,"name":"할일"},"priority":{"id":2,"name":"보통"},"done_ratio":0,"journals":[{"id":9,"user":{"id":7,"name":"나"},"notes":\#(quoted),"created_on":"\#(now)"}]}}"#
+            puts = []
+            WorkLogSync.stub = { request in
+                guard request.httpMethod == "PUT" else { return (200, Data(body.utf8)) }
+                let fields = (request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["issue"] as? [String: Any] ?? [:]
+                DispatchQueue.main.async { puts.append(fields) }
+                return (204, Data())
+            }
+            result = await send(2)
+            await Task.yield()
+            check("끊긴 뒤 다시 보내면 이미 올라간 댓글은 빼고 진척률만 보낸다",
+                  puts.count == 1 && (puts[0]["notes"] as? String ?? "").isEmpty && puts[0]["done_ratio"] as? Int == 60 && !waiting(row))
+        } else {
+            check("끊긴 뒤 다시 보낼 줄이 남아 있다", false)
+        }
+
         row = line(3)
         answer(read: 500, id: 3)
         result = await send(3, edits: [3: WorkReport.IssueEdit(statusID: 2)])

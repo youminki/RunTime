@@ -547,7 +547,7 @@ struct WorkLogPreview: View {
     }
 
     private func sendSummary(_ updates: [WorkReport.RedmineUpdate]) -> String {
-        let noted = updates.filter { $0.needsNote && !page.redmineNoNote.contains($0.issue) }.count
+        let noted = updates.filter { $0.needsNote && !$0.note.isEmpty && !page.redmineNoNote.contains($0.issue) }.count
         var parts = ["\(updates.count)건", noted == updates.count ? "진척률과 댓글" : "댓글 \(noted)건"]
         let changing = updates.filter { !fields($0).isEmpty }.count
         if changing > 0 { parts.append("상태·날짜·담당자 \(changing)건") }
@@ -1063,7 +1063,8 @@ struct WorkLogPreview: View {
                 }
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text(update.note)
+                // 이미 올린 줄만 남았으면 같은 글을 또 올리지 않고 진척률·칸만 보낸다
+                Text(update.note.isEmpty ? "이미 올린 내용이라 댓글 없이 보냄" : update.note)
                     .font(.system(size: 13))
                     .foregroundStyle(WL.text)
                     .lineLimit(expanded ? nil : noNote ? 2 : 6)

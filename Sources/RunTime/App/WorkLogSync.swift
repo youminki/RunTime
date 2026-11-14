@@ -1023,7 +1023,7 @@ final class WorkLogSync: ObservableObject {
 
     func checkPosted(_ updates: [WorkReport.RedmineUpdate]) {
         guard let base = RedmineAPI.baseURL(settings.effectiveRedmineURL), let key = settings.redmineKey else { return }
-        let todo = updates.filter { $0.needsNote && checkedNotes[$0.issue] != $0.note }
+        let todo = updates.filter { $0.needsNote && !$0.note.isEmpty && checkedNotes[$0.issue] != $0.note }
         guard !todo.isEmpty else { return }
         for update in todo {
             // 글이 바뀌었으면 옛 글로 낸 판정을 남기지 않는다. 남기면 새 내용까지 댓글 없이 나간다
@@ -1220,7 +1220,7 @@ final class WorkLogSync: ObservableObject {
         var attach: [Int: (origins: [MRScreenStore.Origin], previous: String)] = [:]
         // 화면은 댓글에 붙으므로 댓글을 빼고 보내는 일감에는 붙이지 않는다
         for update in updates where settings.attachScreens && !withoutScreens.contains(update.issue)
-            && !withoutNotes.contains(update.issue) && !host.isEmpty {
+            && !withoutNotes.contains(update.issue) && !update.note.isEmpty && !host.isEmpty {
             let sources = store.log.entries.filter { update.entryIDs.contains($0.id) }.map(\.source)
             let previous = store.log.sent.filter { $0.issue == update.issue && $0.undoneAt == nil }.map(\.note).joined()
             let origins = MRScreenStore.origins(sources)
@@ -1237,7 +1237,8 @@ final class WorkLogSync: ObservableObject {
                                                                    base: base, key: key, host: host, html: html)
                 }
                 let result = Self.sendOne(update, base: base, key: key, known: known[update.issue], html: html,
-                                          screens: screens, noteless: withoutNotes.contains(update.issue), plan: plan)
+                                          screens: screens, noteless: withoutNotes.contains(update.issue) || update.note.isEmpty,
+                                          plan: plan)
                 failures += result.failures
                 if result.record != nil || result.markOnly { sent += 1 }
                 DispatchQueue.main.async { self?.apply(result, update: update, startedAt: startedAt) }
@@ -1325,10 +1326,20 @@ final class WorkLogSync: ObservableObject {
         let fresh = (try? fetch(RedmineAPI.issueRequest(base: base, key: key, issue: update.issue)))
             .flatMap { try? RedmineAPI.parseIssues($0).first }
         let current = fresh.map { merge(known, $0) } ?? known
+        // 앞서 보내다 시간 초과로 끊겼어도 레드마인에는 저장됐을 수 있다. 30분 안에 같은 댓글이 있으면 다시 올리지 않는다
+        var noteless = noteless
+        if !noteless, let data = try? fetch(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: update.issue)),
+           let journals = try? RedmineAPI.parseJournals(data),
+           RedmineSent(issue: update.issue, sentAt: Date().addingTimeInterval(-1800), entryIDs: [],
+                       note: html ? RedmineNote.html(update.note) : update.note, before: .init(), after: .init())
+               .matchJournal(journals) != nil {
+            noteless = true
+            result.failures.append("#\(update.issue) 같은 댓글이 이미 올라가 있어 댓글은 빼고 보냄")
+        }
         // 같은 댓글이 이미 있으면 댓글은 빼고 진척률·칸만 보낸다
         var note = noteless ? "" : html ? RedmineNote.html(update.note) : update.note
         let uploads = noteless ? [] : screens?.uploads ?? []
-        if let screens {
+        if let screens, !noteless {
             result.failures += screens.failures.map { "#\(update.issue) \($0)" }
             if !screens.section.isEmpty { note += (html ? "\n" : "\n\n") + screens.section }
         }
