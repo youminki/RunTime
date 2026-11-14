@@ -88,7 +88,8 @@ final class UsageEngine: ObservableObject {
         return tracker
     }()
     private static let limitAlertsKey = "limitAlertsSent"
-    private var lastBlockStart: Date?
+    /// 지금 공식 세션 창이 끝나는 시각. 지나면 "세션 초기화"를 한 번 알린다.
+    private var pendingSessionReset: Date?
     private var lastWeeklyReset: Date?
     private var lastTickAt: Date?
     private var lastOfficialAttempt: Date?
@@ -106,6 +107,8 @@ final class UsageEngine: ObservableObject {
     private var lastOfficialFailure = ""
     /// 켠 뒤 공식 조회 결과를 한 번이라도 받았는지. 그 전에는 주간 경계를 모른다.
     private var officialAnswered = false
+    /// 공식 조회가 이어서 실패하기 시작한 때. 하루 넘게 실패하면 월요일 경계로라도 지난주 요약을 보낸다.
+    private var failingSince: Date?
     /// 마지막으로 받은 공식 주간 리셋. 다시 켰을 때 망이 끊겨 있어도 주간 요약이 월요일을 경계로 잘못 보지 않게 남겨 둔다.
     private var knownWeeklyReset: Date? = UserDefaults.standard.object(forKey: UsageEngine.weeklyResetKey) as? Date {
         didSet { UserDefaults.standard.set(knownWeeklyReset, forKey: Self.weeklyResetKey) }
@@ -201,8 +204,12 @@ final class UsageEngine: ObservableObject {
         tokenStalled = false
         lastOfficialFailure = ""
         knownWeeklyReset = nil
+        // 앞 계정의 창으로 초기화 알림을 내지 않는다
+        lastWeeklyReset = nil
+        pendingSessionReset = nil
         // 새 계정의 주간 경계는 그 계정 응답을 받은 뒤에 안다
         officialAnswered = false
+        failingSince = nil
         publishOfficial(nil, status: config.officialEnabled ? .waiting : .disabled)
         if !fetchOfficial(minInterval: 0), config.officialEnabled, let until = RateLimitGate.usage.blockedUntil() {
             publishOfficial(nil, status: .failed(reason: Self.limitReason(until: until)))
@@ -314,6 +321,7 @@ final class UsageEngine: ObservableObject {
         let scanned = watcher.scan(now: now)
         // 켠 직후 공식 리셋을 아직 모르면 월요일을 주의 시작으로 잘못 보고 지난주 요약을 한 번 더 보낸다
         let weeklyBoundaryKnown = nextWeeklyReset != nil || !config.officialEnabled || officialAnswered
+            || failingSince.map { now.timeIntervalSince($0) > 24 * 3600 } == true
         defer {
             if weeklyBoundaryKnown {
                 checkWeeklySummary(nextReset: nextWeeklyReset, now: now, enabled: config.weeklySummaryEnabled)
@@ -371,7 +379,7 @@ final class UsageEngine: ObservableObject {
         let reaction = reactions.update(.init(rate: rate, runThreshold: thresholds.run, idleSeconds: idle,
                                               sessionPercent: result.session?.percent, sessionWindow: window,
                                               activeProjects: activeProjects, now: now))
-        checkNewBlock(snap: snap, enabled: config.newSessionAlertEnabled)
+        checkSessionReset(resetsAt: result.sessionResetsAt, now: now, enabled: config.newSessionAlertEnabled)
 
         log.debug("tick: today=\(snap.todayTokens) block=\(blockTokens) last60s=\(snap.tokensLast60s) rate=\(Int(rate)) state=\(state.rawValue, privacy: .public) 세션%=\(result.session.map { String(format: "%.1f", $0.percent) } ?? "없음", privacy: .public)")
 
@@ -426,11 +434,17 @@ final class UsageEngine: ObservableObject {
         DispatchQueue.main.async { Notifier.shared.send(title: title, body: body, stays: true) }
     }
 
-    /// 5시간 블록 리셋 감지 → "새 세션 시작!" (옵션, 기본 off).
-    private func checkNewBlock(snap: UsageStore.Snapshot, enabled: Bool) {
-        let start = snap.currentBlock?.start
-        defer { lastBlockStart = start ?? lastBlockStart }
-        guard enabled, let start, let previous = lastBlockStart, start != previous else { return }
+    /// 공식 세션 창이 끝나는 시각이 지나면 "세션 초기화" (옵션, 기본 off).
+    /// 로컬 블록(UTC 정시 내림)은 공식 리셋 시각과 달라, 쉬었다 다시 쓸 때 엉뚱한 때 알리게 된다.
+    private func checkSessionReset(resetsAt: Date?, now: Date, enabled: Bool) {
+        if let due = pendingSessionReset, now >= due {
+            pendingSessionReset = nil
+            if enabled { notifySessionReset() }
+        }
+        if let resetsAt, resetsAt > now { pendingSessionReset = resetsAt }
+    }
+
+    private func notifySessionReset() {
         DispatchQueue.main.async {
             Notifier.shared.send(title: "세션 초기화", body: "5시간 사용량이 초기화되었습니다.")
         }
@@ -524,9 +538,11 @@ final class UsageEngine: ObservableObject {
             fetchOfficial(minInterval: 0)
             return
         }
-        officialAnswered = true
         switch result {
         case .success(let usage):
+            // 실패한 응답으로는 주간 경계를 모른다. 세우면 월요일을 경계로 보고 지난주 요약을 잘못 보낸다
+            officialAnswered = true
+            failingSince = nil
             tokenStalled = false
             if !lastOfficialFailure.isEmpty { Diagnostics.record("사용량", "공식 조회 다시 됨") }
             lastOfficialFailure = ""
@@ -539,6 +555,7 @@ final class UsageEngine: ObservableObject {
             tick()
             publishOfficial(usage, status: .live)
         case .failure(let error):
+            if failingSince == nil { failingSince = Date() }
             // 실패해도 앱은 죽지 않는다 (§8). 유예 시간 동안은 직전 값, 그 뒤로는 게이지를 비운다.
             // 요청 제한이면 풀리는 때에 맞춰 다시 받는다. 그새 풀렸으면 정기 조회가 받는다
             if let until = OfficialRetry.retryAt(after: error) { scheduleRetry(at: until) }

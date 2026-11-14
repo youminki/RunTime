@@ -1124,6 +1124,7 @@ private struct HostsPreviewSheet: View {
             Text(mark).frame(width: 12).foregroundStyle(change.kind == .same ? WL.faint : tint)
             Text(change.text.isEmpty ? " " : change.text).foregroundStyle(change.kind == .same ? WL.muted : WL.text)
                 .lineLimit(1).truncationMode(.tail)
+                .tip(change.text)
             Spacer(minLength: 0)
         }
         .font(.system(size: 12, design: .monospaced))

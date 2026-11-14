@@ -20,9 +20,17 @@ public enum HostsFormatter {
             groups.append(Group(title: title))
             return groups.count - 1
         }
+        // `##` 없이 묶음 머리로 읽힌 주석 (꺼 둔 `#192.168.0.5 nas printer`나 항목 뒤 혼자 선 주석).
+        // 뒤에 줄이 없어 묶음이 비면 정리에서 통째로 빠지므로, 앞 묶음 끝에 원문 그대로 남긴다
+        var looseTitles: [(title: String, previous: String?, raw: String)] = []
+        var lastTitle: String?
         for place in file.places {
             let line = file.lines[place.line]
             let raw = line.raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if place.role == .title {
+                if !raw.hasPrefix("##"), let title = place.title { looseTitles.append((title, lastTitle, raw)) }
+                lastTitle = place.title
+            }
             switch place.role {
             case .note: groups[index(place.title ?? "기타")].notes.append(raw)
             case .invalid: groups[index(place.title ?? "기타")].leftovers.append(raw)
@@ -34,6 +42,11 @@ public enum HostsFormatter {
                 }
             case .blank, .title, .marker: continue
             }
+        }
+        for loose in looseTitles {
+            let group = groups.first { $0.title.lowercased() == loose.title.lowercased() }
+            guard group.map({ $0.items.isEmpty && $0.notes.isEmpty && $0.leftovers.isEmpty }) ?? true else { continue }
+            groups[index(loose.previous ?? "기타")].leftovers.append(loose.raw)
         }
 
         // 같은 줄: 하나라도 켜져 있었으면 켠 채로, 메모는 먼저 있던 것

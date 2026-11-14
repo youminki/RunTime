@@ -158,7 +158,9 @@ final class WorkLogPage: ObservableObject {
     @Published var confirmingUndo: RedmineSent?
     @Published var editing: UUID?
     @Published var statusPicking: UUID?
+    /// 쓰던 새 줄 (`날짜|프로젝트` → 글).
     @Published var drafts: [String: String] = [:]
+    static func draftKey(day: String, project: String) -> String { "\(day)|\(project)" }
     /// 기록은 없지만 적으려고 열어 둔 프로젝트 묶음.
     @Published var openProjects: Set<String> = []
     @Published var addingProject = false
@@ -209,7 +211,11 @@ final class WorkLogPage: ObservableObject {
         let name = new.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, name != old else { return }
         if openProjects.remove(old) != nil { openProjects.insert(name) }
-        if let draft = drafts.removeValue(forKey: old) { drafts[name] = draft }
+        // 키는 `날짜|프로젝트`라 첫 | 앞이 날짜다 (프로젝트 이름에 |가 들어 있어도 맞게)
+        for key in drafts.keys {
+            guard let bar = key.firstIndex(of: "|"), key[key.index(after: bar)...] == old else { continue }
+            if let draft = drafts.removeValue(forKey: key) { drafts[Self.draftKey(day: String(key[..<bar]), project: name)] = draft }
+        }
         if collapsed.remove("day:" + old) != nil { collapsed.insert("day:" + name) }
         if project == old { project = name }
         if calendarProject == old { calendarProject = name }

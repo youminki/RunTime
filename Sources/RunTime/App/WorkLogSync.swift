@@ -1658,7 +1658,7 @@ final class WorkLogSync: ObservableObject {
         let weekday = calendar.component(.weekday, from: now)
         let minutes = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
         let today = WorkDay.today()
-        guard (2...6).contains(weekday), minutes >= settings.reminderMinutes,
+        guard (2...6).contains(weekday), KoreanHolidays.name(on: today) == nil, minutes >= settings.reminderMinutes,
               defaults.string(forKey: "workLog.lastReminder") != today else { return }
         defaults.set(today, forKey: "workLog.lastReminder")
         // 알리기 전에 마지막으로 한 번 더 가져와 퇴근 직전 머지도 넣는다

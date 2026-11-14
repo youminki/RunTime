@@ -356,3 +356,12 @@ private let sample = """
         #expect(first.hideKey == moved.hideKey)
     }
 }
+
+@Suite struct HostsOrganizeLooseCommentTests {
+    @Test func disabledLineReadAsHeaderIsKept() {
+        let before = HostsFile("127.0.0.1 localhost\n## Dev\n10.0.0.1 api.dev.example.com\n#192.168.0.5 nas printer\n## Stg\n10.0.0.2 a.stg.example.com\n")
+        let after = HostsFormatter.organized(before)
+        #expect(after.text.contains("#192.168.0.5 nas printer"))
+        #expect(HostsFormatter.organized(after).text == after.text)
+    }
+}

@@ -108,7 +108,8 @@ public enum FigmaAPI {
     /// 파일 버전 기록 (최근 것부터). 자동 저장도 30분 안팎마다 남는다. file_versions:read 범위가 있어야 한다.
     /// `next`는 피그마가 준 다음(더 오래된) 쪽 주소다.
     public static func versionsRequest(fileKey: String, next: URL? = nil, token: String) -> URLRequest {
-        guard let next else { return request("files/\(fileKey)/versions", query: [URLQueryItem(name: "page_size", value: "50")], token: token) }
+        // 캐시 파일이나 응답의 다음 쪽 주소가 피그마가 아니면 토큰을 붙여 보내지 않고 첫 쪽부터 받는다
+        guard let next, next.scheme == "https", next.host == "api.figma.com" else { return request("files/\(fileKey)/versions", query: [URLQueryItem(name: "page_size", value: "50")], token: token) }
         var request = URLRequest(url: next)
         request.setValue(token, forHTTPHeaderField: "X-Figma-Token")
         request.timeoutInterval = 60

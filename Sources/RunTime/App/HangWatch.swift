@@ -68,6 +68,7 @@ enum HangWatch {
         var askedAt = ask()
         var sampled = false
         var report: HangReport?
+        var savedAt: UInt64 = 0
         var woke = now()
         while true {
             Thread.sleep(forTimeInterval: 1)
@@ -80,7 +81,9 @@ enum HangWatch {
             switch HangReport.step(waited: seconds(woke), answered: answer.map(seconds), sampled: sampled, threshold: threshold) {
             case .wait:
                 // 멈춘 채 꺼지면 마지막으로 적은 시간이 남는다
-                if var waiting = report, Int(seconds(woke)) % 10 == 0 {
+                // 1초+α마다 깨어나 10의 배수 초를 건너뛸 수 있어 마지막 저장 시각으로 잰다
+                if var waiting = report, woke - max(savedAt, askedAt) >= 10_000_000_000 {
+                    savedAt = woke
                     waiting.seconds = seconds(woke)
                     report = waiting
                     save(waiting)

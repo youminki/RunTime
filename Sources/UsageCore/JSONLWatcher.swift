@@ -6,7 +6,8 @@ public final class JSONLWatcher {
 
     public let rootDirectory: URL
     /// 시작 풀스캔 지연 방지: 최근 N일 내 수정된 파일만 읽는다 (§8 리스크 대응).
-    public var maxFileAge: TimeInterval = 8 * 24 * 60 * 60
+    /// UsageStore 보관 기간과 맞춘다. 짧으면 다시 켠 직후 주간 요약이 지난주 첫날을 덜 센다.
+    public var maxFileAge: TimeInterval = 10 * 24 * 60 * 60
 
     private var offsets: [String: UInt64] = [:]   // 파일 경로 → 읽은 바이트 수
     /// 한 번에 읽는 양. 기록 파일은 100MB를 넘기도 해, 통째로 읽으면 켤 때 그만큼 메모리를 잡았다 놓는다.

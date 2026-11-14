@@ -52,7 +52,8 @@ public final class UsageStore {
     /// 이보다 오래된 이벤트는 스냅샷 때 버린다. 장기 실행 시 메모리·틱 비용이 계속 늘지 않게.
     private let retention: TimeInterval
 
-    public init(retention: TimeInterval = 8 * 24 * 60 * 60) {
+    /// 주간 요약은 경계 뒤 최대 2일 안에 지난 7일을 세므로 9일보다 길게 둔다.
+    public init(retention: TimeInterval = 10 * 24 * 60 * 60) {
         self.retention = retention
     }
 

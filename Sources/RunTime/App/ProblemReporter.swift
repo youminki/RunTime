@@ -156,6 +156,8 @@ enum ProblemReporter {
         ("([A-Za-z][A-Za-z0-9+.-]*://)[^/\\s@]+@", "$1***@"),
         ("\\b(gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+)", "***"),
         ("(?i)\\b(bearer|token|password|passwd|secret|api[_-]?key)([\\s:=]+)\\S+", "$1$2***"),
+        // 계정 전환 오류 문구에 이메일이 들어간다
+        ("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "(이메일)"),
     ]
 
     /// 사용자 폴더 경로·계정 이름·토큰을 가리고, 긴 줄은 자른다. 클론 위치(`/Users/이름/...`)가 로그 곳곳에 찍힌다.

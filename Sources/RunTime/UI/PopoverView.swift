@@ -404,7 +404,7 @@ struct PopoverView: View {
                     .foregroundStyle(on ? Theme.primary : Theme.secondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 34)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(on ? 0.14 : 0)))
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(on ? Theme.track.opacity(1.4) : Color.clear))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -492,6 +492,9 @@ struct PopoverView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // "42", "%", 막대를 따로 읽지 않고 "세션 5시간, 42%, 2시간 뒤 초기화"로 읽는다
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title) \(window), \(gauge.map { "\($0.displayPercent)%" } ?? "값 없음"), \(detail)")
     }
 
     @ViewBuilder

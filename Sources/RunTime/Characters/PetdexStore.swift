@@ -302,7 +302,8 @@ final class PetdexStore: ObservableObject {
             return
         }
         let folder = Self.folder(entry.slug)
-        if let existing = pets.first(where: { $0.slug == entry.slug }) {
+        let previous = pets.first(where: { $0.slug == entry.slug })
+        if let existing = previous {
             if SheetFrames.meta(folder) != nil {
                 completion(.success(existing))
                 return
@@ -312,6 +313,7 @@ final class PetdexStore: ObservableObject {
             characters[entry.slug] = nil
         }
         guard !installing.contains(entry.slug) else {
+            if let previous, !pets.contains(where: { $0.slug == previous.slug }) { pets.append(previous) }
             completion(.failure(InstallError.inProgress))
             return
         }
@@ -322,7 +324,7 @@ final class PetdexStore: ObservableObject {
             // 풀기와 PNG 저장은 URLSession 콜백 큐를 막지 않게 따로 돌린다
             DispatchQueue.global(qos: .userInitiated).async {
                 let result = Result { try Self.extract(data: data, response: response, error: error, to: folder) }
-                self.finishInstall(entry, folder: folder, result: result, completion: completion)
+                self.finishInstall(entry, folder: folder, result: result, previous: previous, completion: completion)
             }
         }.resume()
     }
@@ -345,7 +347,7 @@ final class PetdexStore: ObservableObject {
         }
     }
 
-    private func finishInstall(_ entry: Entry, folder: URL, result: Result<Void, Error>,
+    private func finishInstall(_ entry: Entry, folder: URL, result: Result<Void, Error>, previous: Pet? = nil,
                                completion: @escaping (Result<Pet, Error>) -> Void) {
         DispatchQueue.main.async {
             self.installing.remove(entry.slug)
@@ -354,10 +356,13 @@ final class PetdexStore: ObservableObject {
                 let pet = Pet(slug: entry.slug, name: String(self.name(for: entry).prefix(24)),
                               submittedBy: entry.submittedBy, added: Date())
                 SheetFrames.forget(folder)
+                self.pets.removeAll { $0.slug == entry.slug }
                 self.pets.append(pet)
                 self.save()
                 completion(.success(pet))
             case .failure(let error):
+                // 다시 받기에 실패하면 목록에서 뺀 펫을 되돌려, 저장 파일과 목록이 어긋나지 않게 한다
+                if let previous, !self.pets.contains(where: { $0.slug == previous.slug }) { self.pets.append(previous) }
                 completion(.failure(error))
             }
         }

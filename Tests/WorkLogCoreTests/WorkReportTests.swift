@@ -700,3 +700,11 @@ private let sample = """
         #expect(!WorkReport.keepsShape(original: original, polished: ""))
     }
 }
+
+@Suite struct SplitIssueTests {
+    @Test func takesOnlyTrailingNumber() {
+        #expect(WorkReport.splitIssue("로그인 개선 #12345") == ("로그인 개선", 12345))
+        #expect(WorkReport.splitIssue("PR #45 리뷰 반영").issue == nil)
+        #expect(WorkReport.splitIssue("#333333 색 변경").issue == nil)
+    }
+}

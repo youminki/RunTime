@@ -52,6 +52,8 @@ enum Format {
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
+        // 시스템을 12시간제로 두면 고정 형식에도 오전/오후가 끼어든다
+        f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm"
         return f
     }()

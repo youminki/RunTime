@@ -435,15 +435,17 @@ struct WorkLogView: View {
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(WL.quiet)
                 .frame(width: 16)
-            TextField("할 일 추가", text: Binding(
-                get: { page.drafts[project] ?? "" },
-                set: { page.drafts[project] = $0 }
+            // 쓰던 글은 날짜마다 따로 둔다. 다른 날로 옮겨 Enter를 누르면 그날 줄로 들어가 버린다
+            let key = WorkLogPage.draftKey(day: page.day, project: project)
+            TextField(page.day == WorkDay.today() ? "할 일 추가" : "\(WorkLogFormat.dayTitle(page.day))에 추가", text: Binding(
+                get: { page.drafts[key] ?? "" },
+                set: { page.drafts[key] = $0 }
             ), onCommit: {
-                let text = (page.drafts[project] ?? "").trimmingCharacters(in: .whitespaces)
+                let text = (page.drafts[key] ?? "").trimmingCharacters(in: .whitespaces)
                 guard !text.isEmpty else { return }
                 let parsed = WorkLogFormat.splitStatus(text)
                 store.add(day: page.day, project: project, title: parsed.title, status: parsed.status)
-                TextInput.clearAfterComposition { page.drafts[project] = "" }
+                TextInput.clearAfterComposition { page.drafts[key] = "" }
             })
             .textFieldStyle(.plain)
             .font(.system(size: 14))

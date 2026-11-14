@@ -27,6 +27,8 @@ final class PetOptions {
 
     private var panel: OptionsPanel?
     private var monitors: [Any] = []
+    /// 펫 창. 그 창의 오른쪽 클릭은 펫이 여닫기를 맡아, 여기서 닫으면 바로 다시 열린다.
+    weak var petWindow: NSWindow?
     private var actions: Actions?
     private(set) var model: Model?
 
@@ -76,7 +78,8 @@ final class PetOptions {
             self?.close()
         }) { monitors.append(global) }
         if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
-            if event.window !== self?.panel { self?.close() }
+            let toggledByPet = event.type == .rightMouseDown && event.window != nil && event.window === self?.petWindow
+            if event.window !== self?.panel, !toggledByPet { self?.close() }
             return event
         }) { monitors.append(local) }
     }

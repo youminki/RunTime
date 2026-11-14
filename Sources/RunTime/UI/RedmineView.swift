@@ -174,8 +174,11 @@ private struct RedmineFlash: View {
         if let message = store.flash {
             Text(message)
                 .font(WL.meta).foregroundStyle(Color.white)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 520)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(Capsule().fill(Color.black.opacity(0.78)))
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.78)))
                 .padding(atTop ? .top : .bottom, atTop ? 56 : store.checked.isEmpty ? 18 : 70)
                 .onTapGesture { store.flash = nil }
                 .task(id: message) {

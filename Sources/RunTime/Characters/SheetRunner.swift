@@ -301,7 +301,9 @@ enum PetdexAtlas {
         for name in SheetFrames.rows {
             guard let source = sources[name], let crop = crops[name] else { continue }
             let canvas = rects[name] == nil ? CGSize(width: frameW, height: frameH) : crop.size
-            for (i, column) in (scanned[name]?.columns ?? []).enumerated() {
+            // 칸 하나를 못 잘라도 파일 번호와 프레임 수가 어긋나지 않게 저장한 수로 센다
+            var saved = 0
+            for column in scanned[name]?.columns ?? [] {
                 // 뒤집어 쓰는 줄은 칸 안의 영역도 좌우로 뒤집어 잘라야 같은 자리가 나온다
                 var area = crop.source
                 if source.mirrored { area.origin.x = CGFloat(cellW) - area.maxX }
@@ -320,11 +322,12 @@ enum PetdexAtlas {
                 out.draw(cell, in: target)
                 guard let image = out.makeImage(),
                       let destination = CGImageDestinationCreateWithURL(
-                          folder.appendingPathComponent("\(name)_\(i).png") as CFURL, UTType.png.identifier as CFString, 1, nil)
+                          folder.appendingPathComponent("\(name)_\(saved).png") as CFURL, UTType.png.identifier as CFString, 1, nil)
                 else { throw ExtractError.saveFailed }
                 CGImageDestinationAddImage(destination, image, nil)
                 guard CGImageDestinationFinalize(destination) else { throw ExtractError.saveFailed }
-                counts[name] = i + 1
+                saved += 1
+                counts[name] = saved
             }
         }
         // 줄이 빈 시트도 본 것으로 남겨 다시 받지 않게 한다

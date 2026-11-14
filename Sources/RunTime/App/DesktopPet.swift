@@ -84,6 +84,10 @@ final class DesktopPet {
     /// 떨어지거나 들려 있을 때의 발 자리 (화면 좌표, 위로 +). nil이면 모서리 위.
     private var free: CGPoint?
     private var fallSpeed: CGFloat = 0
+    /// 저장한 자리 없이 머물기로 나올 때 떨어지는 중. 바닥에 닿은 자리를 머무는 자리로 삼는다.
+    private var settling = false
+    /// 방향키로 옮긴 머무는 자리를 아직 저장하지 않았다.
+    private var pinDirty = false
     /// 바닥에서 뛴 높이.
     private var lift: CGFloat = 0
     private var liftSpeed: CGFloat = 0
@@ -111,6 +115,7 @@ final class DesktopPet {
     /// 화면 크기를 마지막으로 읽은 때. 프레임마다 화면 목록을 다시 만들지 않고 1초에 한 번과 화면이 바뀔 때만 읽는다.
     private var homeReadAt = Date.distantPast
     private var screenObserver: NSObjectProtocol?
+    private var sleepObservers: [NSObjectProtocol] = []
     private var drag: (grab: CGSize, point: CGPoint)?
     /// 마우스를 누르고 있는지. 누른 채 끌기 시작하기 전에 펫이 걸어서 마우스 밑을 벗어나면 끌기를 놓쳐서,
     /// 누르는 동안은 멈추고 클릭을 계속 받는다.
@@ -236,11 +241,13 @@ final class DesktopPet {
         // 놓아 둔 자리가 있으면 그 자리에, 아니면 지금 화면 오른쪽 위에서 톡 떨어지며 나온다
         if modeProvider() == .pinned, let spot = pinnedProvider(), NSScreen.screens.contains(where: { $0.frame.contains(spot) }) {
             moveHome(to: spot)
-            free = spot
+            free = clampedPin(spot)
+            settling = false
         } else {
             homeID = NSScreen.main.flatMap(Self.id(of:))
             refreshHome()
             free = CGPoint(homeArea.maxX - 220, homeArea.minY + 160)
+            settling = modeProvider() == .pinned
         }
         fallSpeed = 0
         dropHeight = 160
@@ -259,6 +266,20 @@ final class DesktopPet {
             .sink { [weak self] equipped, _ in self?.showcase(equipped) }
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                                 object: nil, queue: .main) { [weak self] _ in self?.homeReadAt = .distantPast }
+        // 화면이 잠들거나 잠긴 동안에는 그리지 않는다
+        let workspace = NSWorkspace.shared.notificationCenter
+        sleepObservers = [NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification].map {
+            workspace.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
+                self?.timer?.invalidate()
+                self?.timer = nil
+            }
+        } + [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification].map {
+            workspace.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.panel != nil else { return }
+                self.lastTick = nil
+                self.schedule(fps: 60)
+            }
+        }
         PetKeys.shared.handler = { [weak self] code, down in _ = self?.key(code, down: down, repeated: false) }
         PetKeys.shared.register()
         schedule(fps: 60)
@@ -266,9 +287,13 @@ final class DesktopPet {
     }
 
     func hide() {
+        savePinIfMoved()
         PetOptions.shared.close()
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
+        sleepObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+        sleepObservers = []
+        settling = false
         timer?.invalidate()
         timer = nil
         tricks = nil
@@ -327,6 +352,14 @@ final class DesktopPet {
         homeID = Self.id(of: screen)
         homeFrame = screen.frame
         homeArea = screen.visibleFrame
+    }
+
+    /// 머무는 발 자리를 지금 화면 안으로 넣는다. 몸이 화면 밖으로 잘리거나 빠진 모니터에 남지 않게 한다.
+    private func clampedPin(_ spot: CGPoint) -> CGPoint {
+        let a = homeArea
+        let top = max(a.minY, a.maxY - max(20, bodyOnScreen.height))
+        return CGPoint(min(max(spot.x, a.minX + edgeMargin), max(a.minX + edgeMargin, a.maxX - edgeMargin)),
+                       min(max(spot.y, a.minY), top))
     }
 
     /// 점이 든 화면(없으면 가장 가까운 화면)을 살 곳으로 삼는다.
@@ -532,14 +565,18 @@ final class DesktopPet {
         lastControl = Date()
         // 끌어 놓은 자리에 둔다. 돌아다니던 중이었으면 '놓은 자리에 두기'로 바꾼다
         if modeProvider() != .pinned { onMode(.pinned) }
+        settling = false
         moveHome(to: free)
-        onPin(free)
+        let spot = clampedPin(free)
+        self.free = spot
+        onPin(spot)
     }
 
     /// 오른쪽 클릭 옵션 창. 떠 있는 동안 펫은 멈추고, 다시 오른쪽 클릭하면 닫는다.
     fileprivate func showOptions() {
         let options = PetOptions.shared
         if options.isShown { return options.close() }
+        options.petWindow = panel
         menu(open: true)
         options.show(near: bodyOnScreen, mode: modeProvider(), size: sizeProvider(), keys: PetKeys.shared.label,
                      actions: .init(mode: { [weak self] in self?.choose($0) },
@@ -569,14 +606,25 @@ final class DesktopPet {
         choose(mode)
     }
 
+    /// 방향키로 옮기다 만 머무는 자리를 저장한다.
+    private func savePinIfMoved() {
+        guard pinDirty, let free else { return }
+        pinDirty = false
+        onPin(free)
+    }
+
     fileprivate func choose(_ mode: Mode) {
+        savePinIfMoved()
+        // 처음 떨어지는 중에 다른 움직임을 고르면 내려앉은 자리를 머무는 자리로 저장하지 않는다
+        settling = false
         onMode(mode)
         switch mode {
         case .pinned:
             // 지금 자리에 둔다 (모서리 위면 그 자리, 기울기는 바로 선다)
-            let feet = feetOnScreen
+            let feet = clampedPin(feetOnScreen)
             free = feet
             lift = 0
+            settling = false
             onPin(feet)
         case .floor:
             if free == nil, edge != .bottom { dropOff() }
@@ -599,6 +647,11 @@ final class DesktopPet {
         if now.timeIntervalSince(homeReadAt) >= 1 {
             homeReadAt = now
             refreshHome()
+            // 모니터를 빼거나 해상도가 바뀌면 머무는 자리가 화면 밖에 남는다
+            if drag == nil, !settling, modeProvider() == .pinned, let spot = free {
+                let inside = clampedPin(spot)
+                if inside != spot { free = inside; onPin(inside) }
+            }
         }
         // 전역 단축키는 보조키를 먼저 떼면 놓임 알림이 안 올 수 있어 실제 키 상태로 한 번 더 본다
         if held.left || held.right || held.up || held.down, !panelHasKeys {
@@ -618,17 +671,20 @@ final class DesktopPet {
             let floor = NSScreen.screens.first { $0.frame.contains(target) }?.visibleFrame.minY ?? -.greatestFiniteMagnitude
             free = CGPoint(current.x + (target.x - current.x) * min(1, dt * 20),
                            max(floor, current.y + (target.y - current.y) * min(1, dt * 20)))
-        } else if var spot = free, modeProvider() == .pinned {
+        } else if var spot = free, modeProvider() == .pinned, !settling {
             // 머무는 자리: 방향키로 조금씩 옮기고, 스페이스로 그 자리에서 뛴다
             let x: CGFloat = (held.right ? 1 : 0) - (held.left ? 1 : 0)
             let y: CGFloat = (held.up ? 1 : 0) - (held.down ? 1 : 0)
             if x != 0 || y != 0 {
-                spot.x = min(max(spot.x + x * 150 * dt, a.minX + edgeMargin), a.maxX - edgeMargin)
-                spot.y = min(max(spot.y + y * 150 * dt, a.minY), a.maxY - 20)
+                // 1초마다 맞추는 자리와 같은 한계로 잘라 위 끝에서 툭 떨어지지 않게 한다
+                spot = clampedPin(CGPoint(spot.x + x * 150 * dt, spot.y + y * 150 * dt))
                 free = spot
-                onPin(spot)
+                pinDirty = true
                 velocity = x * 150
                 if x != 0 { heading = x }
+            } else if pinDirty {
+                pinDirty = false
+                onPin(spot)
             }
             if lift > 0 || liftSpeed > 0 {
                 liftSpeed -= 1500 * dt
@@ -642,6 +698,13 @@ final class DesktopPet {
             falling.x = min(max(falling.x, a.minX + edgeMargin), a.maxX - edgeMargin)
             if falling.y <= a.minY {
                 free = nil
+                if settling {
+                    // 머물기로 처음 나왔으면 내려앉은 자리에 머문다
+                    settling = false
+                    let spot = clampedPin(CGPoint(falling.x, a.minY))
+                    free = spot
+                    onPin(spot)
+                }
                 along = falling.x - a.minX
                 if dropHeight > 30 {
                     liftSpeed = min(dropHeight * 2.2, 420)
@@ -661,6 +724,7 @@ final class DesktopPet {
             // 누르고 있거나 커서가 가까이 있으면 멈춘다. 커서가 떠나도 잠깐은 기다려 다시 잡으려는 손을 피하지 않는다
             let waiting = pressing || hovering || menuOpen || now.timeIntervalSince(hoverEnded) < Self.hoverLinger
             velocity = pressing || menuOpen ? 0 : control(edge: edge) * 150
+            let steered = velocity != 0
             if velocity == 0, !waiting, trick == nil, !resting, now.timeIntervalSince(lastControl) > 2 {
                 // 직접 움직이지 않으면 상태 빠르기대로 테두리를 따라 걷는다
                 velocity = heading * Self.walkSpeed(display)
@@ -676,7 +740,8 @@ final class DesktopPet {
             } else if next < edgeMargin || next > a.width - edgeMargin {
                 // 바닥에서만 걸을 때는 양끝에서 돌아선다
                 next = min(max(next, edgeMargin), a.width - edgeMargin)
-                heading = -heading
+                // 방향키로 벽 쪽을 미는 중이면 돌아서지 않고 그 자리에 선다
+                if !steered { heading = -heading }
             }
             along = next
             if lift > 0 || liftSpeed > 0 {
@@ -730,7 +795,7 @@ final class DesktopPet {
         updateHover(now: now)
         panel?.ignoresMouseEvents = drag == nil && !pressing && !hovering && !menuOpen
         // 머무는 펫은 늘 자리(free)를 갖고 있어, 떨어지거나 끄는 중일 때만 바쁘게 그린다
-        let floating = free != nil && !(drag == nil && modeProvider() == .pinned)
+        let floating = free != nil && !(drag == nil && modeProvider() == .pinned && !settling)
         let busy = drag != nil || floating || lift > 0 || hovering || held.left || held.right || held.up || held.down || trick != nil
             || moving || abs(diff) > 0.01 || !puffs.isEmpty || !pats.isEmpty || !trail.isEmpty || buddyHop > 0
             || now < showcaseUntil

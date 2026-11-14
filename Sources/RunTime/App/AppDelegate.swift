@@ -539,12 +539,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func startAccountSwitcher() {
         let switcher = AccountSwitcher.shared
         switcher.captureCurrent()
+        // 토큰을 남기려면 Claude Code 키체인을 읽어야 한다. 3분 폴링마다 읽지 않고 계정이 바뀌었거나 10분이 지났을 때만 읽는다
+        var lastCapture = Date()
         engine.$official.compactMap { $0 }
             .receive(on: DispatchQueue.main)
             .sink { usage in
                 // /login으로 다른 계정에 들어왔으면 누구 값인지 모르니 적지 않고 계정부터 맞춘다
-                if ClaudeLogin.currentAccount()?.uuid == switcher.activeID { switcher.record(usage) }
-                switcher.captureCurrent()
+                let sameAccount = ClaudeLogin.currentAccount()?.uuid == switcher.activeID
+                if sameAccount { switcher.record(usage) }
+                if !sameAccount || Date().timeIntervalSince(lastCapture) >= 600 {
+                    lastCapture = Date()
+                    switcher.captureCurrent()
+                }
                 switcher.refreshOthers()
             }
             .store(in: &cancellables)

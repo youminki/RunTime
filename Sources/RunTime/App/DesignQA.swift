@@ -14,6 +14,11 @@ enum DesignQA {
     static func run(_ args: [String]) {
         setvbuf(stdout, nil, _IOLBF, 0)
         guard args.count >= 3 else { print("쓰기: --design-qa <파일키> <메뉴 경로> <결과 폴더> [notoken]"); exit(2) }
+        // 프로젝트 목록과 기록 파일을 시험 값으로 덮으므로 기록 사본을 가리킬 때만 돈다
+        guard ProcessInfo.processInfo.environment["RUNTIME_DESIGN_HISTORY"]?.isEmpty == false else {
+            print("RUNTIME_DESIGN_HISTORY로 기록 사본을 가리킨 뒤 돌립니다 (내 기록을 덮지 않게)")
+            exit(2)
+        }
         let (key, path) = (args[0], args[1])
         folder = URL(fileURLWithPath: args[2])
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

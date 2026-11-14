@@ -21,13 +21,18 @@ final class DesignImages: ObservableObject {
     private let decoded: NSCache<NSURL, NSImage> = {
         let cache = NSCache<NSURL, NSImage>()
         cache.countLimit = 30
+        // 장 수만 세면 긴 화면 30장이 1GB를 넘는다. 디코딩한 비트맵 크기로 200MB까지만 둔다
+        cache.totalCostLimit = 200 * 1024 * 1024
         return cache
     }()
 
     func image(_ url: URL) -> NSImage? {
         if let image = decoded.object(forKey: url as NSURL) { return image }
         let image = NSImage(contentsOf: url)
-        if let image { decoded.setObject(image, forKey: url as NSURL) }
+        if let image {
+            let pixels = image.representations.map { $0.pixelsWide * $0.pixelsHigh }.max() ?? 0
+            decoded.setObject(image, forKey: url as NSURL, cost: max(pixels, 1) * 4)
+        }
         return image
     }
     /// 이보다 많으면 오래된 것부터 지운다 (반으로 줄인 PNG라 장당 수백 KB).

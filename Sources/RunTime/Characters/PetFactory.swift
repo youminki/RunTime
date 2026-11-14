@@ -562,7 +562,7 @@ final class PetFactory: ObservableObject {
             try shellRun([system, "-m", "venv", Self.venv.path])
             try shellRun([python.path, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "mflux==0.24.0"])
             // 4비트로 미리 줄인 모델을 쓰면 변환용 torch·opencv 등은 쓰지 않는다 (약 0.9GB)
-            try? shellRun([python.path, "-m", "pip", "uninstall", "--yes", "--quiet", "torch", "opencv-python",
+            _ = try? shellRun([python.path, "-m", "pip", "uninstall", "--yes", "--quiet", "torch", "opencv-python",
                            "opencv-python-headless", "matplotlib", "sympy", "networkx"])
         }
         if !manager.fileExists(atPath: Self.models.appendingPathComponent("hub").path) {

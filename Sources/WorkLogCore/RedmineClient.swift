@@ -304,7 +304,11 @@ public enum Redmine {
 
     static func request(_ base: URL, _ path: String, key: String, query: [URLQueryItem] = []) -> URLRequest {
         var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        if !query.isEmpty { components.queryItems = query }
+        if !query.isEmpty {
+            components.queryItems = query
+            // URLComponents는 +를 그대로 두는데 Rails는 쿼리의 +를 빈칸으로 푼다 ("C++" 검색이 "C  "가 된다)
+            components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        }
         var request = URLRequest(url: components.url!)
         request.setValue(key, forHTTPHeaderField: "X-Redmine-API-Key")
         return request

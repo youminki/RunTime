@@ -903,12 +903,12 @@ public enum WorkReport {
         return name.isEmpty ? nil : name
     }
 
-    /// 제목에서 `#12345`를 떼어 낸다.
+    /// 제목 끝에 붙인 `#12345`를 떼어 낸다. 글 가운데의 `PR #45`나 앞에 쓴 색 값 `#333333`은 일감 번호로 보지 않는다.
     public static func splitIssue(_ text: String) -> (title: String, issue: Int?) {
-        guard let range = text.range(of: #"#(\d{2,7})"#, options: .regularExpression) else {
+        guard let range = text.range(of: #"(?:^|\s)#\d{2,7}\s*$"#, options: .regularExpression),
+              let issue = Int(text[range].trimmingCharacters(in: .whitespaces).dropFirst()) else {
             return (text.trimmingCharacters(in: .whitespaces), nil)
         }
-        let issue = Int(text[range].dropFirst())
         var title = text
         title.removeSubrange(range)
         title = title.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)

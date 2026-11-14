@@ -6,7 +6,8 @@ public enum RedmineNote {
     public static func html(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // 이미 HTML로 쓴 댓글은 그대로 둔다
-        if trimmed.hasPrefix("<p") || trimmed.hasPrefix("<div") { return trimmed }
+        // `<pre> 태그 정리`처럼 꺾쇠로 시작하는 평문은 HTML로 보지 않는다
+        if trimmed.range(of: #"^<(p|div)[\s>]"#, options: [.regularExpression, .caseInsensitive]) != nil { return trimmed }
         var sections: [[String]] = []
         var current: [String] = []
         for raw in trimmed.components(separatedBy: .newlines) {
