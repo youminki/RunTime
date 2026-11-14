@@ -88,6 +88,11 @@ final class UsageEngine: ObservableObject {
         return tracker
     }()
     private static let limitAlertsKey = "limitAlertsSent"
+    /// 한도 도달을 미리 알린 세션 창 (계정|창). 같은 창에서는 한 번만 알린다.
+    /// 다시 켜도 같은 창에서 또 알리지 않게 저장한다.
+    private var outlookAlerted = UserDefaults.standard.string(forKey: "limitOutlookAlerted") {
+        didSet { UserDefaults.standard.set(outlookAlerted, forKey: "limitOutlookAlerted") }
+    }
     /// 지금 공식 세션 창이 끝나는 시각. 지나면 "세션 초기화"를 한 번 알린다.
     private var pendingSessionReset: Date?
     private var lastWeeklyReset: Date?
@@ -415,6 +420,16 @@ final class UsageEngine: ObservableObject {
                                                        windowId: sessionWindow, account: knownAccount?.uuid ?? "") {
                 notify(threshold: threshold, kind: "세션",
                        remaining: result.sessionMinutesLeft.map { "현재 속도로 약 \(Format.minutes($0)) 뒤 한도에 닿습니다." })
+            }
+            // 80%가 되기 전이라도 지금 속도로 30분 안에 한도에 닿으면 한 번 미리 알린다 (초기화가 먼저 오면 알리지 않는다)
+            let window = (knownAccount?.uuid ?? "") + "|" + sessionWindow
+            if session.percent < 80, outlookAlerted != window,
+               case .reachesLimit(let minutes) = GaugeMath.limitOutlook(minutesLeft: result.sessionMinutesLeft,
+                                                                        resetsAt: result.sessionResetsAt, now: Date()),
+               minutes <= 30 {
+                outlookAlerted = window
+                let body = "현재 속도로 약 \(Format.minutes(minutes)) 뒤 세션 한도에 닿습니다."
+                DispatchQueue.main.async { Notifier.shared.send(title: "세션 한도 임박", body: body, stays: true) }
             }
         }
         if let weekly = result.weekly {

@@ -22,6 +22,26 @@ public enum WorkLogFile {
         return descriptor
     }
 
+    /// 그날 처음 저장하기 전의 파일을 옆 `worklog-backups/`에 날짜 이름으로 남기고 `keep`개만 둔다.
+    /// 손으로 고치다 깨지거나 덮였을 때 전날 판으로 되살릴 곳이다.
+    @discardableResult
+    public static func backupDaily(_ url: URL = defaultURL, day: String, keep: Int = 7) -> URL? {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: url.path) else { return nil }
+        let folder = url.deletingLastPathComponent().appendingPathComponent("worklog-backups", isDirectory: true)
+        let target = folder.appendingPathComponent("worklog-\(day).json")
+        // 그날 판이 이미 있으면 저장마다 폴더를 읽지 않는다
+        if manager.fileExists(atPath: target.path) { return target }
+        // 깨진 파일은 그날 백업으로 남기지 않는다 (전날 판을 지키게)
+        guard (try? load(url)) != nil else { return nil }
+        try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard (try? manager.copyItem(at: url, to: target)) != nil else { return nil }
+        let old = ((try? manager.contentsOfDirectory(atPath: folder.path)) ?? [])
+            .filter { $0.hasPrefix("worklog-") && $0.hasSuffix(".json") }.sorted().dropLast(keep)
+        old.forEach { try? manager.removeItem(at: folder.appendingPathComponent($0)) }
+        return target
+    }
+
     public static func unlock(_ descriptor: Int32) {
         guard descriptor >= 0 else { return }
         flock(descriptor, LOCK_UN)

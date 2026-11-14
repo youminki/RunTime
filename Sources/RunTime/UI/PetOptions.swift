@@ -13,6 +13,8 @@ final class PetOptions {
         var page: (MainPage) -> Void
         var report: (DailyReportBubble.Kind) -> Void
         var putBack: () -> Void
+        /// 펫을 주 화면 바닥 가운데로 데려온다 (다른 모니터나 화면 구석에서 잃어버렸을 때).
+        var recall: () -> Void = {}
         var closed: () -> Void
     }
 
@@ -55,6 +57,7 @@ final class PetOptions {
                                page: { [weak self] page in self?.finish { $0.page(page) } },
                                report: { [weak self] kind in self?.finish { $0.report(kind) } },
                                putBack: { [weak self] in self?.finish { $0.putBack() } },
+                               recall: { [weak self] in self?.finish { $0.recall() } },
                                close: { [weak self] in self?.close() })
         let host = NSHostingView(rootView: view)
         let fitted = host.fittingSize
@@ -133,6 +136,7 @@ private struct OptionsView: View {
     let page: (MainPage) -> Void
     let report: (DailyReportBubble.Kind) -> Void
     let putBack: () -> Void
+    let recall: () -> Void
     let close: () -> Void
 
     private static let sizes: [(String, CGFloat)] = [("작게", 0.7), ("보통", 1.0), ("크게", 1.4), ("아주 크게", 2.0)]
@@ -192,6 +196,12 @@ private struct OptionsView: View {
                     Text("\(keys)+방향키로 움직이기").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
                 }
                 Spacer()
+                Button(action: recall) {
+                    Label("가운데로", systemImage: "scope").font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .help("주 화면 바닥 가운데로 데려오기")
                 Button(action: putBack) {
                     Label("펫 넣기", systemImage: "tray.and.arrow.down").font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.7))

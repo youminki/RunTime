@@ -149,3 +149,20 @@ import Testing
         #expect(log.applyRecurring(on: "2026-10-26") == 0)
     }
 }
+
+@Suite struct WorkLogBackupTests {
+    @Test func keepsOneCopyPerDayAndOnlyTheLatestSeven() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("backup-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("worklog.json")
+        try Data("{}".utf8).write(to: file)
+        for day in 1...9 { WorkLogFile.backupDaily(file, day: String(format: "2026-11-%02d", day)) }
+        try Data("{\"changed\":1}".utf8).write(to: file)
+        WorkLogFile.backupDaily(file, day: "2026-11-09")
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("worklog-backups").path).sorted()
+        #expect(names.count == 7 && names.first == "worklog-2026-11-03.json")
+        let kept = try String(contentsOf: folder.appendingPathComponent("worklog-backups/worklog-2026-11-09.json"), encoding: .utf8)
+        #expect(kept == "{}")
+    }
+}

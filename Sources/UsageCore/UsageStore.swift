@@ -47,6 +47,10 @@ public final class UsageStore {
 
     private let queue = DispatchQueue(label: "runtime.usagestore")
     private var events: [UsageEvent] = []
+    /// events와 같은 차례로 둔 비용과 그날 0시. 틱마다 모든 기록의 단가 찾기와 날짜 계산을 다시 하지 않게 한 번만 구한다.
+    private var costs: [Double] = []
+    private var dayStarts: [Date] = []
+    private var dayCalendar: Calendar?
     private var seenKeys: Set<String> = []
     private var sorted = true
     /// 이보다 오래된 이벤트는 스냅샷 때 버린다. 장기 실행 시 메모리·틱 비용이 계속 늘지 않게.
@@ -77,8 +81,12 @@ public final class UsageStore {
             if !sorted {
                 events.sort { $0.timestamp < $1.timestamp }
                 sorted = true
+                costs = []
+                dayStarts = []
             }
             pruneEvents(before: now.addingTimeInterval(-retention))
+            fillCosts()
+            fillDayStarts(calendar)
             let dayStart = calendar.startOfDay(for: now)
             let weekStart = weeklySince ?? WeeklyWindow.rollingStart(now: now)
             let sparkStart = now.addingTimeInterval(-Double(Self.sparklineMinutes) * 60)
@@ -95,15 +103,16 @@ public final class UsageStore {
                                projectCost: [String: Double])] = [:]
             var slots: [Date: [String: Set<Int>]] = [:]
 
-            for event in events where event.timestamp <= now {
+            for index in events.indices where events[index].timestamp <= now {
+                let event = events[index]
                 let tokens = event.totalTokens
-                let cost = PricingTable.cost(of: event)
+                let cost = costs[index]
                 if event.timestamp >= dayStart {
                     todayTokens += tokens
                     todayCost += cost
                     if event.isProgrammatic { todayProgrammatic += tokens }
                 }
-                let eventDay = calendar.startOfDay(for: event.timestamp)
+                let eventDay = dayStarts[index]
                 if eventDay >= firstDay {
                     daily[eventDay, default: (0, 0, [:], [:], [:])].tokens += tokens
                     daily[eventDay]!.cost += cost
@@ -168,12 +177,20 @@ public final class UsageStore {
     /// [from, to) 기간 요약. 보관 기간(retention)보다 오래된 기록은 이미 버려져 셈에 들지 않는다.
     public func summary(from: Date, to: Date, calendar: Calendar = .current) -> PeriodSummary {
         queue.sync {
+            if !sorted {
+                events.sort { $0.timestamp < $1.timestamp }
+                sorted = true
+                costs = []
+                dayStarts = []
+            }
+            fillCosts()
             var tokens = 0, cost = 0.0
             var days: [Date: Int] = [:], projects: [String: Int] = [:]
-            for event in events where event.timestamp >= from && event.timestamp < to {
+            for index in events.indices where events[index].timestamp >= from && events[index].timestamp < to {
+                let event = events[index]
                 let t = event.totalTokens
                 tokens += t
-                cost += PricingTable.cost(of: event)
+                cost += costs[index]
                 days[calendar.startOfDay(for: event.timestamp), default: 0] += t
                 if let project = event.project, !project.isEmpty { projects[project, default: 0] += t }
             }
@@ -187,11 +204,32 @@ public final class UsageStore {
     private func pruneEvents(before cutoff: Date) {
         guard let keep = events.firstIndex(where: { $0.timestamp >= cutoff }) else {
             events.removeAll()
+            costs.removeAll()
+            dayStarts.removeAll()
             seenKeys.removeAll()
             return
         }
         guard keep > 0 else { return }
         for event in events[..<keep] { seenKeys.remove(event.dedupKey) }
         events.removeFirst(keep)
+        if costs.count >= keep { costs.removeFirst(keep) } else { costs = [] }
+        if dayStarts.count >= keep { dayStarts.removeFirst(keep) } else { dayStarts = [] }
+    }
+
+    /// queue 안에서만. 새로 붙은 기록의 비용만 구한다 (기록은 정렬된 채 뒤에 붙는다).
+    private func fillCosts() {
+        if costs.count > events.count { costs = [] }
+        costs.reserveCapacity(events.count)
+        while costs.count < events.count { costs.append(PricingTable.cost(of: events[costs.count])) }
+    }
+
+    /// queue 안에서만. 달력(시간대)이 바뀌면 처음부터 다시 구한다.
+    private func fillDayStarts(_ calendar: Calendar) {
+        if dayCalendar != calendar || dayStarts.count > events.count {
+            dayStarts = []
+            dayCalendar = calendar
+        }
+        dayStarts.reserveCapacity(events.count)
+        while dayStarts.count < events.count { dayStarts.append(calendar.startOfDay(for: events[dayStarts.count].timestamp)) }
     }
 }

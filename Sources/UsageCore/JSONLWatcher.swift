@@ -15,6 +15,13 @@ public final class JSONLWatcher {
     /// 마지막 scan에서 새로 읽은 줄 가운데 한도에 막힌 기록. 켠 직후 첫 scan에는 지난 기록도 들어 있다.
     public private(set) var limitHits: [LimitHit] = []
     private let fileManager = FileManager.default
+    /// 지난 전체 훑기에서 찾은 최근 기록 파일. 틱마다 300개 넘는 폴더를 다시 훑지 않고 이 파일들의 크기만 본다.
+    private var known: [URL] = []
+    private var lastFullScan = Date.distantPast
+    /// 맨 위 프로젝트 폴더들의 수정 시각. 새 세션 파일이 생기면 그 폴더 시각이 바뀌어 바로 다시 훑는다.
+    private var folderStamps: [String: Date] = [:]
+    /// 하위 에이전트 기록처럼 깊은 곳에 새로 생긴 파일은 이 간격의 전체 훑기에서 잡는다.
+    public var fullScanInterval: TimeInterval = 15
 
     public init(rootDirectory: URL? = nil) {
         self.rootDirectory = rootDirectory ?? ClaudePaths.configDirectory.appendingPathComponent("projects")
@@ -24,18 +31,27 @@ public final class JSONLWatcher {
     public func scan(now: Date = Date()) -> [UsageEvent] {
         var events: [UsageEvent] = []
         limitHits = []
-        // 폴더 자체가 심볼릭 링크면 enumerator가 아무것도 돌려주지 않는다 (기록을 다른 디스크로 옮긴 경우)
-        guard let enumerator = fileManager.enumerator(
-            at: rootDirectory.resolvingSymlinksInPath(),
-            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+        if needsFullScan(now: now) {
+            // 폴더 자체가 심볼릭 링크면 enumerator가 아무것도 돌려주지 않는다 (기록을 다른 디스크로 옮긴 경우)
+            guard let enumerator = fileManager.enumerator(
+                at: rootDirectory.resolvingSymlinksInPath(),
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) else { return [] }
+            known = enumerator.compactMap { $0 as? URL }.filter { url in
+                guard url.pathExtension == "jsonl",
+                      let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                else { return false }
+                return now.timeIntervalSince(mtime) < maxFileAge
+            }
+            lastFullScan = now
+        }
 
-        for case let url as URL in enumerator {
-            guard url.pathExtension == "jsonl" else { continue }
-            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-                  let mtime = values.contentModificationDate,
-                  let size = values.fileSize
+        for url in known {
+            // URL의 resourceValues는 값을 붙잡아 두어, 같은 URL로 다시 보면 늘어난 크기를 못 본다. 파일 속성을 새로 읽는다
+            guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+                  let mtime = attributes[.modificationDate] as? Date,
+                  let size = (attributes[.size] as? NSNumber)?.intValue
             else { continue }
             guard now.timeIntervalSince(mtime) < maxFileAge else { continue }
 
@@ -63,6 +79,19 @@ public final class JSONLWatcher {
             } catch { continue }
         }
         return events
+    }
+
+    /// 정해진 간격이 지났거나 맨 위 프로젝트 폴더가 생기거나 바뀌었으면 전체를 다시 훑는다.
+    private func needsFullScan(now: Date) -> Bool {
+        let root = rootDirectory.resolvingSymlinksInPath()
+        var stamps: [String: Date] = [:]
+        for name in (try? fileManager.contentsOfDirectory(atPath: root.path)) ?? [] where !name.hasPrefix(".") {
+            let path = root.appendingPathComponent(name).path
+            if let date = (try? fileManager.attributesOfItem(atPath: path))?[.modificationDate] as? Date { stamps[path] = date }
+        }
+        defer { folderStamps = stamps }
+        return known.isEmpty || stamps != folderStamps || now.timeIntervalSince(lastFullScan) >= fullScanInterval
+            || now < lastFullScan
     }
 
     /// 청크를 개행 단위로 파싱. 마지막 불완전한 줄(쓰기 도중)은 남겨두고,

@@ -187,6 +187,8 @@ final class AppSettings: ObservableObject {
 /// 메뉴바 고양이 옆 사용률 표시.
 enum MenuBarLabel: String, CaseIterable {
     case off, session, weekly, higher
+    /// 세션 초기화까지 남은 시간 (`2:18`).
+    case reset
 
     var displayName: String {
         switch self {
@@ -194,6 +196,7 @@ enum MenuBarLabel: String, CaseIterable {
         case .session: return "세션"
         case .weekly: return "주간"
         case .higher: return "높은 쪽"
+        case .reset: return "초기화까지"
         }
     }
 }

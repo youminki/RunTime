@@ -265,17 +265,27 @@ final class DesktopPet {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] equipped, _ in self?.showcase(equipped) }
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                                                object: nil, queue: .main) { [weak self] _ in self?.homeReadAt = .distantPast }
+                                                                object: nil, queue: .main) { [weak self] _ in
+            self?.homeReadAt = .distantPast
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.followFullScreen() }
+        }
         // 화면이 잠들거나 잠긴 동안에는 그리지 않는다
         let workspace = NSWorkspace.shared.notificationCenter
-        sleepObservers = [NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification].map {
+        // 발표·영상처럼 다른 앱이 전체 화면이면 그 화면에서는 펫을 숨긴다. 앱을 바꿀 때 창 배치가 늦게 바뀌어 잠깐 뒤에 본다
+        sleepObservers += [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didActivateApplicationNotification].map {
+            workspace.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.followFullScreen() }
+            }
+        }
+        sleepObservers += [NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification].map {
             workspace.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
                 self?.timer?.invalidate()
                 self?.timer = nil
             }
         } + [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification].map {
             workspace.addObserver(forName: $0, object: nil, queue: .main) { [weak self] _ in
-                guard let self, self.panel != nil else { return }
+                // 전체 화면 앱 때문에 숨겨 둔 동안에는 다시 돌리지 않는다
+                guard let self, self.panel?.isVisible == true else { return }
                 self.lastTick = nil
                 self.schedule(fps: 60)
             }
@@ -283,6 +293,7 @@ final class DesktopPet {
         PetKeys.shared.handler = { [weak self] code, down in _ = self?.key(code, down: down, repeated: false) }
         PetKeys.shared.register()
         schedule(fps: 60)
+        followFullScreen()
         onChange(true)
     }
 
@@ -320,6 +331,8 @@ final class DesktopPet {
     }
 
     private func schedule(fps: Double) {
+        // 전체 화면 앱 때문에 숨긴 동안에는 꾸미기를 바꾸는 등 다른 길로도 그리기를 다시 켜지 않는다
+        guard panel?.isVisible == true else { timer?.invalidate(); timer = nil; return }
         if let timer, abs(timer.timeInterval - 1 / fps) < 0.001 { return }
         timer?.invalidate()
         let timer = Timer(timeInterval: 1 / fps, repeats: true) { [weak self] _ in self?.tick() }
@@ -584,6 +597,7 @@ final class DesktopPet {
                                     page: { [weak self] in self?.openPage($0) },
                                     report: { DailyReportBubble.showOrExplain($0) },
                                     putBack: { [weak self] in self?.hide() },
+                                    recall: { [weak self] in self?.recall() },
                                     closed: { [weak self] in self?.menu(open: false) }))
     }
 
@@ -604,6 +618,61 @@ final class DesktopPet {
     func setMode(_ mode: Mode) {
         guard isShown else { return }
         choose(mode)
+    }
+
+    /// 펫이 사는 화면을 다른 앱의 전체 화면 창이 덮고 있으면 숨기고, 아니면 다시 보인다.
+    private func followFullScreen() {
+        guard let panel else { return }
+        let covered = Self.fullScreenCovers(homeFrame)
+        if covered, panel.isVisible {
+            panel.orderOut(nil)
+            // 숨긴 동안에는 그리지 않는다
+            timer?.invalidate()
+            timer = nil
+        } else if !covered, !panel.isVisible {
+            panel.orderFrontRegardless()
+            lastTick = nil
+            schedule(fps: 60)
+        }
+    }
+
+    /// 창 이름 없이 위치만 읽어 화면 기록 권한이 필요 없다. 데스크톱 그림 같은 아래층 창은 층(layer 0)으로 거른다.
+    private static func fullScreenCovers(_ screen: NSRect) -> Bool {
+        guard screen.width > 0, let primary = NSScreen.screens.first?.frame,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return false }
+        let mine = ProcessInfo.processInfo.processIdentifier
+        // CG 창 좌표는 주 화면 왼쪽 위가 원점이다
+        let target = CGRect(x: screen.minX, y: primary.maxY - screen.maxY, width: screen.width, height: screen.height)
+        let notch = NSScreen.screens.first { $0.frame == screen }.map { $0.safeAreaInsets.top } ?? 0
+        return windows.contains { info in
+            guard (info[kCGWindowLayer as String] as? Int) == 0, (info[kCGWindowOwnerPID as String] as? Int32) != mine,
+                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
+            let rect = CGRect(x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0, width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0)
+            // 노치가 있는 화면에서는 전체 화면 창이 노치 아래 띠(약 32~38pt)를 빼고 그려져 위쪽만 내려온다
+            return abs(rect.minX - target.minX) < 1 && abs(rect.width - target.width) < 1
+                && abs(rect.maxY - target.maxY) < 1 && rect.minY >= target.minY - 1 && rect.minY - target.minY <= notch + 1
+        }
+    }
+
+    /// 주 화면 바닥 가운데로 데려온다. 머물기면 그 자리를 새 머무는 자리로 저장한다.
+    func recall() {
+        guard isShown else { return }
+        homeID = (NSScreen.screens.first ?? NSScreen.main).flatMap(Self.id(of:))
+        refreshHome()
+        settling = false
+        drag = nil
+        lift = 0
+        if modeProvider() == .pinned {
+            let spot = clampedPin(CGPoint(homeArea.midX, homeArea.minY))
+            free = spot
+            onPin(spot)
+        } else {
+            place(along: homeArea.width / 2, heading: heading)
+        }
+        lastControl = Date()
+        play(.greet)
+        followFullScreen()
     }
 
     /// 방향키로 옮기다 만 머무는 자리를 저장한다.

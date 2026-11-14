@@ -356,14 +356,14 @@ public struct WorkLog: Codable, Equatable {
     private static let choseong: [Character] = Array("ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ")
 
     /// 한글 음절을 초성으로 바꾼다. 다른 글자는 그대로 둔다.
-    static func initials(_ text: String) -> String {
+    public static func initials(_ text: String) -> String {
         String(text.unicodeScalars.map { scalar -> Character in
             guard (0xAC00...0xD7A3).contains(scalar.value) else { return Character(scalar) }
             return choseong[Int(scalar.value - 0xAC00) / 588]
         })
     }
 
-    static func isInitialsOnly(_ word: String) -> Bool {
+    public static func isInitialsOnly(_ word: String) -> Bool {
         !word.isEmpty && word.allSatisfy { choseong.contains($0) }
     }
 

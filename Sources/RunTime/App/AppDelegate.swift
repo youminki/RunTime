@@ -147,8 +147,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { [weak self] text in self?.statusItem.button?.toolTip = text }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest3(engine.$sessionGauge, engine.$weeklyGauge, engine.settings.$menuBarLabel)
-            .map { Self.statusLabel($2, session: $0, weekly: $1) }
+        // 남은 시간 표시는 값이 그대로여도 분마다 줄어야 해서 30초마다 다시 만든다
+        let clock = Timer.publish(every: 30, on: .main, in: .common).autoconnect().map { _ in () }.prepend(())
+        Publishers.CombineLatest4(engine.$sessionGauge, engine.$weeklyGauge, engine.settings.$menuBarLabel,
+                                  engine.$sessionResetsAt.combineLatest(clock).map(\.0))
+            .map { Self.statusLabel($2, session: $0, weekly: $1, resetsAt: $3) }
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] label in self?.applyStatusLabel(label) }
@@ -880,10 +883,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     /// 고양이 옆 사용률. 공식 값이 없으면 "--%". 색은 표시 중인 %의 단계로 정한다.
-    private static func statusLabel(_ label: MenuBarLabel, session: GaugeReading?, weekly: GaugeReading?) -> StatusLabel? {
+    private static func statusLabel(_ label: MenuBarLabel, session: GaugeReading?, weekly: GaugeReading?,
+                                    resetsAt: Date? = nil, now: Date = Date()) -> StatusLabel? {
         let gauge: GaugeReading?
         switch label {
         case .off: return nil
+        case .reset:
+            guard let resetsAt, resetsAt > now else { return StatusLabel(text: "--:--", level: .normal) }
+            let minutes = Int(resetsAt.timeIntervalSince(now) / 60)
+            return StatusLabel(text: String(format: "%d:%02d", minutes / 60, minutes % 60),
+                               level: session.map { UsageAlertLevel.level(percent: $0.percent) } ?? .normal)
         case .session: gauge = session
         case .weekly: gauge = weekly
         case .higher: gauge = [session, weekly].compactMap { $0 }.max { $0.percent < $1.percent }

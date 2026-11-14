@@ -1282,7 +1282,12 @@ final class RedmineStore: ObservableObject {
             guard matches(issue, quick), refine.allSatisfy({ value(of: $0.key, in: issue) == $0.value }) else { return false }
             guard !words.isEmpty else { return true }
             let text = "#\(issue.id) \(issue.subject) \(issue.project.name) \(issue.tracker.name) \(issue.status.name) \(issue.assignedTo?.name ?? "")".lowercased()
-            return words.allSatisfy { text.contains($0) }
+            // 업무 일지 찾기처럼 `ㄷㅇㅌ` 같은 초성만 쳐도 맞춘다
+            // 초성만 친 낱말이 있을 때만 초성 글을 만든다
+            let initials = words.contains { WorkLog.isInitialsOnly(String($0)) } ? WorkLog.initials(text) : ""
+            return words.allSatisfy { word in
+                text.contains(word) || (WorkLog.isInitialsOnly(String(word)) && initials.contains(word))
+            }
         }
     }
 
