@@ -212,6 +212,23 @@ enum RedmineFlowCheck {
         check("댓글이 한 번만 나간다", sent == true && again == false && writes() == ["PUT issues/10.json"])
         check("보내기가 끝나면 다시 쓸 수 있다", !store.isBusy(10))
 
+        // 시간 초과로 끊겼지만 레드마인에는 저장된 댓글: 같은 글을 다시 보내면 올리지 않는다
+        let detailFile = folder.appendingPathComponent("issues_10.json")
+        let original = try? Data(contentsOf: detailFile)
+        let now = ISO8601DateFormatter().string(from: Date())
+        if let text = original.flatMap({ String(data: $0, encoding: .utf8) }) {
+            let posted = text.replacingOccurrences(of: #""journals":[]"#,
+                                                   with: #""journals":[{"id":31,"user":{"id":7,"name":"나"},"notes":"끊긴 댓글","created_on":"\#(now)"}]"#)
+            try? Data(posted.utf8).write(to: detailFile)
+        }
+        var duplicate: Bool?
+        store.comment(10, text: "끊긴 댓글", files: []) { duplicate = $0 }
+        await settle()
+        check("끊긴 뒤 같은 댓글을 다시 보내면 올리지 않는다", duplicate == true && writes().isEmpty
+              && store.flash?.contains("이미 올라가") == true)
+        if let original { try? original.write(to: detailFile) }
+        store.flash = nil
+
         let file = folder.appendingPathComponent("첨부.txt")
         try? Data("a".utf8).write(to: file)
         var attached: Bool?

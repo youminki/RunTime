@@ -641,18 +641,36 @@ final class DesktopPet {
         guard screen.width > 0, let primary = NSScreen.screens.first?.frame,
               let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return false }
-        let mine = ProcessInfo.processInfo.processIdentifier
         // CG 창 좌표는 주 화면 왼쪽 위가 원점이다
         let target = CGRect(x: screen.minX, y: primary.maxY - screen.maxY, width: screen.width, height: screen.height)
         let notch = NSScreen.screens.first { $0.frame == screen }.map { $0.safeAreaInsets.top } ?? 0
-        return windows.contains { info in
-            guard (info[kCGWindowLayer as String] as? Int) == 0, (info[kCGWindowOwnerPID as String] as? Int32) != mine,
-                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
-            let rect = CGRect(x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0, width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0)
-            // 노치가 있는 화면에서는 전체 화면 창이 노치 아래 띠(약 32~38pt)를 빼고 그려져 위쪽만 내려온다
-            return abs(rect.minX - target.minX) < 1 && abs(rect.width - target.width) < 1
-                && abs(rect.maxY - target.maxY) < 1 && rect.minY >= target.minY - 1 && rect.minY - target.minY <= notch + 1
+        let list: [WindowInfo] = windows.compactMap { info in
+            guard let layer = info[kCGWindowLayer as String] as? Int, let pid = info[kCGWindowOwnerPID as String] as? Int32,
+                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else { return nil }
+            return WindowInfo(pid: pid, layer: layer,
+                              rect: CGRect(x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0, width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0))
         }
+        return fullScreenCovers(target, windows: list, notch: notch, mine: ProcessInfo.processInfo.processIdentifier)
+    }
+
+    struct WindowInfo { let pid: Int32; let layer: Int; let rect: CGRect }
+
+    /// 화면(`target`, CG 좌표)을 다른 앱의 전체 화면 창이 덮었는지. 창 목록만으로 판단해 점검에서 그대로 시험한다.
+    static func fullScreenCovers(_ target: CGRect, windows: [WindowInfo], notch: CGFloat, mine: Int32) -> Bool {
+        // 이 화면에 걸친 다른 앱의 보통 층 창 (주인, 위치)
+        let others: [(pid: Int32, rect: CGRect)] = windows.compactMap { info in
+            guard info.layer == 0, info.pid != mine else { return nil }
+            let rect = info.rect
+            return rect.intersects(target) && rect.width > 1 && rect.height > 1 ? (info.pid, rect) : nil
+        }
+        // 노치가 있는 화면에서는 전체 화면 창이 노치 아래 띠(약 32~38pt)를 빼고 그려져 위쪽만 내려온다
+        guard let cover = others.first(where: { item in
+            abs(item.rect.minX - target.minX) < 1 && abs(item.rect.width - target.width) < 1 && abs(item.rect.maxY - target.maxY) < 1
+                && item.rect.minY >= target.minY - 1 && item.rect.minY - target.minY <= notch + 1
+        }) else { return false }
+        // 전체 화면 공간에는 그 앱 창만 있다. 메뉴바·Dock을 자동 숨김으로 두고 창을 화면 가득 키운 보통 공간에서는
+        // 가려진 다른 앱 창도 화면 위 창으로 잡혀, 그 경우는 전체 화면으로 보지 않는다
+        return others.allSatisfy { $0.pid == cover.pid }
     }
 
     /// 주 화면 바닥 가운데로 데려온다. 머물기면 그 자리를 새 머무는 자리로 저장한다.
@@ -1384,6 +1402,11 @@ enum DesktopPetCheck {
             print("\(ok ? "✓" : "✗") \(name)")
             if !ok { failures += 1 }
         }
+        /// 이 환경에서 잴 수 없는 항목. 실패로 세지 않고 까닭을 남긴다.
+        func skip(_ name: String, _ reason: String) { print("– \(name) (건너뜀: \(reason))") }
+        // 요즘 macOS는 앞에 있지 않은 앱이 코드로 키 창을 가져가지 못하게 막는다. 실제로는 펫을 누르는 순간 키 창이 된다
+        let keyBlocked = "앱이 앞에 있지 않아 macOS가 코드로 키 창을 넘겨주지 않음"
+        var keyboardTaken = false
         var display = SpriteDisplay.normal(.running)
         var mode = DesktopPet.Mode.roam
         var grabbed = CGPoint.zero, destination = CGPoint.zero
@@ -1625,7 +1648,10 @@ enum DesktopPetCheck {
                 }
             }),
             (0.6, {
-                check("끌면 따라와 들린다 (높이 \(Int(pet.position.lift)))", pet.position.lift > 100)
+                // 높이는 원래 화면 바닥 기준이라, 끌고 간 모니터가 더 낮게 놓여 있으면 0으로 읽힌다. 손 쪽으로 따라왔는지 본다
+                let gap = hypot(pet.bodyCenter.x - destination.x, pet.bodyCenter.y - destination.y)
+                let start = hypot(grabbed.x - destination.x, grabbed.y - destination.y)
+                check("끌면 손을 따라온다 (남은 거리 \(Int(gap))pt / 처음 \(Int(start))pt)", gap < max(80, start * 0.2))
                 mouse(.leftMouseUp, at: destination)
             }),
             (2.5, {
@@ -1694,7 +1720,9 @@ enum DesktopPetCheck {
             (0.2, {
                 mode = .roam
                 pet.takeKeyboardForCheck()
-                check("누르면 방향키를 받는다", pet.hasKeyboard)
+                keyboardTaken = pet.hasKeyboard
+                if keyboardTaken || NSApp.isActive { check("누르면 방향키를 받는다", keyboardTaken) }
+                else { skip("누르면 방향키를 받는다", keyBlocked) }
             }),
             (0.3, {
                 // 조작 안내가 머리 바로 위에 붙는지 눈으로 본다
@@ -1704,13 +1732,16 @@ enum DesktopPetCheck {
             }),
             (0.2, {
                 let bubble = MenuBarBubble.shared.frame ?? .zero, body = pet.bodyFrame ?? .zero, target = pet.bubbleTarget ?? .zero
-                check("조작 안내가 떠 있으면 말풍선이 안내 위로 비켜 뜬다 (몸에서 \(Int(bubble.minY - body.maxY))pt)",
+                if keyboardTaken {
+                    check("조작 안내가 떠 있으면 말풍선이 안내 위로 비켜 뜬다 (몸에서 \(Int(bubble.minY - body.maxY))pt)",
                       target.maxY > body.maxY + 10 && bubble.minY >= target.maxY)
+                } else { skip("조작 안내가 떠 있으면 말풍선이 안내 위로 비켜 뜬다", keyBlocked) }
                 capture("bubble-over-hint")
                 MenuBarBubble.shared.hide()
             }),
             (3.8, {
-                check("4초 동안 방향키를 쓰지 않으면 키 입력을 돌려준다", !pet.hasKeyboard)
+                if keyboardTaken { check("4초 동안 방향키를 쓰지 않으면 키 입력을 돌려준다", !pet.hasKeyboard) }
+                else { skip("4초 동안 방향키를 쓰지 않으면 키 입력을 돌려준다", keyBlocked) }
                 mode = .pinned
                 let anchor = { pet.bubbleTarget.map { ($0, true) } }
                 MenuBarBubble.shared.show(.init(title: "레드마인 새 일감 2건", items: ["#101 로그인 화면 수정", "#102 목록 정렬"],
@@ -1764,6 +1795,26 @@ enum DesktopPetCheck {
                 MenuBarBubble.shared.snapshot(to: file.deletingPathExtension().appendingPathExtension("report.png"))
                 MenuBarBubble.shared.hide()
                 check("일일보고 말풍선은 다시 켜도 낡은 글을 되살리지 않는다", UserDefaults.standard.data(forKey: "menuBarBubbleQueue") == nil)
+                // 가운데로: 주 화면 바닥 가운데로 온다
+                pet.recall()
+                let main = NSScreen.screens.first?.visibleFrame ?? .zero
+                check("가운데로 누르면 주 화면 바닥 가운데로 온다 (\(Int(pet.position.x - main.midX))pt)",
+                      abs(pet.position.x - main.midX) < 2 && main.contains(CGPoint(pet.position.x, main.minY + 1)))
+                // 전체 화면 판단: 창 목록만 바꿔 넣어 본다 (CG 좌표, 화면 1440×900)
+                let sample = CGRect(x: 0, y: 0, width: 1440, height: 900)
+                typealias W = DesktopPet.WindowInfo
+                let full = W(pid: 50, layer: 0, rect: sample)
+                check("다른 앱 창 하나가 화면을 덮으면 전체 화면으로 본다", DesktopPet.fullScreenCovers(sample, windows: [full], notch: 0, mine: 1))
+                check("노치 아래로 그린 전체 화면 창도 잡는다",
+                      DesktopPet.fullScreenCovers(sample, windows: [W(pid: 50, layer: 0, rect: CGRect(x: 0, y: 37, width: 1440, height: 863))], notch: 37, mine: 1))
+                check("화면 가득 키운 창 뒤에 다른 앱 창이 있으면 전체 화면이 아니다",
+                      !DesktopPet.fullScreenCovers(sample, windows: [full, W(pid: 60, layer: 0, rect: CGRect(x: 100, y: 100, width: 400, height: 300))], notch: 0, mine: 1))
+                check("메뉴바·Dock이 보이는 크기의 창은 전체 화면이 아니다",
+                      !DesktopPet.fullScreenCovers(sample, windows: [W(pid: 50, layer: 0, rect: CGRect(x: 0, y: 25, width: 1440, height: 800))], notch: 0, mine: 1))
+                check("메뉴바처럼 위층 창은 세지 않는다",
+                      !DesktopPet.fullScreenCovers(sample, windows: [W(pid: 50, layer: 25, rect: sample)], notch: 0, mine: 1))
+                check("다른 모니터의 전체 화면 창은 이 화면과 상관없다",
+                      !DesktopPet.fullScreenCovers(sample, windows: [W(pid: 50, layer: 0, rect: CGRect(x: 1440, y: 0, width: 1920, height: 1080))], notch: 0, mine: 1))
                 pet.snapshot(to: file)
                 pet.hide()
                 check("넣으면 창이 사라진다", !pet.isShown)

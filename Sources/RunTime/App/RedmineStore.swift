@@ -1070,6 +1070,23 @@ final class RedmineStore: ObservableObject {
             sending.remove(id)
             done(ok)
         }
+        // 앞서 보내다 20초 제한에 끊겼어도 레드마인에는 저장됐을 수 있다. 30분 안에 같은 댓글이 있으면 다시 올리지 않는다
+        let probe = RedmineSent(issue: id, sentAt: Date().addingTimeInterval(-1800), entryIDs: [], note: text,
+                                before: .init(), after: .init())
+        fetch(RedmineAPI.issueWithJournalsRequest(base: base, key: key, issue: id)) { [weak self] body, status, _ in
+            guard let self else { return }
+            if (200..<300).contains(status), let body, let journals = try? RedmineAPI.parseJournals(body),
+               probe.matchJournal(journals) != nil {
+                self.flash = "같은 댓글이 이미 올라가 있어 다시 올리지 않았습니다"
+                self.loadDetail(id)
+                return finish(true)
+            }
+            self.postComment(id, text: text, files: files, isPrivate: isPrivate, base: base, key: key, finish: finish)
+        }
+    }
+
+    private func postComment(_ id: Int, text: String, files: [URL], isPrivate: Bool, base: URL, key: String,
+                             finish: @escaping (Bool) -> Void) {
         var uploads: [RedmineAPI.Upload] = []
         func next(_ rest: [URL]) {
             guard let file = rest.first else {

@@ -889,10 +889,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         switch label {
         case .off: return nil
         case .reset:
-            guard let resetsAt, resetsAt > now else { return StatusLabel(text: "--:--", level: .normal) }
-            let minutes = Int(resetsAt.timeIntervalSince(now) / 60)
-            return StatusLabel(text: String(format: "%d:%02d", minutes / 60, minutes % 60),
-                               level: session.map { UsageAlertLevel.level(percent: $0.percent) } ?? .normal)
+            let text = GaugeMath.countdown(until: resetsAt, now: now)
+            return StatusLabel(text: text, level: text == "--:--" ? .normal : session.map { UsageAlertLevel.level(percent: $0.percent) } ?? .normal)
         case .session: gauge = session
         case .weekly: gauge = weekly
         case .higher: gauge = [session, weekly].compactMap { $0 }.max { $0.percent < $1.percent }

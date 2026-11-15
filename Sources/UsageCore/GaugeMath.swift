@@ -44,6 +44,12 @@ public struct OfficialWindow: Equatable, Sendable {
 /// (실측 세션 1.3배, 주간 4.4배 차이) 조회 사이를 보간하거나 로컬 토큰으로 추정하면 `/usage`와 어긋난다.
 /// 공식값만 쓰면 조회 사이 최대 3분 늦을 뿐 값은 늘 일치하고, 공식 값이 없으면 게이지를 비워 둔다.
 public enum GaugeMath {
+    /// 메뉴바에 쓰는 초기화까지 남은 시간 `2:18`. 모르거나 지났으면 `--:--`. 분은 버림이라 0:00은 1분 안쪽이다.
+    public static func countdown(until end: Date?, now: Date) -> String {
+        guard let end, end > now else { return "--:--" }
+        let minutes = Int(end.timeIntervalSince(now) / 60)
+        return String(format: "%d:%02d", minutes / 60, minutes % 60)
+    }
 
     /// 공식 창 하나의 표시값. 조회 뒤 리셋 시각이 지났으면 창이 초기화된 것이라 0%로 둔다.
     /// 조회할 때 이미 지난 리셋 시각이 왔으면 활성 창이 없는 것이라 0%로 두되 다시 조회하지 않는다

@@ -126,3 +126,13 @@ struct OfficialTrendTests {
         #expect(GaugeMath.pace(percent: 96, elapsed: 0.02) == .critical)
     }
 }
+
+@Suite struct CountdownTests {
+    @Test func formatsHoursAndMinutes() {
+        let now = Date(timeIntervalSince1970: 0)
+        #expect(GaugeMath.countdown(until: now.addingTimeInterval(2 * 3600 + 18 * 60 + 59), now: now) == "2:18")
+        #expect(GaugeMath.countdown(until: now.addingTimeInterval(30), now: now) == "0:00")
+        #expect(GaugeMath.countdown(until: now, now: now) == "--:--")
+        #expect(GaugeMath.countdown(until: nil, now: now) == "--:--")
+    }
+}
