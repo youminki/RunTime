@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Combine
 import os.log
@@ -76,6 +77,10 @@ final class UsageEngine: ObservableObject {
     private var jsonlTimer: DispatchSourceTimer?
     private var officialTimer: DispatchSourceTimer?
     private var activityToken: NSObjectProtocol?
+    /// workQueue 전용. 화면이 꺼졌거나 잠겼으면 기록 폴더를 30초마다만 본다 (보는 사람이 없고 러너도 보이지 않는다).
+    private var screensAsleep = false
+    private var requestedInterval: TimeInterval = 3
+    private var sleepObservers: [NSObjectProtocol] = []
     private var cancellables: Set<AnyCancellable> = []
 
     // 이하 상태는 workQueue 전용
@@ -149,6 +154,18 @@ final class UsageEngine: ObservableObject {
         self.jsonlTimer = jsonlTimer
         workQueue.async { self.applyPollInterval(interval) }
         jsonlTimer.resume()
+        let workspace = NSWorkspace.shared.notificationCenter
+        sleepObservers = [(NSWorkspace.screensDidSleepNotification, true), (NSWorkspace.sessionDidResignActiveNotification, true),
+                          (NSWorkspace.screensDidWakeNotification, false), (NSWorkspace.sessionDidBecomeActiveNotification, false)]
+            .map { name, asleep in
+                workspace.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                    self?.workQueue.async {
+                        guard let self, self.screensAsleep != asleep else { return }
+                        self.screensAsleep = asleep
+                        self.applyPollInterval(self.requestedInterval)   // 깨면 타이머가 바로 한 번 돌아 밀린 기록을 읽는다
+                    }
+                }
+            }
 
         let officialTimer = DispatchSource.makeTimerSource(queue: workQueue)
         officialTimer.schedule(deadline: .now() + 1, repeating: Self.officialPollInterval)
@@ -224,7 +241,10 @@ final class UsageEngine: ObservableObject {
 
     private func applyPollInterval(_ interval: TimeInterval) {
         lastTickAt = nil   // 간격이 바뀐 직후 지연 경고가 뜨지 않게
-        jsonlTimer?.schedule(deadline: .now(), repeating: interval)
+        requestedInterval = interval
+        let effective = screensAsleep ? max(interval, 30) : interval
+        // 다른 앱의 깨움과 묶일 여유를 둬 CPU가 따로 깨어나는 횟수를 줄인다
+        jsonlTimer?.schedule(deadline: .now(), repeating: effective, leeway: .milliseconds(Int(effective * 100)))
     }
 
     // MARK: - 설정
@@ -297,7 +317,8 @@ final class UsageEngine: ObservableObject {
         let now = Date()
         let config = self.config
         // 틱 간격이 폴링 주기의 3배를 넘으면 타이머가 지연/정지된 것 — 진단 신호
-        if let last = lastTickAt, now.timeIntervalSince(last) > config.pollInterval * 3 {
+        let expected = screensAsleep ? max(config.pollInterval, 30) : config.pollInterval
+        if let last = lastTickAt, now.timeIntervalSince(last) > expected * 3 {
             log.warning("tick 지연: \(Int(now.timeIntervalSince(last)))초 만에 재개")
         }
         lastTickAt = now

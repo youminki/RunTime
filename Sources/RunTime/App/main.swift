@@ -641,6 +641,15 @@ if let index = CommandLine.arguments.firstIndex(of: "--update-bubble-check") {
     app.run()
 }
 
+// 꺼낸 펫의 CPU 사용량: --pet-cost 10 (상태마다 10초)
+if let index = CommandLine.arguments.firstIndex(of: "--pet-cost") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let seconds = CommandLine.arguments.dropFirst(index + 1).first.flatMap(Double.init) ?? 10
+    MainActor.assumeIsolated { DesktopPetCost.run(seconds: seconds) }
+    app.run()
+}
+
 // 꺼낸 펫 점검: 실제 창을 띄워 걷기·키·끌기를 보고 마지막 모습을 PNG로 남긴 뒤 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--desktop-pet-check") {
     let app = NSApplication.shared

@@ -616,7 +616,7 @@ final class AppUpdater: ObservableObject {
             install = """
             cd \(quote(build.sourcePath)) && git fetch origin "+refs/heads/"\(branch)":refs/remotes/origin/"\(branch) \\
               && { [ -e \(worktree)/.git ] || { git worktree prune && git worktree add --detach \(worktree) origin/\(branch); }; } \\
-              && cd \(worktree) && git checkout --detach --force origin/\(branch) && ./install.sh
+              && cd \(worktree) && git checkout --detach --force origin/\(branch) && ./install.sh && rm -rf dist
             """
         } else {
             install = "cd \(quote(build.sourcePath)) && git pull --ff-only origin \(branch) && ./install.sh"

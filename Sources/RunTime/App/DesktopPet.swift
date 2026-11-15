@@ -887,7 +887,10 @@ final class DesktopPet {
         let busy = drag != nil || floating || lift > 0 || hovering || held.left || held.right || held.up || held.down || trick != nil
             || moving || abs(diff) > 0.01 || !puffs.isEmpty || !pats.isEmpty || !trail.isEmpty || buddyHop > 0
             || now < showcaseUntil
-        schedule(fps: busy ? 60 : AppSettings.shared.smoothness.fps)
+        // 가만히 있을 때는 숨쉬기·제자리 걸음만 움직여, 창 전체를 30번씩 다시 그리지 않는다 (배터리).
+        // 잠은 숨이 느려 8, 나머지는 15장이면 눈에 띄게 끊기지 않는다
+        let idleFPS: Double = if case .normal(.sleeping) = display { 8 } else { 15 }
+        schedule(fps: busy ? 60 : min(AppSettings.shared.smoothness.fps, idleFPS))
     }
 
     /// 무대처럼 발을 디딜 때마다(한 주기에 두 번) 발먼지가 일고, 뛰거나 떨어졌다 내려오면 크게 인다. 동료가 내려와도 인다.
@@ -1903,5 +1906,39 @@ final class PetKeys {
             DispatchQueue.main.async { PetKeys.shared.handler(code, down) }
             return noErr
         }, specs.count, &specs, nil, &installed)
+    }
+}
+
+/// 꺼낸 펫이 한 자리에 머물 때 CPU를 얼마나 쓰는지 잰다 (배터리 점검). 상태마다 몸풀기 2초 뒤 `seconds`초를 잰다.
+enum DesktopPetCost {
+    static func run(seconds: Double) {
+        let pet = DesktopPet.shared
+        var display = SpriteDisplay.normal(.sleeping)
+        var mode = DesktopPet.Mode.pinned
+        pet.displayProvider = { display }
+        pet.modeProvider = { mode }
+        pet.onMode = { mode = $0 }
+        pet.show()
+        func cpuTime() -> Double {
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1e6
+            let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1e6
+            return user + system
+        }
+        var states: [(String, CatState)] = [("쉬는 중", .sleeping), ("달리는 중", .running)]
+        func next() {
+            guard let (name, state) = states.first else { pet.hide(); exit(0) }
+            states.removeFirst()
+            display = .normal(state)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let start = cpuTime()
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                    print(String(format: "%@: CPU %.2f%%", name, (cpuTime() - start) / seconds * 100))
+                    next()
+                }
+            }
+        }
+        next()
     }
 }
