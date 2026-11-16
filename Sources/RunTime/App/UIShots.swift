@@ -264,6 +264,13 @@ enum UIShots {
             .frame(width: mainSize.width, height: mainSize.height))
     }
 
+    /// 문제 보내기 창. 앱 아이콘을 찍은 그림 대신 붙인다.
+    private static func problemReport() -> AnyView {
+        let model = ProblemReportModel.rehearsal(draft: "펫이 화면 오른쪽 끝에서 멈춰 움직이지 않아요\n외부 모니터를 뺀 뒤부터 그래요",
+                                                 images: [NSApp.applicationIconImage].compactMap { $0 })
+        return AnyView(ProblemReportView(model: model) {}.background(Color(nsColor: .windowBackgroundColor)))
+    }
+
     static func run(to directory: URL, engine: UsageEngine) {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -447,6 +454,8 @@ enum UIShots {
             ("main-settings-redmine-dark", .darkAqua, nil, mainSettings(.redmine, engine: engine)),
             ("main-settings-teams", .darkAqua, nil, mainSettings(.teams, engine: engine)),
             ("main-settings-teams-light", .aqua, nil, mainSettings(.teams, engine: engine)),
+            ("problem-report", .aqua, nil, problemReport()),
+            ("problem-report-dark", .darkAqua, nil, problemReport()),
         ] + designScreens(engine: engine)
         // RUNTIME_SHOTS=main-,worklog-day처럼 이름 앞부분을 주면 그 화면만 찍는다
         let only = ProcessInfo.processInfo.environment["RUNTIME_SHOTS"].flatMap { $0.isEmpty ? nil : $0.split(separator: ",").map(String.init) }

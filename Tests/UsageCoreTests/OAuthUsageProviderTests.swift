@@ -106,4 +106,25 @@ struct OAuthUsageProviderTests {
         let bare = try #require(OAuthUsageProvider.parse(data: Data(Self.realResponse.utf8), fetchedAt: Date()))
         #expect(bare.weeklyBreakdown.isEmpty)
     }
+
+    @Test func 실측_응답에는_이상한_값이_없다() throws {
+        let usage = try #require(OAuthUsageProvider.parse(data: Data(Self.realResponse.utf8), fetchedAt: Date()))
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-07-14T09:00:00Z"))
+        #expect(usage.oddities(now: now).isEmpty)
+    }
+
+    @Test func 범위_밖_사용률과_리셋_시각을_잡는다() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let odd = OfficialUsage(sessionPercent: 250, sessionResetsAt: now.addingTimeInterval(-2 * 3600),
+                                weeklyPercent: 4200, weeklyResetsAt: now.addingTimeInterval(30 * 24 * 3600), fetchedAt: now)
+        #expect(odd.oddities(now: now) == ["세션 사용률이 범위 밖", "주간 사용률이 범위 밖", "세션 리셋 시각이 범위 밖", "주간 리셋 시각이 범위 밖"])
+        // 한도를 넘긴 100% 남짓과 방금 지난 리셋은 정상이다
+        let edge = OfficialUsage(sessionPercent: 104, sessionResetsAt: now.addingTimeInterval(-60),
+                                 weeklyPercent: nil, weeklyResetsAt: now.addingTimeInterval(7 * 24 * 3600), fetchedAt: now)
+        #expect(edge.oddities(now: now).isEmpty)
+        // 쓰지 않아 0%인 창은 지난 리셋 시각이 와도 정상이다
+        let idle = OfficialUsage(sessionPercent: 0, sessionResetsAt: now.addingTimeInterval(-6 * 3600),
+                                 weeklyPercent: 12, weeklyResetsAt: now.addingTimeInterval(3 * 24 * 3600), fetchedAt: now)
+        #expect(idle.oddities(now: now).isEmpty)
+    }
 }

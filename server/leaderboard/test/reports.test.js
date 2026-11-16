@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkoutCommand, cleanReport, mailFor, mailKey, promptFor, reportKey, reportPage, sourceLink, squeezeLog, symbolCommand, viewReport } from "../src/reports.js";
+import { checkoutCommand, cleanReport, mailFor, mailKey, promptFor, reportKey, reportPage, sourceLink, squeezeLog, submitReport, symbolCommand, USER_SCREEN, viewReport } from "../src/reports.js";
 
 const install = "3f2c1a4e-1b2c-4d5e-8f90-1234567890ab";
 
@@ -175,4 +175,99 @@ test("copy page needs the matching token", async () => {
   const response = await viewReport(key, token, env);
   assert.match(response.headers.get("content-security-policy"), /script-src 'nonce-/);
   assert.match(await response.text(), new RegExp(`커밋 ${sha}`));
+});
+
+/// 보고 표 하나와 Resend 응답만 흉내 낸다. 하루 메일 수와 이 Mac의 보고 수는 `counts`로 정한다.
+function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false } = {}) {
+  const rows = new Map();
+  const db = {
+    prepare: (sql) => ({
+      bind: (...args) => ({
+        first: async () => {
+          if (sql.startsWith("SELECT COUNT")) return { stored: rows.size, mailed: 0, mine };
+          if (sql.startsWith("INSERT")) return rows.has(args[0]) ? null : (rows.set(args[0], { mailed: 0 }), { key: args[0] });
+          return null;
+        },
+        run: async () => {
+          if (sql.startsWith("DELETE")) rows.delete(args[0]);
+          if (sql.startsWith("UPDATE")) rows.get(args[0]).mailed = 1;
+        },
+      }),
+    }),
+  };
+  const mails = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (mailThrows) throw new TypeError("network");
+    mails.push(JSON.parse(init.body));
+    return new Response("", { status: mailStatus });
+  };
+  const env = { DB: db, RESEND_API_KEY: "k", REPORT_EMAIL: "me@example.com" };
+  const helpers = {
+    readJSON: async (request) => request.json(),
+    json: (body, status = 200) => new Response(JSON.stringify(body), { status }),
+    overIPLimit: async () => false,
+  };
+  const submit = (body) => submitReport(new Request("https://x/v1/reports", { method: "POST", body: JSON.stringify(body) }), env, helpers);
+  return { submit, rows, mails, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+test("a mail that fails for now drops the stored report so the app sends it again", async () => {
+  for (const options of [{ mailStatus: 500 }, { mailStatus: 429 }, { mailThrows: true }]) {
+    const fake = fakeSubmit(options);
+    try {
+      const response = await fake.submit({ install, kind: "screen-error", message: "레드마인 응답을 읽지 못함", screen: "레드마인" });
+      assert.equal(response.status, 503, JSON.stringify(options));
+      assert.equal(fake.rows.size, 0);
+    } finally { fake.restore(); }
+  }
+});
+
+test("a mail refused for good keeps the report and stops the app from resending", async () => {
+  const fake = fakeSubmit({ mailStatus: 422 });
+  try {
+    const response = await fake.submit({ install, kind: "screen-error", message: "레드마인 응답을 읽지 못함", screen: "레드마인" });
+    assert.equal(response.status, 200);
+    assert.equal(fake.rows.size, 1);
+  } finally { fake.restore(); }
+});
+
+test("a report the user wrote is mailed even past the per-Mac cap", async () => {
+  const fake = fakeSubmit({ mine: 99 });
+  try {
+    await fake.submit({ install, kind: "screen-error", message: "자동 보고", screen: "사용량" });
+    assert.equal(fake.mails.length, 0);
+    const response = await fake.submit({ install, kind: "screen-error", message: "펫이 멈춰요", screen: USER_SCREEN });
+    assert.equal(response.status, 200);
+    assert.equal(fake.mails.length, 1);
+  } finally { fake.restore(); }
+});
+
+test("only a report the user wrote carries screen shots, and they go out as attachments", async () => {
+  const jpeg = "/9j/4AAQSkZJRgABAQ==";
+  assert.deepEqual(cleanReport({ install, kind: "screen-error", message: "x", screen: USER_SCREEN, shots: [jpeg, "iVBORw0KGgo=", 3, jpeg + "<"] }).shots, [jpeg]);
+  assert.deepEqual(cleanReport({ install, kind: "screen-error", message: "x", screen: "레드마인", shots: [jpeg] }).shots, []);
+  assert.deepEqual(cleanReport({ install, kind: "app-crash", message: "x", shots: [jpeg] }).shots, []);
+  const big = "/9j/" + "A".repeat(900_000);
+  assert.equal(cleanReport({ install, kind: "screen-error", message: "x", screen: USER_SCREEN, shots: [big, big] }).shots.length, 1);
+  const fake = fakeSubmit();
+  try {
+    await fake.submit({ install, kind: "screen-error", message: "창이 잘려요", screen: USER_SCREEN, shots: [jpeg] });
+    assert.deepEqual(fake.mails[0].attachments, [{ filename: "screen-1.jpg", content: jpeg }]);
+  } finally { fake.restore(); }
+});
+
+test("reports the user wrote with the same first line stay apart", async () => {
+  const now = Date.UTC(2026, 10, 17);
+  const a = cleanReport({ install, kind: "screen-error", message: "펫이 이상해요", screen: USER_SCREEN, detail: "펫이 이상해요\n멈춰요" });
+  const b = cleanReport({ install, kind: "screen-error", message: "펫이 이상해요", screen: USER_SCREEN, detail: "펫이 이상해요\n사라져요" });
+  const withShot = cleanReport({ install, kind: "screen-error", message: "펫이 이상해요", screen: USER_SCREEN, detail: "펫이 이상해요\n멈춰요", shots: ["/9j/AA=="] });
+  assert.notEqual(await reportKey(a, now), await reportKey(b, now));
+  assert.notEqual(await mailKey(a, now), await mailKey(b, now));
+  assert.notEqual(await reportKey(a, now), await reportKey(withShot, now));
+});
+
+test("three shots at the app's size cap fit the server limit", () => {
+  const shot = "/9j/" + "A".repeat(Math.ceil((360_000 * 4) / 3) - 4);
+  assert.equal(cleanReport({ install, kind: "screen-error", message: "x", screen: USER_SCREEN, shots: [shot, shot, shot] }).shots.length, 3);
 });

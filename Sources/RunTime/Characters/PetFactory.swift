@@ -220,7 +220,12 @@ final class PetFactory: ObservableObject {
         if output.contains("429") { return .failed("Petdex에는 하루 10개까지 올릴 수 있어요. 내일 다시 해 주세요") }
         if output.contains("401") { return .failed("Petdex 로그인이 만료됐어요. 다시 눌러 로그인해 주세요") }
         if output.contains("invalid_spritesheet") || output.contains("missing_field") { return .failed("Petdex가 그림 파일을 받지 않았어요: \(output.suffix(120))") }
-        return .failed("Petdex에 올리지 못했어요: \(String(output.split(separator: "\n").last ?? "알 수 없는 오류").prefix(160))")
+        let reason = "Petdex에 올리지 못했어요: \(String(output.split(separator: "\n").last ?? "알 수 없는 오류").prefix(160))"
+        // 망 오류는 이 Mac 사정이다. 출력은 요청마다 달라 문구는 고정하고 세부에만 둔다
+        if !["ENOTFOUND", "ECONNRESET", "ETIMEDOUT", "fetch failed"].contains(where: output.contains) {
+            ProblemReporter.screen("Petdex 올리기", "올리지 못함 (종료 코드 \(result.status))", detail: "출력 끝:\n\(output.suffix(600))")
+        }
+        return .failed(reason)
     }
 
     private static func run(_ tool: String, _ arguments: [String], path: String, timeout: TimeInterval) -> (status: Int32, output: String) {
@@ -420,6 +425,9 @@ final class PetFactory: ObservableObject {
         switch result {
         case .failure(let error):
             state = .failed(error.localizedDescription)
+            if let title = Self.reportTitle(error) {
+                ProblemReporter.screen("펫 만들기", title, detail: "참고 그림 \(references.count)장\n\(error.localizedDescription)")
+            }
         case .success(let folder):
             PetWatcher.shared.markKnown(folder)
             PetdexStore.shared.importLocal(from: folder) { [weak self] result in
@@ -438,8 +446,20 @@ final class PetFactory: ObservableObject {
                         : "'\(pet.name)'을(를) 그려 러너로 골랐어요")
                 case .failure(let error):
                     self.state = .failed(error.localizedDescription)
+                    ProblemReporter.screen("펫 만들기", "그린 펫을 가져오지 못함", detail: "오류: \(error)")
                 }
             }
+        }
+    }
+
+    /// 만든 사람에게 알릴 때의 문구. 까닭은 도구 출력이라 매번 달라 세부에만 둔다.
+    /// 파이썬이 없거나 디스크가 모자라거나 오래 걸린 것은 이 Mac 사정이라 알리지 않는다(nil).
+    static func reportTitle(_ error: Error) -> String? {
+        switch error as? Failure {
+        case .noPython, .noSpace, .timedOut: nil
+        case .setup: "그림 도구를 준비하지 못함"
+        case .failed: "그림을 그리지 못함"
+        case nil: "펫을 만들지 못함"
         }
     }
 

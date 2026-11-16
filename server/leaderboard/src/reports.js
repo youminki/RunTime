@@ -2,7 +2,11 @@
 // 앱은 무작위 설치 ID, 앱 버전, macOS 버전, 까닭, 사용자 폴더를 가린 기록 끝부분만 보낸다.
 import { isPlayerID } from "./rules.js";
 
-export const MAX_REPORT_BODY = 16 * 1024;
+/// 사용자가 직접 보내며 화면을 붙이면 그림 때문에 커진다. 다른 보고는 칸마다 잘라 작다.
+export const MAX_REPORT_BODY = 2 * 1024 * 1024;
+/// 붙인 화면 (JPEG, base64). 메일 첨부로만 쓰고 저장하지 않는다.
+/// 앱은 장당 360KB(base64로 480KB)까지 줄여 보내므로 세 장이 이 한도 안에 든다 (ProblemReportModel.jpeg).
+export const MAX_SHOTS = 3, MAX_SHOTS_LENGTH = 1_500_000;
 export const REPORT_KINDS = new Set(["update-failed", "update-timeout", "update-unknown", "screen-error", "app-crash", "app-hang"]);
 /// 코드 위치로 GitHub 링크를 만든다. 앱이 보낸 값이라 모양이 맞을 때만 쓴다.
 const REPO = "https://github.com/youminki/RunTime";
@@ -11,6 +15,8 @@ export const REPORTS_PER_DAY = 5;
 /// 설치 ID는 앱이 정하는 값이라 새로 만들면 위 제한을 피한다. 전체에도 하루 상한을 둔다.
 export const STORED_PER_DAY = 200;
 export const MAILS_PER_DAY = 30;
+/// 사용자가 설정에서 직접 보낸 보고의 화면 이름. 앱의 ProblemReporter.userScreen과 같아야 한다.
+export const USER_SCREEN = "직접 보냄";
 /// 한 IP(해시)에서 1분에 받는 보고 수. 순위 제출과 따로 센다.
 export const REPORTS_PER_MINUTE = 2;
 
@@ -38,7 +44,17 @@ export function cleanReport(body) {
     screen: text(body.screen, LIMITS.screen).trim(),
     source: /^Sources\/[\w/.+-]+\.swift:\d+( [\w()_:]+)?$/.test(text(body.source, LIMITS.source)) ? text(body.source, LIMITS.source) : "",
     detail: text(body.detail, LIMITS.detail, true).trim(),
+    shots: cleanShots(body),
   };
+}
+
+/// 사용자가 직접 보낸 보고의 화면만 받는다. 앱이 자동으로 보내는 보고에 그림이 섞이지 않게 한다.
+function cleanShots(body) {
+  if (body.kind !== "screen-error" || body.screen !== USER_SCREEN || !Array.isArray(body.shots)) return [];
+  const shots = body.shots.slice(0, MAX_SHOTS)
+    .filter((shot) => typeof shot === "string" && shot.startsWith("/9j/") && /^[A-Za-z0-9+/]+={0,2}$/.test(shot));
+  let total = 0;
+  return shots.filter((shot) => (total += shot.length) <= MAX_SHOTS_LENGTH);
 }
 
 async function digest(text) {
@@ -46,14 +62,18 @@ async function digest(text) {
   return [...new Uint8Array(bytes).slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/// 사용자가 직접 보낸 것은 제목(첫 줄)이 같아도 본문과 그림이 다르면 다른 보고다. 짧은 제목은 서로 쉽게 겹친다.
+const isByUser = (report) => report.kind === "screen-error" && report.screen === USER_SCREEN;
+const userPart = (report) => (isByUser(report) ? `|${report.detail}|${report.shots?.length ?? 0}` : "");
+
 /// 같은 설치·종류·까닭을 하루 한 번으로 묶는 열쇠.
 export async function reportKey(report, now) {
-  return digest(`${Math.floor(now / 86_400_000)}|${report.install}|${report.kind}|${report.screen}|${report.message}`);
+  return digest(`${Math.floor(now / 86_400_000)}|${report.install}|${report.kind}|${report.screen}|${report.message}${userPart(report)}`);
 }
 
 /// 메일을 하루 한 번으로 묶는 열쇠. 설치 ID를 바꿔 보내도 같은 화면·까닭·자리면 한 통이다.
 export async function mailKey(report, now) {
-  return digest(`${Math.floor(now / 86_400_000)}|${report.kind}|${report.screen}|${report.source}|${report.message}|${report.app}`);
+  return digest(`${Math.floor(now / 86_400_000)}|${report.kind}|${report.screen}|${report.source}|${report.message}|${report.app}${userPart(report)}`);
 }
 
 const KIND_NAMES = {
@@ -264,17 +284,34 @@ export async function submitReport(request, env, { readJSON, json, overIPLimit }
     report.screen, report.source, report.detail, mail, token, now).first();
   if (!inserted) return json({ ok: true, duplicate: true });
   const sent = await env.DB.prepare("SELECT 1 FROM reports WHERE mail_key = ? AND mailed = 1 LIMIT 1").bind(mail).first();
-  if (sent || (counts?.mine ?? 0) >= REPORTS_PER_DAY || (counts?.mailed ?? 0) >= MAILS_PER_DAY || !env.RESEND_API_KEY || !env.REPORT_EMAIL) {
+  // 사람이 직접 보낸 것은 그 Mac의 자동 보고가 많은 날에도 메일로 받는다
+  const byUser = isByUser(report);
+  if (sent || (!byUser && (counts?.mine ?? 0) >= REPORTS_PER_DAY) || (counts?.mailed ?? 0) >= MAILS_PER_DAY || !env.RESEND_API_KEY || !env.REPORT_EMAIL) {
     return json({ ok: true, mailed: false });
   }
   const page = `${new URL(request.url).origin}/v1/reports/${key}?t=${token}`;
   const { subject, text, html } = mailFor(report, page);
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: env.REPORT_FROM ?? "RunTime <onboarding@resend.dev>", to: [env.REPORT_EMAIL], subject, text, html }),
-  });
-  if (response.ok) await env.DB.prepare("UPDATE reports SET mailed = 1 WHERE key = ?").bind(key).run();
-  else console.error("report mail", response.status, await response.text());
-  return json({ ok: true, mailed: response.ok });
+  let response = null;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: env.REPORT_FROM ?? "RunTime <onboarding@resend.dev>", to: [env.REPORT_EMAIL], subject, text, html,
+        attachments: report.shots.map((content, index) => ({ filename: `screen-${index + 1}.jpg`, content })),
+      }),
+    });
+  } catch (error) {
+    console.error("report mail", String(error));
+  }
+  if (!response?.ok) {
+    if (response) console.error("report mail", response.status, await response.text());
+    // 잠깐의 실패(망·한도·서버)면 행을 지워 앱이 다시 보낼 때 메일이 가게 한다. 남겨 두면 같은 열쇠라 메일 없이 묻힌다.
+    // 설정이 틀린 것(4xx)은 다시 보내도 같아서 행만 남겨 두고 받은 것으로 친다
+    if (response && response.status !== 429 && response.status < 500) return json({ ok: true, mailed: false });
+    await env.DB.prepare("DELETE FROM reports WHERE key = ?").bind(key).run();
+    return json({ error: "mail failed" }, 503);
+  }
+  await env.DB.prepare("UPDATE reports SET mailed = 1 WHERE key = ?").bind(key).run();
+  return json({ ok: true, mailed: true });
 }

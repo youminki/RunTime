@@ -110,6 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         AppUpdater.shared.start()
         watchUpdateNews()
         CrashReports.sendNew()
+        // 충돌 보고와 겹쳐 서버의 1분 한도에 걸리지 않게 늦게 보낸다
+        ProblemReporter.schedulePending(after: 60)
         HangWatch.start()
         // 자동 업데이트는 다른 앱을 쓰는 동안 일어나므로, 다시 연 창이 그 앱의 초점을 빼앗지 않게 뒤에 둔다
         reopening = true
@@ -160,7 +162,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 잠자기 동안 공식 값이 유예 시간을 넘겼을 수 있다. 네트워크가 붙을 틈을 두고 다시 읽는다.
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
             .delay(for: .seconds(5), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in self?.engine.refreshNow(forceOfficial: true) }
+            .sink { [weak self] _ in
+                self?.engine.refreshNow(forceOfficial: true)
+                ProblemReporter.schedulePending(after: 30)
+            }
             .store(in: &cancellables)
 
         // 러너·색상·부드러움 변경 → 프레임 다시 그리기 (@Published는 값이 바뀌기 전에 알리므로 한 박자 뒤에)
@@ -455,6 +460,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         add("업데이트 확인") { [weak self] in
             AppUpdater.shared.check()
             self?.openSettings(tab: .general)
+        }
+        add("문제 보내기…") { [weak self] in
+            ProblemReportWindow.shared.show(usage: self.map { "\($0.engine.officialStatus)" } ?? "")
         }
         menu.addItem(.separator())
         add("RunTime 종료") { NSApp.terminate(nil) }

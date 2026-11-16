@@ -539,12 +539,21 @@ final class AppUpdater: ObservableObject {
     }
 
     /// 마지막 업데이트 기록에서 까닭이 적힌 줄 (`✗ …`, `error: …`, `fatal: …`).
-    static func failureReason(inLog text: String) -> String? {
+    /// `lastLine`이면 오류 줄이 없을 때 마지막 줄을 까닭으로 본다. 실패한 것을 아는 쪽만 켠다.
+    static func failureReason(inLog text: String, lastLine: Bool = false) -> String? {
         let attempt = text.components(separatedBy: "\n== ").last ?? text
-        return attempt.components(separatedBy: .newlines)
+        let lines = attempt.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { line in ["✗", "error:", "fatal:"].contains { line.contains($0) } }
-            .map { String($0.prefix(140)) }
+            .filter { !$0.isEmpty && !$0.contains("warning:") }
+        // 오류 낱말 없이 끝난 실패는 마지막 줄이 까닭이다 (단계 머리 줄만 남았으면 그 단계에서 멈춘 것)
+        let found = lines.last { line in ["✗", "error:", "fatal:"].contains { line.contains($0) } }
+            ?? (lastLine ? lines.last : nil).map { line in
+                if line.hasPrefix("▸") { return "\(line.dropFirst().trimmingCharacters(in: .whitespaces)) 단계에서 실패" }
+                // 진행 줄은 시도마다 달라 보고가 하나로 묶이지 않는다
+                if line.firstMatch(of: #/^\[\d+ ?/ ?\d+\]/#) != nil { return "빌드 중 멈춤" }
+                return line
+            }
+        return found.map { String($0.prefix(140)) }
     }
 
     private static func git(_ arguments: [String], in path: String, timeout: TimeInterval = 60) -> String? {
@@ -656,7 +665,7 @@ final class AppUpdater: ObservableObject {
                               target: target, automatic: automatic, kind: .timeout)
                 } else {
                     let log = (try? String(contentsOf: Self.logURL, encoding: .utf8)) ?? ""
-                    let reason = Self.failureReason(inLog: log).map { "업데이트에 실패했습니다: \($0)" }
+                    let reason = Self.failureReason(inLog: log, lastLine: true).map { "업데이트에 실패했습니다: \($0)" }
                         ?? "업데이트에 실패했습니다. 로그: \(Self.logURL.path)"
                     self.fail(reason, target: target, automatic: automatic)
                 }

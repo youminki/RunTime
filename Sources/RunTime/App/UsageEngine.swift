@@ -119,6 +119,11 @@ final class UsageEngine: ObservableObject {
     private var officialAnswered = false
     /// 공식 조회가 이어서 실패하기 시작한 때. 하루 넘게 실패하면 월요일 경계로라도 지난주 요약을 보낸다.
     private var failingSince: Date?
+    /// 서버 오류(5xx)가 이어지기 시작한 때와 그것을 알렸는지. 잠깐의 서버 오류는 알리지 않고 오래 이어질 때 한 번만 알린다.
+    private var serverErrorSince: Date?
+    private var reportedOutage = false
+    /// 직전에 알린 이상한 값. 같은 값이 조회마다 기록을 채우지 않게 바뀔 때만 알린다.
+    private var lastOddities: [String] = []
     /// 마지막으로 받은 공식 주간 리셋. 다시 켰을 때 망이 끊겨 있어도 주간 요약이 월요일을 경계로 잘못 보지 않게 남겨 둔다.
     private var knownWeeklyReset: Date? = UserDefaults.standard.object(forKey: UsageEngine.weeklyResetKey) as? Date {
         didSet { UserDefaults.standard.set(knownWeeklyReset, forKey: Self.weeklyResetKey) }
@@ -232,6 +237,9 @@ final class UsageEngine: ObservableObject {
         // 새 계정의 주간 경계는 그 계정 응답을 받은 뒤에 안다
         officialAnswered = false
         failingSince = nil
+        serverErrorSince = nil
+        reportedOutage = false
+        lastOddities = []
         publishOfficial(nil, status: config.officialEnabled ? .waiting : .disabled)
         if !fetchOfficial(minInterval: 0), config.officialEnabled, let until = RateLimitGate.usage.blockedUntil() {
             publishOfficial(nil, status: .failed(reason: Self.limitReason(until: until)))
@@ -579,12 +587,21 @@ final class UsageEngine: ObservableObject {
             // 실패한 응답으로는 주간 경계를 모른다. 세우면 월요일을 경계로 보고 지난주 요약을 잘못 보낸다
             officialAnswered = true
             failingSince = nil
+            serverErrorSince = nil
+            reportedOutage = false
             tokenStalled = false
             if !lastOfficialFailure.isEmpty { Diagnostics.record("사용량", "공식 조회 다시 됨") }
             lastOfficialFailure = ""
             log.info("공식 조회 성공: 세션 \(usage.sessionPercent ?? -1)% 주간 \(usage.weeklyPercent ?? -1)%")
             // 응답을 기다리는 사이 연동을 끈 경우
             guard config.officialEnabled else { return }
+            let odd = usage.oddities()
+            if odd != lastOddities, !odd.isEmpty {
+                ProblemReporter.screen("사용량", "공식 값이 이상함: \(odd.joined(separator: ", "))",
+                                       detail: "세션 \(usage.sessionPercent.map { "\($0)" } ?? "-") · 리셋 \(usage.sessionResetsAt.map { "\($0)" } ?? "-")\n"
+                                           + "주간 \(usage.weeklyPercent.map { "\($0)" } ?? "-") · 리셋 \(usage.weeklyResetsAt.map { "\($0)" } ?? "-")")
+            }
+            lastOddities = odd
             if let window = usage.sessionWindow { sessionTrend.record(window) }
             officialValue = usage
             // 게이지를 먼저 내보낸다. 상태가 먼저 .live가 되면 팝오버에 "공식 값 없음"이 잠깐 보인다.
@@ -598,7 +615,19 @@ final class UsageEngine: ObservableObject {
             tokenStalled = OfficialRetry.isTokenProblem(error)
             let reason = Self.describe(error)
             // 실패가 이어지는 동안은 까닭이 바뀔 때만 남긴다
-            if reason != lastOfficialFailure { Diagnostics.record("사용량", "공식 조회 실패: \(reason)") }
+            if reason != lastOfficialFailure {
+                Diagnostics.record("사용량", "공식 조회 실패: \(reason)")
+                if Self.isAppFault(error) { ProblemReporter.screen("사용량", "공식 조회 실패: \(reason)", detail: "오류: \(error)") }
+            }
+            if case OAuthUsageProvider.ProviderError.http(500...) = error {
+                if serverErrorSince == nil { serverErrorSince = Date() }
+            } else {
+                serverErrorSince = nil
+            }
+            if !reportedOutage, let since = serverErrorSince, Date().timeIntervalSince(since) > 3600 {
+                reportedOutage = true
+                ProblemReporter.screen("사용량", "공식 조회가 1시간 넘게 서버 오류", detail: "오류: \(error)")
+            }
             lastOfficialFailure = reason
             log.error("공식 조회 실패(\(reason, privacy: .public)): \(String(describing: error))")
             guard config.officialEnabled else { return }
@@ -629,6 +658,20 @@ final class UsageEngine: ObservableObject {
             guard let self, self.retryScheduledFor == until else { return }
             self.retryScheduledFor = nil
             self.fetchOfficial(minInterval: 0)
+        }
+    }
+
+    /// 앱이 응답을 못 읽었거나 요청을 잘못 보냈을 때. 로그인·요청 제한·망 끊김·잠깐의 서버 오류는 이 Mac이나 서버 사정이다.
+    static func isAppFault(_ error: Error) -> Bool {
+        switch error {
+        case let error as OAuthUsageProvider.ProviderError:
+            switch error {
+            case .badResponse: return true
+            case .http(let code): return code < 500 && ![401, 403, 429].contains(code)
+            default: return false
+            }
+        case is URLError, is CancellationError: return false
+        default: return true
         }
     }
 

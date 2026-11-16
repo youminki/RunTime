@@ -76,7 +76,23 @@ fi
 cp assets/AppIcon.icns "$APP/Contents/Resources/"
 
 echo "▸ 서명: $CODESIGN_IDENTITY"
-codesign --force --deep -s "$CODESIGN_IDENTITY" "$APP"
+# iCloud 동기화 폴더나 Finder를 거친 파일의 확장 속성이 남으면 codesign이 "detritus not allowed"로 멈춘다
+xattr -cr "$APP" 2>/dev/null || true
+# codesign 오류는 "경로: 까닭" 꼴이라 업데이터와 문제 보고가 찾는 실패 표시 줄로 다시 남긴다
+if ! SIGN_OUT=$(codesign --force --deep -s "$CODESIGN_IDENTITY" "$APP" 2>&1); then
+  echo "$SIGN_OUT"
+  # 마지막 줄이 "In subcomponent: 경로"면 까닭이 아니라서 건너뛰고, 앞의 앱 경로는 떼어 까닭만 남긴다
+  REASON=$(printf '%s\n' "$SIGN_OUT" | { grep -v '^In subcomponent' || true; } | tail -1)
+  echo "✗ 서명 실패: ${REASON#*.app: }" >&2
+  case "$SIGN_OUT" in
+    *errSecInternalComponent*|*"User interaction is not allowed"*|*"user canceled"*)
+      echo "✗ 키체인이 잠겼거나 codesign의 키 사용을 허용하지 않았습니다. 키체인 창이 뜨면 [항상 허용]을 누르고 다시 업데이트하세요." >&2 ;;
+    *ambiguous*)
+      echo "✗ 키체인에 \"$CODESIGN_IDENTITY\" 인증서가 여러 개입니다. 키체인 접근에서 하나만 남기고 다시 업데이트하세요." >&2 ;;
+  esac
+  exit 1
+fi
+echo "$SIGN_OUT"
 
 # install.sh(자동 업데이트 포함)는 앱만 쓰고 dmg는 나눠 줄 때만 쓴다. 업데이트마다 만들 까닭이 없다
 if [ -n "${RUNTIME_APP_ONLY:-}" ] && [ -z "${NOTARY_PROFILE:-}" ]; then

@@ -1409,7 +1409,32 @@ final class RedmineStore: ObservableObject {
         if ids.indices.contains(next) { selected = ids[next] }
     }
 
-    static func message(status: Int, error: Error?, data: Data?) -> String {
+    /// 실패 까닭. 실패한 곳에서만 부른다. 앱 쪽 잘못일 수 있는 실패는 부른 자리와 함께 만든 사람에게 알린다.
+    static func message(status: Int, error: Error?, data: Data?,
+                        file: String = #filePath, line: Int = #line, function: String = #function) -> String {
+        if shouldReport(status: status, error: error) {
+            // 레드마인 주소·일감·검색어는 회사 자료라 문구는 고정하고 응답은 꼴만 보낸다
+            let keys = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }.map { $0.keys.sorted().joined(separator: ", ") }
+            let nsError = error.map { $0 as NSError }
+            ProblemReporter.screen("레드마인", status == 0 ? "요청하지 못함" : status == 400 ? "요청이 틀림 (400)" : "응답을 읽지 못함",
+                                   detail: "HTTP \(status) · 응답 \(data?.count ?? 0)바이트" + (keys.map { " · 최상위 키: \($0)" } ?? "")
+                                       + (nsError.map { "\n오류: \($0.domain) \($0.code)" } ?? ""),
+                                   file: file, line: line, function: function)
+        }
+        return reason(status: status, error: error, data: data)
+    }
+
+    /// 받은 응답을 못 읽었거나(2xx) 요청이 틀렸을 때(400), 망이 아닌 까닭으로 보내지 못했을 때.
+    /// 키·권한(401·403), 없는 일감(404), 값 확인(422), 사내 서버 장애(5xx), 사내망·인증서 같은 연결 문제는 앱이 고칠 일이 아니다.
+    static func shouldReport(status: Int, error: Error?) -> Bool {
+        switch status {
+        case 200..<300, 400: return true
+        case 0: return !(error is URLError)
+        default: return false
+        }
+    }
+
+    private static func reason(status: Int, error: Error?, data: Data?) -> String {
         let reasons = Redmine.errors(data)
         if !reasons.isEmpty { return reasons.joined(separator: ", ") }
         switch status {

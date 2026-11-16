@@ -176,7 +176,11 @@ final class PetdexStore: ObservableObject {
                     self.refineNames()
                     try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
                     try? data?.write(to: cached)
-                } else if self.entries.isEmpty {
+                } else {
+                    if error == nil, status == 200 {
+                        ProblemReporter.screen("Petdex 목록", "목록 형식이 바뀜", detail: "응답 \(data?.count ?? 0)바이트")
+                    }
+                    guard self.entries.isEmpty else { return }
                     let reason = error != nil ? "네트워크 오류" : (status == 200 ? "목록 형식이 바뀜" : "HTTP \(status)")
                     self.catalogState = .failed(reason)
                 }
@@ -363,6 +367,12 @@ final class PetdexStore: ObservableObject {
             case .failure(let error):
                 // 다시 받기에 실패하면 목록에서 뺀 펫을 되돌려, 저장 파일과 목록이 어긋나지 않게 한다
                 if let previous, !self.pets.contains(where: { $0.slug == previous.slug }) { self.pets.append(previous) }
+                // 받기 실패는 망·Petdex 사정이고, 받은 시트를 풀지 못한 것은 앱이 그 그림 꼴을 모르는 것이다
+                if !(error is InstallError) {
+                    // 오류 문구에 파일 이름이 들어가 펫마다 달라서 문구는 고정한다
+                    ProblemReporter.screen("Petdex 펫 받기", "시트를 풀지 못함",
+                                           detail: "펫: \(entry.slug) · 그림: \(entry.spritesheetUrl)\n오류: \(error)")
+                }
                 completion(.failure(error))
             }
         }

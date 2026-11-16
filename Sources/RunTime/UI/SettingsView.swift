@@ -478,6 +478,11 @@ private struct DiagnosticsRows: View {
         }
         // 기록 본문은 "열기"로 보고, 여기는 마지막 한 건을 마우스를 올렸을 때만 보인다 (설정 화면을 기록으로 채우지 않게)
         .tip(model.recent.last.map { "마지막 기록: \($0)" } ?? Diagnostics.logURL.path)
+        GroupedRow("문제 보내기", icon: "exclamationmark.bubble.fill", tint: Palette.red) {
+            Button("쓰기") { ProblemReportWindow.shared.show(usage: usage()) }
+                .controlSize(.small)
+        }
+        .tip("오류는 안 났지만 이상하게 도는 것을 적고 찍은 화면을 붙여 보냅니다. 메뉴바 오른쪽 클릭 메뉴에서도 엽니다")
     }
 }
 

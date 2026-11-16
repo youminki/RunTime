@@ -33,6 +33,24 @@ public struct OfficialUsage: Equatable, Sendable {
         self.fetchedAt = fetchedAt
         self.weeklyBreakdown = weeklyBreakdown
     }
+
+    /// 응답으로는 나올 수 없는 값. 있으면 응답 형식이 바뀌었거나 읽는 쪽이 틀린 것이다.
+    /// 같은 문제는 같은 문구여야 보고가 한 번으로 묶여서 값은 넣지 않는다.
+    public func oddities(now: Date = Date()) -> [String] {
+        var found: [String] = []
+        for (name, value) in [("세션", sessionPercent), ("주간", weeklyPercent)] {
+            if let value, !(0...200).contains(value) { found.append("\(name) 사용률이 범위 밖") }
+        }
+        // 리셋 시각은 조회 사이에 지날 수 있어 1시간 넘게 지난 것만 본다
+        // 쓰지 않아 창이 열리지 않은 동안(0%)은 리셋 시각이 지난 값으로 올 수 있어 보지 않는다
+        for (name, percent, reset, window) in [("세션", sessionPercent, sessionResetsAt, 5.0 * 3600),
+                                               ("주간", weeklyPercent, weeklyResetsAt, 7.0 * 24 * 3600)] {
+            guard let reset, (percent ?? 0) > 0 else { continue }
+            let ahead = reset.timeIntervalSince(now)
+            if ahead < -3600 || ahead > window + 3600 { found.append("\(name) 리셋 시각이 범위 밖") }
+        }
+        return found
+    }
 }
 
 /// 비문서화 OAuth usage 엔드포인트 폴링 (180초 간격 준수).

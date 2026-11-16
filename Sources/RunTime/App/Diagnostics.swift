@@ -66,7 +66,7 @@ enum Diagnostics {
         let recent = recent(40)
         lines.append("최근 기록 (\(recent.count)):")
         lines.append(contentsOf: recent.isEmpty ? ["  없음"] : recent.map { "  " + $0 })
-        if let failure = (try? String(contentsOf: AppUpdater.logURL, encoding: .utf8)).flatMap(AppUpdater.failureReason(inLog:)) {
+        if let failure = (try? String(contentsOf: AppUpdater.logURL, encoding: .utf8)).flatMap({ AppUpdater.failureReason(inLog: $0) }) {
             lines.append("마지막 설치 로그의 오류 줄: \(failure)")
         }
         return lines.joined(separator: "\n")
