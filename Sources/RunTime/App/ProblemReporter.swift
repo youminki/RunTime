@@ -92,6 +92,10 @@ enum ProblemReporter {
             default: return false
             }
         }
+        // 디스크가 꽉 참·읽기 전용 볼륨·쓰기 권한 없음은 그 Mac 사정이다
+        if let error = error as? CocoaError, [.fileWriteOutOfSpace, .fileWriteVolumeReadOnly, .fileWriteNoPermission].contains(error.code) {
+            return false
+        }
         guard let error = error as? URLError else { return true }
         return [.badURL, .unsupportedURL, .cannotParseResponse, .cannotDecodeContentData, .cannotDecodeRawData].contains(error.code)
     }

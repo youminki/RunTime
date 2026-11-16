@@ -1055,8 +1055,10 @@ final class DesignSync: ObservableObject {
         } catch let problem as LinkProblem {
             return .failure(problem)
         } catch let failure as FigmaAPI.Failure {
+            if ProblemReporter.shouldReport(failure) { ProblemReporter.screen("디자인", "링크를 더하지 못함", detail: "오류: \(failure)") }
             return .failure(LinkProblem(message: failure.message))
         } catch {
+            if ProblemReporter.shouldReport(error) { ProblemReporter.screen("디자인", "링크를 더하지 못함", detail: "오류: \(error)") }
             return .failure(LinkProblem(message: error.localizedDescription))
         }
     }
@@ -1182,8 +1184,10 @@ final class DesignSync: ObservableObject {
                 return .success("연결됐습니다 · 화면설계서를 더하면 읽을 수 있는지 바로 확인합니다")
             }
         } catch let failure as FigmaAPI.Failure {
+            if ProblemReporter.shouldReport(failure) { ProblemReporter.screen("디자인", "토큰 확인 실패", detail: "오류: \(failure)") }
             return .failure(failure)
         } catch {
+            if ProblemReporter.shouldReport(error) { ProblemReporter.screen("디자인", "토큰 확인 실패", detail: "오류: \(error)") }
             return .failure(.server(0))
         }
     }

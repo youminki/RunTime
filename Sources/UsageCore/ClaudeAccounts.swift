@@ -111,6 +111,20 @@ public enum ClaudeLogin {
     /// 한 줄에 담기지 않는 큰 값(MCP 토큰이 함께 든 자격증명 등)은 Claude Code처럼 인자로 넘긴다.
     @discardableResult
     public static func writeKeychain(_ data: Data, service: String, account: String = NSUserName()) -> Bool {
+        writeKeychainResult(data, service: service, account: account) == .written
+    }
+
+    public enum KeychainWrite: Equatable {
+        case written
+        /// security가 0이 아닌 값으로 끝났다 (허용 창을 닫음, 키체인이 잠김 등).
+        case refused(Int32)
+        /// security를 실행하지 못했다.
+        case launchFailed
+        /// security는 됐다고 끝났는데 다시 읽은 값이 다르다.
+        case mismatch
+    }
+
+    public static func writeKeychainResult(_ data: Data, service: String, account: String = NSUserName()) -> KeychainWrite {
         let hex = data.map { String(format: "%02x", $0) }.joined()
         let command = "add-generic-password -U -a \(quoted(account)) -s \(quoted(service)) -X \(hex)\n"
         let process = Process()
@@ -124,13 +138,14 @@ public enum ClaudeLogin {
         }
         process.standardOutput = Pipe()
         process.standardError = Pipe()
-        do { try process.run() } catch { return false }
+        do { try process.run() } catch { return .launchFailed }
         if process.arguments == ["-i"] {
             input.fileHandleForWriting.write(Data(command.utf8))
             try? input.fileHandleForWriting.close()
         }
         process.waitUntilExit()
-        return readKeychain(service: service, account: account) == data
+        if readKeychain(service: service, account: account) == data { return .written }
+        return process.terminationStatus == 0 ? .mismatch : .refused(process.terminationStatus)
     }
 
     public static func readKeychain(service: String, account: String) -> Data? {

@@ -54,7 +54,9 @@ enum GhostStore {
             try JSONEncoder().encode(record).write(to: url, options: .atomic)
             return true
         } catch {
-            NSLog("[RunTime] 고스트 저장 실패: %@", error.localizedDescription)
+            if ProblemReporter.shouldReport(error) {
+                ProblemReporter.screen("게임", "고스트를 저장하지 못함", detail: "난이도: \(difficulty)\n오류: \(error)")
+            }
             return false
         }
     }

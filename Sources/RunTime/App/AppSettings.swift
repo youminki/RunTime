@@ -125,7 +125,21 @@ final class AppSettings: ObservableObject {
         didSet {
             guard launchAtLogin != oldValue, !syncingLaunchAtLogin else { return }
             do { try LaunchAtLogin.set(launchAtLogin) }
-            catch { launchAtLogin = oldValue }   // 실패 시 토글 원복
+            catch {
+                let error = error as NSError
+                // 이미 그 상태(지운 것을 또 지움 6, 등록된 것을 또 등록 12)면 바라던 대로라 되돌리지 않는다
+                // 오류 영역 이름은 macOS 15부터 있어 코드로 가른다 (kSMError*: 4 권한, 6 없음, 11 사용자가 막음, 12 이미 등록)
+                let smCode = error.domain == NSPOSIXErrorDomain ? nil : error.code
+                if let smCode, [6, 12].contains(smCode) { return }
+                launchAtLogin = oldValue   // 실패 시 토글 원복
+                // 사용자가 로그인 항목에서 끔·회사 관리 정책(11, EPERM)은 그 Mac 사정이다. 서명·번들 문제만 알린다
+                if smCode.map({ [4, 11].contains($0) }) ?? (error.code == 1) {
+                    Diagnostics.record("설정", "로그인 시 자동 시작을 시스템이 막음 (\(error.domain) \(error.code))")
+                    return
+                }
+                ProblemReporter.screen("설정", "로그인 시 자동 시작을 바꾸지 못함 (\(error.domain) \(error.code))",
+                                       detail: "바꾸려던 값: \(launchAtLogin ? "끔" : "켬") · 앱 위치: \(Bundle.main.bundlePath.hasPrefix("/Applications") ? "/Applications" : "그 밖")")
+            }
         }
     }
     private var syncingLaunchAtLogin = false

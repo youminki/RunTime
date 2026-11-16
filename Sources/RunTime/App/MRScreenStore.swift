@@ -170,7 +170,13 @@ final class MRScreenStore: ObservableObject {
         guard let bytes else { return }
         let name = path.split(separator: "/").suffix(2).joined(separator: "-")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("RunTime-\(name)")
-        guard (try? bytes.write(to: url)) != nil else { return }
+        do { try bytes.write(to: url) } catch {
+            if ProblemReporter.shouldReport(error) {
+                let error = error as NSError
+                ProblemReporter.screen("MR 화면", "그림을 임시 파일로 쓰지 못함", detail: "오류: \(error.domain) \(error.code)")
+            }
+            return
+        }
         NSWorkspace.shared.open(url)
     }
 

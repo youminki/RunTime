@@ -339,7 +339,18 @@ enum Keychain {
 
     @discardableResult
     static func write(_ value: String, account: String) -> Bool {
-        guard ClaudeLogin.writeKeychain(Data(value.utf8), service: service, account: account) else { return false }
+        switch ClaudeLogin.writeKeychainResult(Data(value.utf8), service: service, account: account) {
+        case .written: break
+        // security가 거절한 것(허용 창을 닫음, 키체인이 잠김)은 그 Mac 사정이다.
+        // 실행조차 못 했거나, 됐다는데 다시 읽은 값이 다른 것만 앱이 고칠 일이다
+        case .refused: return false
+        case .launchFailed:
+            ProblemReporter.screen("키체인", "security를 실행하지 못함", detail: "항목: \(account)")
+            return false
+        case .mismatch:
+            ProblemReporter.screen("키체인", "저장했는데 다시 읽은 값이 다름", detail: "항목: \(account)")
+            return false
+        }
         AppKeychain.delete(account, service: AppKeychain.worklogService)
         return true
     }
@@ -1166,6 +1177,9 @@ final class WorkLogSync: ObservableObject {
             self?.postingTeams = false
             // 보고서 내용은 남기지 않고 어디서 멈췄는지만 (다른 Mac에서 안 될 때 원인을 보려고)
             switch result {
+            case .copied(let reason?) where reason == TeamsOpener.noComposer:
+                // 팀즈 화면이 바뀌어 앱이 입력 칸을 못 찾는 것이라 고칠 일이다
+                ProblemReporter.screen("팀즈 보내기", reason, detail: "받는 곳: \(target.name) · 자동 붙여넣기 \(self?.settings.teamsAutoPaste == true)")
             case .copied(let reason?), .pasted(let reason?): Diagnostics.record("팀즈", "\(target.name): \(reason)")
             case .failed(let message):
                 ProblemReporter.screen("팀즈 보내기", message, detail: "받는 곳: \(target.name) · 자동 붙여넣기 \(self?.settings.teamsAutoPaste == true) · 자동 보내기 \(self?.settings.teamsAutoSend == true)")

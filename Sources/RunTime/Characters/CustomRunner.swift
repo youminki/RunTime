@@ -236,7 +236,12 @@ final class CustomRunnerStore: ObservableObject {
 
     private func save() {
         try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(runners) { try? data.write(to: indexURL) }
+        do { try JSONEncoder().encode(runners).write(to: indexURL, options: .atomic) } catch {
+            // 목록을 못 쓰면 다음에 켰을 때 넣은 그림 러너가 사라진다
+            if ProblemReporter.shouldReport(error) {
+                ProblemReporter.screen("내 그림 러너", "목록을 저장하지 못함", detail: "러너 \(runners.count)개\n오류: \(error)")
+            }
+        }
     }
 
     // MARK: 프레임 손질

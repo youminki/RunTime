@@ -14,6 +14,8 @@ enum TeamsTarget: String, CaseIterable {
 /// 팀즈가 PWA(크롬·엣지 앱)면 그 창에서, 데스크톱 앱이면 msteams:로, 둘 다 없으면 브라우저로 연다.
 /// 붙여 넣기와 보내기는 PWA에서만 한다. 손쉬운 사용 API로 입력 칸을 찾아 초점을 주고, 들어갔는지·비었는지를 읽어 확인한다.
 enum TeamsOpener {
+    /// 팀즈 창에서 입력 칸을 찾지 못했을 때. 팀즈 화면 구조가 바뀐 것이라 만든 사람에게 알린다.
+    static let noComposer = "팀즈 입력 칸을 찾지 못했습니다"
     enum Result {
         /// 복사하고 열기만 했다. 사람이 ⌘V, Enter. 이유가 있으면 함께.
         case copied(String?)
@@ -123,10 +125,17 @@ enum TeamsOpener {
         var lastTitle = ""
         var steady = 0
         var sure = false
+        // 채팅 창이 맨 앞에 떴는데 입력 칸만 없었는지. 이때만 팀즈 화면이 바뀐 것이고,
+        // 다른 창을 눌렀거나 로딩이 느리거나 로그인 화면인 것은 사용자 쪽 사정이다
+        var chatWithoutComposer = false
         let start = Date()
         while Date().timeIntervalSince(start) < 12 {
             Thread.sleep(forTimeInterval: 0.12)
-            guard frontmost() == bundle, let current = snapshot(bundle: bundle), current.composer != nil else { continue }
+            guard frontmost() == bundle, let current = snapshot(bundle: bundle) else { continue }
+            guard current.composer != nil else {
+                if chatName(normalized(current.title)) != nil { chatWithoutComposer = true }
+                continue
+            }
             now = current
             title = normalized(current.title)
             steady = title == lastTitle ? steady + 1 : 1
@@ -141,7 +150,9 @@ enum TeamsOpener {
             // 바뀌지 않으면 3초까지는 바뀌기를 기다린다
             if Date().timeIntervalSince(start) > 3, title == beforeTitle { break }
         }
-        guard let now, let composer = now.composer else { return .copied("팀즈 입력 칸을 찾지 못했습니다") }
+        guard let now, let composer = now.composer else {
+            return .copied(chatWithoutComposer ? noComposer : "팀즈 채팅이 뜨지 않아 붙여 넣지 않았습니다")
+        }
         // 다른 채팅에 붙여 넣지 않게, 맞는 채팅인지 모르겠으면 아예 손대지 않는다
         guard sure else {
             return .copied(identifiable ? "‘\(chatName(title) ?? title)’ 채팅이 떠 있어 붙여 넣지 않았습니다"

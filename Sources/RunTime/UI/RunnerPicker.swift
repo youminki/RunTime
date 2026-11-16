@@ -709,7 +709,13 @@ final class PetMakerText: ObservableObject {
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
                     guard let data, NSImage(data: data) != nil else { return }
                     let url = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-reference-\(UUID().uuidString).img")
-                    guard (try? data.write(to: url)) != nil else { return }
+                    do { try data.write(to: url) } catch {
+                        if ProblemReporter.shouldReport(error) {
+                            let error = error as NSError
+                            ProblemReporter.screen("펫 만들기", "참고 그림을 임시 파일로 쓰지 못함", detail: "오류: \(error.domain) \(error.code)")
+                        }
+                        return
+                    }
                     DispatchQueue.main.async { self.add([url]) }
                 }
             }

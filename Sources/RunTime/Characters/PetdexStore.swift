@@ -642,6 +642,11 @@ final class PetdexStore: ObservableObject {
 
     private func save() {
         try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(pets) { try? data.write(to: indexURL) }
+        do { try JSONEncoder().encode(pets).write(to: indexURL, options: .atomic) } catch {
+            // 목록을 못 쓰면 다음에 켰을 때 받은 펫이 사라진다
+            if ProblemReporter.shouldReport(error) {
+                ProblemReporter.screen("Petdex 펫", "받은 펫 목록을 저장하지 못함", detail: "펫 \(pets.count)개\n오류: \(error)")
+            }
+        }
     }
 }

@@ -138,6 +138,11 @@ final class DesignImages: ObservableObject {
                         try FileManager.default.moveItem(at: temporary, to: url)
                         return (key, .ready(url))
                     } catch {
+                        // 내려받기는 망 사정이고, 받은 것을 저장하지 못한 것은 앱이 고칠 일이다
+                        if ProblemReporter.shouldReport(error) {
+                            let error = error as NSError
+                            ProblemReporter.screen("디자인 이미지", "이미지를 저장하지 못함", detail: "오류: \(error.domain) \(error.code)")
+                        }
                         return (key, .missing("이미지를 받지 못했습니다: \(error.localizedDescription)"))
                     }
                 }

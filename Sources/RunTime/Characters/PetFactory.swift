@@ -176,6 +176,11 @@ final class PetFactory: ObservableObject {
             }
         } catch {
             state = .failed("올릴 파일을 준비하지 못했어요: \(error.localizedDescription)")
+            // 사용자가 펫 폴더를 지웠으면(없는 파일) 그 Mac 사정이다. 경로에 펫 이름이 들어가 코드만 보낸다
+            if ProblemReporter.shouldReport(error), (error as? CocoaError)?.code != .fileReadNoSuchFile {
+                let error = error as NSError
+                ProblemReporter.screen("Petdex 올리기", "올릴 파일을 준비하지 못함", detail: "오류: \(error.domain) \(error.code)")
+            }
             return
         }
         job += 1
