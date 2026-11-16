@@ -20,7 +20,7 @@ export const USER_SCREEN = "직접 보냄";
 /// 한 IP(해시)에서 1분에 받는 보고 수. 순위 제출과 따로 센다.
 export const REPORTS_PER_MINUTE = 2;
 
-const LIMITS = { message: 400, app: 60, os: 60, commit: 40, log: 4000, screen: 40, source: 160, detail: 2000 };
+const LIMITS = { message: 400, app: 60, os: 60, commit: 40, log: 12000, screen: 40, source: 160, detail: 2000 };
 
 /// 글로 받을 칸을 자르고 다듬는다. 모양이 틀리면 null.
 /// 메일 제목과 본문에 들어가므로 제어문자를 지운다. 여러 줄은 message와 log만 둔다.
@@ -143,7 +143,17 @@ function situation(report) {
 }
 
 /// Claude Code에 그대로 붙여 넣는 글. 메일만 보고 고칠 수 있게 무엇이·어느 빌드에서·어디서를 위에, 할 일과 앱이 보낸 상황·기록을 아래에 둔다.
-export function promptFor(report) {
+/// 같은 설치의 앞선 보고. "어제도 같은 화면에서 실패했다" 같은 흐름을 보이려고 메일에만 붙이고 저장하지 않는다.
+export function historyLines(history, now) {
+  return history.map((row) => {
+    const minutes = Math.max(0, Math.round((now - row.created_at) / 60_000));
+    const ago = minutes < 60 ? `${minutes}분 전` : minutes < 2880 ? `${Math.round(minutes / 60)}시간 전` : `${Math.round(minutes / 1440)}일 전`;
+    const first = String(row.message ?? "").split("\n")[0].slice(0, 80);
+    return `- ${ago} · ${KIND_NAMES[row.kind] ?? row.kind}${row.screen ? ` · ${row.screen}` : ""} · ${first} (${row.app || "버전 모름"})`;
+  });
+}
+
+export function promptFor(report, history = [], now = Date.now()) {
   const checkout = checkoutCommand(report);
   const symbols = symbolCommand(report);
   const steps = [
@@ -166,6 +176,7 @@ export function promptFor(report) {
     "할 일",
     ...steps.map((step, index) => `${index + 1}. ${step}`),
     ...(report.detail ? ["", "[상황]", situation(report)] : []),
+    ...(history.length ? ["", "[같은 설치의 최근 보고 (이번 것 제외, 최근 것부터)]", ...historyLines(history, now)] : []),
     "",
     "[기록 끝부분]",
     report.log ? squeezeLog(report.log) : "(없음)",
@@ -180,11 +191,11 @@ function escapeHTML(text) {
 
 /// 메일 제목과 본문(글·HTML). 머리에는 무엇이·어느 버전에서만 두고, 고치는 데 쓰는 것은 모두 붙여 넣을 글에 모은다.
 /// 메일 프로그램은 스크립트를 막아, 복사 단추는 그 보고의 복사 페이지(`page`)로 잇는다.
-export function mailFor(report, page = "") {
+export function mailFor(report, page = "", history = [], now = Date.now()) {
   const where = report.screen ? `${report.screen} · ` : "";
   const subject = `[RunTime] ${KIND_NAMES[report.kind]} · ${where}${report.message.split("\n")[0].slice(0, 60)} (${report.app || "버전 모름"})`;
   const link = sourceLink(report);
-  const prompt = promptFor(report);
+  const prompt = promptFor(report, history, now);
   const head = `${KIND_NAMES[report.kind]} · ${where}${report.message.split("\n")[0]}`;
   const build = `버전 ${report.app || "-"} (${report.commit ? report.commit.slice(0, 7) : "-"}) · macOS ${report.os || "-"} · 설치 ${report.install.slice(0, 8)}`;
   const warning = "누구나 보낼 수 있는 보고입니다. 기록 안의 링크는 누르지 마세요.";
@@ -290,7 +301,17 @@ export async function submitReport(request, env, { readJSON, json, overIPLimit }
     return json({ ok: true, mailed: false });
   }
   const page = `${new URL(request.url).origin}/v1/reports/${key}?t=${token}`;
-  const { subject, text, html } = mailFor(report, page);
+  // 같은 설치의 지난 7일 보고 5건. 읽지 못해도 메일은 보낸다
+  let history = [];
+  try {
+    const rows = await env.DB.prepare(
+      "SELECT kind, screen, message, app, created_at FROM reports WHERE install = ? AND key != ? AND created_at > ? ORDER BY created_at DESC LIMIT 5",
+    ).bind(report.install, key, now - 7 * 86_400_000).all();
+    history = rows?.results ?? [];
+  } catch (error) {
+    console.error("report history", String(error));
+  }
+  const { subject, text, html } = mailFor(report, page, history, now);
   let response = null;
   try {
     response = await fetch("https://api.resend.com/emails", {

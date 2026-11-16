@@ -1522,13 +1522,22 @@ final class WorkLogSync: ObservableObject {
     private static func report(_ request: URLRequest, status: Int?, error: Error?, data: Data?,
                                file: String, line: Int, function: String) {
         let method = request.httpMethod ?? "GET", path = request.url?.path ?? "-"
-        let body = data.map { String(decoding: $0.prefix(500), as: UTF8.self) } ?? ""
+        // 응답 본문에는 일감 제목·담당자 같은 회사 자료가 있어 꼴(종류·크기·최상위 키)만 남긴다
+        let json = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let shape = data.map { data in
+            let kind = ProblemReporter.isHTML(data) ? "HTML" : json != nil ? "JSON" : "본문"
+            return "\(kind) \(data.count)바이트" + (json.map { " · 키: " + $0.keys.sorted().joined(separator: ",") } ?? "")
+        } ?? "본문 없음"
         // 같은 주소라도 내 일감 받기와 번호로 찾기를 가리게 물음표 뒤 칸 이름과 부른 함수를 남긴다 (값은 남기지 않는다)
         let names = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems?.map(\.name) } ?? []
         let query = names.isEmpty ? "" : "?" + names.joined(separator: ",")
-        Diagnostics.record("레드마인 요청", "\(method) \(path)\(query) → \(status.map(String.init) ?? "응답 없음") · \(function) \(body.prefix(200))")
+        Diagnostics.record("레드마인 요청", "\(method) \(path)\(query) → \(status.map(String.init) ?? "응답 없음") · \(function) · \(shape)")
         if let error, !ProblemReporter.shouldReport(error) { return }
-        if let status, [401, 403, 404, 405].contains(status) { return }
+        // 앱이 고칠 것만 알린다: 응답을 못 읽음(2xx), 요청이 틀림(400), 값이 틀림(422).
+        // 키·권한·없는 일감(401·403·404·405), 프록시 인증(407), 한도(429), 사내 서버·VPN 게이트웨이(5xx)는 그 Mac과 회사 사정이다
+        if let status, !(200..<300).contains(status), ![400, 422].contains(status) { return }
+        // VPN이 끊긴 채 게이트웨이·로그인 안내 페이지가 대신 오거나 응답이 잘린 것도 사내망 사정이다
+        if status != nil, data?.isEmpty != false || ProblemReporter.isForeignHTML(data) { return }
         var fields = "-"
         if let sent = request.httpBody, var object = (try? JSONSerialization.jsonObject(with: sent)) as? [String: Any] {
             if var issue = object["issue"] as? [String: Any] {
@@ -1539,10 +1548,10 @@ final class WorkLogSync: ObservableObject {
         } else if let sent = request.httpBody {
             fields = "(\(request.value(forHTTPHeaderField: "Content-Type") ?? "본문") \(sent.count)바이트)"
         }
-        let detail = ["요청: \(method) \(path)", "보낸 칸: \(fields)",
-                      "응답: \(status.map { "HTTP \($0)" } ?? "응답 없음") \(error.map { "\($0)" } ?? body)"].joined(separator: "\n")
         // 레드마인이 준 까닭(`{"errors":[…]}`)을 제목에 넣어, 까닭이 다르면 메일도 따로 오게 한다
-        let reasons = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["errors"] as? [String]
+        let reasons = json?["errors"] as? [String]
+        let detail = ["요청: \(method) \(path)", "보낸 칸: \(fields)",
+                      "응답: \(status.map { "HTTP \($0)" } ?? "응답 없음") · \(error.map { "\($0)" } ?? shape)"].joined(separator: "\n")
         let summary = "레드마인 \(method) 실패 (\(status.map { "HTTP \($0)" } ?? "응답 없음"))" + (reasons.map { ": " + $0.joined(separator: ", ") } ?? "")
         ProblemReporter.screen("업무 일지", summary, detail: detail, file: file, line: line, function: function)
     }

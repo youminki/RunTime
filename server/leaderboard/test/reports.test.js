@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkoutCommand, cleanReport, mailFor, mailKey, promptFor, reportKey, reportPage, sourceLink, squeezeLog, submitReport, symbolCommand, USER_SCREEN, viewReport } from "../src/reports.js";
+import { checkoutCommand, cleanReport, mailFor, mailKey, promptFor, reportKey, reportPage, sourceLink, squeezeLog, submitReport, symbolCommand, USER_SCREEN, viewReport, historyLines } from "../src/reports.js";
 
 const install = "3f2c1a4e-1b2c-4d5e-8f90-1234567890ab";
 
 test("report keeps only known fields and trims them", () => {
   const report = cleanReport({ install, kind: "update-failed", message: "  빌드 실패  ", app: "1.4.12", log: "x".repeat(20_000), extra: "버림" });
   assert.equal(report.message, "빌드 실패");
-  assert.equal(report.log.length, 4000);
+  assert.equal(report.log.length, 12000);
   assert.equal(report.extra, undefined);
 });
 
@@ -178,7 +178,7 @@ test("copy page needs the matching token", async () => {
 });
 
 /// 보고 표 하나와 Resend 응답만 흉내 낸다. 하루 메일 수와 이 Mac의 보고 수는 `counts`로 정한다.
-function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false } = {}) {
+function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false, history = [] } = {}) {
   const rows = new Map();
   const db = {
     prepare: (sql) => ({
@@ -188,6 +188,7 @@ function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false } = {}) {
           if (sql.startsWith("INSERT")) return rows.has(args[0]) ? null : (rows.set(args[0], { mailed: 0 }), { key: args[0] });
           return null;
         },
+        all: async () => ({ results: history }),
         run: async () => {
           if (sql.startsWith("DELETE")) rows.delete(args[0]);
           if (sql.startsWith("UPDATE")) rows.get(args[0]).mailed = 1;
@@ -209,7 +210,7 @@ function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false } = {}) {
     overIPLimit: async () => false,
   };
   const submit = (body) => submitReport(new Request("https://x/v1/reports", { method: "POST", body: JSON.stringify(body) }), env, helpers);
-  return { submit, rows, mails, restore: () => { globalThis.fetch = realFetch; } };
+  return { submit, rows, mails, env, restore: () => { globalThis.fetch = realFetch; } };
 }
 
 test("a mail that fails for now drops the stored report so the app sends it again", async () => {
@@ -270,4 +271,35 @@ test("reports the user wrote with the same first line stay apart", async () => {
 test("three shots at the app's size cap fit the server limit", () => {
   const shot = "/9j/" + "A".repeat(Math.ceil((360_000 * 4) / 3) - 4);
   assert.equal(cleanReport({ install, kind: "screen-error", message: "x", screen: USER_SCREEN, shots: [shot, shot, shot] }).shots.length, 3);
+});
+
+test("mail lists the earlier reports of the same install", async () => {
+  const now = Date.now();
+  const history = [
+    { kind: "screen-error", screen: "레드마인", message: "응답을 읽지 못함\n둘째 줄", app: "0.8.140", created_at: now - 3 * 3_600_000 },
+    { kind: "update-failed", screen: "", message: "서명 실패", app: "0.8.133", created_at: now - 3 * 86_400_000 },
+  ];
+  assert.deepEqual(historyLines(history, now), [
+    "- 3시간 전 · 화면 오류 · 레드마인 · 응답을 읽지 못함 (0.8.140)",
+    "- 3일 전 · 업데이트 실패 · 서명 실패 (0.8.133)",
+  ]);
+  const fake = fakeSubmit({ history });
+  try {
+    await fake.submit({ install, kind: "screen-error", message: "또 실패", screen: "레드마인" });
+    assert.match(fake.mails[0].text, /같은 설치의 최근 보고/);
+    assert.match(fake.mails[0].text, /3시간 전 · 화면 오류 · 레드마인/);
+  } finally { fake.restore(); }
+  assert.doesNotMatch(mailFor(cleanReport({ install, kind: "screen-error", message: "x" }), "", []).text, /같은 설치의 최근 보고/);
+});
+
+test("a failed history query does not stop the mail", async () => {
+  const fake = fakeSubmit();
+  const prepare = fake.env.DB.prepare;
+  fake.env.DB.prepare = (sql) => sql.includes("ORDER BY created_at DESC")
+    ? { bind: () => { throw new Error("db"); } } : prepare(sql);
+  try {
+    const response = await fake.submit({ install, kind: "screen-error", message: "실패", screen: "레드마인" });
+    assert.equal(response.status, 200);
+    assert.equal(fake.mails.length, 1);
+  } finally { fake.restore(); }
 });

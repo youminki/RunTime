@@ -46,6 +46,39 @@ enum Diagnostics {
         return Array(text.components(separatedBy: "\n").filter { !$0.isEmpty }.suffix(count))
     }
 
+    /// 자동 보고마다 붙이는 이 Mac의 사정. 그 Mac에서만 나는 문제를 메일만 보고 가르게 한다.
+    /// 기종·메모리·화면 구성·모습·권한처럼 사람이나 회사 자료가 아닌 것만 담는다. 메인 스레드에서 부른다.
+    /// `thisRun`이 false면 지난 실행의 충돌·멈춤을 다음에 켜서 보내는 것이라, 켠 시간·펫처럼 이번 실행의 값은 빼고 기기 사정만 둔다.
+    static func environment(thisRun: Bool = true) -> [String] {
+        var model = [CChar](repeating: 0, count: 64), size = model.count
+        let machine = sysctlbyname("hw.model", &model, &size, nil, 0) == 0 ? String(cString: model) : "-"
+        let info = ProcessInfo.processInfo
+        let screens = NSScreen.screens.map { screen in
+            let f = screen.frame
+            return "\(Int(f.width))x\(Int(f.height))@\(Int(screen.backingScaleFactor))x 메뉴바 \(Int(f.maxY - screen.visibleFrame.maxY))pt"
+        }
+        let dark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let lines = [
+            "Mac: \(machine) · 메모리 \(info.physicalMemory >> 30)GB · 코어 \(info.activeProcessorCount)"
+                + (info.isLowPowerModeEnabled ? " · 저전력" : "") + (info.thermalState.rawValue >= 2 ? " · 과열" : ""),
+            "화면 \(screens.count)개: \(screens.joined(separator: ", "))",
+            "모습: \(dark ? "다크" : "라이트") · 언어 \(Locale.preferredLanguages.first ?? "-")"
+                + " · 자동 업데이트: \(AppUpdater.shared.autoUpdate ? "켬" : "끔") · 손쉬운 사용 허용: \(AXIsProcessTrusted() ? "예" : "아니오")",
+        ]
+        guard thisRun else { return lines }
+        let minutes = launchedAt.map { "\(Int(-$0.timeIntervalSinceNow / 60))분" } ?? "-"
+        return lines + ["앱 켠 지 \(minutes) · 펫 꺼냄: \(DesktopPet.shared.isShown ? "예" : "아니오")"]
+    }
+
+    /// 이 프로세스가 시작된 때. 오래 켜 둔 뒤에만 나는 문제를 가른다. `static let`은 처음 읽을 때 정해져서 커널에 묻는다.
+    static let launchedAt: Date? = {
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+        var name = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&name, 4, &info, &size, nil, 0) == 0 else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+    }()
+
     /// 붙여 넣어 물어볼 수 있는 진단 요약. 이 Mac의 빌드·화면 구성·상태와 최근 기록.
     static func report(updater: AppUpdater = .shared, usage: String? = nil) -> String {
         let info = Bundle.main.infoDictionary ?? [:]

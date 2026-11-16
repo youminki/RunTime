@@ -50,6 +50,10 @@ enum ProblemReporter {
     static func payload(_ kind: Kind, _ message: String, screen: String = "", source: String = "", detail: String = "",
                         app: String? = nil, commit: String? = nil, log: String? = nil) -> [String: String] {
         let info = Bundle.main.infoDictionary ?? [:]
+        // 충돌·멈춤은 자기 기록을 넘기므로 이 Mac의 사정을 앞에 붙인다 (다른 보고는 recentEvents·recentLog가 붙인다).
+        // 대개 다음 실행에서 보내서 이번 실행의 값(켠 시간·펫)은 빼고 기기 사정만 둔다
+        let log = log.map { kind == .crash || kind == .hang
+            ? (["[환경 (보낸 실행)]"] + Diagnostics.environment(thisRun: false) + ["", $0]).joined(separator: "\n") : $0 }
         return [
             "install": installID,
             "kind": kind.rawValue,
@@ -57,7 +61,7 @@ enum ProblemReporter {
             "app": app ?? info["CFBundleShortVersionString"] as? String ?? "",
             "commit": commit ?? info["RunTimeCommitSHA"] as? String ?? info["RunTimeCommit"] as? String ?? "",
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
-            "log": newest(redact(log ?? (kind == .screen ? recentEvents() : recentLog())), limit: 3900),
+            "log": newest(redact(log ?? (kind == .screen ? recentEvents() : recentLog())), limit: 11_900),
             "screen": screen,
             "source": source,
             "detail": redact(detail),
@@ -80,6 +84,7 @@ enum ProblemReporter {
     }
 
     /// 만든 사람이 고칠 실패인지. 망 끊김·느림과 피그마 토큰·권한·한도·없는 파일은 사용자 쪽 일이라 화면에만 보인다.
+    /// 연결 오류는 앱이 주소를 잘못 만들었거나 응답을 못 읽은 것만 알린다. 나머지는 VPN 끊김, 사내 인증서·프록시 같은 그 Mac의 망 사정이다.
     static func shouldReport(_ error: Error) -> Bool {
         if let failure = error as? FigmaAPI.Failure {
             switch failure {
@@ -88,8 +93,20 @@ enum ProblemReporter {
             }
         }
         guard let error = error as? URLError else { return true }
-        return ![.notConnectedToInternet, .timedOut, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost,
-                .dnsLookupFailed, .cancelled, .internationalRoamingOff, .dataNotAllowed, .secureConnectionFailed].contains(error.code)
+        return [.badURL, .unsupportedURL, .cannotParseResponse, .cannotDecodeContentData, .cannotDecodeRawData].contains(error.code)
+    }
+
+    /// 응답이 HTML 페이지인지. 앞의 공백과 UTF-8 BOM은 건너뛴다.
+    static func isHTML(_ data: Data?) -> Bool {
+        data?.first(where: { !" \n\r\t\u{FEFF}".utf8.contains($0) }) == UInt8(ascii: "<")
+    }
+
+    /// 레드마인이 아닌 곳이 대신 준 HTML인지. VPN이 끊긴 채 게이트웨이·로그인 안내 페이지가 오면 앱이 고칠 일이 아니다.
+    /// 레드마인 자신의 페이지(앱이 `.json`을 빠뜨리는 등 주소를 잘못 만든 것)는 앱 버그라 가른다.
+    static func isForeignHTML(_ data: Data?) -> Bool {
+        guard let data, isHTML(data) else { return false }
+        let head = String(decoding: data.prefix(4096), as: UTF8.self)
+        return !(head.contains("csrf-token") && head.contains("Redmine"))
     }
 
     /// `/Users/이름/.../Sources/RunTime/App/A.swift`에서 저장소 안 경로만 남긴다.
@@ -220,20 +237,22 @@ enum ProblemReporter {
         }
     }
 
-    /// 화면 오류에 붙이는 최근 기록. 실패 바로 앞의 요청·응답 줄이 까닭을 보여 준다.
+    /// 화면 오류에 붙이는 이 Mac의 사정과 최근 기록. 실패 바로 앞의 요청·응답 줄이 까닭을 보여 준다.
     static func recentEvents() -> String {
         let events = ((try? String(contentsOf: Diagnostics.logURL, encoding: .utf8)) ?? "")
-            .components(separatedBy: "\n").filter { !$0.isEmpty && !$0.contains("[문제 보고]") }.suffix(25)
-        return (["[최근 기록]"] + events).joined(separator: "\n")
+            .components(separatedBy: "\n").filter { !$0.isEmpty && !$0.contains("[문제 보고]") }.suffix(60)
+        return (environmentBlock + ["[최근 기록]"] + events).joined(separator: "\n")
     }
+
+    private static var environmentBlock: [String] { ["[환경]"] + Diagnostics.environment() + [""] }
 
     /// 업데이트 관련 최근 기록과 마지막 업데이트 로그 끝부분.
     static func recentLog() -> String {
         let events = ((try? String(contentsOf: Diagnostics.logURL, encoding: .utf8)) ?? "")
-            .components(separatedBy: "\n").filter { $0.contains("[업데이트]") }.suffix(15)
+            .components(separatedBy: "\n").filter { $0.contains("[업데이트]") }.suffix(30)
         // 컴파일러 경고·소스 인용 줄은 빼고 단계·오류·완료 줄만 둔다 (까닭이 보이는 줄)
         let last = ((try? String(contentsOf: AppUpdater.logURL, encoding: .utf8)) ?? "").components(separatedBy: "\n== ").last ?? ""
-        return (["[최근 기록]"] + events + ["", "[업데이트 로그 끝]"] + updateLines(last)).joined(separator: "\n")
+        return (environmentBlock + ["[최근 기록]"] + events + ["", "[업데이트 로그 끝]"] + updateLines(last)).joined(separator: "\n")
     }
 
     /// 업데이트 한 번의 로그에서 까닭이 보이는 줄. 단계·오류 줄에 더해 마지막 몇 줄은 늘 둔다.
@@ -258,13 +277,15 @@ enum ProblemReporter {
             .suffix(40)
     }
 
-    /// 서버는 기록을 앞에서부터 4000자로 자른다. 까닭은 끝 쪽에 있어, 첫 줄(머리)을 두고 그 뒤 오래된 줄부터 덜어 맞춘다.
+    /// 서버는 기록을 앞에서부터 12000자로 자른다. 까닭은 끝 쪽에 있어, 머리(환경·진단 요약)를 두고 그 뒤 오래된 줄부터 덜어 맞춘다.
     static func newest(_ text: String, limit: Int) -> String {
         var lines = text.components(separatedBy: "\n")
-        // 진단 내용은 머리(빌드·업데이트·화면)가 기록보다 쓸모 있어 "최근 기록" 줄 뒤부터 덜어 낸다
-        let first = (lines.firstIndex { $0.hasPrefix("최근 기록") } ?? 0) + 1
-        var length = lines.reduce(lines.count - 1) { $0 + $1.count }
-        while length > limit, lines.count > first + 1 { length -= lines.remove(at: first).count + 1 }
+        // 머리(환경, 빌드·업데이트·화면)가 오래된 기록보다 쓸모 있어 첫 기록 머리줄("[최근 기록]", "[죽기 전 기록]",
+        // 진단 요약의 "최근 기록 (n):") 뒤부터 덜어 낸다
+        let first = (lines.firstIndex { $0.hasPrefix("최근 기록") || ($0.hasPrefix("[") && !$0.hasPrefix("[환경")) } ?? 0) + 1
+        // 서버(자바스크립트)는 UTF-16 단위로 자르므로 같은 단위로 센다
+        var length = lines.reduce(lines.count - 1) { $0 + $1.utf16.count }
+        while length > limit, lines.count > first + 1 { length -= lines.remove(at: first).utf16.count + 1 }
         return String(lines.joined(separator: "\n").prefix(limit))
     }
 
