@@ -108,6 +108,8 @@ final class DesktopPet {
     private var hintOnScreen: CGRect?
     /// 동료가 반대편으로 달려가는 빠르기 (buddySide가 1초에 바뀌는 양). 0이 아니면 가는 쪽을 본다.
     private var buddyShift: CGFloat = 0
+    /// 동료가 땅 위에서 실제로 움직이는 빠르기 (pt/초). 다리 박자와 달리기·걷기를 이것으로 정한다.
+    private var buddySpeed: CGFloat = 0
     private var trick: (kind: Trick, start: Date)?
     /// 누르고 있는 키 (화면 방향).
     private var held: (left: Bool, right: Bool, up: Bool, down: Bool) = (false, false, false, false)
@@ -190,6 +192,8 @@ final class DesktopPet {
     var edgeName: String { free == nil ? edge.rawValue : "free" }
     /// 점검 도구가 읽는 동료 자리 (어느 쪽 뒤인지, 뛴 높이).
     var buddyForCheck: (side: CGFloat, lift: CGFloat, lag: CGFloat) { (buddySide, buddyLift, buddyLag) }
+    /// 점검 도구가 읽는 걸음 박자: 펫과 동료가 지금까지 디딘 걸음 수, 둘의 땅 위 빠르기.
+    var gaitForCheck: (pet: CGFloat, buddy: CGFloat, petSpeed: CGFloat, buddySpeed: CGFloat) { (gait, buddyGait, speedNow, buddySpeed) }
     /// 점검 도구가 읽는 발 자리(화면 좌표)와 지금 기울기.
     var feetForCheck: CGPoint { feetOnScreen }
     var tiltForCheck: CGFloat { angle }
@@ -851,7 +855,7 @@ final class DesktopPet {
         let moving = abs(velocity) > 8 && drag == nil && free == nil
         gait += moving ? dt * abs(velocity) / 110 : dt / CGFloat(display.cycle)
         speedNow = moving ? abs(velocity) : 0
-        emitDust(moving: moving, buddyMoving: abs(buddyLag * 4) > 8 || buddyShift != 0 || moving,
+        emitDust(moving: moving, buddyMoving: buddySpeed > 8,
                  clock: now.timeIntervalSinceReferenceDate)
         if buddyHop > 0 || buddyHopSpeed > 0 {
             buddyHopSpeed -= 1500 * dt
@@ -868,12 +872,17 @@ final class DesktopPet {
         buddySide += gap > 0 ? min(gap, 6 * dt) : max(gap, -6 * dt)
         buddyLift = follows ? buddyLift + (lift * 0.6 - buddyLift) * min(1, dt * 10) : lift
         // 펫이 걸으면 동료는 제자리에 남았다가 뒤따라 달려온다. 1초에 남은 거리의 4배씩 줄여 걸을 때 약 0.25초 늦게 따라온다
+        let lagBefore = buddyLag
         if follows, drag == nil { buddyLag -= velocity * dt }
         buddyLag -= buddyLag * min(1, dt * 4)
         let room = 12 * scale
         buddyLag = min(max(buddyLag, -room), room)
-        let catching = abs(buddyLag * 4) > 8
-        buddyGait += dt * (moving || catching || buddyShift != 0 ? max(abs(velocity), 90) : 20) / 60
+        // 동료가 땅 위에서 움직인 빠르기 = 펫 빠르기 + 뒤처짐이 바뀐 빠르기. 반대편으로 갈 때는 몸 너비만큼 달려간다
+        let carried = follows && drag == nil && moving ? velocity : 0
+        buddySpeed = abs(carried + (buddyLag - lagBefore) / max(dt, 0.001))
+        if buddyShift != 0 { buddySpeed = max(buddySpeed, 90) }
+        // 다리 박자는 펫과 같은 보폭(110pt에 한 걸음)으로 센다. 같이 걸으면 펫과 같은 박자로 걷는다
+        buddyGait += buddySpeed > 8 ? dt * buddySpeed / 110 : dt / CGFloat(display.cycle > 0 ? display.cycle : 2.4)
         place()
         view?.needsDisplay = true
         // 방향키를 4초 넘게 쓰지 않으면 키 입력을 돌려준다
@@ -1204,12 +1213,20 @@ final class DesktopPet {
         let buddyOffset = origin.x + (body.midX - buddySide * (body.width / 2 + 5)) * scale + buddyLag
         // 반대편으로 달려가는 동안은 가는 쪽을, 아니면 펫과 같은 쪽을 본다
         let buddyFacing: CGFloat = buddyShift != 0 ? (buddyShift > 0 ? -1 : 1) : (buddySide >= 0 ? 1 : -1)
-        let buddyMoving = buddyShift != 0 || abs(buddyLag * 4) > 8 || (Self.walkSpeed(display) > 0 && !resting) || held.left || held.right
+        let buddyMoving = buddySpeed > 8
         let rise = buddyLift + buddyHop
         let buddyJump: CGFloat? = rise > 2 ? (buddyHopSpeed > 0 || lift * 0.6 > buddyLift ? 0.3 : 0.7) : nil
         // 펫은 장난하는 동안 멈춰 있어, 동료가 따라잡는 중이거나 펫이 실제로 움직일 때만 따라 하지 않는다
         let busyBuddy = buddyShift != 0 || abs(buddyLag * 4) > 8 || speedNow > 0 || held.left || held.right
-        let buddyGesture = buddyJump == nil ? Self.gesture(following: frame.pose, moving: busyBuddy, phase: buddyGait) : nil
+        var buddyGesture = buddyJump == nil ? Self.gesture(following: frame.pose, moving: busyBuddy, phase: buddyGait) : nil
+        if buddyJump == nil, buddyMoving {
+            // 펫과 나란히 갈 때는 펫과 같이 걷거나 같은 세기로 달린다. 따라붙거나 반대편으로 갈 때만 달린다
+            let together = buddyShift == 0 && abs(buddySpeed - abs(speedNow)) < 20 && speedNow > 0
+            let petPose = frame.pose
+            buddyGesture = together && (petPose.activity == .walk || petPose.activity == .run)
+                ? CharacterPose(activity: petPose.activity, phase: buddyGait, speed: petPose.speed)
+                : CharacterPose(activity: .run, phase: buddyGait, speed: 1)
+        }
         var buddyInFrame = false
         if let companion, free == nil {
             // 테두리 위에서는 동료도 둥근 길을 따라 선다. 펫 몸 축으로 곧게 두면 모서리에서 화면 밖으로 떠 보인다
@@ -1402,6 +1419,7 @@ enum DesktopPetCheck {
     static func run(to file: URL, done: @escaping (Bool) -> Void) {
         let pet = DesktopPet.shared
         var failures = 0
+        var gaits: (pet: CGFloat, buddy: CGFloat, petSpeed: CGFloat, buddySpeed: CGFloat) = (0, 0, 0, 0)
         func check(_ name: String, _ ok: Bool) {
             print("\(ok ? "✓" : "✗") \(name)")
             if !ok { failures += 1 }
@@ -1491,7 +1509,17 @@ enum DesktopPetCheck {
                 pet.pointerForCheck = nil
                 start = pet.position
             }),
-            (2.5, { check("커서가 떠나면 다시 걷는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) > 20) }),
+            (2.5, {
+                check("커서가 떠나면 다시 걷는다 (\(Int(abs(pet.position.x - start.x)))pt)", abs(pet.position.x - start.x) > 20)
+                gaits = pet.gaitForCheck
+            }),
+            (1.0, {
+                // 같이 걸을 때 동료 다리가 펫보다 몇 배 빨리 움직이던 문제: 걸음 수가 비슷해야 한다
+                let now = pet.gaitForCheck
+                let petSteps = now.pet - gaits.pet, buddySteps = now.buddy - gaits.buddy
+                check(String(format: "같이 걸으면 동료도 펫과 같은 박자로 걷는다 (1초에 펫 %.2f걸음, 동료 %.2f걸음)", petSteps, buddySteps),
+                      petSteps > 0 && abs(buddySteps - petSteps) <= max(0.15, petSteps * 0.25))
+            }),
             (0.1, {
                 display = .normal(.sleeping)
                 pet.takeKeyboardForCheck()
@@ -1620,7 +1648,8 @@ enum DesktopPetCheck {
                 MenuBarBubble.shared.show(.init(title: "세션 사용량 95%", items: ["곧 한도에 닿습니다"]),
                                           at: { pet.bubbleTarget.map { ($0, true) } })
             }),
-            (1.2, {
+            // 저절로 닫기는 배터리 때문에 5초(PresentCountdown.step)마다 센다. 한 번 셀 때까지 기다린다
+            (PresentCountdown.step + 0.5, {
                 check("안내 말풍선은 저절로 닫히고 남은 소식이 보인다 (\(MenuBarBubble.shared.pending)건, \(MenuBarBubble.shared.currentTitle ?? "없음"))",
                       MenuBarBubble.shared.pending == 1 && MenuBarBubble.shared.currentTitle == "세션 사용량 95%")
                 MenuBarBubble.shared.hide()
