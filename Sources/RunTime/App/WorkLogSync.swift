@@ -880,7 +880,7 @@ final class WorkLogSync: ObservableObject {
                                                    items: fresh.prefix(3).map { "#\($0.id) \($0.subject)" }
                                                        + (fresh.count > 3 ? ["외 \(fresh.count - 3)건"] : []),
                                                    actionTitle: "레드마인 열기", action: { MenuBarNews.open(.redmine) },
-                                                   link: "page:redmine"))
+                                                   link: "page:redmine", keeps: false, closesAfter: UsageEngine.newsLifetime))
                         }
                     }
                     if assigned { self.issuesLoadedAt = Date() }

@@ -320,7 +320,7 @@ struct WorkLogPreview: View {
             } label: {
                 HStack(spacing: 6) {
                     if busy { ProgressView().controlSize(.small) }
-                    Label(busy ? "다듬는 중…" : "Claude로 다듬기", systemImage: "wand.and.stars")
+                    Label(busy ? "다듬는 중…" : "Claude로 다듬기", systemImage: "pencil.line")
                 }
             }
             .buttonStyle(TextLinkButtonStyle())

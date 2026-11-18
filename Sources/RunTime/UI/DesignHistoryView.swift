@@ -486,7 +486,7 @@ struct DesignHistoryView: View {
         if let screen {
             let pending = sync.pendingEvents(for: screen.screen, in: screen.fileKey)
             Button { copy(sync.claudePrompt(for: screen.screen, in: screen.fileKey)) } label: {
-                Label("이 화면 Claude 문구", systemImage: "sparkles")
+                Label("이 화면 Claude 문구", systemImage: "doc.on.doc")
             }
             .buttonStyle(BarButtonStyle(kind: pending.isEmpty ? .primary : .secondary))
             .tip(pending.isEmpty ? "이 화면을 처음 마크업해 달라는 글을 복사합니다" : "반영할 변경만 정리한 글을 복사합니다")
@@ -498,7 +498,7 @@ struct DesignHistoryView: View {
             }
         } else if let event {
             if copyable(event) {
-                Button { copy(sync.claudePrompt(for: event)) } label: { Label("이 변경 Claude 문구", systemImage: "sparkles") }
+                Button { copy(sync.claudePrompt(for: event)) } label: { Label("이 변경 Claude 문구", systemImage: "doc.on.doc") }
                     .buttonStyle(BarButtonStyle(kind: stored(event) ? .secondary : .primary))
                     .tip("이 변경을 반영해 달라는 글을 복사합니다")
             }
@@ -527,7 +527,7 @@ struct DesignHistoryView: View {
             .tip(allPicked ? "체크를 모두 풉니다" : "지금 목록의 변경을 모두 고릅니다")
         barDivider
         if !undo {
-            Button { copy(sync.claudePrompt(events: promptable, title: "")) } label: { Label("Claude 문구", systemImage: "sparkles") }
+            Button { copy(sync.claudePrompt(events: promptable, title: "")) } label: { Label("Claude 문구", systemImage: "doc.on.doc") }
                 .buttonStyle(BarButtonStyle(kind: .secondary))
                 .disabled(promptable.isEmpty)
                 .tip("고른 변경을 화면별로 묶어 한 글로 복사합니다. 지운 화면과 이력 줄은 뺍니다")
@@ -1920,7 +1920,7 @@ struct DesignTimeline: View {
                     let prompt = sync.claudePrompt(menu: path, in: fileKey)
                     NSPasteboard.general.setString(prompt, forType: .string)
                     page.flash(DesignFormat.copied(prompt))
-                } label: { Label(compact ? "메뉴 문구" : "메뉴 변경 \(pending)건 문구", systemImage: "sparkles") }
+                } label: { Label(compact ? "메뉴 문구" : "메뉴 변경 \(pending)건 문구", systemImage: "doc.on.doc") }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .tip("이 메뉴 화면들의 반영하지 않은 변경을 화면별로 묶어 복사합니다. 반영 체크한 항목은 빼고, 전체 명세 대신 화면마다 피그마 링크를 넣어 짧게 만듭니다")
             } else if unbuilt, let path = menuPath {
@@ -1929,7 +1929,7 @@ struct DesignTimeline: View {
                     let prompt = sync.claudeBuildPrompt(menu: path, in: fileKey)
                     NSPasteboard.general.setString(prompt, forType: .string)
                     page.flash(DesignFormat.copied(prompt))
-                } label: { Label(compact ? "메뉴 문구" : "메뉴 마크업 문구", systemImage: "sparkles") }
+                } label: { Label(compact ? "메뉴 문구" : "메뉴 마크업 문구", systemImage: "doc.on.doc") }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .tip("이 메뉴 화면마다 피그마 링크·참고·남은 기능 명세를 묶어 복사합니다. 목업 문구와 배치는 Claude가 피그마 MCP로 읽게 해 글을 줄이고, 구현을 마친 화면은 뺍니다")
             }

@@ -588,8 +588,11 @@ final class UsageEngine: ObservableObject {
         let summary = store.summary(from: boundary.addingTimeInterval(-WeeklyWindow.duration), to: boundary)
         guard summary.tokens > 0 else { return }
         let body = Self.describe(summary)
-        DispatchQueue.main.async { Notifier.shared.send(title: "지난주 Claude 사용 요약", body: body, opens: .daily) }
+        DispatchQueue.main.async { Notifier.shared.send(title: "지난주 Claude 사용 요약", body: body, opens: .daily, closesAfter: Self.newsLifetime) }
     }
+
+    /// 읽기만 하면 되는 소식(요약, 새 일감, 디자인 변경, 새 버전)이 떠 있는 시간. 자리를 비운 동안은 세지 않는다.
+    static let newsLifetime: TimeInterval = 60
 
     static func describe(_ summary: UsageStore.PeriodSummary) -> String {
         var parts = ["\(Format.tokens(summary.tokens)) 토큰", "약 \(Format.usd(summary.costUSD))"]

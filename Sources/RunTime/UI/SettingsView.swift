@@ -143,12 +143,12 @@ struct SettingsView: View {
     private var general: some View {
         GroupedList {
             GroupedSection(footer: "단축키를 켜면 어느 앱에서든 \(GlobalHotKey.displayName)로 사용량 창을 엽니다. 사용률 표시를 켜면 러너 옆에 숫자를 함께 보입니다.") {
-                ToggleRow(title: "로그인 시 자동 시작", icon: "power", tint: Palette.green, isOn: $settings.launchAtLogin)
+                ToggleRow(title: "로그인 시 자동 시작", icon: "power", isOn: $settings.launchAtLogin)
                     .disabled(!LaunchAtLogin.available)
-                ToggleRow(title: "단축키로 사용량 열기", icon: "command", tint: Palette.gray,
+                ToggleRow(title: "단축키로 사용량 열기", icon: "command",
                           isOn: $settings.globalHotKeyEnabled)
                 if settings.globalHotKeyEnabled {
-                    GroupedRow("단축키", icon: "keyboard", tint: Palette.gray) {
+                    GroupedRow("단축키", icon: "keyboard") {
                         HStack(spacing: 6) {
                             if GlobalHotKey.shared.combo != .standard && !hotKeyRecorder.recording {
                                 Button("기본으로") { hotKeyRecorder.reset() }
@@ -170,7 +170,7 @@ struct SettingsView: View {
                     GroupedRow("다른 앱이 이 단축키를 쓰고 있어 등록하지 못했습니다.") { EmptyView() }
                         .foregroundStyle(Palette.orange)
                 }
-                ToggleRow(title: "메뉴바에 사용률 표시", icon: "percent", tint: Palette.blue, isOn: $settings.showsMenuBarLabel)
+                ToggleRow(title: "메뉴바에 사용률 표시", icon: "percent", isOn: $settings.showsMenuBarLabel)
                 if settings.showsMenuBarLabel {
                     GroupedRow("표시할 값") {
                         segmented("표시할 값", $settings.menuBarLabel, MenuBarLabel.allCases.filter { $0 != .off }) { $0.displayName }
@@ -188,16 +188,16 @@ struct SettingsView: View {
             }
 
             GroupedSection("정보", footer: "RunTime은 Anthropic과 관계없는 개인 프로젝트입니다.") {
-                GroupedRow("버전", icon: "info", tint: Palette.gray) {
+                GroupedRow("버전", icon: "info") {
                     Text(Self.versionText).foregroundStyle(.secondary)
                 }
-                GroupedRow("Claude Code 기록 폴더", icon: "folder.fill", tint: Palette.teal) {
+                GroupedRow("Claude Code 기록 폴더", icon: "folder.fill") {
                     Button("열기") { NSWorkspace.shared.open(Self.projectsDirectory) }
                         .controlSize(.small)
                 }
                 .tip(Self.projectsDirectory.path)
                 Link(destination: URL(string: "https://github.com/youminki/RunTime")!) {
-                    GroupedRow("GitHub 저장소", icon: "chevron.left.forwardslash.chevron.right", tint: Color(white: 0.2)) {
+                    GroupedRow("GitHub 저장소", icon: "chevron.left.forwardslash.chevron.right") {
                         Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                     }
                     .contentShape(Rectangle())
@@ -214,36 +214,36 @@ struct SettingsView: View {
             runnerHero
 
             GroupedSection("모습", footer: "'크게'는 머리 위 여백을 줄여 캐릭터를 키웁니다. 움직임은 1초에 그리는 그림 수로, 많을수록 매끄럽지만 CPU를 조금 더 씁니다.") {
-                GroupedRow("메뉴바 크기", icon: "textformat.size", tint: Palette.indigo) {
+                GroupedRow("메뉴바 크기", icon: "textformat.size") {
                     segmented("메뉴바 크기", $settings.runnerSize, RunnerSize.allCases) { $0.displayName }
                 }
-                GroupedRow("색상", icon: "paintpalette.fill", tint: Palette.pink) {
+                GroupedRow("색상", icon: "paintpalette.fill") {
                     menu("색상", $settings.spriteTheme, SpriteTheme.allCases) { $0.displayName }
                 }
-                GroupedRow("움직임", icon: "film.stack", tint: Palette.orange) {
+                GroupedRow("움직임", icon: "film.stack") {
                     segmented("움직임", $settings.smoothness, SpriteSmoothness.allCases) { $0.displayName }
                 }
-                ToggleRow(title: "가끔 혼자 장난치기", icon: "hand.wave.fill", tint: Palette.purple, isOn: $settings.tricksEnabled)
+                ToggleRow(title: "가끔 혼자 장난치기", icon: "hand.wave.fill", isOn: $settings.tricksEnabled)
             }
 
             GroupedSection("러너 고르기", footer: "직접 만들었거나 쓸 권리가 있는 그림만 불러오세요. 불러온 그림은 이 Mac에만 저장되고 어디로도 보내지 않습니다.") {
-                GroupedRow("러너와 꾸미기", icon: "hare.fill", tint: Palette.orange) {
+                GroupedRow("러너와 꾸미기", icon: "hare.fill") {
                     Button("러너 화면 열기", action: openRunners)
                 }
                 PetMakerStorageRow()
             }
 
             GroupedSection("화면에 꺼낸 펫", footer: "펫을 끌어다 놓으면 그 자리에 머물러요(다른 모니터로도 옮겨져요). 어느 앱을 쓰든 ⌃⌥+방향키로 움직이고 ⌃⌥+스페이스로 뛰어요. 다른 앱이 이 키를 쓰고 있으면 ⌃⌥⇧으로 바뀌어요. 펫을 오른쪽 클릭하면 앱의 각 화면으로 바로 가거나 크기를 바꿀 수 있어요.") {
-                ToggleRow(title: "펫을 화면에 꺼내 두기", icon: "macwindow.on.rectangle", tint: Palette.blue,
+                ToggleRow(title: "펫을 화면에 꺼내 두기", icon: "macwindow.on.rectangle",
                           isOn: Binding(get: { settings.desktopPet },
                                         set: { $0 ? DesktopPet.shared.show() : DesktopPet.shared.hide() }))
-                GroupedRow("펫 크기", icon: "arrow.up.left.and.arrow.down.right", tint: Palette.indigo) {
+                GroupedRow("펫 크기", icon: "arrow.up.left.and.arrow.down.right") {
                     HStack(spacing: 8) {
                         Slider(value: $settings.desktopPetSize, in: 0.6...2).frame(width: 160)
                         Text("\(Int((settings.desktopPetSize * 100).rounded()))%").monospacedDigit().frame(width: 44, alignment: .trailing)
                     }
                 }
-                GroupedRow("움직이는 방식", icon: "figure.walk", tint: Palette.teal) {
+                GroupedRow("움직이는 방식", icon: "figure.walk") {
                     menu("움직이는 방식", Binding(get: { settings.desktopPetMode },
                                          set: { DesktopPet.shared.setMode($0) ; settings.desktopPetMode = $0 }),
                          DesktopPet.Mode.allCases) { $0.title }
@@ -276,8 +276,8 @@ struct SettingsView: View {
         GroupedList {
             GroupedSection("공식 사용량",
                            footer: "Anthropic 계정 기준 사용률을 3분마다 받습니다. 받지 못하면 사용률은 비워 두고 속도와 오늘 사용량은 이 Mac의 기록으로 보입니다.") {
-                ToggleRow(title: "공식 사용량 연동", icon: "chart.pie.fill", tint: Palette.indigo, isOn: $settings.officialEnabled)
-                GroupedRow("상태", icon: "antenna.radiowaves.left.and.right", tint: officialStatusColor) {
+                ToggleRow(title: "공식 사용량 연동", icon: "chart.pie.fill", isOn: $settings.officialEnabled)
+                GroupedRow("상태", icon: "antenna.radiowaves.left.and.right") {
                     HStack(spacing: 8) {
                         Text(officialStatusText).foregroundStyle(.secondary).lineLimit(1)
                         Button("지금 받기") { engine.refreshNow(forceOfficial: true) }
@@ -286,22 +286,22 @@ struct SettingsView: View {
                 }
                 .tip(officialStatusText)
                 if let account = engine.account {
-                    GroupedRow("계정", icon: "person.crop.circle.fill", tint: Palette.green) {
+                    GroupedRow("계정", icon: "person.crop.circle.fill") {
                         Text(account.email + (account.organizationType.map { " · " + AccountSwitcher.Account.planName($0) } ?? ""))
                             .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     }
                     .tip("지금 Claude Code에 로그인한 계정. 아래 사용률은 이 계정 기준입니다")
                 }
-                GroupedRow("세션 (5시간)", icon: "clock.fill", tint: Palette.orange) {
+                GroupedRow("세션 (5시간)", icon: "clock.fill") {
                     Text(Self.gaugeText(engine.sessionGauge, reset: engine.sessionResetsAt.map { Format.resetCountdown(until: $0) }))
                         .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                 }
-                GroupedRow("주간 (7일)", icon: "calendar", tint: Palette.blue) {
+                GroupedRow("주간 (7일)", icon: "calendar") {
                     Text(Self.gaugeText(engine.weeklyGauge, reset: engine.nextWeeklyReset.map { "\(Format.weekdayTime($0)) 초기화" }))
                         .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                 }
                 if let shares = weeklySharesText {
-                    GroupedRow("주간 사용처", icon: "chart.bar.fill", tint: Palette.indigo) {
+                    GroupedRow("주간 사용처", icon: "chart.bar.fill") {
                         Text(shares).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
@@ -310,33 +310,33 @@ struct SettingsView: View {
             AccountSection(switcher: AccountSwitcher.shared, engine: engine)
 
             GroupedSection("속도", footer: "민감도가 높을수록 적은 사용량에도 빨리 달립니다. 확인 주기가 짧을수록 러너가 빨리 반응합니다. Claude가 답을 마치면 바로 멈추고, 5분 넘게 자리를 비우면 잠듭니다. 입력에 반응을 켜면 키보드를 치는 빠르기로도 걷고 달리고, 손을 떼면 바로 멈춥니다. 마우스만 쓰는 동안에는 두리번거립니다. 누른 키는 읽지 않고 횟수만 셉니다. 자정부터 새벽 5시까지는 걸음이 느려지고 졸린 장난을 합니다.") {
-                GroupedRow("민감도", icon: "hare.fill", tint: Palette.orange) {
+                GroupedRow("민감도", icon: "hare.fill") {
                     segmented("민감도", $settings.sensitivity, Thresholds.Sensitivity.allCases) { $0.displayName }
                 }
-                GroupedRow("기록 확인 주기", icon: "timer", tint: Palette.blue) {
+                GroupedRow("기록 확인 주기", icon: "timer") {
                     menu("기록 확인 주기", $settings.pollInterval, AppSettings.pollIntervalOptions) { String(format: "%.0f초", $0) }
                 }
-                ToggleRow(title: "입력에 반응", icon: "keyboard.fill", tint: Palette.teal, isOn: $settings.typingRunnerEnabled)
+                ToggleRow(title: "입력에 반응", icon: "keyboard.fill", isOn: $settings.typingRunnerEnabled)
             }
 
             GroupedSection("승인 기다림", footer: permissionHook.error ?? "켜면 Claude Code 설정(~/.claude/settings.json)에 알림 훅을 하나 더합니다. Claude가 도구 승인을 기다리면 러너가 물음표를 띄우고 기다립니다. 다른 설정과 훅은 그대로 두고, 바꾸기 전 파일은 settings.json.runtime-backup으로 남깁니다. 끄면 더한 훅만 뺍니다.") {
-                ToggleRow(title: "Claude 승인 기다림 알기", icon: "hand.raised.fill", tint: Palette.orange,
+                ToggleRow(title: "Claude 승인 기다림 알기", icon: "hand.raised.fill",
                           isOn: Binding(get: { permissionHook.installed }, set: { permissionHook.set($0) }))
             }
             .onAppear { permissionHook.refresh() }
 
-            GroupedSection("알림", footer: "펫을 화면에 꺼내 두면 알림이 펫 위 말풍선으로 뜨고, 직접 닫을 때까지 남습니다. 한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
-                ToggleRow(title: "한도 임박 알림", icon: "bell.badge.fill", tint: Palette.red, isOn: $settings.limitAlertsEnabled)
-                ToggleRow(title: "세션 초기화 알림", icon: "arrow.clockwise", tint: Palette.green,
+            GroupedSection("알림", footer: "펫을 화면에 꺼내 두면 알림이 펫 위 말풍선으로 뜹니다. 한도나 실패처럼 할 일이 남은 알림은 직접 닫을 때까지 남고, 요약·새 일감·디자인 변경·새 버전 소식은 1분쯤 보인 뒤 저절로 닫힙니다. 마우스를 올려 읽는 동안과 자리를 비운 동안에는 닫히지 않습니다. 한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
+                ToggleRow(title: "한도 임박 알림", icon: "bell.badge.fill", isOn: $settings.limitAlertsEnabled)
+                ToggleRow(title: "세션 초기화 알림", icon: "arrow.clockwise",
                           isOn: $settings.newSessionAlertEnabled)
-                ToggleRow(title: "주간 초기화 알림", icon: "calendar", tint: Palette.teal,
+                ToggleRow(title: "주간 초기화 알림", icon: "calendar",
                           isOn: $settings.weeklyResetAlertEnabled)
                     .disabled(!settings.officialEnabled)   // 주간 창은 공식 값으로만 안다
-                ToggleRow(title: "Claude 작업 끝 알림", icon: "checkmark.bubble.fill", tint: Palette.orange,
+                ToggleRow(title: "Claude 작업 끝 알림", icon: "checkmark.bubble.fill",
                           isOn: $settings.claudeDoneAlertEnabled)
-                ToggleRow(title: "주간 요약 알림", icon: "chart.bar.doc.horizontal", tint: Palette.indigo,
+                ToggleRow(title: "주간 요약 알림", icon: "chart.bar.doc.horizontal",
                           isOn: $settings.weeklySummaryEnabled)
-                GroupedRow("알림 보내 보기", icon: "paperplane.fill", tint: Palette.blue) {
+                GroupedRow("알림 보내 보기", icon: "paperplane.fill") {
                     Button("보내기") {
                         Notifier.shared.send(title: "RunTime 알림", body: "알림이 이렇게 와요. 사용률이 80%, 95%에 닿으면 알려 드릴게요.")
                     }
@@ -432,7 +432,7 @@ private struct NotificationStyleRow: View {
     @StateObject private var model = Model()
 
     var body: some View {
-        GroupedRow("펫을 넣어 두었을 때 알림", icon: "rectangle.stack.badge.person.crop", tint: Palette.purple) {
+        GroupedRow("펫을 넣어 두었을 때 알림", icon: "rectangle.stack.badge.person.crop") {
             HStack(spacing: 8) {
                 Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
                 Button("바꾸기") {
@@ -468,9 +468,9 @@ private struct DiagnosticsRows: View {
     @StateObject private var model = DiagnosticsModel()
 
     var body: some View {
-        ToggleRow(title: "문제를 만든 사람에게 알리기", icon: "paperplane.fill", tint: Palette.blue,
+        ToggleRow(title: "문제를 만든 사람에게 알리기", icon: "paperplane.fill",
                   isOn: Binding(get: { model.reports }, set: { model.reports = $0 }))
-        GroupedRow("최근 기록", icon: "stethoscope", tint: Palette.orange) {
+        GroupedRow("최근 기록", icon: "stethoscope") {
             HStack(spacing: 8) {
                 Text(model.recent.isEmpty ? "없음" : "\(model.recent.count)건").foregroundStyle(.secondary)
                 Button("열기") { NSWorkspace.shared.open(Diagnostics.logURL) }
@@ -486,7 +486,7 @@ private struct DiagnosticsRows: View {
         }
         // 기록 본문은 "열기"로 보고, 여기는 마지막 한 건을 마우스를 올렸을 때만 보인다 (설정 화면을 기록으로 채우지 않게)
         .tip(model.recent.last.map { "마지막 기록: \($0)" } ?? Diagnostics.logURL.path)
-        GroupedRow("문제 보내기", icon: "exclamationmark.bubble.fill", tint: Palette.red) {
+        GroupedRow("문제 보내기", icon: "exclamationmark.bubble.fill") {
             Button("쓰기") { ProblemReportWindow.shared.show(usage: usage()) }
                 .controlSize(.small)
         }
@@ -523,7 +523,7 @@ private struct UpdateRows: View {
     @ObservedObject var updater: AppUpdater
 
     var body: some View {
-        GroupedRow("새 버전", icon: "arrow.down.circle.fill", tint: Palette.blue) {
+        GroupedRow("새 버전", icon: "arrow.down.circle.fill") {
             HStack(spacing: 8) {
                 Text(status).foregroundStyle(statusColor).lineLimit(1).truncationMode(.middle)
                 switch updater.state {
@@ -563,7 +563,7 @@ private struct UpdateRows: View {
             }
         }
         if updater.canCheck {
-            ToggleRow(title: "자동으로 업데이트", icon: "arrow.triangle.2.circlepath", tint: Palette.teal, isOn: $updater.autoUpdate)
+            ToggleRow(title: "자동으로 업데이트", icon: "arrow.triangle.2.circlepath", isOn: $updater.autoUpdate)
         }
     }
 
@@ -635,8 +635,7 @@ private struct AccountSection: View {
     var body: some View {
         GroupedSection("Claude 계정", footer: footer) {
             ForEach(switcher.accounts) { account in
-                GroupedRow(account.label, icon: account.id == switcher.activeID ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle",
-                           tint: account.id == switcher.activeID ? Palette.green : Palette.gray) {
+                GroupedRow(account.label, icon: account.id == switcher.activeID ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle") {
                     HStack(spacing: 6) {
                         if account.needsLogin == true {
                             Text("다시 로그인 필요").foregroundStyle(Palette.orange)
@@ -665,15 +664,15 @@ private struct AccountSection: View {
                 }
             }
             if switcher.accounts.isEmpty {
-                GroupedRow("기억한 계정 없음", icon: "person.crop.circle.badge.questionmark", tint: Palette.gray) { EmptyView() }
+                GroupedRow("기억한 계정 없음", icon: "person.crop.circle.badge.questionmark") { EmptyView() }
             }
             // 바꿀 계정이 하나뿐이면 쓸 일이 없어 숨긴다
             if switcher.accounts.count >= 2 {
-                ToggleRow(title: "한도에 닿으면 자동으로 바꾸기", icon: "arrow.left.arrow.right", tint: Palette.blue,
+                ToggleRow(title: "한도에 닿으면 자동으로 바꾸기", icon: "arrow.left.arrow.right",
                           isOn: $switcher.autoSwitch)
             }
             if let error = switcher.lastError {
-                GroupedRow(error, icon: "exclamationmark.triangle.fill", tint: Palette.orange) { EmptyView() }
+                GroupedRow(error, icon: "exclamationmark.triangle.fill") { EmptyView() }
             }
         }
     }
@@ -689,7 +688,7 @@ private struct PetMakerStorageRow: View {
 
     var body: some View {
         if factory.isPrepared {
-            GroupedRow("펫 만들기 모델", icon: "externaldrive.fill", tint: Palette.purple) {
+            GroupedRow("펫 만들기 모델", icon: "externaldrive.fill") {
                 Button("지우기 (\(ByteCountFormatter.string(fromByteCount: factory.storageSize, countStyle: .file)))") {
                     factory.removeTools()
                 }

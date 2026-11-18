@@ -1,5 +1,16 @@
 import Foundation
+import CoreGraphics
 import UserNotifications
+
+/// 사람이 Mac 앞에 있는지. 저절로 닫히는 소식은 자리를 비운 동안 시간이 가지 않게 해, 돌아와서 놓치지 않게 한다.
+enum UserPresence {
+    /// 키보드·마우스 입력이 이만큼 없으면 자리를 비운 것으로 본다.
+    static let awayAfter: TimeInterval = 60
+
+    static var isAway: Bool {
+        CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: CGEventType(rawValue: ~0)!) >= awayAfter
+    }
+}
 
 /// macOS 알림 (§F4). UNUserNotificationCenter는 번들 앱에서만 동작 —
 /// `swift run` 개발 실행(번들 ID 없음)에서는 조용히 비활성화된다.
@@ -81,6 +92,17 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let request = UNNotificationRequest(identifier: UUID().uuidString,
                                             content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+        // 알림 센터에 쌓이지 않게, 읽기만 하면 되는 알림은 사람이 있는 동안 그만큼 지나면 거둔다
+        if let lifetime { removeDelivered(request.identifier, after: lifetime) }
+    }
+
+    private func removeDelivered(_ id: String, after seconds: TimeInterval) {
+        let countdown = PresentCountdown(seconds)
+        Timer.scheduledTimer(withTimeInterval: PresentCountdown.step, repeats: true) { timer in
+            guard countdown.tick() else { return }
+            timer.invalidate()
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
@@ -99,5 +121,19 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             }
         }
         completionHandler()
+    }
+}
+
+/// 사람이 자리에 있는 동안만 줄어드는 남은 시간. 메인 스레드에서만 쓴다.
+final class PresentCountdown {
+    static let step: TimeInterval = 5
+    private var left: TimeInterval
+
+    init(_ seconds: TimeInterval) { left = seconds }
+
+    /// 한 걸음 지나 다 됐으면 true.
+    func tick() -> Bool {
+        if !UserPresence.isAway { left -= Self.step }
+        return left <= 0
     }
 }

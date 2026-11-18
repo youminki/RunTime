@@ -390,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { target, _ in
                 guard let target, updater.hasPendingUpdate else { return }
                 showOnce("pending-\(target)", title: "새 버전이 있어요", lines: updater.incomingLines,
-                         action: ("지금 업데이트", { updater.update() }), keeps: false)
+                         action: ("지금 업데이트", { updater.update() }), keeps: false, closesAfter: UsageEngine.newsLifetime)
             }
             .store(in: &cancellables)
     }

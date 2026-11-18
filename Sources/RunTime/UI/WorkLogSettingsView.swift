@@ -89,7 +89,7 @@ struct WorkLogSettingsView: View {
 
     private var gitlab: some View {
         VStack(spacing: 0) {
-            SettingRow("자동으로 가져오기", "10분마다, 그리고 업무 일지를 열 때 가져옵니다.") {
+            SettingRow("자동으로 가져오기", "10분마다, 업무 일지를 열 때마다 가져옵니다.") {
                 Toggle("", isOn: $settings.captureEnabled).toggleStyle(.switch).labelsHidden()
             }
             SettingRow("GitLab 주소", WorkLogSync.glabInstalled ? "glab에 로그인한 회사 GitLab입니다." : "glab이 없습니다. 터미널에서 brew install glab 뒤 glab auth login",

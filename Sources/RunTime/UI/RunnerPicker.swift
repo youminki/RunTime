@@ -162,7 +162,7 @@ struct RunnerPicker: View {
                 }
                 referenceStrip
                 Button(action: make) {
-                    Label("만들기", systemImage: "sparkles").frame(maxWidth: .infinity)
+                    Label("만들기", systemImage: "paintbrush.pointed.fill").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(PrimaryGameButtonStyle(height: 44, fontSize: 15))
                 .disabled(maker.text.trimmingCharacters(in: .whitespaces).isEmpty && maker.references.isEmpty)
@@ -223,7 +223,6 @@ struct RunnerPicker: View {
     private var makeCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "wand.and.stars").font(.system(size: 13, weight: .bold)).foregroundStyle(GameKit.gold)
                 Text("펫 만들기").font(.system(size: 13.5, weight: .bold)).foregroundStyle(Theme.primary)
                 Text("설명이나 그림으로 이 Mac에서 새로 그려요").font(.system(size: 12)).foregroundStyle(Theme.tertiary).lineLimit(1)
             }
@@ -363,7 +362,7 @@ struct RunnerPicker: View {
                 if factory.isWorking {
                     ProgressView().controlSize(.small)
                 } else {
-                    Image(systemName: "sparkles").font(.system(size: 12, weight: .bold))
+                    Image(systemName: "paintbrush.pointed.fill").font(.system(size: 12, weight: .bold))
                 }
                 Text("만들기")
             }

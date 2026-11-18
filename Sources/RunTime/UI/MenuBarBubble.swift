@@ -9,7 +9,8 @@ enum MenuBarNews {
 }
 
 /// 메뉴바 러너 아래, 또는 화면에 꺼낸 펫 위에 뜨는 말풍선. 사용량 창을 열지 않아도 소식을 핵심 몇 줄로 보인다.
-/// 사람이 닫기 전에는 닫히지 않고, 앱을 다시 켜도 닫지 않은 소식은 다시 뜬다. 여러 소식이 오면 한 말풍선에 모아
+/// 할 일이 남은 소식은 사람이 닫기 전에는 닫히지 않고, 앱을 다시 켜도 닫지 않은 소식은 다시 뜬다. 읽기만 하면 되는 소식은
+/// `closesAfter`만큼 보인 뒤 저절로 닫힌다 (읽는 동안과 자리를 비운 동안은 세지 않는다). 여러 소식이 오면 한 말풍선에 모아
 /// 앞뒤로 넘겨 보고, 하나를 닫으면 다음 것을 보인다. 앱을 앞으로 가져오지 않는다.
 final class MenuBarBubble {
     static let shared = MenuBarBubble()
@@ -227,12 +228,19 @@ final class MenuBarBubble {
     /// 때가 된 소식을 닫는다. 커서를 올려 읽고 있거나 단추가 일하는 중이면 조금 더 둔다.
     private func expire(_ id: UUID, after seconds: TimeInterval) {
         expiry[id]?.invalidate()
-        expiry[id] = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
-            guard let self else { return }
+        let countdown = PresentCountdown(seconds)
+        expiry[id] = Timer.scheduledTimer(withTimeInterval: PresentCountdown.step, repeats: true) { [weak self] timer in
+            guard let self, let at = self.queue.firstIndex(where: { $0.id == id }) else {
+                timer.invalidate()
+                self?.expiry[id] = nil
+                return
+            }
+            // 마우스를 올려 읽는 동안, 단추가 하는 중일 때, 자리를 비운 동안에는 시간이 가지 않는다
+            let reading = at == self.index
+                && (self.panel?.frame.contains(NSEvent.mouseLocation) == true || self.busy != nil || self.draft != nil)
+            guard !reading, countdown.tick() else { return }
+            timer.invalidate()
             self.expiry[id] = nil
-            guard let at = self.queue.firstIndex(where: { $0.id == id }) else { return }
-            let reading = at == self.index && self.panel?.frame.contains(NSEvent.mouseLocation) == true
-            if reading || (at == self.index && (self.busy != nil || self.draft != nil)) { return self.expire(id, after: 3) }
             if at == self.index { self.clearFlash() }
             self.queue.remove(at: at)
             if at < self.index { self.index -= 1 }
@@ -384,7 +392,6 @@ final class MenuBarBubble {
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    Image(systemName: "sparkles").font(.system(size: 11, weight: .bold)).foregroundStyle(GameKit.gold)
                     Text(content.title).font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
                     Spacer(minLength: 8)
                     if total > 1 {

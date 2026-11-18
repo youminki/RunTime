@@ -16,9 +16,9 @@ struct PatchNotes: Equatable {
 
         var icon: String {
             switch self {
-            case .added: return "sparkles"
+            case .added: return "plus.circle"
             case .fixed: return "wrench.adjustable"
-            case .polished: return "wand.and.stars"
+            case .polished: return "paintbrush.pointed"
             }
         }
     }

@@ -281,7 +281,7 @@ struct DesignSettingsView: View {
                     Button(source.alerts.isEmpty ? "메뉴 고르기" : "바꾸기") { form.alertPicker = source.fileKey }
                         .buttonStyle(NotionButtonStyle(kind: source.alerts.isEmpty ? .primary : .secondary))
                         .disabled(record == nil)
-                        .tip(record == nil ? "한 번 가져온 뒤에 고를 수 있습니다" : "디자인 화면 왼쪽 메뉴의 종(🔔)과 같습니다")
+                        .tip(record == nil ? "한 번 가져온 뒤에 고를 수 있습니다" : "디자인 화면 왼쪽 메뉴의 종 모양 단추와 같습니다")
                 }
             }
         }

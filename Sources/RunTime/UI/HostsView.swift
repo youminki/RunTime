@@ -232,7 +232,7 @@ struct HostsView: View {
             HStack(spacing: 8) {
                 let fixable = issues.filter(\.fixable).count
                 if store.canEdit, store.organizedText != store.draft.text {
-                    HeadingAction(title: fixable > 0 ? "정리 · 문제 \(fixable)개 고침" : "정리", icon: "wand.and.stars",
+                    HeadingAction(title: fixable > 0 ? "정리 · 문제 \(fixable)개 고침" : "정리", icon: "wrench.and.screwdriver",
                                   tint: fixable > 0 ? WL.waiting : WL.accent) {
                         page.sheet = .preview(title: "정리", text: store.organizedText, base: store.saved.text)
                     }
@@ -336,7 +336,7 @@ struct HostsView: View {
                 }
                 ForEach(page.showAllIssues ? issues : Array(issues.prefix(3))) { issue in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Image(systemName: issue.isNotice ? "info.circle" : issue.fixable ? "wand.and.stars" : "exclamationmark.triangle")
+                        Image(systemName: issue.isNotice ? "info.circle" : issue.fixable ? "wrench.and.screwdriver" : "exclamationmark.triangle")
                             .font(.system(size: 12)).foregroundStyle(issue.isNotice ? WL.muted : WL.waiting)
                             .frame(width: 14)
                         Text("\(issue.line + 1)번째 줄").font(WL.number).foregroundStyle(WL.muted)

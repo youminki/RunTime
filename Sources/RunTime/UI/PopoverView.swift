@@ -467,12 +467,11 @@ struct PopoverView: View {
                 paceBadge(gauge: gauge, elapsed: elapsed, reachesLimit: reachesLimit)
             }
             .frame(height: 18)
-            HStack(alignment: .firstTextBaseline, spacing: 1) {
-                Text(gauge.map { "\($0.displayPercent)" } ?? "--")
-                    .font(.system(size: 28, weight: .semibold, design: .rounded).monospacedDigit())
-                    .contentTransition(.numericText())
-                Text("%").font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundStyle(Theme.secondary)
-            }
+            // 숫자와 %를 한 글줄로 둔다. 따로 두면 숫자가 바뀌는 동안 %가 옛 숫자 폭에 놓여 겹친다
+            (Text(gauge.map { "\($0.displayPercent)" } ?? "--")
+                .font(.system(size: 28, weight: .semibold, design: .rounded).monospacedDigit())
+             + Text("%").font(.system(size: 14, weight: .semibold, design: .rounded)).foregroundColor(Theme.secondary))
+            .contentTransition(.numericText())
             .foregroundStyle(gauge == nil ? Theme.tertiary : gauge!.percent >= 80 ? Theme.ring(gauge!.percent) : Theme.primary)
             .animation(.easeOut(duration: 0.25), value: gauge?.displayPercent)
             .padding(.top, 4)
@@ -715,7 +714,7 @@ final class PopoverPage: ObservableObject {
         var icon: String {
             switch self {
             case .pets: "pawprint.fill"
-            case .decor: "sparkles"
+            case .decor: "paintbrush.fill"
             }
         }
     }

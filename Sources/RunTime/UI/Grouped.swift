@@ -71,39 +71,28 @@ struct GroupedSection<Content: View>: View {
     }
 }
 
-/// 색 바탕 위 흰 기호 (iOS 설정 앱의 줄 아이콘).
-struct IconTile: View {
-    let systemName: String
-    let tint: Color
-    var size: CGFloat = 24
-
-    var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: size * 0.52, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).fill(tint))
-            .accessibilityHidden(true)
-    }
-}
-
 /// 묶음 안의 한 줄: 아이콘, 제목, 오른쪽 조작. 위쪽 구분선은 아이콘 오른쪽부터 긋는다.
+/// 줄 아이콘은 색 없이 둔다. 줄마다 색이 다르면 무엇이 중요한지 가리지 못하고 눈만 바쁘다 (색은 왼쪽 목록과 경고에만 쓴다).
 struct GroupedRow<Trailing: View>: View {
     private let icon: String?
-    private let tint: Color
     private let title: String
     private let trailing: Trailing
 
-    init(_ title: String, icon: String? = nil, tint: Color = Palette.gray, @ViewBuilder trailing: () -> Trailing) {
+    init(_ title: String, icon: String? = nil, @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.icon = icon
-        self.tint = tint
         self.trailing = trailing()
     }
 
     var body: some View {
         HStack(spacing: 10) {
-            if let icon { IconTile(systemName: icon, tint: tint) }
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+            }
             Text(title).font(.system(size: 13))
             Spacer(minLength: 12)
             trailing
@@ -111,14 +100,14 @@ struct GroupedRow<Trailing: View>: View {
         .padding(.horizontal, 12)
         .frame(minHeight: 40)
         .overlay(alignment: .top) {
-            Rectangle().fill(Palette.separator).frame(height: 0.5).padding(.leading, icon == nil ? 12 : 46)
+            Rectangle().fill(Palette.separator).frame(height: 0.5).padding(.leading, icon == nil ? 12 : 42)
         }
     }
 }
 
 extension GroupedRow where Trailing == EmptyView {
-    init(_ title: String, icon: String? = nil, tint: Color = Palette.gray) {
-        self.init(title, icon: icon, tint: tint) { EmptyView() }
+    init(_ title: String, icon: String? = nil) {
+        self.init(title, icon: icon) { EmptyView() }
     }
 }
 
@@ -126,11 +115,10 @@ extension GroupedRow where Trailing == EmptyView {
 struct ToggleRow: View {
     let title: String
     let icon: String
-    let tint: Color
     @Binding var isOn: Bool
 
     var body: some View {
-        GroupedRow(title, icon: icon, tint: tint) {
+        GroupedRow(title, icon: icon) {
             Toggle(title, isOn: $isOn).toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Palette.green)
                 .accessibilityLabel(title)
         }

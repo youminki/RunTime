@@ -188,7 +188,7 @@ struct DesignCompareView: View {
                                                     unit: model.screen != nil ? "화면" : model.path != nil ? "메뉴" : "프로젝트")
                     NSPasteboard.general.setString(prompt, forType: .string)
                     page.flash(DesignFormat.copied(prompt))
-                } label: { Label("Claude 문구", systemImage: "sparkles") }
+                } label: { Label("Claude 문구", systemImage: "doc.on.doc") }
                 .buttonStyle(NotionButtonStyle(kind: .primary))
                 .tip("이 기간의 변경을 화면별로 묶어 복사합니다. 같은 항목을 여러 번 고친 것은 처음→마지막 한 줄로 합치고, 반영 체크한 항목은 뺍니다")
             }

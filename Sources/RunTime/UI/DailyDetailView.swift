@@ -109,11 +109,12 @@ struct DailyDetailView: View {
                         path.move(to: CGPoint(x: 0, y: y))
                         path.addLine(to: CGPoint(x: geo.size.width, y: y))
                     }
-                    .stroke(Palette.green, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    // 막대의 모델 색(Haiku 초록 등)과 헷갈리지 않게 무채색으로 긋는다
+                    .stroke(Color.secondary, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .allowsHitTesting(false)
                     Text("평균")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Palette.green)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
                         .background(Capsule().fill(Palette.groupedRow))
                         .position(x: geo.size.width - 12, y: max(y - 8, 6))
