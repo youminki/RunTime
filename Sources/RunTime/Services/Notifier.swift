@@ -7,8 +7,11 @@ enum UserPresence {
     /// 키보드·마우스 입력이 이만큼 없으면 자리를 비운 것으로 본다.
     static let awayAfter: TimeInterval = 60
 
+    /// 점검 도구는 입력 없이 오래 돌아 자리를 비운 것으로 보이므로, 앞에 있는 것으로 친다.
+    static var assumesPresent = false
+
     static var isAway: Bool {
-        CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: CGEventType(rawValue: ~0)!) >= awayAfter
+        !assumesPresent && CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: CGEventType(rawValue: ~0)!) >= awayAfter
     }
 }
 

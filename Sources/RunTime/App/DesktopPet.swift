@@ -878,7 +878,8 @@ final class DesktopPet {
         let room = 12 * scale
         buddyLag = min(max(buddyLag, -room), room)
         // 동료가 땅 위에서 움직인 빠르기 = 펫 빠르기 + 뒤처짐이 바뀐 빠르기. 반대편으로 갈 때는 몸 너비만큼 달려간다
-        let carried = follows && drag == nil && moving ? velocity : 0
+        // 걸을 때와, 머무는 펫을 방향키로 옮길 때(free가 있어 moving은 false) 모두 펫 빠르기를 싣는다
+        let carried = follows && drag == nil ? velocity : 0
         buddySpeed = abs(carried + (buddyLag - lagBefore) / max(dt, 0.001))
         if buddyShift != 0 { buddySpeed = max(buddySpeed, 90) }
         // 다리 박자는 펫과 같은 보폭(110pt에 한 걸음)으로 센다. 같이 걸으면 펫과 같은 박자로 걷는다
@@ -1418,6 +1419,8 @@ private final class PetView: NSView {
 enum DesktopPetCheck {
     static func run(to file: URL, done: @escaping (Bool) -> Void) {
         let pet = DesktopPet.shared
+        // 말풍선이 저절로 닫히는지 볼 때 키보드를 1분 넘게 쓰지 않았다고 시간을 멈추지 않게
+        UserPresence.assumesPresent = true
         var failures = 0
         var gaits: (pet: CGFloat, buddy: CGFloat, petSpeed: CGFloat, buddySpeed: CGFloat) = (0, 0, 0, 0)
         func check(_ name: String, _ ok: Bool) {
