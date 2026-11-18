@@ -207,7 +207,7 @@ public enum WindowCheck {
         let saved = layouts.save(named: "RunTime 점검")
         _ = run(.maximize)
         layouts.restore(saved)
-        pump(0.4)
+        pump(0.8)
         let back = window.frame
         layouts.delete(saved)
         lines.append(Line(name: "배치 저장·불러오기", ok: near(back.minX, original.minX) && near(back.width, original.width) && near(back.height, original.height),
@@ -239,9 +239,11 @@ public enum WindowCheck {
         WindowDefaults.store.set(MASDictionaryTransformer().reverseTransformedValue(MASShortcut(keyCode: 105, modifierFlags: [.control, .option, .command])), forKey: testKey)
         binder.bindShortcut(withDefaultsKey: testKey) { count += 1 }
         binder.repeatingKeys.insert(testKey)
+        MASShortcutBinder.assumesHeld = true
         _ = binder.simulatePress(defaultsKey: testKey)
         pump(0.8)
         _ = binder.simulatePress(defaultsKey: testKey, down: false)
+        MASShortcutBinder.assumesHeld = false
         pump(0.1)
         let whileHeld = count
         pump(0.4)
@@ -273,6 +275,8 @@ public enum WindowCheck {
             layouts.snapshot()
             pump(0.1)
         }
+        // 아직 찍는 중인 것이 끝난 뒤에 창을 옮긴다 (옮긴 자리를 찍어 기억을 덮지 않게)
+        for _ in 0..<30 where layouts.capturing { pump(0.1) }
         _ = run(.maximize)
         layouts.lastScreens = "점검"
         layouts.screensChanged()

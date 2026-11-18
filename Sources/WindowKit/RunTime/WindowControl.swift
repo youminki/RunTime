@@ -39,13 +39,14 @@ public final class WindowControl {
         let doneKey = "hiddenSettingsTrimmed"
         guard !store.bool(forKey: doneKey) else { return }
         let suite = ProcessInfo.processInfo.environment["RUNTIME_WINDOW_DEFAULTS"] ?? "dev.runtime.RunTime.window"
-        let shown: Set<String> = ["windowSnapping", "subsequentExecutionMode", "gapSize", "experimentalWindowAnimations",
+        let shown = Set<String>(["windowSnapping", "subsequentExecutionMode", "gapSize", "experimentalWindowAnimations",
                                   "alternateDefaultShortcuts", "disabledApps", "lastVersion", "installVersion", "allowAnyShortcut",
                                   "internalTilingNotified", "notifiedOfProblemApps", "savedLayouts", "savedLayouts.unreadable",
-                                  "reservedClearedShortcuts", "commandPalette"]
+                                  "reservedClearedShortcuts", "commandPalette", "rememberPerScreen", "screenSnapshots", "hiddenSettingsTrimmed"])
+            .union(WindowShortcutSlot.extras.map(\.defaultsKey))
         let shortcuts = Set(WindowAction.active.map(\.name))
         for key in store.persistentDomain(forName: suite)?.keys ?? [:].keys
-        where !shown.contains(key) && !shortcuts.contains(key) && !key.hasPrefix("layout.") {
+        where !shown.contains(key) && !shortcuts.contains(key) && !key.hasPrefix("layout.") && !key.hasPrefix("extra.") {
             store.removeObject(forKey: key)
         }
         store.set(true, forKey: doneKey)
@@ -58,7 +59,8 @@ public final class WindowControl {
             Defaults.installVersion.value = "100"
             Defaults.allowAnyShortcut.enabled = true
             Defaults.alternateDefaultShortcuts.enabled = true
-            Defaults.subsequentExecutionMode.value = .acrossMonitor
+            // 설정 화면의 '옆 모니터로'와 같은 값. 모니터가 하나면 끝에서 크기를 바꿔 거듭 눌러도 반응한다
+            Defaults.subsequentExecutionMode.value = .acrossAndResize
         }
         MASShortcutMigration.syncRenamedSideShortcutAliases()
         Defaults.lastVersion.value = "100"

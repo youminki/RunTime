@@ -211,11 +211,25 @@ final class MASShortcutBinder: NSObject {
         guard repeatingKeys.contains(key) else { return }
         repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
             self?.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.06, repeats: true) { [weak self] timer in
-                // 창 배치가 꺼졌거나 단축키가 풀렸으면 멈춘다 (놓음 이벤트를 놓친 경우)
-                guard let self, !WindowRuntime.paused, self.bindings[key]?.ref != nil else { return timer.invalidate() }
-                self.bindings[key]?.action()
+                // 보조키를 먼저 떼면 놓음 이벤트가 오지 않는다. 키와 보조키가 실제로 눌려 있을 때만 되풀이한다
+                guard let self, !WindowRuntime.paused, let binding = self.bindings[key], binding.ref != nil,
+                      let shortcut = binding.shortcut, Self.isHeld(shortcut) else { return timer.invalidate() }
+                binding.action()
             }
         }
+    }
+
+    /// 그 단축키의 키와 보조키가 지금 모두 눌려 있는지. 수를 세거나 내용을 읽지 않아 권한이 필요 없다.
+    /// 점검 도구는 키를 실제로 누르지 않아 눌린 것으로 친다.
+    static var assumesHeld = false
+
+    static func isHeld(_ shortcut: MASShortcut) -> Bool {
+        if assumesHeld { return true }
+        guard CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(shortcut.keyCode)) else { return false }
+        let flags = CGEventSource.flagsState(.combinedSessionState)
+        let needed: [(NSEvent.ModifierFlags, CGEventFlags)] = [(.control, .maskControl), (.option, .maskAlternate),
+                                                                (.shift, .maskShift), (.command, .maskCommand)]
+        return needed.allSatisfy { !shortcut.modifierFlags.contains($0.0) || flags.contains($0.1) }
     }
 
     /// 창 배치를 껐다 켤 때 모든 단축키를 놓거나 다시 잡는다.

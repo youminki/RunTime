@@ -17,6 +17,9 @@ public struct SavedWindowLayout: Codable, Identifiable, Hashable {
         let title: String
         /// 화면 왼쪽 위 기준 좌표 (손쉬운 사용 API와 같다).
         let frame: CGRect
+        /// 창 번호. 창이 열려 있는 동안은 바뀌지 않아, 제목이 바뀌는 창(브라우저 탭)도 같은 창으로 짝짓는다.
+        /// 예전에 저장한 배치에는 없다.
+        var windowID: CGWindowID?
     }
 
     public var slot: WindowShortcutSlot { WindowShortcutSlot(defaultsKey: "layout.\(id.uuidString)", title: "‘\(name)’ 불러오기") }
@@ -46,7 +49,7 @@ public final class WindowLayouts {
     /// 모니터 구성마다 마지막으로 본 창 자리 (Rectangle 이슈 #127·#1552). 구성이 바뀌면 그 구성의 자리로 되돌린다.
     private(set) var snapshots: [String: [Entry]] = [:]
     private var snapshotTimer: Timer?
-    private var capturing = false
+    private(set) var capturing = false
     /// 모니터가 바뀐 직후에는 macOS가 옮겨 놓은 엉뚱한 자리를 찍지 않게 잠깐 쉰다.
     var quietUntil = Date.distantPast
     private let captureQueue = DispatchQueue(label: "dev.runtime.window.snapshot", qos: .utility)
@@ -94,7 +97,22 @@ public final class WindowLayouts {
                                                                 object: nil, queue: .main) { [weak self] _ in
             self?.screensChanged()
         }
+        // 잠자는 동안 모니터를 빼고 다시 꽂으면 구성 문자열은 그대로인데 macOS는 창을 주 화면에 몰아 둔다 (Rectangle #1552).
+        // 잠들기 전에 찍고, 깨어나면 쉬는 시간을 둔 뒤 되돌린다
+        let workspace = NSWorkspace.shared.notificationCenter
+        sleepObservers = [
+            workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.snapshot()
+            },
+            workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.lastScreens = ""
+                self.screensChanged()
+            },
+        ]
     }
+
+    private var sleepObservers: [NSObjectProtocol] = []
 
     func snapshot() {
         guard !WindowRuntime.paused, remembersPerScreen, !capturing, Date() > quietUntil else { return }
@@ -102,18 +120,39 @@ public final class WindowLayouts {
         capturing = true
         captureQueue.async { [weak self] in
             let entries = Self.captureWindows()
+            let alive = Self.liveWindowIDs()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.capturing = false
-                // 찍는 동안 모니터가 바뀌었으면 버린다
+                // 찍는 동안 모니터가 바뀌었거나, 기억을 껐거나, 창 배치를 껐으면 버린다
                 guard !entries.isEmpty, screens == Self.screenSignature(), Date() > self.quietUntil,
-                      self.snapshots[screens] != entries else { return }
-                self.snapshots[screens] = entries
+                      self.remembersPerScreen, !WindowRuntime.paused else { return }
+                let merged = Self.merge(old: self.snapshots[screens] ?? [], new: entries, alive: alive)
+                guard self.snapshots[screens] != merged else { return }
+                self.snapshots[screens] = merged
                 if let data = try? JSONEncoder().encode(self.snapshots) {
                     WindowDefaults.store.set(data, forKey: Self.snapshotsKey)
                 }
             }
         }
+    }
+
+    /// 지금 본 창으로 바꾸되, 지금 안 보이는 창(다른 데스크톱, 전체 화면 뒤)은 아직 열려 있으면 남긴다.
+    /// 전체 화면 앱 하나만 보이는 동안 찍어도 다른 창의 기억이 지워지지 않게 한다.
+    static func merge(old: [Entry], new: [Entry], alive: Set<CGWindowID>) -> [Entry] {
+        let seen = Set(new.compactMap(\.windowID))
+        let seenApps = Set(new.map(\.bundleID))
+        let kept = old.filter { entry in
+            guard let id = entry.windowID else { return !seenApps.contains(entry.bundleID) }
+            return !seen.contains(id) && alive.contains(id)
+        }
+        return new + kept
+    }
+
+    /// 열려 있는 모든 창 번호 (다른 데스크톱 포함). 다른 스레드에서 불러도 된다.
+    static func liveWindowIDs() -> Set<CGWindowID> {
+        let infos = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        return Set(infos.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value })
     }
 
     /// 모니터를 꽂거나 뺀 뒤 macOS가 창을 다 옮길 때까지 조금 기다렸다가 맞는 배치를 불러온다.
@@ -130,9 +169,12 @@ public final class WindowLayouts {
             if let layout = self.saved.last(where: { $0.autoRestore && $0.screens == screens }) {
                 self.restore(layout)
             } else if self.remembersPerScreen, let entries = self.snapshots[screens] {
-                let (moved, _) = self.place(entries)
-                Logger.log("모니터 구성이 바뀌어 창 \(moved)개를 되돌림 (기억한 창 \(entries.count)개)")
-                if moved > 0 { self.onScreenRestore(moved) }
+                self.placeInBackground(entries) { moved, _ in
+                    Logger.log("모니터 구성이 바뀌어 창 \(moved)개를 되돌림 (기억한 창 \(entries.count)개)")
+                    if moved > 0 { self.onScreenRestore(moved) }
+                    self.quietUntil = Date().addingTimeInterval(2)
+                }
+                return
             }
             self.quietUntil = Date().addingTimeInterval(2)
         }
@@ -225,11 +267,9 @@ public final class WindowLayouts {
         if let layout = saved.first(where: { $0.name == name }) { restore(layout) }
     }
 
-    /// 앱마다 창을 제목이 같은 것부터 짝짓고, 남은 창은 저장한 차례대로 짝지어 옮긴다. 실행 중이 아닌 앱은 건너뛴다.
     public func restore(_ layout: SavedWindowLayout) {
         guard !WindowRuntime.paused else { return }
-        let (moved, missing) = place(layout.windows)
-        onRestore(layout, moved, missing)
+        placeInBackground(layout.windows) { [weak self] moved, missing in self?.onRestore(layout, moved, missing) }
     }
 
     /// 모니터 구성이 바뀌어 창을 제자리로 옮겼으면 알린다 (옮긴 창 수).
@@ -238,37 +278,55 @@ public final class WindowLayouts {
     /// 점검 도구가 사용자 창을 건드리지 않게 이 앱(키)의 창만 옮기게 한다.
     var onlyApp: String?
 
-    /// 앱마다 창을 제목이 같은 것부터 짝짓고, 남은 창은 저장한 차례대로 짝지어 옮긴다. 이미 그 자리인 창은 세지 않는다.
-    /// 한 앱이 여러 프로세스로 떠 있으면 모든 프로세스의 창에서 찾는다.
-    private func place(_ entries: [Entry]) -> (moved: Int, missing: [String]) {
+    /// 창을 찾고 옮기는 일은 손쉬운 사용 호출이 많아 다른 스레드에서 한다 (답이 느린 앱 때문에 메뉴바가 멈추지 않게).
+    private func placeInBackground(_ entries: [Entry], done: @escaping (Int, [String]) -> Void) {
+        let only = onlyApp
+        let screens = NSScreen.screens.map { $0.frame.screenFlipped }
+        captureQueue.async {
+            let (moved, missing) = Self.place(entries, only: only, screens: screens)
+            DispatchQueue.main.async { done(moved, missing) }
+        }
+    }
+
+    /// 앱마다 창을 창 번호 → 제목 → 저장한 자리와 가장 가까운 창 차례로 짝지어 옮긴다. 이미 그 자리인 창은 세지 않는다.
+    /// 한 앱이 여러 프로세스로 떠 있으면 모든 프로세스의 창에서 찾는다. 전체 화면 창은 건드리지 않는다.
+    static func place(_ entries: [Entry], only: String?, screens: [CGRect]) -> (moved: Int, missing: [String]) {
         var moved = 0
         var missing: [String] = []
         let own = ProcessInfo.processInfo.processIdentifier
         let running = NSWorkspace.shared.runningApplications.filter { $0.processIdentifier != own }
-        let screens = NSScreen.screens.map { $0.frame.screenFlipped }
-        for (bundleID, group) in Dictionary(grouping: entries, by: \.bundleID) where onlyApp == nil || onlyApp == bundleID {
-            let apps = running.filter { WindowLayouts.key(of: $0) == bundleID }
+        for (bundleID, group) in Dictionary(grouping: entries, by: \.bundleID) where only == nil || only == bundleID {
+            let apps = running.filter { key(of: $0) == bundleID }
             guard !apps.isEmpty else {
                 missing.append(group[0].appName)
                 continue
             }
-            // 답하지 않는 앱 하나 때문에 메뉴바 앱 전체가 오래 멈추지 않게
+            // 답하지 않는 앱 하나 때문에 오래 멈추지 않게
             var windows = apps.flatMap { app -> [AccessibilityElement] in
                 let element = AccessibilityElement(app.processIdentifier)
                 element.setMessagingTimeout(1)
                 return element.windowElements ?? []
             }
-            .filter { $0.isMinimized != true && $0.isSheet != true && $0.isStandardWindow != false }
+            .filter { $0.isMinimized != true && $0.isSheet != true && $0.isStandardWindow != false && $0.isFullScreen != true }
             var pairs: [(AccessibilityElement, CGRect)] = []
-            var rest: [Entry] = []
-            for entry in group {
-                if let index = windows.firstIndex(where: { ($0.title ?? "") == entry.title }) {
+            var rest = group
+            func take(_ match: (AccessibilityElement, Entry) -> Bool) {
+                rest = rest.filter { entry in
+                    guard let index = windows.firstIndex(where: { match($0, entry) }) else { return true }
                     pairs.append((windows.remove(at: index), entry.frame))
-                } else {
-                    rest.append(entry)
+                    return false
                 }
             }
-            for (window, entry) in zip(windows, rest) { pairs.append((window, entry.frame)) }
+            take { window, entry in entry.windowID != nil && window.getWindowId() == entry.windowID }
+            take { window, entry in !entry.title.isEmpty && (window.title ?? "") == entry.title }
+            // 남은 창은 저장한 자리와 가장 가까운 창끼리 (같은 앱 창끼리 자리가 뒤바뀌지 않게)
+            for entry in rest {
+                guard let index = windows.indices.min(by: {
+                    windows[$0].frame.centerPoint.distance(to: entry.frame.centerPoint)
+                        < windows[$1].frame.centerPoint.distance(to: entry.frame.centerPoint)
+                }) else { break }
+                pairs.append((windows.remove(at: index), entry.frame))
+            }
             // 지금 없는 모니터에 있던 창은 화면 밖으로 보내지 않고 둔다
             for (window, frame) in pairs where screens.contains(where: { $0.intersects(frame) }) {
                 window.setMessagingTimeout(1)
@@ -303,10 +361,12 @@ public final class WindowLayouts {
             element.setMessagingTimeout(1)
             return (element.windowElements ?? []).compactMap { window -> Entry? in
                 window.setMessagingTimeout(1)
-                guard window.isStandardWindow != false, window.isMinimized != true, window.isSheet != true else { return nil }
+                guard window.isStandardWindow != false, window.isMinimized != true, window.isSheet != true,
+                      window.isFullScreen != true else { return nil }
                 let frame = window.frame
                 guard !frame.isNull, frame.width > 40, frame.height > 40 else { return nil }
-                return Entry(bundleID: bundleID, appName: app.localizedName ?? bundleID, title: window.title ?? "", frame: frame)
+                return Entry(bundleID: bundleID, appName: app.localizedName ?? bundleID, title: window.title ?? "", frame: frame,
+                             windowID: window.getWindowId())
             }
         }
     }
@@ -320,4 +380,8 @@ public final class WindowLayouts {
         NSScreen.screens.map { "\(Int($0.frame.minX)),\(Int($0.frame.minY)),\(Int($0.frame.width))x\(Int($0.frame.height))" }
             .sorted().joined(separator: ";")
     }
+}
+
+private extension CGPoint {
+    func distance(to other: CGPoint) -> CGFloat { hypot(x - other.x, y - other.y) }
 }

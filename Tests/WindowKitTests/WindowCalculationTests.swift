@@ -111,3 +111,16 @@ private func rect(_ action: WindowAction, last: RectangleAction? = nil, in frame
     #expect(L("Button 5") == "버튼 5")
     #expect(L("unknown") == "unknown")
 }
+
+@Test func snapshotsKeepWindowsThatAreOnlyHidden() {
+    func entry(_ app: String, _ id: CGWindowID?, x: CGFloat) -> SavedWindowLayout.Entry {
+        SavedWindowLayout.Entry(bundleID: app, appName: app, title: "", frame: CGRect(x: x, y: 0, width: 100, height: 100), windowID: id)
+    }
+    let old = [entry("chrome", 1, x: 0), entry("chrome", 2, x: 200), entry("code", 3, x: 400), entry("closed", 4, x: 0), entry("legacy", nil, x: 0)]
+    // 전체 화면 동영상만 보이는 동안 찍어도 다른 데스크톱의 창(2, 3)은 열려 있으면 남는다
+    let merged = WindowLayouts.merge(old: old, new: [entry("chrome", 1, x: 50)], alive: [1, 2, 3])
+    #expect(merged.map(\.windowID) == [1, 2, 3, nil])
+    #expect(merged.first?.frame.minX == 50)
+    // 창 번호가 없는 예전 기억은 그 앱 창을 새로 보면 버린다
+    #expect(WindowLayouts.merge(old: old, new: [entry("legacy", 9, x: 0)], alive: [9]).map(\.windowID) == [9])
+}

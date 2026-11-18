@@ -58,13 +58,18 @@ public enum WindowExtraCommand: String, CaseIterable, Identifiable {
     private func nudge(_ window: AccessibilityElement) -> Bool {
         let frame = window.frame
         guard !frame.isNull else { return false }
-        var moved = frame.offsetBy(dx: direction.dx * Self.nudgeStep, dy: direction.dy * Self.nudgeStep)
-        // 창이 걸친 화면 안에 머물게 한다 (화면 끝에서 더 누르면 그대로)
+        // 움직이는 축만 바꾼다. 화면 밖으로 더 나가지 않게만 막고, 이미 걸쳐 나간 창을 끌어오거나 다른 축을 맞추지 않는다
+        var moved = frame
         if let screen = NSScreen.screens.map({ $0.visibleFrame.screenFlipped }).max(by: {
             $0.intersection(frame).area < $1.intersection(frame).area
         }) {
-            moved.origin.x = min(max(moved.minX, screen.minX), max(screen.minX, screen.maxX - moved.width))
-            moved.origin.y = min(max(moved.minY, screen.minY), max(screen.minY, screen.maxY - moved.height))
+            switch self {
+            case .nudgeLeft: moved.origin.x = max(frame.minX - Self.nudgeStep, min(frame.minX, screen.minX))
+            case .nudgeRight: moved.origin.x = min(frame.minX + Self.nudgeStep, max(frame.minX, screen.maxX - frame.width))
+            case .nudgeUp: moved.origin.y = max(frame.minY - Self.nudgeStep, min(frame.minY, screen.minY))
+            case .nudgeDown: moved.origin.y = min(frame.minY + Self.nudgeStep, max(frame.minY, screen.maxY - frame.height))
+            default: break
+            }
         }
         guard moved.origin != frame.origin else { return false }
         window.setFrame(moved, adjustSizeFirst: false)
@@ -83,14 +88,15 @@ public enum WindowExtraCommand: String, CaseIterable, Identifiable {
                 && $0.frame.width > 60 && $0.frame.height > 60
                 && !["Dock", "WindowManager", "Notification Center", "Window Server"].contains($0.processName ?? "")
         }
-        let target = candidates.compactMap { info -> (WindowInfo, CGFloat)? in
+        let ranked = candidates.compactMap { info -> (WindowInfo, CGFloat)? in
             let other = info.frame.centerPoint
             let forward = (other.x - center.x) * direction.dx + (other.y - center.y) * direction.dy
             let side = abs((other.x - center.x) * direction.dy) + abs((other.y - center.y) * direction.dx)
             guard forward > 1 else { return nil }
             return (info, forward + side * 2)
-        }.min { $0.1 < $1.1 }?.0
-        guard let target, let element = AccessibilityElement.getWindowElement(target.id) else { return false }
+        }.sorted { $0.1 < $1.1 }
+        // 손쉬운 사용으로 잡히지 않는 창(투명 덮개 등)은 건너뛰고 다음으로 가까운 창으로
+        guard let element = ranked.lazy.compactMap({ AccessibilityElement.getWindowElement($0.0.id) }).first else { return false }
         element.raise()
         element.bringToFront(force: true)
         return true
