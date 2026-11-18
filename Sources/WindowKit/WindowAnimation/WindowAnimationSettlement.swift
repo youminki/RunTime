@@ -240,11 +240,13 @@ struct WindowAnimationSettlement {
     private static func matchesPixelRoundedFrame(_ actual: CGRect, target: CGRect) -> Bool {
         let values = [actual.minX, actual.minY, actual.width, actual.height]
         let targets = [target.minX, target.minY, target.width, target.height]
-        return [CGFloat(1), 0.5].contains { pixel in
-            zip(values, targets).allSatisfy { value, target in
-                abs(value - target) <= 0.001
-                    || (abs(value - target) <= pixel / 2 + 0.001
-                        && abs(value / pixel - (value / pixel).rounded()) <= 0.001)
+        let pixels: [CGFloat] = [1, 0.5]
+        return pixels.contains { (pixel: CGFloat) -> Bool in
+            zip(values, targets).allSatisfy { (pair: (CGFloat, CGFloat)) -> Bool in
+                let difference: CGFloat = abs(pair.0 - pair.1)
+                if difference <= 0.001 { return true }
+                let steps: CGFloat = pair.0 / pixel
+                return difference <= pixel / 2 + 0.001 && abs(steps - steps.rounded()) <= 0.001
             }
         }
     }

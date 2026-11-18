@@ -45,7 +45,7 @@ final class WindowSizeWarning: NSPanel {
         container.layer?.masksToBounds = true
 
         let iconConfig = NSImage.SymbolConfiguration(pointSize: 24, weight: .regular)
-        let iconImage = NSImage(systemSymbolName: "arrow.down.forward.and.arrow.up.backward.rectangle", accessibilityDescription: nil)?
+        let iconImage = NSImage(systemSymbolName: "arrow.down.right.and.arrow.up.left", accessibilityDescription: nil)?
             .withSymbolConfiguration(iconConfig)
 
         let imageView = NSImageView(image: iconImage ?? NSImage())

@@ -183,7 +183,9 @@ class FootprintWindow: NSWindow {
         decoration.zPosition = 1
         decoration.contentsScale = backingScaleFactor
         decoration.contentsFormat = .RGBA8Uint
+        #if compiler(>=6.2)
         if #available(macOS 26, *) { decoration.preferredDynamicRange = .standard }
+        #endif
         let radius = FootprintStyle.cornerRadius
         let mask = NSImage(size: NSSize(width: radius * 2 + 1, height: radius * 2 + 1), flipped: false) { rect in
             NSColor.white.setFill()

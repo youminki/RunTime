@@ -81,6 +81,31 @@ APPLIED = set()
 
 # 기계적으로 바꿀 수 없는 몇 군데. 원본이 바뀌어 맞는 줄이 없으면 그냥 지나간다
 PATCHES = [
+    # RunTime은 macOS 13부터 돈다. 이 SF Symbol은 macOS 15부터라 같은 뜻의 오래된 그림으로 바꾼다
+    ('NSImage(systemSymbolName: "arrow.down.forward.and.arrow.up.backward.rectangle"',
+     'NSImage(systemSymbolName: "arrow.down.right.and.arrow.up.left"'),
+    # RunTime은 사용자 Mac의 Swift로 빌드하고 CI가 Xcode 16도 본다. Xcode 26 SDK에만 있는 API는 그 컴파일러에서만 쓴다
+    ("        if #available(macOS 26, *) { decoration.preferredDynamicRange = .standard }",
+     "        #if compiler(>=6.2)\n        if #available(macOS 26, *) { decoration.preferredDynamicRange = .standard }\n        #endif"),
+    # Xcode 16 컴파일러가 제때 타입을 정하지 못하는 식에 타입을 적는다 (뜻은 같다)
+    ("        let candidates = (0..<stages.count).map { step in",
+     "        let candidates: [Int] = (0..<stages.count).map { (step: Int) -> Int in"),
+    ("""        return [CGFloat(1), 0.5].contains { pixel in
+            zip(values, targets).allSatisfy { value, target in
+                abs(value - target) <= 0.001
+                    || (abs(value - target) <= pixel / 2 + 0.001
+                        && abs(value / pixel - (value / pixel).rounded()) <= 0.001)
+            }
+        }""",
+     """        let pixels: [CGFloat] = [1, 0.5]
+        return pixels.contains { (pixel: CGFloat) -> Bool in
+            zip(values, targets).allSatisfy { (pair: (CGFloat, CGFloat)) -> Bool in
+                let difference: CGFloat = abs(pair.0 - pair.1)
+                if difference <= 0.001 { return true }
+                let steps: CGFloat = pair.0 / pixel
+                return difference <= pixel / 2 + 0.001 && abs(steps - steps.rounded()) <= 0.001
+            }
+        }"""),
     # RunTime은 백그라운드 큐에서도 UserDefaults에 쓴다. 단축키 다시 잡기(Carbon)는 메인 스레드에서만 한다
     ("    @objc private func userDefaultsChanged(_ notification: Notification) {\n        reloadShortcutBindingsIfNeeded()",
      "    @objc private func userDefaultsChanged(_ notification: Notification) {\n        // RunTime의 다른 설정이 바뀔 때마다 140여 개 단축키를 다시 견주지 않는다\n        guard (notification.object as AnyObject?) === WindowDefaults.store else { return }\n        guard Thread.isMainThread else {\n            DispatchQueue.main.async { [weak self] in self?.reloadShortcutBindingsIfNeeded() }\n            return\n        }\n        reloadShortcutBindingsIfNeeded()"),

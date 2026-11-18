@@ -34,7 +34,7 @@ public final class WindowMenu: NSObject, NSMenuDelegate {
         if let openPalette {
             let find = item("다른 명령 찾기…", run: openPalette)
             find.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-            if #available(macOS 27.0, *) { find.preferredImageVisibility = .visible }
+            Self.showImage(find)
             menu.addItem(find)
         }
         addLayoutItems()
@@ -62,8 +62,7 @@ public final class WindowMenu: NSObject, NSMenuDelegate {
 
     private func actionItem(_ action: WindowAction, enabled: Bool, portrait: Bool) -> NSMenuItem {
         let entry = item(action.koreanTitle, enabled: enabled) { action.postMenu() }
-        // macOS 27부터 메뉴 그림은 항목이 보이겠다고 해야 보인다
-        if #available(macOS 27.0, *) { entry.preferredImageVisibility = .visible }
+        Self.showImage(entry)
         let image = action.image.copy() as? NSImage
         image?.size = NSSize(width: 18, height: 12)
         if portrait && action.classification == .thirds {
@@ -97,6 +96,13 @@ public final class WindowMenu: NSObject, NSMenuDelegate {
         }
         menu.addItem(holder)
         menu.setSubmenu(sub, for: holder)
+    }
+
+    /// macOS 27부터 메뉴 그림은 항목이 보이겠다고 해야 보인다 (preferredImageVisibility = .visible, 값 1).
+    /// 그 API는 macOS 27 SDK에만 있어, 오래된 Xcode로도 빌드되게 런타임에 있을 때만 이름으로 정한다.
+    private static func showImage(_ item: NSMenuItem) {
+        guard item.responds(to: NSSelectorFromString("setPreferredImageVisibility:")) else { return }
+        item.setValue(1, forKey: "preferredImageVisibility")
     }
 
     private func item(_ title: String, enabled: Bool = true, run: (() -> Void)? = nil) -> NSMenuItem {
