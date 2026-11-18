@@ -1065,7 +1065,7 @@ final class DesktopPet {
     /// 걷는 빠르기 (pt/초). 잘 때와 지칠 때는 서 있다.
     static func walkSpeed(_ display: SpriteDisplay) -> CGFloat {
         switch display {
-        case .normal(.sleeping), .tired, .alert: 0
+        case .normal(.sleeping), .normal(.standing), .normal(.looking), .normal(.waiting), .tired, .alert: 0
         case .straining(let state, _): walkSpeed(.normal(state))
         case .normal(.walking): 22
         case .normal(.running): 55

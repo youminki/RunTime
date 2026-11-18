@@ -60,7 +60,7 @@ struct RunnerStage: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.white.opacity(0.07)))
         .overlay { bubbleLayer }
-        .onReceive(claudeFinished) { model.claudeFinished(project: $0.project) }
+        .onReceive(claudeFinished) { model.claudeFinished($0) }
         .onReceive(reactions) { model.react($0, display: display) }
         // 메뉴바 러너가 하는 동작(혼자 하는 장난, 깨기·잠들기 포함)을 무대도 함께 한다
         .onReceive(SpriteAnimator.performed) { model.mirrored($0) }
@@ -704,7 +704,7 @@ final class StageModel: ObservableObject {
         let hour = Calendar.current.component(.hour, from: Date())
         let line: String
         switch display {
-        case .tired, .alert, .straining, .normal(.sleeping): line = Self.phrases(for: display).randomElement() ?? ""
+        case .tired, .alert, .straining, .normal(.sleeping), .normal(.waiting): line = Self.phrases(for: display).randomElement() ?? ""
         default:
             switch hour {
             case 5..<11: line = "좋은 아침"
@@ -775,12 +775,15 @@ final class StageModel: ObservableObject {
     }
 
     /// 게임 중이면 판을 멈추지 않고 화면 위에 알리고, 아니면 러너가 말한다.
-    func claudeFinished(project: String?) {
-        let name = project.map { " · \($0)" } ?? ""
+    func claudeFinished(_ turn: TurnEndDetector.FinishedTurn) {
+        let name = turn.project.map { " · \($0)" } ?? ""
         if let game, game.game.phase == .playing {
             game.announce("Claude 작업 끝\(name)")
         } else if let flight, flight.isPlaying {
             flight.announce("Claude 작업 끝\(name)")
+        } else if turn.isLong {
+            play(.celebrate)
+            say("\(Int((turn.duration / 60).rounded()))분짜리 작업 끝\(name)", seconds: 3.5)
         } else {
             play(.greet)
             say("Claude가 끝났어요\(name)", seconds: 3)
@@ -806,6 +809,9 @@ final class StageModel: ObservableObject {
     static func phrases(for display: SpriteDisplay) -> [String] {
         switch display {
         case .normal(.sleeping): return ["쿨쿨", "5분만 더", "음냐"]
+        case .normal(.standing): return ["잠깐 쉬는 중", "다음은 뭐 할까", "숨 고르기"]
+        case .normal(.looking): return ["뭐 보는 중?", "나도 같이 볼래", "흠흠"]
+        case .normal(.waiting): return ["Claude가 승인을 기다려", "확인해 줘", "허락이 필요해"]
         case .normal(.walking): return ["산책 중", "느긋하게", "천천히 가자"]
         case .normal(.running): return ["좋은 페이스", "몸 풀렸다", "이 속도 좋아"]
         case .normal(.dashing): return ["속도 붙었다", "바람 좋다", "이대로 쭉"]
@@ -997,7 +1003,7 @@ final class StageModel: ObservableObject {
     /// 배경이 흘러가는 속도 (pt/초).
     static func worldSpeed(_ display: SpriteDisplay) -> CGFloat {
         switch display {
-        case .normal(.sleeping), .tired, .alert: return 0
+        case .normal(.sleeping), .normal(.standing), .normal(.looking), .normal(.waiting), .tired, .alert: return 0
         case .straining(let state, _): return worldSpeed(.normal(state))
         case .normal(.walking): return 16
         case .normal(.running): return 46

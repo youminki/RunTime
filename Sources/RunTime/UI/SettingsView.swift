@@ -15,6 +15,7 @@ struct SettingsView: View {
     @ObservedObject private var workLogSettings = WorkLogSettings.shared
     @ObservedObject private var workLogSync = WorkLogSync.shared
     @StateObject private var hotKeyRecorder = HotKeyRecorder()
+    @ObservedObject private var permissionHook = PermissionHookFile.shared
 
     enum Tab: Hashable { case general, runner, usage, workLog, design, designAlerts }
 
@@ -308,14 +309,21 @@ struct SettingsView: View {
 
             AccountSection(switcher: AccountSwitcher.shared, engine: engine)
 
-            GroupedSection("속도", footer: "민감도가 높을수록 적은 사용량에도 빨리 달립니다. 확인 주기가 짧을수록 러너가 빨리 반응합니다.") {
+            GroupedSection("속도", footer: "민감도가 높을수록 적은 사용량에도 빨리 달립니다. 확인 주기가 짧을수록 러너가 빨리 반응합니다. Claude가 답을 마치면 바로 멈추고, 5분 넘게 자리를 비우면 잠듭니다. 입력에 반응을 켜면 키보드를 치는 빠르기로도 걷고 달리고, 손을 떼면 바로 멈춥니다. 마우스만 쓰는 동안에는 두리번거립니다. 누른 키는 읽지 않고 횟수만 셉니다. 자정부터 새벽 5시까지는 걸음이 느려지고 졸린 장난을 합니다.") {
                 GroupedRow("민감도", icon: "hare.fill", tint: Palette.orange) {
                     segmented("민감도", $settings.sensitivity, Thresholds.Sensitivity.allCases) { $0.displayName }
                 }
                 GroupedRow("기록 확인 주기", icon: "timer", tint: Palette.blue) {
                     menu("기록 확인 주기", $settings.pollInterval, AppSettings.pollIntervalOptions) { String(format: "%.0f초", $0) }
                 }
+                ToggleRow(title: "입력에 반응", icon: "keyboard.fill", tint: Palette.teal, isOn: $settings.typingRunnerEnabled)
             }
+
+            GroupedSection("승인 기다림", footer: permissionHook.error ?? "켜면 Claude Code 설정(~/.claude/settings.json)에 알림 훅을 하나 더합니다. Claude가 도구 승인을 기다리면 러너가 물음표를 띄우고 기다립니다. 다른 설정과 훅은 그대로 두고, 바꾸기 전 파일은 settings.json.runtime-backup으로 남깁니다. 끄면 더한 훅만 뺍니다.") {
+                ToggleRow(title: "Claude 승인 기다림 알기", icon: "hand.raised.fill", tint: Palette.orange,
+                          isOn: Binding(get: { permissionHook.installed }, set: { permissionHook.set($0) }))
+            }
+            .onAppear { permissionHook.refresh() }
 
             GroupedSection("알림", footer: "펫을 화면에 꺼내 두면 알림이 펫 위 말풍선으로 뜨고, 직접 닫을 때까지 남습니다. 한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
                 ToggleRow(title: "한도 임박 알림", icon: "bell.badge.fill", tint: Palette.red, isOn: $settings.limitAlertsEnabled)

@@ -202,12 +202,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             .store(in: &cancellables)
 
-        // Claude가 일을 마치면 메뉴바 러너가 손을 흔들며 알린다 (다른 창을 보고 있어도 눈에 띄게).
+        // Claude가 일을 마치면 메뉴바 러너가 손을 흔들며 알린다 (다른 창을 보고 있어도 눈에 띄게). 오래 걸린 작업이면 축하한다.
         // 오래 걸린 작업이고 사용량 창이 닫혀 있으면 알림도 보낸다. 짧은 대답마다 보내면 대화하는 동안 계속 울린다.
         engine.turnEnded
             .sink { [weak self] turn in
                 guard let self else { return }
-                _ = self.animator.perform(.greet)
+                _ = self.animator.perform(turn.isLong ? .celebrate : .greet)
                 guard self.engine.settings.claudeDoneAlertEnabled, turn.duration >= Self.claudeDoneMinimum,
                       self.popover?.isShown != true,
                       // 무대가 보이면 러너가 말풍선으로 알리니 알림은 보내지 않는다

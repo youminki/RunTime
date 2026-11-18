@@ -12,9 +12,9 @@ enum SpriteDisplay: Equatable {
 
     init(state: CatState, level: UsageAlertLevel) {
         switch (level, state) {
-        case (.normal, _): self = .normal(state)
-        case (.tired, .sleeping): self = .tired
-        case (.critical, .sleeping): self = .alert
+        case (.normal, _), (_, .waiting): self = .normal(state)
+        case (.tired, let state) where !state.isMoving: self = .tired
+        case (.critical, let state) where !state.isMoving: self = .alert
         case (.tired, _): self = .straining(state, critical: false)
         case (.critical, _): self = .straining(state, critical: true)
         }
@@ -46,6 +46,9 @@ enum SpriteDisplay: Equatable {
     var cycle: TimeInterval {
         switch self {
         case .normal(.sleeping): return 2.6
+        case .normal(.standing): return 2.4
+        case .normal(.looking): return 3.2
+        case .normal(.waiting): return 1.6
         case .normal(.walking): return 1.25
         case .normal(.running): return 0.72
         case .normal(.dashing): return 0.54
@@ -71,7 +74,9 @@ enum SpriteDisplay: Equatable {
     /// 숨쉬기처럼 느린 동작은 프레임을 늘려도 차이가 없어 상한을 둔다 (잠자는 동안 CPU 절약).
     var maxFPS: Double {
         switch self {
-        case .normal(.sleeping): return 20
+        case .normal(.sleeping), .normal(.standing): return 20
+        case .normal(.looking): return 30
+        case .normal(.waiting): return 20
         case .tired: return 30
         case .straining(let state, _): return SpriteDisplay.normal(state).maxFPS
         default: return 60
@@ -83,6 +88,19 @@ enum SpriteDisplay: Equatable {
         switch self {
         case .normal(.sleeping):
             return MotionFrame(pose: CharacterPose(activity: .sleep, phase: phase, eyes: .closed))
+        case .normal(.standing):
+            return MotionFrame(pose: CharacterPose(activity: .stand, phase: phase))
+        case .normal(.looking):
+            // 그림 러너는 검토 줄을 세 번 돌고, 벡터 러너는 좌우를 천천히 둘러본다
+            var pose = CharacterPose(activity: .stand, phase: phase)
+            pose.review = phase * 3
+            var frame = MotionFrame(pose: pose)
+            frame.transform.scaleX = tanh(4 * cos(tau * phase))
+            return frame
+        case .normal(.waiting):
+            var pose = CharacterPose(activity: .stand, phase: phase)
+            pose.waiting = true
+            return MotionFrame(pose: pose)
         case .normal(.walking):
             return MotionFrame(pose: CharacterPose(activity: .walk, phase: phase))
         case .normal(.running):
@@ -126,6 +144,8 @@ enum SpriteDisplay: Equatable {
             Emote.draw(phase < 0.5 ? "sleep" : "sleeps", in: cg, around: bounds, pop: 1, bob: sin(phase * tau) * 0.3)
         case (.alert, true) where !compact:
             Emote.draw("exclamation", in: cg, around: bounds, pop: 1)
+        case (.normal(.waiting), true) where !compact:
+            Emote.draw("question", in: cg, around: bounds, pop: 1, bob: sin(phase * tau) * 0.4)
         default:
             break
         }

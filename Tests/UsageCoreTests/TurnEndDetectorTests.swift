@@ -85,3 +85,28 @@ struct TurnDurationTests {
         #expect(turns.first?.duration == 20)
     }
 }
+
+extension TurnEndDetectorTests {
+    @Test func workingUntilTurnEndsOrGoesQuiet() throws {
+        let tool = try #require(JSONLParser.parse(line: Self.line(stop: #""tool_use""#)))
+        let end = try #require(JSONLParser.parse(line: Self.line(stop: #""end_turn""#)))
+        let now = tool.timestamp.addingTimeInterval(5)
+        var detector = TurnEndDetector()
+        #expect(!detector.isWorking(now: now, within: 300))
+        _ = detector.finishedTurns(in: [tool], now: now)
+        #expect(detector.isWorking(now: now, within: 300))
+        // 끝 표시 없이 조용해진 차례는 일하는 중으로 보지 않는다
+        #expect(!detector.isWorking(now: now.addingTimeInterval(300), within: 300))
+        _ = detector.finishedTurns(in: [end], now: now)
+        #expect(!detector.isWorking(now: now, within: 300))
+    }
+
+    @Test func longTurnsAreCelebrated() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        func turn(_ minutes: Double) -> TurnEndDetector.FinishedTurn {
+            TurnEndDetector.FinishedTurn(project: nil, endedAt: start, duration: minutes * 60)
+        }
+        #expect(!turn(9.9).isLong)
+        #expect(turn(10).isLong)
+    }
+}

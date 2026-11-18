@@ -55,7 +55,7 @@ enum MenuBarAudit {
                 }
                 return raster
             }
-            let displays: [SpriteDisplay] = [.normal(.sleeping), .normal(.walking), .normal(.running), .normal(.dashing),
+            let displays: [SpriteDisplay] = [.normal(.sleeping), .normal(.standing), .normal(.looking), .normal(.waiting), .normal(.walking), .normal(.running), .normal(.dashing),
                                              .normal(.rainbow), .tired, .alert,
                                              .straining(.running, critical: false), .straining(.rainbow, critical: true)]
             for display in displays {

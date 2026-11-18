@@ -8,6 +8,10 @@ public struct TurnEndDetector {
         public let endedAt: Date
         /// 차례가 끝나기 전 첫 응답부터 끝날 때까지. 사람이 보낸 글은 기록에 시각만 있고 토큰이 없어 응답부터 센다.
         public let duration: TimeInterval
+
+        /// 축하할 만큼 오래 걸린 작업.
+        public static let longDuration: TimeInterval = 10 * 60
+        public var isLong: Bool { duration >= Self.longDuration }
     }
 
     /// 이보다 오래된 기록은 지금 끝난 것이 아니다.
@@ -20,6 +24,12 @@ public struct TurnEndDetector {
     private var lastSeen: [String: Date] = [:]
 
     public init() {}
+
+    /// 아직 끝나지 않은 차례가 있는지. 도구를 오래 돌려 기록이 잠시 끊겨도 일하는 중으로 본다.
+    /// 끝 표시 없이 멈춘 차례(중단 등)는 `within`이 지나면 끝난 것으로 본다.
+    public func isWorking(now: Date, within: TimeInterval) -> Bool {
+        started.keys.contains { lastSeen[$0].map { now.timeIntervalSince($0) < within } ?? false }
+    }
 
     /// 방금 끝난 차례들. 같은 메시지는 한 번만.
     public mutating func finishedTurns(in events: [UsageEvent], now: Date) -> [FinishedTurn] {

@@ -119,7 +119,7 @@ extension Thresholds {
     public func tempo(burnRate rate: Double, state: CatState) -> Double {
         let range: (Double, Double)
         switch state {
-        case .sleeping: return 1
+        case .sleeping, .standing, .looking, .waiting: return 1
         case .walking: range = (walk, run)
         case .running: range = (run, dash)
         case .dashing: range = (dash, rainbow)

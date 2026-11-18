@@ -24,7 +24,8 @@ struct SheetRig: CharacterRig {
         switch pose.activity {
         case .walk, .run: order = pose.jump != nil ? ["jump", "run", "idle"] : pose.leftward ? ["runLeft", "run", "idle"] : ["run", "idle"]
         case .stand:
-            order = pose.wave != nil ? ["wave", "idle", "run"] : pose.review != nil ? ["review", "idle", "run"] : ["idle", "run"]
+            order = pose.wave != nil ? ["wave", "idle", "run"] : pose.review != nil ? ["review", "idle", "run"]
+                : pose.waiting ? ["wait", "idle", "run"] : ["idle", "run"]
         // 한도 80%는 기다리는 줄(고개 갸웃), 95%는 슬픔 줄(고개 숙임)
         case .sit: order = pose.sad ? ["sad", "wait", "idle"] : ["wait", "sad", "idle"]
         // 시트에 잠자는 줄이 없어 서 있기 줄을 천천히 돌린다 (말풍선 Z가 잠을 알린다)

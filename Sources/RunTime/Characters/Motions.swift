@@ -45,6 +45,8 @@ enum Trick: String, CaseIterable {
     /// 나머지 동작은 '동작' 메뉴에서 직접 고를 수 있다.
     static let awake: [Trick] = [.lookAround, .sing, .doze, .greet, .love, .blink]
     static let asleep: [Trick] = [.rollOver, .snore, .dream]
+    /// 늦은 밤(자정~새벽 5시)에는 졸린 장난만 한다.
+    static let night: [Trick] = [.doze, .stretch, .blink]
     /// 팝오버에서 러너를 눌렀을 때. 같은 것을 연달아 하지 않게 고른다.
     static let petting: [Trick] = [.greet, .hop, .sing]
 

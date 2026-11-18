@@ -72,6 +72,14 @@ final class UsageEngine: ObservableObject {
 
     private let store = UsageStore()
     private let meter = BurnRateMeter()
+    /// 최근 몇 초의 키 누름 누계. 키 내용은 읽지 않고 횟수만 본다 (권한이 필요 없다).
+    private var keySamples: [(at: Date, count: UInt32)] = []
+    /// 타자를 멈추면 바로 서도록 기록 확인 주기와 따로 1초마다 본다. 타자 반응을 끄거나 화면이 꺼지면 쉰다.
+    private var typingTimer: DispatchSourceTimer?
+    /// 직전 틱에서 본 Claude 쪽 사정. 타자 타이머가 이것과 합쳐 단계를 정한다.
+    private var claudePace: (rate: Double, working: Bool, lastEvent: Date?, limited: Bool, waiting: Bool)?
+    private let permissionWaits = PermissionWaitWatcher(directory: PermissionHookFile.markDirectory)
+    private var publishedPace: (state: CatState, tempo: Double)?
     private let provider = OAuthUsageProvider()
     private let workQueue = DispatchQueue(label: "runtime.engine", qos: .utility)
     private var jsonlTimer: DispatchSourceTimer?
@@ -157,6 +165,10 @@ final class UsageEngine: ObservableObject {
         let jsonlTimer = DispatchSource.makeTimerSource(queue: workQueue)
         jsonlTimer.setEventHandler { [weak self] in self?.tick() }
         self.jsonlTimer = jsonlTimer
+        let typingTimer = DispatchSource.makeTimerSource(queue: workQueue)
+        typingTimer.setEventHandler { [weak self] in self?.updatePace(now: Date()) }
+        self.typingTimer = typingTimer
+        typingTimer.resume()
         workQueue.async { self.applyPollInterval(interval) }
         jsonlTimer.resume()
         let workspace = NSWorkspace.shared.notificationCenter
@@ -253,6 +265,12 @@ final class UsageEngine: ObservableObject {
         let effective = screensAsleep ? max(interval, 30) : interval
         // 다른 앱의 깨움과 묶일 여유를 둬 CPU가 따로 깨어나는 횟수를 줄인다
         jsonlTimer?.schedule(deadline: .now(), repeating: effective, leeway: .milliseconds(Int(effective * 100)))
+        if config.typingRunner, !screensAsleep {
+            typingTimer?.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(200))
+        } else {
+            typingTimer?.schedule(deadline: .distantFuture, repeating: .never)
+            keySamples = []
+        }
     }
 
     // MARK: - 설정
@@ -266,6 +284,7 @@ final class UsageEngine: ObservableObject {
         let weeklyResetAlertEnabled: Bool
         let weeklySummaryEnabled: Bool
         let pollInterval: TimeInterval
+        let typingRunner: Bool
 
         init(_ settings: AppSettings) {
             officialEnabled = settings.officialEnabled
@@ -275,6 +294,7 @@ final class UsageEngine: ObservableObject {
             weeklyResetAlertEnabled = settings.weeklyResetAlertEnabled
             weeklySummaryEnabled = settings.weeklySummaryEnabled
             pollInterval = settings.pollInterval
+            typingRunner = settings.typingRunnerEnabled
         }
     }
 
@@ -305,7 +325,7 @@ final class UsageEngine: ObservableObject {
                 publishOfficial(nil, status: .disabled)   // 연동 off → 게이지를 바로 비운다
             }
         }
-        if new.pollInterval != old.pollInterval {
+        if new.pollInterval != old.pollInterval || new.typingRunner != old.typingRunner {
             applyPollInterval(new.pollInterval)   // 타이머가 바로 한 번 돈다
         } else {
             tick()   // 설정 변경을 다음 틱까지 기다리지 않고 반영
@@ -388,8 +408,6 @@ final class UsageEngine: ObservableObject {
         let rate = meter.update(tokensInLastMinute: snap.tokensLast60s)
         let idle = snap.lastEventDate.map { now.timeIntervalSince($0) } ?? .infinity
         let thresholds = Thresholds.preset(sensitivity: config.sensitivity)
-        let state = thresholds.state(burnRate: rate, idleSeconds: idle)
-        let tempo = thresholds.tempo(burnRate: rate, state: state)
         for event in scanned {
             guard let project = event.project, event.timestamp > projectSeen[project] ?? .distantPast else { continue }
             projectSeen[project] = event.timestamp
@@ -404,6 +422,9 @@ final class UsageEngine: ObservableObject {
             sessionRatePerMinute: rate >= 1 ? sessionTrend.ratePerMinute(now: now) : nil))
         // 조회 뒤 공식 창이 초기화됐으면 다음 정기 조회(최대 3분)를 기다리지 않고 새 값을 받는다.
         if result.needsRefresh { fetchOfficial(minInterval: Self.rolloverRefetchInterval) }
+        let working = turnDetector.isWorking(now: now, within: thresholds.sleepAfterIdle)
+        claudePace = (rate, working, snap.lastEventDate, result.level != .normal, permissionWaits.isWaiting(now: now))
+        updatePace(now: now)
 
         if config.limitAlertsEnabled {
             fireLimitAlerts(snap: snap, nextWeeklyReset: nextWeeklyReset, result: result)
@@ -415,14 +436,12 @@ final class UsageEngine: ObservableObject {
                                               activeProjects: activeProjects, now: now))
         checkSessionReset(resetsAt: result.sessionResetsAt, now: now, enabled: config.newSessionAlertEnabled)
 
-        log.debug("tick: today=\(snap.todayTokens) block=\(blockTokens) last60s=\(snap.tokensLast60s) rate=\(Int(rate)) state=\(state.rawValue, privacy: .public) 세션%=\(result.session.map { String(format: "%.1f", $0.percent) } ?? "없음", privacy: .public)")
+        log.debug("tick: today=\(snap.todayTokens) block=\(blockTokens) last60s=\(snap.tokensLast60s) rate=\(Int(rate)) 일하는중=\(working) 세션%=\(result.session.map { String(format: "%.1f", $0.percent) } ?? "없음", privacy: .public)")
 
         let breakdown = official?.weeklyBreakdown ?? []
         DispatchQueue.main.async {
             self.snapshot = snap
             self.burnRate = rate
-            self.catState = state
-            if abs(self.tempo - tempo) > 0.02 { self.tempo = tempo }
             if let reaction { self.reacted.send(reaction) }
             self.alertLevel = result.level
             self.sessionGauge = result.session
@@ -432,6 +451,52 @@ final class UsageEngine: ObservableObject {
             self.nextWeeklyReset = result.weeklyResetsAt ?? nextWeeklyReset
             self.weeklyBreakdown = breakdown
         }
+    }
+
+    /// Claude 쪽 사정과 타자를 합쳐 러너 단계를 정한다. 틱과 타자 타이머가 부른다.
+    private func updatePace(now: Date) {
+        guard let claude = claudePace else { return }
+        let thresholds = Thresholds.preset(sensitivity: config.sensitivity)
+        var away = claude.lastEvent.map { now.timeIntervalSince($0) } ?? .infinity
+        var typing: Double?
+        var keyIdle = TimeInterval.infinity
+        var pointerIdle = TimeInterval.infinity
+        if config.typingRunner {
+            // 한도에 가까우면 쉬는 자세가 경고라 타자로 덮지 않는다. 자리에 있는 동안은 잠들지 않는다
+            if claude.limited { keySamples = [] } else { typing = typingRate(now: now) }
+            keyIdle = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
+            away = min(away, CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: Self.anyInput))
+            pointerIdle = Self.pointerEvents.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }
+                .min() ?? .infinity
+        }
+        let pace = Pace.decide(.init(claudeRate: claude.rate, claudeWorking: claude.working, typingRate: typing,
+                                     keyIdle: keyIdle, away: away, pointerIdle: pointerIdle, night: Pace.isNight(now),
+                                     waiting: claude.waiting),
+                               claude: thresholds, keys: .typing(sensitivity: config.sensitivity))
+        if let last = publishedPace, last.state == pace.state, abs(last.tempo - pace.tempo) <= 0.02 { return }
+        publishedPace = pace
+        DispatchQueue.main.async {
+            if self.catState != pace.state { self.catState = pace.state }
+            if abs(self.tempo - pace.tempo) > 0.02 { self.tempo = pace.tempo }
+        }
+    }
+
+    private static let anyInput = CGEventType(rawValue: ~0)!
+    private static let pointerEvents: [CGEventType] = [.mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+                                                       .leftMouseDragged, .scrollWheel]
+    /// 타자 속도를 재는 구간. 짧을수록 빨리 반응하고 길수록 덜 출렁인다.
+    private static let typingWindow: TimeInterval = 3
+
+    /// 최근 몇 초 키 누름 수를 타/분으로. 키보드에서 온 입력만 센다 (앱이 보내는 붙여넣기 키는 타자가 아니다).
+    private func typingRate(now: Date) -> Double {
+        let count = CGEventSource.counterForEventType(.hidSystemState, eventType: .keyDown)
+        if let last = keySamples.last, count < last.count { keySamples = [] }
+        keySamples.append((now, count))
+        if let cut = keySamples.lastIndex(where: { now.timeIntervalSince($0.at) >= Self.typingWindow }) {
+            keySamples.removeFirst(cut)
+        }
+        guard let first = keySamples.first, keySamples.count > 1 else { return 0 }
+        return Double(count - first.count) / max(now.timeIntervalSince(first.at), 1) * 60
     }
 
     // MARK: - 한도 알림 (§F4: 80%/95% 각 1회)

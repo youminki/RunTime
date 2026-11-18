@@ -59,6 +59,9 @@ final class SpriteAnimator {
         display = newDisplay
         // 걷기·달리기가 3초마다 바뀌어도 장난 타이머는 이어 간다
         if idleTimer == nil { scheduleIdleTrick() }
+        // 하던 동작은 끝까지 하고 새 상태의 반복 동작으로 넘어간다. Claude 작업 끝 인사가 곧바로 멈춤으로 끊기지 않게.
+        // 잠들고 깨는 순간과 한도 경고는 바로 보여 준다
+        if playing != nil, !newDisplay.isLimited, previous?.isAsleep == newDisplay.isAsleep { return }
         // 상태가 바뀌는 순간을 짧은 동작으로 잇는다. 한도 경고는 바로 보여 준다.
         if let previous, tricksEnabledProvider() {
             switch (previous.isAsleep, newDisplay) {
@@ -68,6 +71,9 @@ final class SpriteAnimator {
                 if perform(.fallAsleep) { return }
             case (false, .normal(.rainbow)):
                 if perform(.celebrate) { return }
+            case (_, .normal(.waiting)):
+                // 승인을 기다리기 시작하면 깡충 뛰어 눈길을 끈다
+                if perform(.hop) { return }
             default:
                 break
             }
@@ -113,7 +119,8 @@ final class SpriteAnimator {
     /// 깨어 있으면 깨어 있는 동작, 자고 있으면 잠버릇 중 하나.
     func performRandom() {
         guard let display else { return }
-        let candidates = (display.isAsleep ? Trick.asleep : Trick.awake).filter { $0 != lastIdleTrick }
+        let awake = Pace.isNight(Date()) ? Trick.night : Trick.awake
+        let candidates = (display.isAsleep ? Trick.asleep : awake).filter { $0 != lastIdleTrick }
         guard let trick = candidates.randomElement() else { return }
         lastIdleTrick = trick
         perform(trick)
@@ -241,7 +248,8 @@ final class SpriteAnimator {
         if let cached = bodyRightCache[key] { return cached }
         var right = 0
         let displays: [SpriteDisplay] = resting ? [.normal(.sleeping), .tired, .alert]
-            : [.normal(.walking), .normal(.running), .normal(.dashing), .normal(.rainbow)]
+            : [.normal(.standing), .normal(.looking), .normal(.waiting),
+               .normal(.walking), .normal(.running), .normal(.dashing), .normal(.rainbow)]
         // 메뉴바와 같은 색 방식으로 그린다. 단색 실루엣은 그림 러너의 투명한 둘레까지 칠할 수 있다
         let theme = character.menuBarTheme(themeProvider())
         do {
