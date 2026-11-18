@@ -1,0 +1,450 @@
+/// WindowCalculation.swift
+
+import Cocoa
+
+protocol Calculation {
+    
+    func calculate(_ params: WindowCalculationParameters) -> WindowCalculationResult?
+    
+    func calculateRect(_ params: RectCalculationParameters) -> RectResult
+}
+
+class WindowCalculation: Calculation {
+    
+     func calculate(_ params: WindowCalculationParameters) -> WindowCalculationResult? {
+        
+        let rectResult = calculateRect(params.asRectParams())
+        
+        if rectResult.rect.isNull {
+            return nil
+        }
+        
+        return WindowCalculationResult(rect: rectResult.rect, screen: params.usableScreens.currentScreen, resultingAction: rectResult.resultingAction ?? params.action, resultingSubAction: rectResult.subAction)
+    }
+
+    func calculateRect(_ params: RectCalculationParameters) -> RectResult {
+        RectResult(.null)
+    }
+
+    func facingVerticalHalf(_ params: RectCalculationParameters) -> RectResult {
+        let (action, calculation): (WindowAction, RepeatedExecutionsCalculation) = params.action == .topHalf
+            ? (.bottomHalf, WindowCalculationFactory.bottomHalfCalculation)
+            : (.topHalf, WindowCalculationFactory.topHalfCalculation)
+        let facing = RectCalculationParameters(window: params.window, visibleFrameOfScreen: params.visibleFrameOfScreen,
+                                               action: action, lastAction: params.lastAction)
+        return RectResult(calculation.calculateFirstRect(facing).rect, resultingAction: action)
+    }
+
+    func calculateAcrossVerticalDisplays(_ params: WindowCalculationParameters) -> WindowCalculationResult? {
+        guard Defaults.subsequentExecutionMode.traversesDisplays,
+              isRepeatedCommand(params),
+              let screen = params.usableScreens.verticalNeighbor(above: params.action == .topHalf,
+                                                                wrap: !Defaults.subsequentExecutionMode.resizes),
+              !Defaults.halvesPreserveOtherAxisSize.enabled || HalvesPreserveOtherAxisSize.rect(for: params.asRectParams()) == nil
+        else { return nil }
+
+        let facing = facingVerticalHalf(params.asRectParams(visibleFrame: screen.adjustedVisibleFrame(params.ignoreTodo)))
+        return WindowCalculationResult(rect: facing.rect, screen: screen, resultingAction: facing.resultingAction ?? params.action)
+    }
+    
+    func rectCenteredWithinRect(_ rect1: CGRect, _ rect2: CGRect) -> Bool {
+        let centeredMidX = abs(rect2.midX - rect1.midX) <= 1.0
+        let centeredMidY = abs(rect2.midY - rect1.midY) <= 1.0
+        return rect1.contains(rect2) && centeredMidX && centeredMidY
+    }
+    
+    func rectFitsWithinRect(rect1: CGRect, rect2: CGRect) -> Bool {
+        (rect1.width <= rect2.width) && (rect1.height <= rect2.height)
+    }
+    
+    func isRepeatedCommand(_ params: WindowCalculationParameters) -> Bool {
+        isRepeatedCommand(lastAction: params.lastAction, action: params.action, windowRect: params.window.rect)
+    }
+
+    func isRepeatedCommand(_ params: RectCalculationParameters) -> Bool {
+        isRepeatedCommand(lastAction: params.lastAction, action: params.action, windowRect: params.window.rect)
+    }
+
+    /// The same action was just executed on this window and the window has not moved since.
+    private func isRepeatedCommand(lastAction: RectangleAction?, action: WindowAction, windowRect: CGRect) -> Bool {
+        guard let lastAction, lastAction.action == action else { return false }
+        let normalizedLastRect = lastAction.rect.screenFlipped
+        return normalizedLastRect == windowRect
+    }
+    
+}
+
+struct Window {
+    let id: CGWindowID?
+    let rect: CGRect
+}
+
+struct WindowCalculationParameters {
+    let window: Window
+    let usableScreens: UsableScreens
+    let action: WindowAction
+    let lastAction: RectangleAction?
+    let ignoreTodo: Bool
+    
+    func asRectParams(visibleFrame: CGRect? = nil, differentAction: WindowAction? = nil) -> RectCalculationParameters {
+        RectCalculationParameters(window: window,
+                                  visibleFrameOfScreen: visibleFrame ?? usableScreens.currentScreen.adjustedVisibleFrame(ignoreTodo),
+                                  action: differentAction ?? action,
+                                  lastAction: lastAction,
+                                  hasAdjacentScreen: usableScreens.adjacentScreens.map { $0.next !== usableScreens.currentScreen } ?? false)
+    }
+    
+    func withDifferentAction(_ differentAction: WindowAction) -> WindowCalculationParameters {
+        .init(window: window,
+              usableScreens: usableScreens,
+              action: differentAction,
+              lastAction: lastAction,
+              ignoreTodo: ignoreTodo)
+    }
+}
+
+struct RectCalculationParameters {
+    let window: Window
+    let visibleFrameOfScreen: CGRect
+    let action: WindowAction
+    let lastAction: RectangleAction?
+    var hasAdjacentScreen = false
+}
+
+struct RectResult {
+    let rect: CGRect
+    let resultingAction: WindowAction?
+    let subAction: SubWindowAction?
+    
+    init(_ rect: CGRect, resultingAction: WindowAction? = nil, subAction: SubWindowAction? = nil) {
+        self.rect = rect
+        self.resultingAction = resultingAction
+        self.subAction = subAction
+    }
+}
+
+struct WindowCalculationResult {
+    var rect: CGRect
+    var initialRect: CGRect
+    let screen: NSScreen
+    let resultingAction: WindowAction
+    let resultingSubAction: SubWindowAction?
+    let resultingScreenFrame: CGRect?
+
+    init(rect: CGRect,
+         screen: NSScreen,
+         resultingAction: WindowAction,
+         resultingSubAction: SubWindowAction? = nil,
+         resultingScreenFrame: CGRect? = nil) {
+        
+        self.rect = rect
+        self.initialRect = rect
+        self.screen = screen
+        self.resultingAction = resultingAction
+        self.resultingSubAction = resultingSubAction
+        self.resultingScreenFrame = resultingScreenFrame
+    }
+}
+
+enum HalfSplitSide {
+    case leading
+    case trailing
+}
+
+struct HalfSplitFrameCalculation {
+    private static let floorTolerance: CGFloat = 0.0001
+    
+    static func horizontalRect(in visibleFrameOfScreen: CGRect, side: HalfSplitSide, fraction: Float) -> CGRect {
+        var rect = visibleFrameOfScreen
+        rect.size.width = floorDimension(visibleFrameOfScreen.width * CGFloat(fraction))
+        
+        if side == .trailing {
+            rect.origin.x = visibleFrameOfScreen.maxX - rect.width
+        }
+        
+        return rect
+    }
+    
+    static func verticalRect(in visibleFrameOfScreen: CGRect, side: HalfSplitSide, fraction: Float) -> CGRect {
+        var rect = visibleFrameOfScreen
+        rect.size.height = floorDimension(visibleFrameOfScreen.height * CGFloat(fraction))
+        
+        if side == .leading {
+            rect.origin.y = visibleFrameOfScreen.maxY - rect.height
+        }
+        
+        return rect
+    }
+    
+    static func cornerRect(in visibleFrameOfScreen: CGRect,
+                           horizontalSide: HalfSplitSide,
+                           verticalSide: HalfSplitSide,
+                           horizontalFraction: Float,
+                           verticalFraction: Float) -> CGRect {
+        let horizontalRect = horizontalRect(in: visibleFrameOfScreen, side: horizontalSide, fraction: horizontalFraction)
+        let verticalRect = verticalRect(in: visibleFrameOfScreen, side: verticalSide, fraction: verticalFraction)
+        
+        var rect = visibleFrameOfScreen
+        rect.origin.x = horizontalRect.origin.x
+        rect.size.width = horizontalRect.width
+        rect.origin.y = verticalRect.origin.y
+        rect.size.height = verticalRect.height
+        return rect
+    }
+    
+    private static func floorDimension(_ value: CGFloat) -> CGFloat {
+        floor(value + floorTolerance)
+    }
+}
+
+class WindowCalculationFactory {
+    
+    static let leftHalfCalculation = LeftRightHalfCalculation()
+    static let rightHalfCalculation = LeftRightHalfCalculation()
+    static let centerHalfCalculation = CenterHalfCalculation()
+    static let bottomHalfCalculation = BottomHalfCalculation()
+    static let topHalfCalculation = TopHalfCalculation()
+    static let centerCalculation = CenterCalculation()
+    static let centerProminentlyCalculation = CenterProminentlyCalculation()
+    static let nextPrevDisplayCalculation = NextPrevDisplayCalculation()
+    static let maximizeCalculation = MaximizeCalculation()
+    static let changeSizeCalculation = ChangeSizeCalculation()
+    static let halfOrDoubleDimensionCalculation = HalfOrDoubleDimensionCalculation()
+    static let lowerLeftCalculation = LowerLeftCalculation()
+    static let lowerRightCalculation = LowerRightCalculation()
+    static let upperLeftCalculation = UpperLeftCalculation()
+    static let upperRightCalculation = UpperRightCalculation()
+    static let maxHeightCalculation = MaximizeHeightCalculation()
+    static let firstThirdCalculation = FirstThirdCalculation()
+    static let firstTwoThirdsCalculation = FirstTwoThirdsCalculation()
+    static let centerThirdCalculation = CenterThirdCalculation()
+    static let centerTwoThirdsCalculation = CenterTwoThirdsCalculation()
+    static let lastTwoThirdsCalculation = LastTwoThirdsCalculation()
+    static let lastThirdCalculation = LastThirdCalculation()
+    static let moveLeftRightCalculation = MoveLeftRightCalculation()
+    static let moveUpCalculation = MoveUpDownCalculation()
+    static let moveDownCalculation = MoveUpDownCalculation()
+    static let almostMaximizeCalculation = AlmostMaximizeCalculation()
+    static let firstFourthCalculation = FirstFourthCalculation()
+    static let secondFourthCalculation = SecondFourthCalculation()
+    static let thirdFourthCalculation = ThirdFourthCalculation()
+    static let lastFourthCalculation = LastFourthCalculation()
+    static let firstThreeFourthsCalculation = FirstThreeFourthsCalculation()
+    static let centerThreeFourthsCalculation = CenterThreeFourthsCalculation()
+    static let lastThreeFourthsCalculation = LastThreeFourthsCalculation()
+    static let topLeftSixthCalculation = TopLeftSixthCalculation()
+    static let topCenterSixthCalculation = TopCenterSixthCalculation()
+    static let topRightSixthCalculation = TopRightSixthCalculation()
+    static let bottomLeftSixthCalculation = BottomLeftSixthCalculation()
+    static let bottomCenterSixthCalculation = BottomCenterSixthCalculation()
+    static let bottomRightSixthCalculation = BottomRightSixthCalculation()
+    static let topLeftNinthCalculation = TopLeftNinthCalculation()
+    static let topCenterNinthCalculation = TopCenterNinthCalculation()
+    static let topRightNinthCalculation = TopRightNinthCalculation()
+    static let middleLeftNinthCalculation = MiddleLeftNinthCalculation()
+    static let middleCenterNinthCalculation = MiddleCenterNinthCalculation()
+    static let middleRightNinthCalculation = MiddleRightNinthCalculation()
+    static let bottomLeftNinthCalculation = BottomLeftNinthCalculation()
+    static let bottomCenterNinthCalculation = BottomCenterNinthCalculation()
+    static let bottomRightNinthCalculation = BottomRightNinthCalculation()
+    static let topLeftThirdCalculation = TopLeftThirdCalculation()
+    static let topRightThirdCalculation = TopRightThirdCalculation()
+    static let bottomLeftThirdCalculation = BottomLeftThirdCalculation()
+    static let bottomRightThirdCalculation = BottomRightThirdCalculation()
+    static let topLeftEighthCalculation = TopLeftEighthCalculation()
+    static let topCenterLeftEighthCalculation = TopCenterLeftEighthCalculation()
+    static let topCenterRightEighthCalculation = TopCenterRightEighthCalculation()
+    static let topRightEighthCalculation = TopRightEighthCalculation()
+    static let bottomLeftEighthCalculation = BottomLeftEighthCalculation()
+    static let bottomCenterLeftEighthCalculation = BottomCenterLeftEighthCalculation()
+    static let bottomCenterRightEighthCalculation = BottomCenterRightEighthCalculation()
+    static let bottomRightEighthCalculation = BottomRightEighthCalculation()
+    static let specifiedCalculation = SpecifiedCalculation()
+    static let leftTodoCalculation = LeftTodoCalculation()
+    static let rightTodoCalculation = RightTodoCalculation()
+    static let bottomVerticalTwoThirdsCalculation = BottomVerticalTwoThirdsCalculation()
+    static let topVerticalTwoThirdsCalculation = TopVerticalTwoThirdsCalculation()
+    static let bottomVerticalThirdCalculation = BottomVerticalThirdCalculation()
+    static let topVerticalThirdCalculation = TopVerticalThirdCalculation()
+    static let middleVerticalThirdCalculation = MiddleVerticalThirdCalculation()
+    static let topLeftTwelfthCalculation = TopLeftTwelfthCalculation()
+    static let topCenterLeftTwelfthCalculation = TopCenterLeftTwelfthCalculation()
+    static let topCenterRightTwelfthCalculation = TopCenterRightTwelfthCalculation()
+    static let topRightTwelfthCalculation = TopRightTwelfthCalculation()
+    static let middleLeftTwelfthCalculation = MiddleLeftTwelfthCalculation()
+    static let middleCenterLeftTwelfthCalculation = MiddleCenterLeftTwelfthCalculation()
+    static let middleCenterRightTwelfthCalculation = MiddleCenterRightTwelfthCalculation()
+    static let middleRightTwelfthCalculation = MiddleRightTwelfthCalculation()
+    static let bottomLeftTwelfthCalculation = BottomLeftTwelfthCalculation()
+    static let bottomCenterLeftTwelfthCalculation = BottomCenterLeftTwelfthCalculation()
+    static let bottomCenterRightTwelfthCalculation = BottomCenterRightTwelfthCalculation()
+    static let bottomRightTwelfthCalculation = BottomRightTwelfthCalculation()
+    static let topLeftSixteenthCalculation = TopLeftSixteenthCalculation()
+    static let topCenterLeftSixteenthCalculation = TopCenterLeftSixteenthCalculation()
+    static let topCenterRightSixteenthCalculation = TopCenterRightSixteenthCalculation()
+    static let topRightSixteenthCalculation = TopRightSixteenthCalculation()
+    static let upperMiddleLeftSixteenthCalculation = UpperMiddleLeftSixteenthCalculation()
+    static let upperMiddleCenterLeftSixteenthCalculation = UpperMiddleCenterLeftSixteenthCalculation()
+    static let upperMiddleCenterRightSixteenthCalculation = UpperMiddleCenterRightSixteenthCalculation()
+    static let upperMiddleRightSixteenthCalculation = UpperMiddleRightSixteenthCalculation()
+    static let lowerMiddleLeftSixteenthCalculation = LowerMiddleLeftSixteenthCalculation()
+    static let lowerMiddleCenterLeftSixteenthCalculation = LowerMiddleCenterLeftSixteenthCalculation()
+    static let lowerMiddleCenterRightSixteenthCalculation = LowerMiddleCenterRightSixteenthCalculation()
+    static let lowerMiddleRightSixteenthCalculation = LowerMiddleRightSixteenthCalculation()
+    static let bottomLeftSixteenthCalculation = BottomLeftSixteenthCalculation()
+    static let bottomCenterLeftSixteenthCalculation = BottomCenterLeftSixteenthCalculation()
+    static let bottomCenterRightSixteenthCalculation = BottomCenterRightSixteenthCalculation()
+    static let bottomRightSixteenthCalculation = BottomRightSixteenthCalculation()
+    static let specificDisplayCalculation = SpecificDisplayCalculation()
+    static let firstVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 0)
+    static let secondVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 1)
+    static let thirdVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 2)
+    static let fourthVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 3)
+    static let fifthVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 4)
+    static let sixthVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 5)
+    static let seventhVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 6)
+    static let lastVerticalEighthCalculation = VerticalEighthCalculation(ordinal: 7)
+    static let firstVerticalSixthCalculation = VerticalSixthCalculation(ordinal: 0)
+    static let secondVerticalSixthCalculation = VerticalSixthCalculation(ordinal: 1)
+    static let thirdVerticalSixthCalculation = VerticalSixthCalculation(ordinal: 2)
+    static let fourthVerticalSixthCalculation = VerticalSixthCalculation(ordinal: 3)
+    static let fifthVerticalSixthCalculation = VerticalSixthCalculation(ordinal: 4)
+    static let lastVerticalSixthCalculation = VerticalSixthCalculation(ordinal: 5)
+
+    static let calculationsByAction: [WindowAction: WindowCalculation] = [
+     .leftHalf: leftHalfCalculation,
+     .rightHalf: rightHalfCalculation,
+     .maximize: maximizeCalculation,
+     .maximizeHeight: maxHeightCalculation,
+     .previousDisplay: nextPrevDisplayCalculation,
+     .nextDisplay: nextPrevDisplayCalculation,
+     .larger: changeSizeCalculation,
+     .smaller: changeSizeCalculation,
+     .largerWidth: changeSizeCalculation,
+     .smallerWidth: changeSizeCalculation,
+     .largerHeight: changeSizeCalculation,
+     .smallerHeight: changeSizeCalculation,
+     .bottomHalf: bottomHalfCalculation,
+     .topHalf: topHalfCalculation,
+     .center: centerCalculation,
+     .centerProminently: centerProminentlyCalculation,
+     .bottomLeft: lowerLeftCalculation,
+     .bottomRight: lowerRightCalculation,
+     .topLeft: upperLeftCalculation,
+     .topRight: upperRightCalculation,
+     .firstThird: firstThirdCalculation,
+     .firstTwoThirds: firstTwoThirdsCalculation,
+     .centerThird: centerThirdCalculation,
+     .centerTwoThirds: centerTwoThirdsCalculation,
+     .lastTwoThirds: lastTwoThirdsCalculation,
+     .lastThird: lastThirdCalculation,
+     .moveLeft: moveLeftRightCalculation,
+     .moveRight: moveLeftRightCalculation,
+     .moveUp: moveUpCalculation,
+     .moveDown: moveDownCalculation,
+     .almostMaximize: almostMaximizeCalculation,
+     .centerHalf: centerHalfCalculation,
+     .firstFourth: firstFourthCalculation,
+     .secondFourth: secondFourthCalculation,
+     .thirdFourth: thirdFourthCalculation,
+     .lastFourth: lastFourthCalculation,
+     .firstThreeFourths: firstThreeFourthsCalculation,
+     .centerThreeFourths: centerThreeFourthsCalculation,
+     .lastThreeFourths: lastThreeFourthsCalculation,
+     .topLeftSixth: topLeftSixthCalculation,
+     .topCenterSixth: topCenterSixthCalculation,
+     .topRightSixth: topRightSixthCalculation,
+     .bottomLeftSixth: bottomLeftSixthCalculation,
+     .bottomCenterSixth: bottomCenterSixthCalculation,
+     .bottomRightSixth: bottomRightSixthCalculation,
+     .topLeftNinth: topLeftNinthCalculation,
+     .topCenterNinth: topCenterNinthCalculation,
+     .topRightNinth: topRightNinthCalculation,
+     .middleLeftNinth: middleLeftNinthCalculation,
+     .middleCenterNinth: middleCenterNinthCalculation,
+     .middleRightNinth: middleRightNinthCalculation,
+     .bottomLeftNinth: bottomLeftNinthCalculation,
+     .bottomCenterNinth: bottomCenterNinthCalculation,
+     .bottomRightNinth: bottomRightNinthCalculation,
+     .topLeftThird: topLeftThirdCalculation,
+     .topRightThird: topRightThirdCalculation,
+     .bottomLeftThird: bottomLeftThirdCalculation,
+     .bottomRightThird: bottomRightThirdCalculation,
+     .topLeftEighth: topLeftEighthCalculation,
+     .topCenterLeftEighth: topCenterLeftEighthCalculation,
+     .topCenterRightEighth: topCenterRightEighthCalculation,
+     .topRightEighth: topRightEighthCalculation,
+     .bottomLeftEighth: bottomLeftEighthCalculation,
+     .bottomCenterLeftEighth: bottomCenterLeftEighthCalculation,
+     .bottomCenterRightEighth: bottomCenterRightEighthCalculation,
+     .bottomRightEighth: bottomRightEighthCalculation,
+     .firstVerticalEighth: firstVerticalEighthCalculation,
+     .secondVerticalEighth: secondVerticalEighthCalculation,
+     .thirdVerticalEighth: thirdVerticalEighthCalculation,
+     .fourthVerticalEighth: fourthVerticalEighthCalculation,
+     .fifthVerticalEighth: fifthVerticalEighthCalculation,
+     .sixthVerticalEighth: sixthVerticalEighthCalculation,
+     .seventhVerticalEighth: seventhVerticalEighthCalculation,
+     .lastVerticalEighth: lastVerticalEighthCalculation,
+     .firstVerticalSixth: firstVerticalSixthCalculation,
+     .secondVerticalSixth: secondVerticalSixthCalculation,
+     .thirdVerticalSixth: thirdVerticalSixthCalculation,
+     .fourthVerticalSixth: fourthVerticalSixthCalculation,
+     .fifthVerticalSixth: fifthVerticalSixthCalculation,
+     .lastVerticalSixth: lastVerticalSixthCalculation,
+     .halveHeightUp: halfOrDoubleDimensionCalculation,
+     .halveHeightDown: halfOrDoubleDimensionCalculation,
+     .halveWidthLeft: halfOrDoubleDimensionCalculation,
+     .halveWidthRight: halfOrDoubleDimensionCalculation,
+     .doubleHeightUp: halfOrDoubleDimensionCalculation,
+     .doubleHeightDown: halfOrDoubleDimensionCalculation,
+     .doubleWidthLeft: halfOrDoubleDimensionCalculation,
+     .doubleWidthRight: halfOrDoubleDimensionCalculation,
+     .specified: specifiedCalculation,
+     .leftTodo: leftTodoCalculation,
+     .rightTodo: rightTodoCalculation,
+     .topVerticalThird: topVerticalThirdCalculation,
+     .middleVerticalThird: middleVerticalThirdCalculation,
+     .bottomVerticalThird: bottomVerticalThirdCalculation,
+     .topVerticalTwoThirds: topVerticalTwoThirdsCalculation,
+     .bottomVerticalTwoThirds: bottomVerticalTwoThirdsCalculation,
+     .topLeftTwelfth: topLeftTwelfthCalculation,
+     .topCenterLeftTwelfth: topCenterLeftTwelfthCalculation,
+     .topCenterRightTwelfth: topCenterRightTwelfthCalculation,
+     .topRightTwelfth: topRightTwelfthCalculation,
+     .middleLeftTwelfth: middleLeftTwelfthCalculation,
+     .middleCenterLeftTwelfth: middleCenterLeftTwelfthCalculation,
+     .middleCenterRightTwelfth: middleCenterRightTwelfthCalculation,
+     .middleRightTwelfth: middleRightTwelfthCalculation,
+     .bottomLeftTwelfth: bottomLeftTwelfthCalculation,
+     .bottomCenterLeftTwelfth: bottomCenterLeftTwelfthCalculation,
+     .bottomCenterRightTwelfth: bottomCenterRightTwelfthCalculation,
+     .bottomRightTwelfth: bottomRightTwelfthCalculation,
+     .topLeftSixteenth: topLeftSixteenthCalculation,
+     .topCenterLeftSixteenth: topCenterLeftSixteenthCalculation,
+     .topCenterRightSixteenth: topCenterRightSixteenthCalculation,
+     .topRightSixteenth: topRightSixteenthCalculation,
+     .upperMiddleLeftSixteenth: upperMiddleLeftSixteenthCalculation,
+     .upperMiddleCenterLeftSixteenth: upperMiddleCenterLeftSixteenthCalculation,
+     .upperMiddleCenterRightSixteenth: upperMiddleCenterRightSixteenthCalculation,
+     .upperMiddleRightSixteenth: upperMiddleRightSixteenthCalculation,
+     .lowerMiddleLeftSixteenth: lowerMiddleLeftSixteenthCalculation,
+     .lowerMiddleCenterLeftSixteenth: lowerMiddleCenterLeftSixteenthCalculation,
+     .lowerMiddleCenterRightSixteenth: lowerMiddleCenterRightSixteenthCalculation,
+     .lowerMiddleRightSixteenth: lowerMiddleRightSixteenthCalculation,
+     .bottomLeftSixteenth: bottomLeftSixteenthCalculation,
+     .bottomCenterLeftSixteenth: bottomCenterLeftSixteenthCalculation,
+     .bottomCenterRightSixteenth: bottomCenterRightSixteenthCalculation,
+     .bottomRightSixteenth: bottomRightSixteenthCalculation,
+     .displayOne: specificDisplayCalculation,
+     .displayTwo: specificDisplayCalculation,
+     .displayThree: specificDisplayCalculation,
+     .displayFour: specificDisplayCalculation,
+     .displayFive: specificDisplayCalculation,
+     .displaySix: specificDisplayCalculation,
+     .displaySeven: specificDisplayCalculation,
+     .displayEight: specificDisplayCalculation,
+     .displayNine: specificDisplayCalculation
+        //     .restore: nil
+    ]
+}

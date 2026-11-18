@@ -1,0 +1,118 @@
+/// CompoundSnapArea.swift
+
+import Cocoa
+
+enum CompoundSnapArea: Int, Codable {
+    
+    case leftTopBottomHalf = -2, rightTopBottomHalf = -3, thirds = -4, portraitThirdsSide = -5, halves = -6, topSixths = -7, bottomSixths = -8, fourths = -9, portraitTopBottomHalves = -10, topEighths = -11, bottomEighths = -12
+
+    static let all = [leftTopBottomHalf, rightTopBottomHalf, thirds, portraitThirdsSide, halves, topSixths, bottomSixths, fourths, portraitTopBottomHalves, topEighths, bottomEighths]
+    
+    static let leftCompoundCalculation = LeftTopBottomHalfCalculation()
+    static let rightCompoundCalculation = RightTopBottomHalfCalculation()
+    static let thirdsCompoundCalculation = ThirdsCompoundCalculation()
+    static let portraitSideThirdsCalculation = PortraitSideThirdsCompoundCalculation()
+    static let leftRightHalvesCalculation = LeftRightHalvesCompoundCalculation()
+    static let topSixthsCalculation = TopSixthsCompoundCalculation()
+    static let bottomSixthsCalculation = BottomSixthsCompoundCalculation()
+    static let fourthsColumnCalculation = FourthsColumnCompoundCalculation()
+    static let portraitTopBottomCalculation = TopBottomHalvesCalculation()
+    static let topEighthsCalculation = TopEighthsCompoundCalculation()
+    static let bottomEighthsCalculation = BottomEighthsCompoundCalculation()
+
+    var displayName: String {
+        switch self {
+        case .leftTopBottomHalf:
+            return L("Left side, top/bottom side near corners")
+        case .rightTopBottomHalf:
+            return L("Right side, top/bottom side near corners")
+        case .thirds:
+            return L("Thirds, drag toward center for two thirds")
+        case .portraitThirdsSide:
+            return L("Thirds, top/bottom side near corners")
+        case .halves:
+            return L("Left or right side")
+        case .topSixths:
+            return L("Top sixths from corners; maximize")
+        case .bottomSixths:
+            return L("Bottom sixths from corners; thirds")
+        case .fourths:
+            return L("Fourths columns")
+        case .portraitTopBottomHalves:
+            return L("Top/bottoms")
+        case .topEighths:
+            return L("Top eighths from corners; maximize")
+        case .bottomEighths:
+            return L("Bottom eighths from corners; thirds")
+        }
+    }
+    
+    var calculation: CompoundSnapAreaCalculation {
+        switch self {
+        case .leftTopBottomHalf:
+            return Self.leftCompoundCalculation
+        case .rightTopBottomHalf:
+            return Self.rightCompoundCalculation
+        case .thirds:
+            return Self.thirdsCompoundCalculation
+        case .portraitThirdsSide:
+            return Self.portraitSideThirdsCalculation
+        case .halves:
+            return Self.leftRightHalvesCalculation
+        case .topSixths:
+            return Self.topSixthsCalculation
+        case .bottomSixths:
+            return Self.bottomSixthsCalculation
+        case .fourths:
+            return Self.fourthsColumnCalculation
+        case .portraitTopBottomHalves:
+            return Self.portraitTopBottomCalculation
+        case .topEighths:
+            return Self.topEighthsCalculation
+        case .bottomEighths:
+            return Self.bottomEighthsCalculation
+        }
+    }
+    
+    var compatibleDirectionals: [Directional] {
+        switch self {
+        case .leftTopBottomHalf:
+            return [.l]
+        case .rightTopBottomHalf:
+            return [.r]
+        case .thirds:
+            return [.t, .b]
+        case .portraitThirdsSide:
+            return [.l, .r]
+        case .halves:
+            return [.t, .b]
+        case .topSixths:
+            return [.t]
+        case .bottomSixths:
+            return [.b]
+        case .fourths:
+            return [.t, .b]
+        case .portraitTopBottomHalves:
+            return [.l, .r]
+        case .topEighths:
+            return [.t]
+        case .bottomEighths:
+            return [.b]
+        }
+    }
+    
+    var compatibleOrientation: [DisplayOrientation] {
+        switch self {
+        case .leftTopBottomHalf, .rightTopBottomHalf, .halves:
+            return [.portrait, .landscape]
+        case .portraitThirdsSide, .portraitTopBottomHalves:
+            return [.portrait]
+        case .thirds, .topSixths, .bottomSixths, .fourths, .topEighths, .bottomEighths:
+            return [.landscape]
+        }
+    }
+}
+
+protocol CompoundSnapAreaCalculation {
+    func snapArea(cursorLocation: NSPoint, screen: NSScreen, directional: Directional, priorSnapArea: SnapArea?) -> SnapArea?
+}

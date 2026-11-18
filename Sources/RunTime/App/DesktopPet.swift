@@ -1,4 +1,5 @@
 import AppKit
+import WindowKit
 import Carbon.HIToolbox
 import Combine
 import UsageCore
@@ -1856,6 +1857,10 @@ final class PetKeys {
     /// 점검 도구는 키를 실제로 누르지 않아 눌린 것으로 친다.
     static var assumesDown = false
     private static let codes: [UInt16] = [123, 124, 125, 126, 49]
+    /// 창 배치가 ⌃⌥ 방향키를 쓸 때 펫이 물러나는 ⌃⌥⇧ 조합. 창 배치 기본 단축키가 이 자리를 잡지 않게 알린다.
+    static var fallbackKeys: [WindowKey] {
+        codes.map { WindowKey(carbonKeyCode: UInt32($0), carbonModifiers: UInt32(controlKey | optionKey | shiftKey)) }
+    }
 
     /// 지금 그 키가 실제로 눌려 있는지. 수를 세거나 내용을 읽지 않아 권한이 필요 없다.
     static func isDown(_ code: UInt16) -> Bool {

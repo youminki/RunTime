@@ -22,6 +22,17 @@
 	<string>0.8.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.runtime.RunTime.window</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>runtime-window</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>

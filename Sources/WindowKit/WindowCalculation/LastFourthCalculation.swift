@@ -1,0 +1,59 @@
+/// LastFourthCalculation.swift
+
+import Cocoa
+
+class LastFourthCalculation: WindowCalculation, OrientationAware {
+    
+    override func calculate(_ params: WindowCalculationParameters) -> WindowCalculationResult? {
+        calculateAcrossDisplays(params, toNext: true, oppositeAction: .firstFourth, opposite: WindowCalculationFactory.firstFourthCalculation)
+            ?? super.calculate(params)
+    }
+
+    override func calculateRect(_ params: RectCalculationParameters) -> RectResult {
+        let visibleFrameOfScreen = params.visibleFrameOfScreen
+        guard Defaults.subsequentExecutionMode.cyclesThirdsAndFourths(hasAdjacentScreen: params.hasAdjacentScreen),
+            let last = params.lastAction, let lastSubAction = last.subAction else {
+                return orientationBasedRect(visibleFrameOfScreen)
+        }
+        
+        var calculation: WindowCalculation?
+        if last.action == .lastFourth {
+            switch lastSubAction {
+            case .bottomFourth, .rightFourth:
+                calculation = WindowCalculationFactory.thirdFourthCalculation
+            case .centerBottomFourth, .centerRightFourth:
+                calculation = WindowCalculationFactory.secondFourthCalculation
+            case .centerTopFourth, .centerLeftFourth:
+                calculation = WindowCalculationFactory.firstFourthCalculation
+            default:
+                break
+            }
+        } else if last.action == .firstFourth {
+            switch lastSubAction {
+            case .bottomFourth, .rightFourth:
+                calculation = WindowCalculationFactory.thirdFourthCalculation
+            default:
+                break
+            }
+        }
+
+        if let calculation = calculation {
+            return calculation.calculateRect(params)
+        }
+        
+        return orientationBasedRect(visibleFrameOfScreen)
+    }
+
+    func landscapeRect(_ visibleFrameOfScreen: CGRect) -> RectResult {
+        var rect = visibleFrameOfScreen
+        rect.size.width = floor(visibleFrameOfScreen.width / 4.0)
+        rect.origin.x = visibleFrameOfScreen.origin.x + visibleFrameOfScreen.width - rect.width
+        return RectResult(rect, subAction: .rightFourth)
+    }
+    
+    func portraitRect(_ visibleFrameOfScreen: CGRect) -> RectResult {
+        var rect = visibleFrameOfScreen
+        rect.size.height = floor(visibleFrameOfScreen.height / 4.0)
+        return RectResult(rect, subAction: .bottomFourth)
+    }
+}

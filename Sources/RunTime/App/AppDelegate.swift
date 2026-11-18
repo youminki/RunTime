@@ -1,4 +1,5 @@
 import AppKit
+import WindowKit
 import SwiftUI
 import Combine
 import UsageCore
@@ -40,6 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { DesignSync.shared.flush() }
         HangWatch.appWillTerminate()
+    }
+
+    /// runtime-window://execute-action?name=left-half 같은 창 배치 주소 (Rectangle의 rectangle:// 주소와 같은 꼴).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { _ = WindowLayout.shared.open(url) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -266,6 +272,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .removeDuplicates()
             .sink { GlobalHotKey.shared.setEnabled($0) }
             .store(in: &cancellables)
+        WindowLayout.shared.openSettings = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.openSettings(tab: .windows)
+        }
+        WindowLayout.shared.launch()
 
         // 알림을 누르면 그 내용을 볼 수 있는 화면을 연다
         Notifier.shared.onOpen = { [weak self] destination, context in
@@ -453,6 +464,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         add(unseenDesign > 0 ? "디자인 변경 (\(unseenDesign))" : "디자인 변경") { [weak self] in self?.showMain(.design) }
         addHostsMenu(to: menu)
         menu.addItem(.separator())
+        if WindowLayout.shared.enabled {
+            // 따로 둔 메뉴바 아이콘의 메뉴와 같은 것을 하나 더 만든다 (한 메뉴는 한 자리에만 붙는다)
+            let windows = WindowMenu()
+            windows.openSettings = WindowLayout.shared.openSettings
+            windows.openPalette = { WindowPalette.shared.show() }
+            let parent = NSMenuItem(title: "창 배치", action: nil, keyEquivalent: "")
+            parent.submenu = windows.menu
+            parent.representedObject = windows
+            menu.addItem(parent)
+        }
         add("러너와 게임") { [weak self] in self?.showMain(.runners) }
         add(DesktopPet.shared.isShown ? "펫 넣기" : "펫 꺼내기 (화면에서 돌아다니기)") { DesktopPet.shared.toggle() }
         menu.addItem(.separator())

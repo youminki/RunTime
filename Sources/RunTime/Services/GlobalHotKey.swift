@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import WindowKit
 
 /// 어느 앱을 쓰고 있든 단축키(기본 ⌃⌥U)로 사용량 창을 연다. Carbon 단축키는 손쉬운 사용 권한 없이 동작한다.
 /// 기본은 다른 앱 단축키와 겹치지 않도록 잘 쓰지 않는 control+option 조합이고, 설정에서 바꿀 수 있다.
@@ -58,7 +59,11 @@ final class GlobalHotKey {
     /// 새 조합을 저장하고, 켜져 있으면 바로 다시 등록한다.
     func setCombo(_ combo: Combo) {
         self.combo = combo
-        defer { setQuickAdd(quickEnabled) }   // 사용량 단축키를 ⌃⌥L로 바꾸면 한 줄 적기를 비킨다
+        defer {
+            setQuickAdd(quickEnabled)   // 사용량 단축키를 ⌃⌥L로 바꾸면 한 줄 적기를 비킨다
+            // 창 배치 기본 단축키 가운데 새 조합과 겹치는 것은 비우고, 더는 겹치지 않는 것은 되돌린다
+            WindowControl.shared.reservedKeysChanged()
+        }
         let defaults = UserDefaults.standard
         defaults.set(Int(combo.keyCode), forKey: Key.code)
         defaults.set(Int(combo.modifiers), forKey: Key.modifiers)
@@ -150,34 +155,7 @@ extension GlobalHotKey.Combo {
     }
 
     /// 키 이름은 입력기와 상관없이 자판 자리로 정한다 (한글 입력 중에도 U가 'ㅕ'로 보이지 않게).
-    static func keyName(_ code: UInt16) -> String? {
-        if let name = names[Int(code)] { return name }
-        return nil
-    }
-
-    private static let names: [Int: String] = {
-        var map: [Int: String] = [
-            kVK_Space: "Space", kVK_Return: "↩", kVK_Tab: "⇥", kVK_Delete: "⌫", kVK_ForwardDelete: "⌦",
-            kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_UpArrow: "↑", kVK_DownArrow: "↓",
-            kVK_Home: "↖", kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟",
-            kVK_F1: "F1", kVK_F2: "F2", kVK_F3: "F3", kVK_F4: "F4", kVK_F5: "F5", kVK_F6: "F6",
-            kVK_F7: "F7", kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10", kVK_F11: "F11", kVK_F12: "F12",
-        ]
-        let ansi: [(Int, String)] = [
-            (kVK_ANSI_A, "A"), (kVK_ANSI_B, "B"), (kVK_ANSI_C, "C"), (kVK_ANSI_D, "D"), (kVK_ANSI_E, "E"),
-            (kVK_ANSI_F, "F"), (kVK_ANSI_G, "G"), (kVK_ANSI_H, "H"), (kVK_ANSI_I, "I"), (kVK_ANSI_J, "J"),
-            (kVK_ANSI_K, "K"), (kVK_ANSI_L, "L"), (kVK_ANSI_M, "M"), (kVK_ANSI_N, "N"), (kVK_ANSI_O, "O"),
-            (kVK_ANSI_P, "P"), (kVK_ANSI_Q, "Q"), (kVK_ANSI_R, "R"), (kVK_ANSI_S, "S"), (kVK_ANSI_T, "T"),
-            (kVK_ANSI_U, "U"), (kVK_ANSI_V, "V"), (kVK_ANSI_W, "W"), (kVK_ANSI_X, "X"), (kVK_ANSI_Y, "Y"),
-            (kVK_ANSI_Z, "Z"), (kVK_ANSI_0, "0"), (kVK_ANSI_1, "1"), (kVK_ANSI_2, "2"), (kVK_ANSI_3, "3"),
-            (kVK_ANSI_4, "4"), (kVK_ANSI_5, "5"), (kVK_ANSI_6, "6"), (kVK_ANSI_7, "7"), (kVK_ANSI_8, "8"),
-            (kVK_ANSI_9, "9"), (kVK_ANSI_Minus, "-"), (kVK_ANSI_Equal, "="), (kVK_ANSI_LeftBracket, "["),
-            (kVK_ANSI_RightBracket, "]"), (kVK_ANSI_Semicolon, ";"), (kVK_ANSI_Quote, "'"), (kVK_ANSI_Comma, ","),
-            (kVK_ANSI_Period, "."), (kVK_ANSI_Slash, "/"), (kVK_ANSI_Backslash, "\\"), (kVK_ANSI_Grave, "`"),
-        ]
-        for (code, name) in ansi { map[code] = name }
-        return map
-    }()
+    static func keyName(_ code: UInt16) -> String? { KeyName.name(Int(code)) }
 }
 
 /// 설정 화면에서 새 단축키를 기록한다. `@State`를 못 써서(HoverFlag 참고) 관찰 객체로 둔다.

@@ -1,0 +1,527 @@
+/// TodoManager.swift
+
+import Cocoa
+import Carbon.HIToolbox
+
+class TodoManager {
+    private static var todoWindowId: CGWindowID?
+    private static var shortcutBindingsSessionActive = true
+
+    static var todoScreen : NSScreen?
+    static let toggleDefaultsKey = "toggleTodo"
+    static let reflowDefaultsKey = "reflowTodo"
+    static let defaultsKeys = [toggleDefaultsKey, reflowDefaultsKey]
+    private static var shortcutBindingsSuspended = false
+    private static var displayChangeReflow: TodoDisplayChangeReflow?
+
+    /// Keeps the Todo layout in step with display changes for as long as the
+    /// app runs. Starting it again is a no-op.
+    static func startReflowOnDisplayChanges() {
+        guard displayChangeReflow == nil else { return }
+        displayChangeReflow = TodoDisplayChangeReflow()
+    }
+    
+    static func setTodoMode(_ enabled: Bool, _ bringToFront: Bool = true) {
+        Defaults.todoMode.enabled = enabled
+        registerUnregisterReflowShortcut()
+        moveAllIfNeeded(bringToFront)
+    }
+
+    static func initToggleShortcut() {
+        if WindowDefaults.store.dictionary(forKey: toggleDefaultsKey) == nil {
+            guard let dictTransformer = ValueTransformer(forName: NSValueTransformerName(rawValue: MASDictionaryTransformerName)) else { return }
+            
+            let toggleShortcut = MASShortcut(keyCode: kVK_ANSI_B,
+                                             modifierFlags: [NSEvent.ModifierFlags.control, NSEvent.ModifierFlags.option])
+            let toggleShortcutDict = dictTransformer.reverseTransformedValue(toggleShortcut)
+            WindowDefaults.store.set(toggleShortcutDict, forKey: toggleDefaultsKey)
+        }
+    }
+    
+    static func initReflowShortcut() {
+        if WindowDefaults.store.dictionary(forKey: reflowDefaultsKey) == nil {
+            guard let dictTransformer = ValueTransformer(forName: NSValueTransformerName(rawValue: MASDictionaryTransformerName)) else { return }
+            
+            let reflowShortcut = MASShortcut(keyCode: kVK_ANSI_N,
+                                             modifierFlags: [NSEvent.ModifierFlags.control, NSEvent.ModifierFlags.option])
+            let reflowShortcutDict = dictTransformer.reverseTransformedValue(reflowShortcut)
+            WindowDefaults.store.set(reflowShortcutDict, forKey: reflowDefaultsKey)
+        }
+    }
+    
+    private static func registerToggleShortcut() {
+        guard isTodoShortcutBindable(toggleDefaultsKey) else {
+            unregisterToggleShortcut()
+            return
+        }
+
+        MASShortcutBinder.shared()?.bindShortcut(withDefaultsKey: toggleDefaultsKey, toAction: {
+            let enabled = !Defaults.todoMode.enabled
+            setTodoMode(enabled)
+        })
+    }
+    
+    private static func registerReflowShortcut() {
+        guard isTodoShortcutBindable(reflowDefaultsKey) else {
+            unregisterReflowShortcut()
+            return
+        }
+
+        MASShortcutBinder.shared()?.bindShortcut(withDefaultsKey: reflowDefaultsKey, toAction: {
+            moveAll()
+        })
+    }
+    
+    private static func unregisterToggleShortcut() {
+        MASShortcutBinder.shared()?.breakBinding(withDefaultsKey: toggleDefaultsKey)
+    }
+    
+    private static func unregisterReflowShortcut() {
+        MASShortcutBinder.shared()?.breakBinding(withDefaultsKey: reflowDefaultsKey)
+    }
+    
+    static func registerUnregisterToggleShortcut() {
+        if Defaults.todo.userEnabled && shortcutBindingsSessionActive && !shortcutBindingsSuspended {
+            registerToggleShortcut()
+        } else {
+            unregisterToggleShortcut()
+        }
+    }
+    
+    static func registerUnregisterReflowShortcut() {
+        if Defaults.todo.userEnabled && Defaults.todoMode.enabled && shortcutBindingsSessionActive && !shortcutBindingsSuspended {
+            registerReflowShortcut()
+        } else {
+            unregisterReflowShortcut()
+        }
+    }
+
+    static func setShortcutBindingsSessionActive(_ isActive: Bool) {
+        guard shortcutBindingsSessionActive != isActive else { return }
+
+        shortcutBindingsSessionActive = isActive
+        unregisterToggleShortcut()
+        unregisterReflowShortcut()
+
+        if isActive {
+            registerUnregisterToggleShortcut()
+            registerUnregisterReflowShortcut()
+        }
+    }
+
+    static func setShortcutBindingsSuspended(_ suspended: Bool) {
+        guard shortcutBindingsSuspended != suspended else { return }
+        shortcutBindingsSuspended = suspended
+        registerUnregisterToggleShortcut()
+        registerUnregisterReflowShortcut()
+    }
+
+    private static func isTodoShortcutBindable(_ defaultsKey: String) -> Bool {
+        guard let shortcut = shortcut(for: defaultsKey) else { return true }
+        return AppShortcutConflict.conflict(for: shortcut, ignoringDefaultsKey: defaultsKey) == nil
+    }
+
+    private static func shortcut(for defaultsKey: String, userDefaults: UserDefaults = WindowDefaults.store) -> MASShortcut? {
+        guard
+            let shortcutDict = userDefaults.dictionary(forKey: defaultsKey),
+            let dictTransformer = ValueTransformer(forName: NSValueTransformerName(rawValue: MASDictionaryTransformerName)),
+            let shortcut = dictTransformer.transformedValue(shortcutDict) as? MASShortcut
+        else {
+            return nil
+        }
+        return shortcut
+    }
+
+    static func getToggleKeyDisplay() -> (String?, NSEvent.ModifierFlags)? {
+        guard let shortcut = shortcut(for: toggleDefaultsKey) else { return nil }
+        return (shortcut.keyCodeStringForKeyEquivalent, shortcut.modifierFlags)
+    }
+    
+    static func getReflowKeyDisplay() -> (String?, NSEvent.ModifierFlags)? {
+        guard let shortcut = shortcut(for: reflowDefaultsKey) else { return nil }
+        return (shortcut.keyCodeStringForKeyEquivalent, shortcut.modifierFlags)
+    }
+    
+    private static func getTodoWindowElement() -> AccessibilityElement? {
+        guard let bundleId = Defaults.todoApplication.value, let windowElements = AccessibilityElement(bundleId)?.windowElements else {
+            todoWindowId = nil
+            return nil
+        }
+        if let windowId = todoWindowId, !(windowElements.contains { $0.windowId == windowId }) {
+            todoWindowId = nil
+        }
+        if todoWindowId == nil {
+            todoWindowId = windowElements.first?.windowId
+        }
+        if let windowId = todoWindowId, let windowElement = (windowElements.first { $0.windowId == windowId }) {
+            return windowElement
+        }
+        todoWindowId = nil
+        return nil
+    }
+    
+    static func hasTodoWindow() -> Bool {
+        return getTodoWindowElement() != nil
+    }
+    
+    static func isTodoWindowFront() -> Bool {
+        guard let windowElement = AccessibilityElement.getFrontWindowElement() else { return false }
+        return isTodoWindow(windowElement)
+    }
+    
+    static func isTodoWindow(_ windowElement: AccessibilityElement) -> Bool {
+        guard let windowId = windowElement.windowId else { return false }
+        return isTodoWindow(windowId)
+    }
+    
+    static func isTodoWindow(_ windowId: CGWindowID) -> Bool {
+        return getTodoWindowElement()?.windowId == windowId
+    }
+
+    static func getTodoWindowId() -> CGWindowID? {
+        return getTodoWindowElement()?.windowId
+    }
+    
+    static func resetTodoWindow() {
+        todoWindowId = nil
+        _ = getTodoWindowElement()
+    }
+    
+    static func moveAll(_ bringToFront: Bool = true) {
+        TodoManager.refreshTodoScreen()
+
+        let pid = ProcessInfo.processInfo.processIdentifier
+        // Avoid footprint window
+        let windows = AccessibilityElement.getAllWindowElements().filter { $0.pid != pid }
+
+        if let todoWindow = getTodoWindowElement() {
+            if let screen = TodoManager.todoScreen {
+                let sd = ScreenDetection()
+                var adjustedVisibleFrame = screen.adjustedVisibleFrame()
+                // Clear all windows from the todo app sidebar
+                for w in windows {
+                    let wScreen = sd.detectScreens(using: w)?.currentScreen
+                    if w.getWindowId() != todoWindow.getWindowId() &&
+                        wScreen == TodoManager.todoScreen {
+                        shiftWindowOffSidebar(w, screenVisibleFrame: adjustedVisibleFrame)
+                    }
+                }
+
+                adjustedVisibleFrame = screen.adjustedVisibleFrame(true)
+                moveTodoWindow(todoWindow, screenVisibleFrame: adjustedVisibleFrame)
+            }
+
+            if bringToFront {
+                todoWindow.bringToFront()
+            }
+        }
+    }
+
+    static func moveTodoWindow(_ todoWindow: AccessibilityElement,
+                               screenVisibleFrame: CGRect,
+                               primaryScreenMaxY: CGFloat = NSScreen.screens[0].frame.maxY) {
+        let sidebarWidth = getSidebarWidth(visibleFrameWidth: screenVisibleFrame.width)
+        let isRightSide = Defaults.todoSidebarSide.value == .right
+        let sharedEdge: Edge = isRightSide ? .left : .right
+        var rect = screenVisibleFrame
+
+        if isRightSide {
+            rect.origin.x = screenVisibleFrame.maxX - sidebarWidth
+        }
+        rect.size.width = sidebarWidth
+
+        // Accessibility coordinates are relative to the primary display, even on other displays.
+        rect = rect.screenFlipped(primaryScreenMaxY: primaryScreenMaxY)
+
+        if Defaults.gapSize.value > 0 {
+            rect = GapCalculation.applyGaps(rect, sharedEdges: sharedEdge, gapSize: Defaults.gapSize.value)
+        }
+        todoWindow.setFrame(rect)
+        keepOnScreen(todoWindow, placedIn: rect,
+                     visibleFrame: screenVisibleFrame.screenFlipped(primaryScreenMaxY: primaryScreenMaxY),
+                     isRightSide: isRightSide)
+    }
+
+    /// An app can refuse a size below its minimum, which left a right-side Todo
+    /// window extending past the screen edge (#1307). Keep the size the app
+    /// accepted, align it with the outer edge of its zone (ClampedWindowAligner's
+    /// rule for the other actions) and keep it on screen with the position-only
+    /// write BestEffortWindowMover uses.
+    private static func keepOnScreen(_ todoWindow: AccessibilityElement, placedIn zone: CGRect,
+                                     visibleFrame: CGRect, isRightSide: Bool) {
+        let achieved = todoWindow.frame
+        let tolerance = ClampedWindowAligner.alignmentTolerance
+        guard !achieved.isNull,
+              achieved.width > zone.width + tolerance || achieved.height > zone.height + tolerance
+        else { return }
+
+        var corrected = achieved
+        if achieved.width > zone.width + tolerance {
+            corrected.origin.x = isRightSide ? zone.maxX - achieved.width : zone.minX
+        }
+        corrected = WindowFrameBounds.constrained(corrected, to: visibleFrame, gap: CGFloat(Defaults.gapSize.value))
+        // constrained favours the far edge of a window that cannot fit. Keep the
+        // leading edges, where the title bar is, on screen instead.
+        corrected.origin.x = max(corrected.minX, visibleFrame.minX)
+        corrected.origin.y = max(corrected.minY, visibleFrame.minY)
+        guard corrected.origin != achieved.origin else { return }
+
+        Logger.log("Todo window kept \(achieved.size.debugDescription) instead of \(zone.size.debugDescription), moving it to \(corrected.origin.debugDescription)")
+        todoWindow.setImmediateFrame(corrected, from: achieved, sizeFirst: false)
+    }
+    
+    static func getSidebarWidth(visibleFrameWidth: CGFloat) -> CGFloat {
+        var sidebarWidth = Defaults.todoSidebarWidth.cgFloat
+        
+        if sidebarWidth > 0 && sidebarWidth <= 1 {
+            sidebarWidth = sidebarWidth * visibleFrameWidth
+        } else if Defaults.todoSidebarWidthUnit.value == .pct {
+            sidebarWidth = convert(width: sidebarWidth, toUnit: .pixels, visibleFrameWidth: visibleFrameWidth)
+        }
+        
+        return sidebarWidth
+    }
+    
+    static func changeSidebarWidthUnit(to unit: TodoSidebarWidthUnit) {
+        if let visibleFrameWidth = TodoManager.todoScreen?.adjustedVisibleFrame(true).width {
+            let newValue = TodoManager.convert(width: Defaults.todoSidebarWidth.cgFloat, toUnit: unit, visibleFrameWidth: visibleFrameWidth)
+            Defaults.todoSidebarWidth.value = Float(newValue)
+        }
+    }
+    
+    static func convert(width: CGFloat, toUnit unit: TodoSidebarWidthUnit, visibleFrameWidth: CGFloat) -> CGFloat {
+        unit == .pixels
+        ? ((width * 0.01) * visibleFrameWidth).rounded()
+        : ((width / visibleFrameWidth) * 100).rounded()
+    }
+    
+    static func moveAllIfNeeded(_ bringToFront: Bool = true) {
+        guard !WindowRuntime.paused, Defaults.todo.userEnabled && Defaults.todoMode.enabled else { return }
+        moveAll(bringToFront)
+    }
+    
+    static func refreshTodoScreen() {
+        let todoWindow = getTodoWindowElement()
+        let screens = ScreenDetection().detectScreens(using: todoWindow)
+        TodoManager.todoScreen = screens?.currentScreen
+    }
+    
+    private static func shiftWindowOffSidebar(_ w: AccessibilityElement, screenVisibleFrame: CGRect) {
+        var rect = w.frame
+        let halfGapWidth = CGFloat(Defaults.gapSize.value) / 2
+        let screenVisibleFrameMinX = screenVisibleFrame.minX + halfGapWidth
+        let screenVisibleFrameMaxX = screenVisibleFrame.maxX - halfGapWidth
+
+        if Defaults.todoSidebarSide.value == .left && rect.minX < screenVisibleFrameMinX {
+            // Shift it to the right
+            rect.origin.x = min(screenVisibleFrameMaxX - rect.width, screenVisibleFrameMinX)
+            
+            // If it's still too wide, scale it down
+            if rect.minX < screenVisibleFrameMinX {
+                let widthDiff = screenVisibleFrameMinX - rect.minX
+                rect.origin.x += widthDiff
+                rect.size.width -= widthDiff
+            }
+            
+            w.setFrame(rect)
+        } else if Defaults.todoSidebarSide.value == .right && rect.maxX > screenVisibleFrameMaxX {
+            // Shift it to the left
+            rect.origin.x = min(rect.minX, max(screenVisibleFrameMinX, screenVisibleFrameMaxX - rect.width))
+            
+            // If it's still too wide, scale it down
+            if rect.maxX > screenVisibleFrameMaxX {
+                rect.size.width -= rect.maxX - screenVisibleFrameMaxX
+            }
+            
+            w.setFrame(rect)
+        }
+    }
+    
+    static func execute(parameters: ExecutionParameters) -> Bool {
+        if [.leftTodo, .rightTodo].contains(parameters.action) {
+            moveAll(!parameters.preservesFocus)
+            return true
+        }
+        return false
+    }
+}
+
+struct AppShortcutConflict {
+
+    let shortcutName: String
+
+    static func conflict(for shortcut: MASShortcut,
+                         ignoringDefaultsKey ignoredDefaultsKey: String,
+                         userDefaults: UserDefaults = WindowDefaults.store) -> AppShortcutConflict? {
+        let identity = ShortcutCycle.ShortcutIdentity(shortcut)
+
+        for action in WindowAction.active {
+            guard let actionShortcut = ShortcutCycle.shortcut(for: action, userDefaults: userDefaults),
+                  ShortcutCycle.ShortcutIdentity(actionShortcut) == identity
+            else { continue }
+
+            return AppShortcutConflict(shortcutName: action.displayName ?? action.name)
+        }
+
+        let appShortcutDefaultsKeys = TodoManager.defaultsKeys + StackBadgeManager.defaultsKeys
+        for defaultsKey in appShortcutDefaultsKeys where defaultsKey != ignoredDefaultsKey {
+            guard let appShortcut = ShortcutCycle.shortcut(forDefaultsKey: defaultsKey, userDefaults: userDefaults),
+                  ShortcutCycle.ShortcutIdentity(appShortcut) == identity
+            else { continue }
+
+            return AppShortcutConflict(shortcutName: displayName(forDefaultsKey: defaultsKey))
+        }
+
+        return nil
+    }
+
+    private static func displayName(forDefaultsKey defaultsKey: String) -> String {
+        switch defaultsKey {
+        case TodoManager.toggleDefaultsKey:
+            return L("Toggle Todo")
+        case TodoManager.reflowDefaultsKey:
+            return L("Reflow Todo")
+        case StackBadgeManager.toggleDefaultsKey:
+            return L("Toggle stacked window badge")
+        default:
+            return defaultsKey
+        }
+    }
+}
+
+class AppShortcutValidator: MASShortcutValidator {
+
+    private let defaultsKey: String
+    private let userDefaults: UserDefaults
+
+    init(defaultsKey: String, userDefaults: UserDefaults = WindowDefaults.store) {
+        self.defaultsKey = defaultsKey
+        self.userDefaults = userDefaults
+        super.init()
+    }
+
+    override func isShortcutValid(_ shortcut: MASShortcut!) -> Bool {
+        guard super.isShortcutValid(shortcut) else { return false }
+
+        // Preserve previous behavior by rejecting Rectangle-internal conflicts quietly,
+        // without routing them through MASShortcut's "already used" alert.
+        return AppShortcutConflict.conflict(for: shortcut,
+                                            ignoringDefaultsKey: defaultsKey,
+                                            userDefaults: userDefaults) == nil
+    }
+
+    override func isShortcutAlreadyTaken(bySystem shortcut: MASShortcut!,
+                                         explanation: AutoreleasingUnsafeMutablePointer<NSString?>!) -> Bool {
+        return super.isShortcutAlreadyTaken(bySystem: shortcut, explanation: explanation)
+    }
+}
+
+typealias TodoShortcutConflict = AppShortcutConflict
+typealias TodoShortcutValidator = AppShortcutValidator
+
+enum TodoSidebarSide: Int, CaseIterable {
+    case right = 1
+    case left = 2
+    
+    var title: String {
+        switch self {
+        // Own keys: "Left" and "Right" alone name the Left/Right Half actions.
+        case .left: return L("Todo Side Left", defaultValue: "Left", comment: "Todo side option: the Todo app sits on the left side of the screen")
+        case .right: return L("Todo Side Right", defaultValue: "Right", comment: "Todo side option: the Todo app sits on the right side of the screen")
+        }
+    }
+}
+
+enum TodoSidebarWidthUnit: Int, CaseIterable, CustomStringConvertible {
+    case pixels = 1
+    case pct = 2
+    
+    var description: String {
+        switch self {
+        case .pixels: return L("px")
+        case .pct: return L("%")
+        }
+    }
+}
+
+/// Reflows Todo mode after the display configuration changes (#764).
+///
+/// Connecting or disconnecting a display, or changing an arrangement or a
+/// resolution, posts a burst of screen-parameter notifications, after which
+/// the Todo window tends to sit on the wrong display or at the wrong size.
+/// Once the burst settles, the reflow the Reflow Todo command performs runs,
+/// without bringing the Todo window forward. Nothing happens while Todo mode
+/// is off, and nothing happens for notifications that leave the layout as it
+/// was at the last reflow.
+final class TodoDisplayChangeReflow {
+
+    struct ScreenLayout: Equatable {
+        let frames: [CGRect]
+        let visibleFrames: [CGRect]
+
+        static var current: ScreenLayout {
+            ScreenLayout(frames: NSScreen.screens.map(\.frame), visibleFrames: NSScreen.screens.map(\.visibleFrame))
+        }
+    }
+
+    /// How long the screen parameters must stay quiet before the reflow.
+    static let settleDelay: TimeInterval = 1.0
+
+    private let notificationCenter: NotificationCenter
+    private let delay: TimeInterval
+    private let layout: () -> ScreenLayout
+    private let reflow: () -> Void
+    private let schedule: (TimeInterval, DispatchWorkItem) -> Void
+    private var observer: NSObjectProtocol?
+    private var pending: DispatchWorkItem?
+    private var lastLayout: ScreenLayout
+    private var layoutChanged = false
+
+    init(notificationCenter: NotificationCenter = .default,
+         delay: TimeInterval = TodoDisplayChangeReflow.settleDelay,
+         layout: @escaping () -> ScreenLayout = { .current },
+         reflow: @escaping () -> Void = { TodoManager.moveAllIfNeeded(false) },
+         schedule: @escaping (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+         }) {
+        self.notificationCenter = notificationCenter
+        self.delay = delay
+        self.layout = layout
+        self.reflow = reflow
+        self.schedule = schedule
+        lastLayout = layout()
+        observer = notificationCenter.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                                  object: nil, queue: .main) { [weak self] _ in
+            self?.screenParametersDidChange()
+        }
+    }
+
+    deinit {
+        pending?.cancel()
+        if let observer {
+            notificationCenter.removeObserver(observer)
+        }
+    }
+
+    private func screenParametersDidChange() {
+        // A display that is unplugged and plugged back in before the burst
+        // settles ends with the old layout, but macOS has moved windows meanwhile.
+        if layout() != lastLayout {
+            layoutChanged = true
+        }
+        pending?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.settled() }
+        pending = work
+        schedule(delay, work)
+    }
+
+    private func settled() {
+        pending = nil
+        // AppKit can report stale visible frames at notification time (#467),
+        // so the layout is checked again now that the burst has settled.
+        guard layoutChanged || layout() != lastLayout else { return }
+        layoutChanged = false
+        lastLayout = layout()
+        reflow()
+    }
+}

@@ -5,6 +5,7 @@ import HostsCore
 import ReportCore
 import UsageCore
 import WorkLogCore
+import WindowKit
 
 LegacyMigration.run()
 
@@ -184,6 +185,81 @@ if let index = CommandLine.arguments.firstIndex(of: "--game-shots") {
         }
     }
     dispatchMain()
+}
+
+// 창 배치 점검 (`--window-check`). 자기 창을 손쉬운 사용 API로 옮기면 메인 스레드가 멈춰 대상 창은 자식 프로세스로 띄운다
+if CommandLine.arguments.contains("--window-check-target") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    var windows: [NSWindow] = []
+    func open(_ title: String, at origin: NSPoint) {
+        let window = NSWindow(contentRect: NSRect(origin: origin, size: NSSize(width: 520, height: 380)),
+                              styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
+        window.title = title
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+        windows.append(window)
+    }
+    // 바둑판 배열과 포커스 옮기기는 창이 둘이어야 볼 수 있다. 새 창 자동 배치는 SIGUSR1로 연 창으로 본다
+    open("RunTime 창 배치 점검 2", at: NSPoint(x: 260, y: 160))
+    open("RunTime 창 배치 점검", at: NSPoint(x: 200, y: 200))
+    signal(SIGUSR1, SIG_IGN)
+    let newWindow = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+    newWindow.setEventHandler { open("RunTime 새 창", at: NSPoint(x: 300, y: 260)) }
+    newWindow.resume()
+    // 점검하던 쪽이 죽으면 함께 끝난다 (창이 화면에 남지 않게)
+    let parent = getppid()
+    Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in if getppid() != parent { exit(0) } }
+    app.activate(ignoringOtherApps: true)
+    app.run()
+}
+// 창 배치 단축키가 RunTime 단축키·펫·macOS 시스템 단축키와 겹치는지 본다 (두 묶음 모두)
+if CommandLine.arguments.contains("--window-keys-audit") {
+    let control = WindowControl.shared
+    control.reservedKeys = { WindowLayout.reservedKeys }
+    var others: [(String, WindowKey)] = [
+        ("RunTime 사용량 열기", WindowKey(carbonKeyCode: GlobalHotKey.shared.combo.keyCode, carbonModifiers: GlobalHotKey.shared.combo.modifiers)),
+        ("RunTime 한 줄 적기", WindowKey(carbonKeyCode: GlobalHotKey.quickCombo.keyCode, carbonModifiers: GlobalHotKey.quickCombo.modifiers)),
+        ("명령 찾기", WindowPalette.defaultKey),
+    ]
+    others += PetKeys.fallbackKeys.map { ("펫 (창 배치를 켰을 때)", $0) }
+    others += SystemHotKeys.enabled().map { ("macOS: " + $0.name, $0.key) }
+    var problems = 0
+    for preset in WindowKeyPreset.allCases {
+        let keys = control.effectiveKeys(preset: preset)
+        print("▸ \(preset.title): 명령 \(keys.count)개")
+        for (title, key) in keys {
+            for (other, otherKey) in others where otherKey == key {
+                print("  ✗ \(key.label)  \(title)  ↔  \(other)")
+                problems += 1
+            }
+        }
+        var seen: [WindowKey: String] = [:]
+        for (title, key) in keys {
+            if let first = seen[key] { print("  · \(key.label)  \(first) / \(title) (번갈아 하기)") } else { seen[key] = title }
+        }
+    }
+    print(problems == 0 ? "겹치는 단축키 없음" : "겹치는 단축키 \(problems)개")
+    exit(problems == 0 ? 0 : 1)
+}
+
+if CommandLine.arguments.contains("--window-check") {
+    // 점검은 이 Mac의 창 배치 설정(배치·실행 모드·여백)을 건드리지 않게 따로 둔 저장소를 쓴다
+    setenv("RUNTIME_WINDOW_DEFAULTS", "dev.runtime.RunTime.window.check", 0)
+    _ = NSApplication.shared
+    let target = Process()
+    target.executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+    target.arguments = ["--window-check-target"]
+    try? target.run()
+    defer { target.terminate() }
+    var lines = WindowCheck.run(pid: target.processIdentifier)
+    // 단축키 처리기와 끌어다 붙이기까지 보려면 input을 붙인다 (마우스 포인터가 잠깐 움직인다)
+    if CommandLine.arguments.contains("input") { lines += WindowCheck.runInput(pid: target.processIdentifier) }
+    lines += WindowCheck.runFeatures(pid: target.processIdentifier)
+    lines += WindowCheck.measure(extra: WindowLayoutSettingsView.extraSlots)
+    for line in lines { print(line.ok ? "✓" : "✗", line.name, "·", line.detail) }
+    target.terminate()
+    exit(lines.allSatisfy(\.ok) ? 0 : 1)
 }
 
 // README용: 고스트와 겨루는 게임 장면을 이어 찍어 PNG로 저장하고 종료.
@@ -678,6 +754,7 @@ if CommandLine.arguments.contains("--diagnose") {
 }
 
 if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
+    setenv("RUNTIME_WINDOW_DEFAULTS", "dev.runtime.RunTime.window.check", 0)
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "ui-shots"
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)

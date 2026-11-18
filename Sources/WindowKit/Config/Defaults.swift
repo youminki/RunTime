@@ -1,0 +1,655 @@
+/// Defaults.swift
+
+import Cocoa
+
+class Defaults {
+    static let launchOnLogin = BoolDefault(key: "launchOnLogin")
+    static let disabledApps = JSONDefault<Set<String>>(key: "disabledApps")
+    static let hideMenuBarIcon = BoolDefault(key: "hideMenubarIcon")
+    static let alternateDefaultShortcuts = BoolDefault(key: "alternateDefaultShortcuts") // switch to magnet defaults
+    static let subsequentExecutionMode = SubsequentExecutionDefault()
+    static let tileColumnsMaxWindows = PositiveIntDefault(key: "tileColumnsMaxWindows", defaultValue: 3)
+    static let tileRowsMaxWindows = PositiveIntDefault(key: "tileRowsMaxWindows", defaultValue: 3)
+    static let selectedCycleSizes = CycleSizesDefault()
+    static let cycleSizesIsChanged = BoolDefault(key: "cycleSizesIsChanged")
+    static let cornerCycleExpansionAxis = IntEnumDefault<CornerCycleExpansionAxis>(key: "cornerCycleExpansionAxis", defaultValue: .horizontal)
+    static let cooperativeCornerResize = BoolDefault(key: "cooperativeCornerResize")
+    static let experimentalWindowAnimations = BoolDefault(key: "experimentalWindowAnimations")
+    static let showMinimumWindowSizeWarning = OptionalBoolDefault(key: "showMinimumWindowSizeWarning")
+    static let allowAnyShortcut = BoolDefault(key: "allowAnyShortcut")
+    static let windowSnapping = OptionalBoolDefault(key: "windowSnapping")
+    static let almostMaximizeHeight = FloatDefault(key: "almostMaximizeHeight")
+    static let almostMaximizeWidth = FloatDefault(key: "almostMaximizeWidth")
+    static let gapSize = FloatDefault(key: "gapSize")
+    static let skipGapTopEdge = BoolDefault(key: "skipGapTopEdge")
+    static let snapBeforeReachingEdges = DoubleDefault(key: "snapBeforeReachingEdges")
+
+    static let snapEdgeMarginTop = FloatDefault(key: "snapEdgeMarginTop", defaultValue: 5)
+    static let snapEdgeMarginBottom = FloatDefault(key: "snapEdgeMarginBottom", defaultValue: 5)
+    static let snapEdgeMarginLeft = FloatDefault(key: "snapEdgeMarginLeft", defaultValue: 5)
+    static let snapEdgeMarginRight = FloatDefault(key: "snapEdgeMarginRight", defaultValue: 5)
+    static let centeredDirectionalMove = OptionalBoolDefault(key: "centeredDirectionalMove")
+    static let resizeOnDirectionalMove = BoolDefault(key: "resizeOnDirectionalMove")
+    static let halvesPreserveOtherAxisSize = BoolDefault(key: "halvesPreserveOtherAxisSize")
+    static let repeatedMaximizeRestoresPrevious = BoolDefault(key: "repeatedMaximizeRestoresPrevious")
+    static let moveFixedSizeToEdge = IntEnumDefault<EdgeAlignment>(key: "moveFixedSizeToEdge", defaultValue: .edgesAndCorners)
+    static let ignoredSnapAreas = IntDefault(key: "ignoredSnapAreas")
+    static let traverseSingleScreen = OptionalBoolDefault(key: "traverseSingleScreen")
+    static let thirdsAndFourthsAcrossDisplays = OptionalBoolDefault(key: "thirdsAndFourthsAcrossDisplays")
+    static let useCursorScreenDetection = BoolDefault(key: "useCursorScreenDetection")
+    static let minimumWindowWidth = DoubleDefault(key: "minimumWindowWidth", defaultValue: 0.25)
+    static let minimumWindowHeight = DoubleDefault(key: "minimumWindowHeight", defaultValue: 0.25)
+    static let sizeOffset = FloatDefault(key: "sizeOffset")
+    static let widthStepSize = FloatDefault(key: "widthStepSize", defaultValue: 30)
+    static let unsnapRestore = OptionalBoolDefault(key: "unsnapRestore")
+    static let unsnapRestoreFromSizeChange = OptionalBoolDefault(key: "unsnapRestoreFromSizeChange")
+    static let curtainChangeSize = OptionalBoolDefault(key: "curtainChangeSize")
+    static let smallerShrinksMaximizedHeight = BoolDefault(key: "smallerShrinksMaximizedHeight")
+    static let relaunchOpensMenu = BoolDefault(key: "relaunchOpensMenu")
+    static let obtainWindowOnClick = OptionalBoolDefault(key: "obtainWindowOnClick")
+    static let screenEdgeGapTop = FloatDefault(key: "screenEdgeGapTop", defaultValue: 0)
+    static let screenEdgeGapBottom = FloatDefault(key: "screenEdgeGapBottom", defaultValue: 0)
+    static let screenEdgeGapLeft = FloatDefault(key: "screenEdgeGapLeft", defaultValue: 0)
+    static let screenEdgeGapRight = FloatDefault(key: "screenEdgeGapRight", defaultValue: 0)
+    static let screenEdgeGapsOnMainScreenOnly = BoolDefault(key: "screenEdgeGapsOnMainScreenOnly")
+    static let screenEdgeGapTopNotch = DoubleDefault(key: "screenEdgeGapTopNotch", defaultValue: -1)
+    static let ignoreMenuBar = OptionalBoolDefault(key: "ignoreMenuBar")
+    static let lastVersion = StringDefault(key: "lastVersion")
+    static let installVersion = StringDefault(key: "installVersion")
+    static let showAllActionsInMenu = OptionalBoolDefault(key: "showAllActionsInMenu")
+    static let showAdditionalSizesInMenu = OptionalBoolDefault(key: "showAdditionalSizesInMenu")
+    static var SUHasLaunchedBefore: Bool { WindowDefaults.store.bool(forKey: "SUHasLaunchedBefore") }
+    static let footprintAlpha = DoubleDefault(key: "footprintAlpha")
+    static var effectiveFootprintAlpha: Double {
+        effectiveFootprintAlpha(usesBlur: footprintBlur.enabled)
+    }
+    static func effectiveFootprintAlpha(usesBlur: Bool) -> Double {
+        if WindowDefaults.store.object(forKey: footprintAlpha.key) == nil {
+            return usesBlur ? 0 : 0.3
+        }
+        return footprintAlpha.value
+    }
+    static let footprintBorderWidth = FloatDefault(key: "footprintBorderWidth", defaultValue: 2)
+    static let footprintFade = OptionalBoolDefault(key: "footprintFade")
+    static let footprintColor = JSONDefault<CodableColor>(key: "footprintColor")
+    static let footprintBlur = BoolDefault(key: "footprintBlur")
+    static let blurAppearance = IntEnumDefault<BlurAppearance>(key: "blurAppearance", defaultValue: .system)
+
+    static let SUEnableAutomaticChecks = BoolDefault(key: "SUEnableAutomaticChecks")
+    static let todo = OptionalBoolDefault(key: "todo")
+    static let todoMode = BoolDefault(key: "todoMode")
+    static let todoApplication = StringDefault(key: "todoApplication")
+    static let todoSidebarWidth = FloatDefault(key: "todoSidebarWidth", defaultValue: 400)
+    static let todoSidebarWidthUnit = IntEnumDefault<TodoSidebarWidthUnit>(key: "todoSidebarWidthUnit", defaultValue: .pixels)
+    static let todoSidebarSide = IntEnumDefault<TodoSidebarSide>(key: "todoSidebarSide", defaultValue: .right)
+    static let snapModifiers = IntDefault(key: "snapModifiers")
+    static let attemptMatchOnNextPrevDisplay = OptionalBoolDefault(key: "attemptMatchOnNextPrevDisplay")
+    static let centerAcrossDisplays = OptionalBoolDefault(key: "centerAcrossDisplays")
+    static let altThirdCycle = OptionalBoolDefault(key: "altThirdCycle")
+    static let centerHalfCycles = OptionalBoolDefault(key: "centerHalfCycles")
+    static let cyclingOverlapOffset = OptionalBoolDefault(key: "cyclingOverlapOffset")
+    static let cyclingOverlapOffsetSize = FloatDefault(key: "cyclingOverlapOffsetSize", defaultValue: 11)
+    static let cyclingOverlapMaxCascade = IntDefault(key: "cyclingOverlapMaxCascade", defaultValue: 1)
+    static let stackBadge = OptionalBoolDefault(key: "stackBadge")
+    static let stackSameSizeOnly = OptionalBoolDefault(key: "stackSameSizeOnly")
+    static let fullIgnoreBundleIds = JSONDefault<[String]>(key: "fullIgnoreBundleIds")
+    static let notifiedOfProblemApps = BoolDefault(key: "notifiedOfProblemApps")
+    static let specifiedHeight = FloatDefault(key: "specifiedHeight", defaultValue: 1050)
+    static let specifiedWidth = FloatDefault(key: "specifiedWidth", defaultValue: 1680)
+    static let horizontalSplitRatio = FloatDefault(key: "horizontalSplitRatio", defaultValue: 50)
+    static let verticalSplitRatio = FloatDefault(key: "verticalSplitRatio", defaultValue: 50)
+    static let moveCursorAcrossDisplays = OptionalBoolDefault(key: "moveCursorAcrossDisplays")
+    static let moveCursor = OptionalBoolDefault(key: "moveCursor")
+    static let autoMaximize = OptionalBoolDefault(key: "autoMaximize")
+    static let applyGapsToMaximize = OptionalBoolDefault(key: "applyGapsToMaximize")
+    static let applyGapsToMaximizeHeight = OptionalBoolDefault(key: "applyGapsToMaximizeHeight")
+    static let cornerSnapAreaSize = FloatDefault(key: "cornerSnapAreaSize", defaultValue: 20)
+    static let shortEdgeSnapAreaSize = FloatDefault(key: "shortEdgeSnapAreaSize", defaultValue: 145)
+    static let cascadeAllDeltaSize = FloatDefault(key: "cascadeAllDeltaSize", defaultValue: 30)
+    static let sixthsSnapArea = OptionalBoolDefault(key: "sixthsSnapArea")
+    static let stageSize = FloatDefault(key: "stageSize", defaultValue: 190)
+    static let dragFromStage = OptionalBoolDefault(key: "dragFromStage")
+    static let alwaysAccountForStage = OptionalBoolDefault(key: "alwaysAccountForStage")
+    static let landscapeSnapAreas = JSONDefault<[Directional:SnapAreaConfig]>(key: "landscapeSnapAreas")
+    static let portraitSnapAreas = JSONDefault<[Directional:SnapAreaConfig]>(key: "portraitSnapAreas")
+    static let missionControlDragging = OptionalBoolDefault(key: "missionControlDragging")
+    static let enhancedUI = IntEnumDefault<EnhancedUI>(
+        key: "enhancedUI",
+        defaultValue: .automatic,
+        invalidValueFallback: .disableEnable
+    )
+    static let footprintAnimationDurationMultiplier = FloatDefault(key: "footprintAnimationDurationMultiplier", defaultValue: 0)
+    static let hapticFeedbackOnSnap = OptionalBoolDefault(key: "hapticFeedbackOnSnap")
+    static let missionControlDraggingAllowedOffscreenDistance = FloatDefault(key: "missionControlDraggingAllowedOffscreenDistance", defaultValue: 25)
+    static let missionControlDraggingDisallowedDuration = IntDefault(key: "missionControlDraggingDisallowedDuration", defaultValue: 250)
+    static let doubleClickTitleBar = IntDefault(key: "doubleClickTitleBar")
+    static let doubleClickTitleBarRestore = OptionalBoolDefault(key: "doubleClickTitleBarRestore")
+    static let doubleClickTitleBarIgnoredApps = JSONDefault<[String]>(key: "doubleClickTitleBarIgnoredApps")
+    static let doubleClickToolBarIgnoredApps = JSONDefault<Set<String>>(key: "doubleClickToolBarIgnoredApps", defaultValue: ["epp.package.java"])
+    static let ignoreDragSnapToo = OptionalBoolDefault(key: "ignoreDragSnapToo")
+    static let systemWideMouseDown = OptionalBoolDefault(key: "systemWideMouseDown")
+    static let systemWideMouseDownApps = JSONDefault<Set<String>>(key:"systemWideMouseDownApps", defaultValue: Set<String>(["org.languagetool.desktop", "com.microsoft.teams2"]))
+    static let directAnimationNativeResizeApps = JSONDefault<Set<String>>(key: "directAnimationNativeResizeApps", defaultValue: Set<String>(["com.colliderli.iina"]))
+    static let internalTilingNotified = BoolDefault(key: "internalTilingNotified")
+    static let screensOrderedByX = IntEnumDefault<ScreenOrdering>(key: "screensOrderedByX", defaultValue: .yThenMinX)
+    static let combinedDisplayMode = OptionalBoolDefault(key: "combinedDisplayMode")
+    static let greenButtonOverride = BoolDefault(key: "greenButtonOverride")
+    static let mouseButtonShortcutsUseWindowUnderCursor = BoolDefault(key: "mouseButtonShortcutsUseWindowUnderCursor")
+    static let ignoreShortcutsInMissionControl = BoolDefault(key: "ignoreShortcutsInMissionControl", defaultValue: true)
+    static let newWindowAction = StringDefault(key: "newWindowAction")
+    static let wasWelcomeDisplayed = BoolDefault(key: "wasWelcomeDisplayed")
+    static var array: [Default] = [
+        launchOnLogin,
+        disabledApps,
+        hideMenuBarIcon,
+        alternateDefaultShortcuts,
+        subsequentExecutionMode,
+        tileColumnsMaxWindows,
+        tileRowsMaxWindows,
+        selectedCycleSizes,
+        cycleSizesIsChanged,
+        cornerCycleExpansionAxis,
+        cooperativeCornerResize,
+        experimentalWindowAnimations,
+        allowAnyShortcut,
+        windowSnapping,
+        almostMaximizeHeight,
+        almostMaximizeWidth,
+        gapSize,
+        skipGapTopEdge,
+        snapBeforeReachingEdges,
+        snapEdgeMarginTop,
+        snapEdgeMarginBottom,
+        snapEdgeMarginLeft,
+        snapEdgeMarginRight,
+        centeredDirectionalMove,
+        resizeOnDirectionalMove,
+        halvesPreserveOtherAxisSize,
+        repeatedMaximizeRestoresPrevious,
+        ignoredSnapAreas,
+        traverseSingleScreen,
+        thirdsAndFourthsAcrossDisplays,
+        minimumWindowWidth,
+        minimumWindowHeight,
+        sizeOffset,
+        widthStepSize,
+        unsnapRestore,
+        curtainChangeSize,
+        smallerShrinksMaximizedHeight,
+        relaunchOpensMenu,
+        obtainWindowOnClick,
+        screenEdgeGapTop,
+        screenEdgeGapBottom,
+        screenEdgeGapLeft,
+        screenEdgeGapRight,
+        screenEdgeGapsOnMainScreenOnly,
+        screenEdgeGapTopNotch,
+        ignoreMenuBar,
+        newWindowAction,
+        showAllActionsInMenu,
+        showAdditionalSizesInMenu,
+        footprintAlpha,
+        footprintBorderWidth,
+        footprintFade,
+        footprintColor,
+        footprintBlur,
+        blurAppearance,
+        SUEnableAutomaticChecks,
+        todo,
+        todoMode,
+        todoApplication,
+        todoSidebarWidth,
+        todoSidebarWidthUnit,
+        todoSidebarSide,
+        snapModifiers,
+        attemptMatchOnNextPrevDisplay,
+        centerAcrossDisplays,
+        altThirdCycle,
+        centerHalfCycles,
+        fullIgnoreBundleIds,
+        notifiedOfProblemApps,
+        specifiedHeight,
+        specifiedWidth,
+        horizontalSplitRatio,
+        verticalSplitRatio,
+        moveCursorAcrossDisplays,
+        moveCursor,
+        autoMaximize,
+        applyGapsToMaximize,
+        applyGapsToMaximizeHeight,
+        cornerSnapAreaSize,
+        shortEdgeSnapAreaSize,
+        cascadeAllDeltaSize,
+        sixthsSnapArea,
+        stageSize,
+        dragFromStage,
+        alwaysAccountForStage,
+        landscapeSnapAreas,
+        portraitSnapAreas,
+        missionControlDragging,
+        enhancedUI,
+        footprintAnimationDurationMultiplier,
+        hapticFeedbackOnSnap,
+        missionControlDraggingAllowedOffscreenDistance,
+        missionControlDraggingDisallowedDuration,
+        doubleClickTitleBar,
+        doubleClickTitleBarRestore,
+        doubleClickTitleBarIgnoredApps,
+        ignoreDragSnapToo,
+        systemWideMouseDown,
+        systemWideMouseDownApps,
+        directAnimationNativeResizeApps,
+        screensOrderedByX,
+        showAdditionalSizesInMenu,
+        cyclingOverlapOffset,
+        cyclingOverlapOffsetSize,
+        cyclingOverlapMaxCascade,
+        stackBadge,
+        stackSameSizeOnly,
+        moveFixedSizeToEdge,
+        greenButtonOverride,
+        mouseButtonShortcutsUseWindowUnderCursor,
+        ignoreShortcutsInMissionControl
+    ]
+}
+
+struct CodableDefault: Codable {
+    let bool: Bool?
+    let int: Int?
+    let float: Float?
+    let double: Double?
+    let string: String?
+    
+    init(bool: Bool? = nil, int: Int? = nil, float: Float? = nil, double: Double? = nil, string: String? = nil) {
+        self.bool = bool
+        self.int = int
+        self.float = float
+        self.double = double
+        self.string = string
+    }
+}
+
+protocol Default {
+    var key: String { get }
+    func load(from codable: CodableDefault)
+    func toCodable() -> CodableDefault
+}
+
+class BoolDefault: Default {
+    public private(set) var key: String
+    private var initialized = false
+    
+    var enabled: Bool {
+        didSet {
+            if initialized {
+                WindowDefaults.store.set(enabled, forKey: key)
+            }
+        }
+    }
+    
+    init(key: String, defaultValue: Bool = false) {
+        self.key = key
+        if WindowDefaults.store.object(forKey: key) == nil {
+            enabled = defaultValue
+        } else {
+            enabled = WindowDefaults.store.bool(forKey: key)
+        }
+        initialized = true
+    }
+
+    func load(from codable: CodableDefault) {
+        if let value = codable.bool {
+            self.enabled = value
+        }
+    }
+    
+    func toCodable() -> CodableDefault {
+        return CodableDefault(bool: enabled)
+    }
+}
+
+class OptionalBoolDefault: Default {
+    public private(set) var key: String
+    private var initialized = false
+    
+    var enabled: Bool? {
+        didSet {
+            if initialized {
+                if enabled == true {
+                    WindowDefaults.store.set(1, forKey: key)
+                } else if enabled == false {
+                    WindowDefaults.store.set(2, forKey: key)
+                } else {
+                    WindowDefaults.store.set(0, forKey: key)
+                }
+            }
+        }
+    }
+    
+    var userDisabled: Bool { enabled == false }
+    var userEnabled: Bool { enabled == true }
+    var userModified: Bool { enabled != nil }
+    var notSet: Bool { enabled == nil }
+    
+    init(key: String) {
+        self.key = key
+        let intValue = WindowDefaults.store.integer(forKey: key)
+        set(using: intValue)
+        initialized = true
+    }
+    
+    private func set(using intValue: Int) {
+        switch intValue {
+        case 0: enabled = nil
+        case 1: enabled = true
+        case 2: enabled = false
+        default: break
+        }
+    }
+    
+    func load(from codable: CodableDefault) {
+        if let value = codable.int {
+            set(using: value)
+        }
+    }
+    
+    func toCodable() -> CodableDefault {
+        guard let enabled = enabled else { return CodableDefault(int: 0)}
+        let intValue = enabled ? 1 : 2
+        return CodableDefault(int: intValue)
+    }
+}
+
+class StringDefault: Default {
+    public private(set) var key: String
+    private var initialized = false
+    
+    var value: String? {
+        didSet {
+            if initialized {
+                WindowDefaults.store.set(value, forKey: key)
+            }
+        }
+    }
+    
+    init(key: String) {
+        self.key = key
+        value = WindowDefaults.store.string(forKey: key)
+        initialized = true
+    }
+    
+    func load(from codable: CodableDefault) {
+        value = codable.string
+    }
+    
+    func toCodable() -> CodableDefault {
+        return CodableDefault(string: value)
+    }
+}
+
+class FloatDefault: Default {
+    public private(set) var key: String
+    private var initialized = false
+    
+    var value: Float {
+        didSet {
+            if initialized {
+                WindowDefaults.store.set(value, forKey: key)
+            }
+        }
+    }
+    
+    var cgFloat: CGFloat { CGFloat(value) }
+
+    init(key: String, defaultValue: Float = 0) {
+        self.key = key
+        value = WindowDefaults.store.float(forKey: key)
+        if(defaultValue != 0 && value == 0) {
+            value = defaultValue
+        }
+        initialized = true
+    }
+    
+    func load(from codable: CodableDefault) {
+        if let float = codable.float {
+            value = float
+        }
+    }
+    
+    func toCodable() -> CodableDefault {
+        return CodableDefault(float: value)
+    }
+}
+
+class DoubleDefault: Default {
+    public private(set) var key: String
+    private var initialized = false
+    private let defaultValue: Double
+
+    var value: Double {
+        didSet {
+            if initialized {
+                WindowDefaults.store.set(value, forKey: key)
+            }
+        }
+    }
+
+    init(key: String, defaultValue: Double = 0) {
+        self.key = key
+        self.defaultValue = defaultValue
+        if WindowDefaults.store.object(forKey: key) == nil {
+            value = defaultValue
+        } else {
+            value = WindowDefaults.store.double(forKey: key)
+        }
+        initialized = true
+    }
+
+    func load(from codable: CodableDefault) {
+        if let double = codable.double {
+            value = double
+        } else if let float = codable.float {
+            // Legacy float-backed defaults could not distinguish an absent value
+            // from zero; preserve their effective default when migrating.
+            value = float == 0 && defaultValue != 0 ? defaultValue : Double(float)
+        }
+    }
+
+    func toCodable() -> CodableDefault {
+        CodableDefault(double: value)
+    }
+}
+
+class PositiveIntDefault: Default {
+    let key: String
+    private let userDefaults: UserDefaults
+    private var storedValue: Int
+
+    var value: Int {
+        get { storedValue }
+        set {
+            storedValue = max(1, newValue)
+            userDefaults.set(storedValue, forKey: key)
+        }
+    }
+
+    init(key: String, defaultValue: Int, userDefaults: UserDefaults = WindowDefaults.store) {
+        precondition(defaultValue > 0)
+        self.key = key
+        self.userDefaults = userDefaults
+        if let savedValue = userDefaults.object(forKey: key) {
+            storedValue = max(1, savedValue as? Int ?? 1)
+        } else {
+            storedValue = defaultValue
+        }
+    }
+
+    func load(from codable: CodableDefault) {
+        if let int = codable.int {
+            value = int
+        }
+    }
+
+    func toCodable() -> CodableDefault {
+        CodableDefault(int: value)
+    }
+}
+
+class IntDefault: Default {
+    public private(set) var key: String
+    private var initialized = false
+    
+    var value: Int {
+        didSet {
+            if initialized {
+                WindowDefaults.store.set(value, forKey: key)
+            }
+        }
+    }
+    
+    init(key: String, defaultValue: Int = 0) {
+        self.key = key
+        value = WindowDefaults.store.integer(forKey: key)
+        if(defaultValue != 0 && value == 0) {
+            value = defaultValue
+        }
+        initialized = true
+    }
+    
+    func load(from codable: CodableDefault) {
+        if let int = codable.int {
+            value = int
+        }
+    }
+    
+    func toCodable() -> CodableDefault {
+        return CodableDefault(int: value)
+    }
+}
+
+class JSONDefault<T: Codable>: StringDefault {
+    
+    private var typeInitialized = false
+    
+    var typedValue: T? {
+        didSet {
+            if typeInitialized {
+                saveToJSON(typedValue)
+            }
+        }
+    }
+    
+    override init(key: String) {
+        super.init(key: key)
+        loadFromJSON()
+        typeInitialized = true
+    }
+    
+    init(key: String, defaultValue: T) {
+        super.init(key: key)
+        loadFromJSON()
+        if typedValue == nil {
+            typedValue = defaultValue
+        }
+    }
+    
+    override func load(from codable: CodableDefault) {
+        if value != codable.string {
+            value = codable.string
+            typeInitialized = false
+            loadFromJSON()
+            typeInitialized = true
+        }
+    }
+    
+    private func loadFromJSON() {
+        guard let jsonString = value else { return }
+        let decoder = JSONDecoder()
+        guard let jsonData = jsonString.data(using: .utf8) else { return }
+        typedValue = try? decoder.decode(T.self, from: jsonData)
+    }
+    
+    private func saveToJSON(_ obj: T?) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+
+        if let jsonData = try? encoder.encode(obj) {
+            let jsonString = String(data: jsonData, encoding: .utf8)
+            if jsonString != value {
+                value = jsonString
+            }
+        }
+    }
+}
+
+class IntEnumDefault<E: RawRepresentable>: Default where E.RawValue == Int {
+    public private(set) var key: String
+    private let invalidValueFallback: E
+
+    var _value: E
+    var value: E {
+        set {
+            if newValue != _value {
+                _value = newValue
+                WindowDefaults.store.set(_value.rawValue, forKey: key)
+            }
+        }
+        get { _value }
+    }
+
+    init(key: String, defaultValue: E, invalidValueFallback: E? = nil) {
+        self.key = key
+        let invalidValueFallback = invalidValueFallback ?? defaultValue
+        self.invalidValueFallback = invalidValueFallback
+        if WindowDefaults.store.object(forKey: key) == nil {
+            _value = defaultValue
+        } else {
+            let intValue = WindowDefaults.store.integer(forKey: key)
+            _value = E(rawValue: intValue) ?? invalidValueFallback
+        }
+    }
+
+    func load(from codable: CodableDefault) {
+        if let intValue = codable.int, _value.rawValue != intValue {
+            _value = E(rawValue: intValue) ?? invalidValueFallback
+            WindowDefaults.store.set(_value.rawValue, forKey: key)
+        }
+    }
+    
+    func toCodable() -> CodableDefault {
+        CodableDefault(int: value.rawValue)
+    }
+}
+
+struct CodableColor : Codable {
+    var red: CGFloat = 0.0
+    var green: CGFloat = 0.0
+    var blue: CGFloat = 0.0
+    var alpha: CGFloat? = 1.0
+
+    var nsColor : NSColor {
+        return NSColor(red: red, green: green, blue: blue, alpha: alpha ?? 1.0)
+    }
+
+    init(nsColor: NSColor) {
+        self.red = nsColor.redComponent
+        self.green = nsColor.greenComponent
+        self.blue = nsColor.blueComponent
+        self.alpha = nsColor.alphaComponent
+    }
+}
+
+enum BlurAppearance: Int, CaseIterable {
+    case system = 0
+    case light = 1
+    case dark = 2
+
+    var appearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+

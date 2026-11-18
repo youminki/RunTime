@@ -1,0 +1,149 @@
+/// CycleSize.swift
+
+import Cocoa
+
+enum CycleSize: Int, CaseIterable {
+    case twoThirds = 0
+    case oneHalf = 1
+    case oneThird = 2
+    case oneQuarter = 3
+    case threeQuarters = 4
+    
+    static func fromBits(bits: Int) -> Set<CycleSize> {
+        Set(
+            Self.allCases.filter {
+                (bits >> $0.rawValue) & 1 == 1
+            }
+        )
+    }
+    
+    static var firstSize = CycleSize.oneHalf
+    static var defaultSizes: Set<CycleSize> = [.oneHalf, .twoThirds, .oneThird]
+    
+    // The expected order of the cycle sizes is to start with the
+    // first division, then go gradually upwards in size and wrap
+    // around to the smaller sizes.
+    //
+    // For example if all cycles are used, the order should be:
+    // 1/2, 2/3, 3/4, 1/4, 1/3
+    static var sortedSizes: [CycleSize] = {
+        let sortedSizes = Self.allCases.sorted(by: { $0.fraction < $1.fraction })
+        
+        guard let firstSizeIndex = sortedSizes.firstIndex(of: firstSize) else {
+            return sortedSizes
+        }
+        
+        let lessThanFistSizes = sortedSizes[0..<firstSizeIndex]
+        let greaterThanFistSizes = sortedSizes[(firstSizeIndex + 1)..<sortedSizes.count]
+        
+        return [firstSize] + greaterThanFistSizes + lessThanFistSizes
+    }()
+
+    /// The sizes repeated executions cycle through, in cycling order.
+    static func sortedSelectedSizes() -> [CycleSize] {
+        let useDefaultPositions = !Defaults.cycleSizesIsChanged.enabled
+        let positions = useDefaultPositions ? defaultSizes : Defaults.selectedCycleSizes.value
+
+        return sortedSizes.filter { positions.contains($0) }
+    }
+}
+
+enum CornerCycleExpansionAxis: Int, CaseIterable {
+    case horizontal = 0
+    case vertical = 1
+    
+    var title: String {
+        switch self {
+        case .horizontal: return L("Horizontally")
+        case .vertical: return L("Vertically")
+        }
+    }
+}
+
+extension CycleSize {
+    static let matchingTolerance: Float = 0.001
+    
+    static func matching(percentValue: Float) -> CycleSize? {
+        sortedSizes.first { $0.matches(percentValue: percentValue) }
+    }
+    
+    var title: String {
+        switch self {
+        case .twoThirds:
+            L("⅔")
+        case .oneHalf:
+            L("½")
+        case .oneThird:
+            L("⅓")
+        case .oneQuarter:
+            L("¼")
+        case .threeQuarters:
+            L("¾")
+        }
+    }
+    
+    var fraction: Float {
+        switch self {
+        case .twoThirds:
+            2 / 3
+        case .oneHalf:
+            1 / 2
+        case .oneThird:
+            1 / 3
+        case .oneQuarter:
+            1 / 4
+        case .threeQuarters:
+            3 / 4
+        }
+    }
+    
+    var percentValue: Float {
+        fraction * 100
+    }
+    
+    func matches(percentValue: Float, tolerance: Float = Self.matchingTolerance) -> Bool {
+        abs(self.percentValue - percentValue) <= tolerance
+    }
+    
+}
+
+extension Set where Element == CycleSize {
+    func toBits() -> Int {
+        var bits = 0
+        self.forEach {
+            bits |= 1 << $0.rawValue
+        }
+        return bits
+    }
+}
+
+class CycleSizesDefault: Default {
+    public private(set) var key: String = "selectedCycleSizes"
+    private var initialized = false
+    
+    var value: Set<CycleSize> {
+        didSet {
+            if initialized {
+                WindowDefaults.store.set(value.toBits(), forKey: key)
+            }
+        }
+    }
+    
+    init() {
+        let bits = WindowDefaults.store.integer(forKey: key)
+        value = CycleSize.fromBits(bits: bits)
+        initialized = true
+    }
+
+    func load(from codable: CodableDefault) {
+        if let bits = codable.int {
+            let divisions = CycleSize.fromBits(bits: bits)
+            value = divisions
+        }
+    }
+    
+    func toCodable() -> CodableDefault {
+        return CodableDefault(int: value.toBits())
+    }
+
+}

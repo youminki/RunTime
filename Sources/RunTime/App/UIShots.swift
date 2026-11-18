@@ -296,6 +296,19 @@ enum UIShots {
             ("main-usage", .darkAqua, nil, mainPage(.usage, engine: engine)),
             // 사용량 화면은 시스템 모습을 따른다
             ("main-usage-light", .aqua, nil, mainPage(.usage, engine: engine)),
+            // 창 배치를 켜지 않고도 모든 줄을 보인다
+            ("main-settings-windows", .aqua, 1700,
+             AnyView(WindowLayoutSettingsView(layout: .shared, showsAll: true)
+                .frame(width: 760, height: 1700).background(Palette.groupedBackground))),
+            ("main-settings-windows-dark", .darkAqua, 1700,
+             AnyView(WindowLayoutSettingsView(layout: .shared, showsAll: true)
+                .frame(width: 760, height: 1700).background(Palette.groupedBackground))),
+            ("window-palette", .darkAqua, nil, {
+                let model = WindowPaletteModel()
+                model.prepare()
+                model.query = "ㅇㅉ"
+                return AnyView(WindowPaletteView(model: model, perform: { _ in }, close: {}))
+            }()),
             ("main-settings-runner", .aqua, nil, {
                 let navigator = MainNavigator()
                 navigator.start(at: .settings)

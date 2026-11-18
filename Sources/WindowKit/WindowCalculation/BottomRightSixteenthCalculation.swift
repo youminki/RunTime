@@ -1,0 +1,45 @@
+/// BottomRightSixteenthCalculation.swift
+
+import Cocoa
+
+class BottomRightSixteenthCalculation: WindowCalculation, OrientationAware, SixteenthsRepeated {
+
+    override func calculateRect(_ params: RectCalculationParameters) -> RectResult {
+        let visibleFrameOfScreen = params.visibleFrameOfScreen
+
+        guard Defaults.subsequentExecutionMode.value != .none,
+              let last = params.lastAction,
+              let lastSubAction = last.subAction
+        else {
+            return orientationBasedRect(visibleFrameOfScreen)
+        }
+
+        if last.action != .bottomRightSixteenth {
+            return orientationBasedRect(visibleFrameOfScreen)
+        }
+
+        if let calculation = self.nextCalculation(subAction: lastSubAction, direction: .right) {
+            return calculation(visibleFrameOfScreen)
+        }
+
+        return orientationBasedRect(visibleFrameOfScreen)
+    }
+
+    func landscapeRect(_ visibleFrameOfScreen: CGRect) -> RectResult {
+        var rect = visibleFrameOfScreen
+        rect.size.width = floor(visibleFrameOfScreen.width / 4.0)
+        rect.size.height = floor(visibleFrameOfScreen.height / 4.0)
+        rect.origin.y = visibleFrameOfScreen.minY
+        rect.origin.x = visibleFrameOfScreen.minX + rect.width * 3
+        return RectResult(rect, subAction: .bottomRightSixteenth)
+    }
+
+    func portraitRect(_ visibleFrameOfScreen: CGRect) -> RectResult {
+        var rect = visibleFrameOfScreen
+        rect.size.width = floor(visibleFrameOfScreen.width / 4.0)
+        rect.size.height = floor(visibleFrameOfScreen.height / 4.0)
+        rect.origin.y = visibleFrameOfScreen.minY
+        rect.origin.x = visibleFrameOfScreen.minX + rect.width * 3
+        return RectResult(rect, subAction: .bottomRightSixteenth)
+    }
+}

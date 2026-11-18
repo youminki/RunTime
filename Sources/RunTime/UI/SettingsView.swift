@@ -17,7 +17,7 @@ struct SettingsView: View {
     @StateObject private var hotKeyRecorder = HotKeyRecorder()
     @ObservedObject private var permissionHook = PermissionHookFile.shared
 
-    enum Tab: Hashable { case general, runner, usage, workLog, design, designAlerts }
+    enum Tab: Hashable { case general, runner, usage, windows, workLog, design, designAlerts }
 
     init(settings: AppSettings, engine: UsageEngine, tab: SettingsTabState, workLog: WorkLogPage, openRunners: @escaping () -> Void = {}) {
         self.openRunners = openRunners
@@ -35,6 +35,7 @@ struct SettingsView: View {
                 navRow(.general, "일반", icon: "gearshape", tint: Palette.gray)
                 navRow(.runner, "러너", icon: "hare.fill", tint: Palette.orange)
                 navRow(.usage, "사용량", icon: "chart.bar.fill", tint: Palette.blue)
+                navRow(.windows, "창 배치", icon: "rectangle.split.2x1.fill", tint: Palette.teal)
                 navHeader("업무 일지").padding(.top, 14)
                 ForEach(WorkLogPage.SettingsSection.allCases, id: \.self) { section in
                     workLogRow(section)
@@ -59,6 +60,7 @@ struct SettingsView: View {
                 case .general: general
                 case .runner: runner
                 case .usage: usage
+                case .windows: WindowLayoutSettingsView(layout: .shared)
                 case .workLog:
                     WorkLogSettingsView(settings: workLogSettings, sync: workLogSync, page: workLog, store: .shared)
                         .padding(.leading, -12)
@@ -81,6 +83,7 @@ struct SettingsView: View {
         case .general: return "일반"
         case .runner: return "러너"
         case .usage: return "사용량"
+        case .windows: return "창 배치"
         case .workLog: return workLog.settingsSection.rawValue
         case .design: return "피그마"
         case .designAlerts: return "디자인 알림"

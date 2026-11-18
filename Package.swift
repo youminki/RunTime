@@ -12,9 +12,11 @@ let package = Package(
         .target(name: "DesignSyncCore"),
         .target(name: "HostsCore"),
         .target(name: "ReportCore"),
+        // Rectangle(MIT)의 창 배치 코드를 옮겨 왔다. 저작권 고지는 Sources/WindowKit/LICENSE
+        .target(name: "WindowKit", exclude: ["LICENSE"], resources: [.copy("Icons")]),
         .executableTarget(
             name: "RunTime",
-            dependencies: ["UsageCore", "GameCore", "SearchCore", "WorkLogCore", "DesignSyncCore", "HostsCore", "ReportCore"],
+            dependencies: ["UsageCore", "GameCore", "SearchCore", "WorkLogCore", "DesignSyncCore", "HostsCore", "ReportCore", "WindowKit"],
             resources: [.copy("Assets")]
         ),
         .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"]),
@@ -24,5 +26,6 @@ let package = Package(
         .testTarget(name: "DesignSyncCoreTests", dependencies: ["DesignSyncCore"]),
         .testTarget(name: "HostsCoreTests", dependencies: ["HostsCore"]),
         .testTarget(name: "ReportCoreTests", dependencies: ["ReportCore"]),
+        .testTarget(name: "WindowKitTests", dependencies: ["WindowKit"]),
     ]
 )

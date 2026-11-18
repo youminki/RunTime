@@ -1,0 +1,101 @@
+/// HalvesCompoundCalculation.swift
+
+import Cocoa
+
+struct LeftTopBottomHalfCalculation: CompoundSnapAreaCalculation {
+    
+    private let marginTop = Defaults.snapEdgeMarginTop.cgFloat
+    private let marginBottom = Defaults.snapEdgeMarginBottom.cgFloat
+    
+    private let ignoredSnapAreas = SnapAreaOption(rawValue: Defaults.ignoredSnapAreas.value)
+    
+    func snapArea(cursorLocation loc: NSPoint, screen: NSScreen, directional: Directional, priorSnapArea: SnapArea?) -> SnapArea? {
+        let frame = screen.frame
+        let shortEdgeSize = CGFloat(Defaults.shortEdgeSnapAreaSize.value)
+
+        if loc.y <= frame.minY + marginBottom + shortEdgeSize {
+            if !ignoredSnapAreas.contains(.bottomLeftShort) {
+                return SnapArea(screen: screen, directional: directional, action: .bottomHalf)
+            }
+        }
+        if loc.y >= frame.maxY - marginTop - shortEdgeSize {
+            if !ignoredSnapAreas.contains(.topLeftShort) {
+                return SnapArea(screen: screen, directional: directional, action: .topHalf)
+            }
+        }
+        return SnapArea(screen: screen, directional: directional, action: .leftHalf)
+    }
+    
+}
+
+struct RightTopBottomHalfCalculation: CompoundSnapAreaCalculation {
+    
+    private let marginTop = Defaults.snapEdgeMarginTop.cgFloat
+    private let marginBottom = Defaults.snapEdgeMarginBottom.cgFloat
+    
+    private let ignoredSnapAreas = SnapAreaOption(rawValue: Defaults.ignoredSnapAreas.value)
+    
+    func snapArea(cursorLocation loc: NSPoint, screen: NSScreen, directional: Directional, priorSnapArea: SnapArea?) -> SnapArea? {
+        let frame = screen.frame
+        let shortEdgeSize = CGFloat(Defaults.shortEdgeSnapAreaSize.value)
+
+        if loc.y <= frame.minY + marginBottom + shortEdgeSize {
+            if !ignoredSnapAreas.contains(.bottomRightShort) {
+                return SnapArea(screen: screen, directional: directional, action: .bottomHalf)
+            }
+        }
+        if loc.y >= frame.maxY - marginTop - shortEdgeSize {
+            if !ignoredSnapAreas.contains(.topRightShort) {
+                return SnapArea(screen: screen, directional: directional, action: .topHalf)
+            }
+        }
+        return SnapArea(screen: screen, directional: directional, action: .rightHalf)
+    }
+    
+}
+
+struct LeftRightHalvesCompoundCalculation: CompoundSnapAreaCalculation {
+    
+    func snapArea(cursorLocation loc: NSPoint, screen: NSScreen, directional: Directional, priorSnapArea: SnapArea?) -> SnapArea? {
+        return loc.x < screen.frame.maxX - (screen.frame.width / 2)
+            ? SnapArea(screen: screen, directional: directional, action: .leftHalf)
+            : SnapArea(screen: screen, directional: directional, action: .rightHalf)
+    }
+    
+}
+
+struct TopBottomHalvesCalculation: CompoundSnapAreaCalculation {
+    private let marginTop = Defaults.snapEdgeMarginTop.cgFloat
+    private let marginBottom = Defaults.snapEdgeMarginBottom.cgFloat
+    private let ignoredSnapAreas = SnapAreaOption(rawValue: Defaults.ignoredSnapAreas.value)
+    
+    func snapArea(cursorLocation loc: NSPoint, screen: NSScreen, directional: Directional, priorSnapArea: SnapArea?) -> SnapArea? {
+        let frame = screen.frame
+        let halfHeight = floor(frame.height / 2)
+        let shortEdgeSize = Defaults.shortEdgeSnapAreaSize.cgFloat
+        
+        if loc.y <= frame.minY + marginBottom + shortEdgeSize {
+            let snapAreaOption: SnapAreaOption = loc.x < frame.midX ? .bottomLeftShort : .bottomRightShort
+            if !ignoredSnapAreas.contains(snapAreaOption) {
+                return SnapArea(screen: screen, directional: directional, action: .bottomHalf)
+            }
+        }
+        
+        if loc.y >= frame.maxY - marginTop - shortEdgeSize {
+            let snapAreaOption: SnapAreaOption = loc.x < frame.midX ? .topLeftShort : .topRightShort
+            if !ignoredSnapAreas.contains(snapAreaOption) {
+                return SnapArea(screen: screen, directional: directional, action: .topHalf)
+            }
+        }
+        
+        if loc.y >= frame.minY && loc.y <= frame.minY + halfHeight {
+            return SnapArea(screen: screen, directional: directional, action: .bottomHalf)
+        }
+        
+        if loc.y > frame.minY + halfHeight && loc.y <= frame.maxY {
+            return SnapArea(screen: screen, directional: directional, action: .topHalf)
+        }
+        
+        return nil
+    }
+}

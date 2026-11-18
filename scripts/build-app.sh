@@ -37,9 +37,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp .build/release/RunTime "$APP/Contents/MacOS/"
 # SPM 리소스 번들 (스프라이트 Assets) — Bundle.module이 Contents/Resources에서 찾음
-if [ -d .build/release/RunTime_RunTime.bundle ]; then
-  cp -R .build/release/RunTime_RunTime.bundle "$APP/Contents/Resources/"
-fi
+# 창 배치(WindowKit) 메뉴 아이콘 번들도 같은 자리에 둔다
+for BUNDLE in RunTime_RunTime RunTime_WindowKit; do
+  if [ -d ".build/release/$BUNDLE.bundle" ]; then
+    cp -R ".build/release/$BUNDLE.bundle" "$APP/Contents/Resources/"
+  fi
+done
 cp scripts/Info.plist "$APP/Contents/Info.plist"
 # 설정 화면에서 지금 설치된 빌드가 어느 커밋인지 확인할 수 있게 남긴다 (+ = 커밋 안 된 변경 포함)
 # 앱 안의 업데이터는 이 클론 위치·저장소·기본 브랜치로 새 커밋을 확인하고, 이 클론에서 다시 빌드한다

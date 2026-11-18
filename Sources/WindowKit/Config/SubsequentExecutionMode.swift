@@ -1,0 +1,99 @@
+/// SubsequentExecutionMode.swift
+
+import Cocoa
+
+enum SubsequentExecutionMode: Int {
+    case resize = 0 // based on Spectacle
+    case acrossMonitor = 1
+    case none = 2
+    case acrossAndResize = 3 // across displays for side actions, resize at layout boundaries
+    case cycleMonitor = 4
+    case resizeAndCycleQuadrants = 5
+    case switchSides = 6 // repeated half actions move to the opposite side
+    
+    var title: String {
+        switch self {
+        case .resize: return L("cycle sizes on side actions")
+        case .acrossMonitor: return L("move to adjacent display on side actions")
+        case .none: return L("do nothing")
+        case .acrossAndResize: return L("move to adjacent display on side actions and cycle size at final edge")
+        case .cycleMonitor: return L("cycle through displays")
+        case .resizeAndCycleQuadrants: return L("cycle positions on quadrants, cycle sizes on side")
+        case .switchSides: return L("Switch to the opposite side on half actions")
+        }
+    }
+    
+    var resizes: Bool {
+        switch self {
+        case .resize, .acrossAndResize, .resizeAndCycleQuadrants: return true
+        default: return false
+        }
+    }
+    
+    static var ordered: [SubsequentExecutionMode] = [.none, .cycleMonitor, .resize, .acrossMonitor, .acrossAndResize, .resizeAndCycleQuadrants, .switchSides]
+}
+
+class SubsequentExecutionDefault: Default {
+    public private(set) var key: String = "subsequentExecutionMode"
+    private var initialized = false
+    
+    var value: SubsequentExecutionMode {
+        didSet {
+            if initialized {
+                WindowDefaults.store.set(value.rawValue, forKey: key)
+            }
+        }
+    }
+    
+    init() {
+        let intValue = WindowDefaults.store.integer(forKey: key)
+        value = SubsequentExecutionMode(rawValue: intValue) ?? .resize
+        initialized = true
+    }
+    
+    var resizes: Bool {
+        switch value {
+        case .resize, .acrossAndResize, .resizeAndCycleQuadrants: return true
+        default: return false
+        }
+    }
+
+    /// First/last thirds and fourths step through their positions on repeat, except when repeating
+    /// should do nothing, or when it moves to the adjacent display: with the hidden
+    /// `thirdsAndFourthsAcrossDisplays` flag on, that needs an adjacent display to move to.
+    func cyclesThirdsAndFourths(hasAdjacentScreen: Bool) -> Bool {
+        switch value {
+        case .none: return false
+        case .acrossMonitor:
+            let movesAcrossDisplays = Defaults.thirdsAndFourthsAcrossDisplays.enabled == true && hasAdjacentScreen
+            return !movesAcrossDisplays
+        default: return true
+        }
+    }
+
+    var cyclesQuadrantPositions: Bool {
+        switch value {
+        case .resizeAndCycleQuadrants: return true
+        default: return false
+        }
+    }
+
+    var traversesDisplays: Bool {
+        switch value {
+        case .acrossMonitor, .acrossAndResize: return true
+        default: return false
+        }
+    }
+
+    func load(from codable: CodableDefault) {
+        if let int = codable.int,
+           let mode = SubsequentExecutionMode(rawValue: int) {
+            value = mode
+        }
+    }
+    
+    func toCodable() -> CodableDefault {
+        return CodableDefault(int: value.rawValue)
+    }
+
+}
