@@ -542,9 +542,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 item.representedObject = MenuAction {
                     MainActor.assumeIsolated {
                         store.quickToggle(section, turnOn) { failure in
-                            // 직접 켜고 끈 결과는 열어 볼 게 없고, 실패했을 때만 호스트 화면을 연다
-                            Notifier.shared.send(title: "호스트", body: failure ?? "‘\(title)’ 묶음을 \(turnOn ? "켰습니다" : "껐습니다")",
-                                                 opens: failure == nil ? nil : .hosts)
+                            // 직접 켜고 끈 결과는 메뉴 체크로 보이니 실패만 알린다
+                            guard let failure else { return }
+                            Notifier.shared.send(title: "호스트", body: failure, opens: .hosts)
                         }
                     }
                 }
@@ -598,22 +598,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         engine.accountSwitched
             .sink { switcher.captureCurrent() }
             .store(in: &cancellables)
-        switcher.onExhausted = { account, resetsAt in
-            let when = resetsAt.map { " \(Self.clockFormatter.string(from: $0))에 \(account?.email ?? "")부터 다시 쓸 수 있습니다." } ?? ""
-            Notifier.shared.send(title: "모든 Claude 계정이 한도에 닿았습니다", body: "바꿀 계정이 없습니다." + when, stays: true)
-        }
         switcher.onSwitched = { account, automatic in
             Notifier.shared.send(title: automatic ? "Claude 계정을 자동으로 바꿨습니다" : "Claude 계정을 바꿨습니다",
                                  body: "\(account.email)로 바꿨습니다. 새로 여는 Claude Code 세션부터 이 계정을 씁니다.")
         }
     }
-
-    private static let clockFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "M월 d일 a h:mm"
-        return f
-    }()
 
     @objc private func runMenuAction(_ sender: NSMenuItem) {
         (sender.representedObject as? MenuAction)?.run()

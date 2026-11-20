@@ -95,17 +95,6 @@ final class UsageEngine: ObservableObject {
     private var config: Config
     private var officialValue: OfficialUsage?
     private var clientVersion: String?
-    private var alertTracker: LimitAlertTracker = {
-        var tracker = LimitAlertTracker()
-        tracker.saved = UserDefaults.standard.dictionary(forKey: UsageEngine.limitAlertsKey) as? [String: String] ?? [:]
-        return tracker
-    }()
-    private static let limitAlertsKey = "limitAlertsSent"
-    /// 한도 도달을 미리 알린 세션 창 (계정|창). 같은 창에서는 한 번만 알린다.
-    /// 다시 켜도 같은 창에서 또 알리지 않게 저장한다.
-    private var outlookAlerted = UserDefaults.standard.string(forKey: "limitOutlookAlerted") {
-        didSet { UserDefaults.standard.set(outlookAlerted, forKey: "limitOutlookAlerted") }
-    }
     /// 지금 공식 세션 창이 끝나는 시각. 지나면 "세션 초기화"를 한 번 알린다.
     private var pendingSessionReset: Date?
     private var lastWeeklyReset: Date?
@@ -279,7 +268,6 @@ final class UsageEngine: ObservableObject {
     private struct Config: Equatable {
         let officialEnabled: Bool
         let sensitivity: Thresholds.Sensitivity
-        let limitAlertsEnabled: Bool
         let newSessionAlertEnabled: Bool
         let weeklyResetAlertEnabled: Bool
         let weeklySummaryEnabled: Bool
@@ -289,7 +277,6 @@ final class UsageEngine: ObservableObject {
         init(_ settings: AppSettings) {
             officialEnabled = settings.officialEnabled
             sensitivity = settings.sensitivity
-            limitAlertsEnabled = settings.limitAlertsEnabled
             newSessionAlertEnabled = settings.newSessionAlertEnabled
             weeklyResetAlertEnabled = settings.weeklyResetAlertEnabled
             weeklySummaryEnabled = settings.weeklySummaryEnabled
@@ -426,9 +413,6 @@ final class UsageEngine: ObservableObject {
         claudePace = (rate, working, snap.lastEventDate, result.level != .normal, permissionWaits.isWaiting(now: now))
         updatePace(now: now)
 
-        if config.limitAlertsEnabled {
-            fireLimitAlerts(snap: snap, nextWeeklyReset: nextWeeklyReset, result: result)
-        }
         // 새 세션은 공식 창으로만 센다. 로컬 블록과 섞으면 공식 값이 오가며 창이 바뀐 것처럼 보인다
         let window = result.sessionResetsAt.map(LimitAlertTracker.windowId(resetsAt:))
         let reaction = reactions.update(.init(rate: rate, runThreshold: thresholds.run, idleSeconds: idle,
@@ -453,6 +437,7 @@ final class UsageEngine: ObservableObject {
         }
     }
 
+<<<<<<< Updated upstream
     /// Claude 쪽 사정과 타자를 합쳐 러너 단계를 정한다. 틱과 타자 타이머가 부른다.
     private func updatePace(now: Date) {
         guard let claude = claudePace else { return }
@@ -543,6 +528,53 @@ final class UsageEngine: ObservableObject {
         DispatchQueue.main.async { Notifier.shared.send(title: title, body: body, stays: true) }
     }
 
+||||||| Stash base
+    // MARK: - 한도 알림 (§F4: 80%/95% 각 1회)
+
+    private func fireLimitAlerts(snap: UsageStore.Snapshot, nextWeeklyReset: Date?, result: UsageEvaluator.Result) {
+        // 창 식별자는 창이 유지되는 동안 바뀌지 않는 값이어야 한다.
+        // now-7d처럼 매 틱 바뀌거나 조회마다 흔들리는 값을 그대로 쓰면 추적기가 리셋돼 알림이 다시 나간다.
+        let sessionWindow = result.sessionResetsAt.map(LimitAlertTracker.windowId(resetsAt:))
+            ?? snap.currentBlock.map { "\($0.start.timeIntervalSince1970)" } ?? "none"
+        let weeklyWindow = (result.weeklyResetsAt ?? nextWeeklyReset).map(LimitAlertTracker.windowId(resetsAt:))
+            ?? "rolling"
+
+        if let session = result.session {
+            for threshold in alertTracker.alertsToFire(kind: .session, percent: session.percent,
+                                                       windowId: sessionWindow, account: knownAccount?.uuid ?? "") {
+                notify(threshold: threshold, kind: "세션",
+                       remaining: result.sessionMinutesLeft.map { "현재 속도로 약 \(Format.minutes($0)) 뒤 한도에 닿습니다." })
+            }
+            // 80%가 되기 전이라도 지금 속도로 30분 안에 한도에 닿으면 한 번 미리 알린다 (초기화가 먼저 오면 알리지 않는다)
+            let window = (knownAccount?.uuid ?? "") + "|" + sessionWindow
+            if session.percent < 80, outlookAlerted != window,
+               case .reachesLimit(let minutes) = GaugeMath.limitOutlook(minutesLeft: result.sessionMinutesLeft,
+                                                                        resetsAt: result.sessionResetsAt, now: Date()),
+               minutes <= 30 {
+                outlookAlerted = window
+                let body = "현재 속도로 약 \(Format.minutes(minutes)) 뒤 세션 한도에 닿습니다."
+                DispatchQueue.main.async { Notifier.shared.send(title: "세션 한도 임박", body: body, stays: true) }
+            }
+        }
+        if let weekly = result.weekly {
+            for threshold in alertTracker.alertsToFire(kind: .weekly, percent: weekly.percent,
+                                                       windowId: weeklyWindow, account: knownAccount?.uuid ?? "") {
+                notify(threshold: threshold, kind: "주간", remaining: nil)
+            }
+        }
+        // 리셋 시각을 모를 때의 고정 ID는 저장하면 다음 창에서도 알림이 막힌다
+        UserDefaults.standard.set(alertTracker.saved.filter { !$0.value.hasPrefix("rolling|") && !$0.value.hasPrefix("none|") },
+                                  forKey: Self.limitAlertsKey)
+    }
+
+    private func notify(threshold: LimitAlertTracker.Threshold, kind: String, remaining: String?) {
+        let title = "\(kind) 사용량 \(threshold.rawValue)%"
+        let body = remaining ?? "Claude Code에서 /usage로 남은 양을 확인할 수 있습니다."
+        DispatchQueue.main.async { Notifier.shared.send(title: title, body: body, stays: true) }
+    }
+
+=======
+>>>>>>> Stashed changes
     /// 공식 세션 창이 끝나는 시각이 지나면 "세션 초기화" (옵션, 기본 off).
     /// 로컬 블록(UTC 정시 내림)은 공식 리셋 시각과 달라, 쉬었다 다시 쓸 때 엉뚱한 때 알리게 된다.
     private func checkSessionReset(resetsAt: Date?, now: Date, enabled: Bool) {
