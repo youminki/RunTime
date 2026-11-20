@@ -9,13 +9,7 @@ final class AppSettings: ObservableObject {
     static let pollIntervalOptions: [Double] = [1, 3, 5, 10]
 
     private enum Key: String {
-<<<<<<< Updated upstream
         case officialEnabled, sensitivity, pollInterval, limitAlertsEnabled, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, globalHotKeyEnabled, spriteTheme, typingRunnerEnabled
-||||||| Stash base
-        case officialEnabled, sensitivity, pollInterval, limitAlertsEnabled, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, globalHotKeyEnabled, spriteTheme
-=======
-        case officialEnabled, sensitivity, pollInterval, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, globalHotKeyEnabled, spriteTheme
->>>>>>> Stashed changes
         case menuBarLabel, menuBarLabelLast, runner, smoothness, tricksEnabled, customRunner, runnerSize, desktopPet
         case desktopPetSize, desktopPetEdges, desktopPetMode, desktopPetSpot
     }
@@ -29,19 +23,12 @@ final class AppSettings: ObservableObject {
 
     @Published var pollInterval: Double { didSet { save(pollInterval, .pollInterval) } }
 
-<<<<<<< Updated upstream
     /// 키보드·마우스 입력에 반응한다 (기본 켬). 타자 빠르기로 움직이고, 마우스만 쓰면 둘러본다.
     @Published var typingRunnerEnabled: Bool { didSet { save(typingRunnerEnabled, .typingRunnerEnabled) } }
 
     /// 80%/95% 한도 알림 (기본 on).
     @Published var limitAlertsEnabled: Bool { didSet { save(limitAlertsEnabled, .limitAlertsEnabled) } }
 
-||||||| Stash base
-    /// 80%/95% 한도 알림 (기본 on).
-    @Published var limitAlertsEnabled: Bool { didSet { save(limitAlertsEnabled, .limitAlertsEnabled) } }
-
-=======
->>>>>>> Stashed changes
     /// 5시간 블록 리셋 알림 (§F4 — 기본 off).
     @Published var newSessionAlertEnabled: Bool { didSet { save(newSessionAlertEnabled, .newSessionAlertEnabled) } }
     /// ⌃⌥U로 어디서든 사용량 창 열기 (기본 켬).
@@ -178,13 +165,8 @@ final class AppSettings: ObservableObject {
         sensitivity = Thresholds.Sensitivity(rawValue: string(.sensitivity)) ?? .normal
         let poll = d.double(forKey: Key.pollInterval.rawValue)
         pollInterval = poll > 0 ? poll : 3.0
-<<<<<<< Updated upstream
         typingRunnerEnabled = bool(.typingRunnerEnabled, true)
         limitAlertsEnabled = bool(.limitAlertsEnabled, true)
-||||||| Stash base
-        limitAlertsEnabled = bool(.limitAlertsEnabled, true)
-=======
->>>>>>> Stashed changes
         newSessionAlertEnabled = bool(.newSessionAlertEnabled, false)
         weeklyResetAlertEnabled = bool(.weeklyResetAlertEnabled, false)
         claudeDoneAlertEnabled = bool(.claudeDoneAlertEnabled, true)

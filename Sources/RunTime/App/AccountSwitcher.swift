@@ -86,6 +86,10 @@ final class AccountSwitcher: ObservableObject {
     /// 쓰지 않는 계정 사용률을 받는 간격. 공식 조회 간격(3분)보다 길게 잡아 요청을 늘리지 않는다.
     static let othersRefreshInterval: TimeInterval = 10 * 60
     private var othersFetchedAt: [String: Date] = [:]
+    /// 모든 계정이 한도라고 알린 때. 같은 상황을 되풀이해 알리지 않는다.
+    private var exhaustedNoticeUntil: Date?
+    /// 모든 계정이 한도에 닿았을 때 부른다 (가장 먼저 풀리는 계정, 풀리는 때). 메인 스레드.
+    var onExhausted: (Account?, Date?) -> Void = { _, _ in }
     private var keychainOff: Bool { WorkLogSettings.keychainOff }
 
     private init() {
@@ -415,9 +419,26 @@ final class AccountSwitcher: ObservableObject {
         guard let mine = usage[id], mine.effectivePercent(now: now) >= Self.autoSwitchLimit else { return }
         guard let target = ClaudeLogin.autoSwitchTarget(current: id, usage: usage, candidates: accounts.map(\.id),
                                                         limit: Self.autoSwitchLimit, now: now)
-        else { return }
+        else {
+            noticeExhausted(now: now)
+            return
+        }
         lastAutoSwitch = now
         switchTo(target, automatic: true)
+    }
+
+    /// 바꿀 계정이 없으면 가장 먼저 풀리는 계정을 한 번 알린다. 그 계정이 풀릴 때까지 다시 알리지 않는다.
+    private func noticeExhausted(now: Date) {
+        if let until = exhaustedNoticeUntil, now < until { return }
+        let soonest = accounts.compactMap { account -> (Account, Date)? in
+            guard let usage = account.lastUsage else { return nil }
+            let resets = [usage.sessionPercent.flatMap { $0 >= Self.autoSwitchLimit ? usage.sessionResetsAt : nil },
+                          usage.weeklyPercent.flatMap { $0 >= Self.autoSwitchLimit ? usage.weeklyResetsAt : nil }]
+                .compactMap { $0 }.filter { $0 > now }
+            return resets.max().map { (account, $0) }
+        }.min { $0.1 < $1.1 }
+        exhaustedNoticeUntil = soonest?.1 ?? now.addingTimeInterval(30 * 60)
+        onExhausted(soonest?.0, soonest?.1)
     }
 
     // MARK: - 쓰지 않는 계정 토큰 살려 두기

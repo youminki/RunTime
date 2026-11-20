@@ -531,6 +531,9 @@ struct WorkLogSettingsView: View {
                     Toggle("", isOn: $settings.reminderEnabled).toggleStyle(.switch).labelsHidden()
                 }
             }
+            SettingRow("펫 말풍선 일일보고", "펫을 꺼내 두면 평일 10시에 진행 예정, 18시에 진행 사항을 펫 위에 띄웁니다. 말풍선에서 복사하거나 팀즈로 보냅니다.") {
+                Toggle("", isOn: $settings.petReportBubble).toggleStyle(.switch).labelsHidden()
+            }
             SettingRow("창 단축키", "⌘[ 이전 · ⌘] 다음 · ⌘T 오늘 · ⌘R 가져오기 · ⇧⌘C 보고서 복사 · ⌘, 설정") { EmptyView() }
         }
     }
