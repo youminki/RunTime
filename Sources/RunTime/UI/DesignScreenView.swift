@@ -287,7 +287,7 @@ struct DesignScreenDetail: View {
                             VStack(spacing: 8) {
                                 Text(reason).font(WL.caption).foregroundStyle(WL.waiting).multilineTextAlignment(.center)
                                 if reason.contains("토큰") {
-                                    Button("피그마 토큰 넣기") { page.openSettings(.figma) }.buttonStyle(NotionButtonStyle())
+                                    Button("피그마 토큰 넣기") { page.openSettings() }.buttonStyle(NotionButtonStyle())
                                 }
                             }
                             .padding(10)

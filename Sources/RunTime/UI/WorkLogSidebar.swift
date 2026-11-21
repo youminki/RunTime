@@ -376,29 +376,39 @@ struct WorkLogSidebar: View {
 
     // MARK: 연동 상태
 
+    /// 줄마다 그 연동의 설정 칸을 바로 연다.
     private var footer: some View {
-        Button { page.showsSettings = true } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                // 오류 글은 길어 한 줄에서 잘리니 "확인 필요"로 줄이고 전체 글은 올렸을 때 보인다
-                status("GitLab", on: settings.captureEnabled, error: settings.captureEnabled && sync.captureError != nil,
+        VStack(alignment: .leading, spacing: 0) {
+            // 오류 글은 길어 한 줄에서 잘리니 "확인 필요"로 줄이고 전체 글은 올렸을 때 보인다
+            statusLink(.gitlab, on: settings.captureEnabled, error: settings.captureEnabled && sync.captureError != nil,
                        detail: !settings.captureEnabled ? "꺼짐" : sync.captureError != nil ? "확인 필요"
-                           : sync.lastCapture.map { "\(WorkLogFormat.when($0)) 가져옴" } ?? (settings.captureEnabled ? "대기" : "꺼짐"))
-                    .tip(sync.captureError ?? "")
-                status("레드마인", on: settings.redmineReady, error: sync.issuesError != nil,
-                       detail: sync.issuesError != nil ? "확인 필요" : settings.redmineReady ? "연결됨" : "꺼짐")
-                    .tip(sync.issuesError ?? "")
-                status("팀즈", on: settings.hasTeams(.chat), error: false,
-                       detail: settings.teamsDirect(.chat) ? "웹훅 연결" : settings.hasTeams(.chat) ? "채팅 연결" : "나에게만")
-            }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
-                .fill(hover.key == "footer" ? WL.hover : .clear))
-            .contentShape(Rectangle())
+                           : sync.lastCapture.map { "\(WorkLogFormat.when($0)) 가져옴" } ?? "대기",
+                       tip: sync.captureError)
+            statusLink(.redmine, on: settings.redmineReady, error: sync.issuesError != nil,
+                       detail: sync.issuesError != nil ? "확인 필요" : settings.redmineReady ? "연결됨" : "꺼짐",
+                       tip: sync.issuesError)
+            statusLink(.teams, on: settings.hasTeams(.chat), error: false,
+                       detail: settings.teamsDirect(.chat) ? "웹훅 연결" : settings.hasTeams(.chat) ? "채팅 연결" : "나에게만",
+                       tip: nil)
+        }
+    }
+
+    private func statusLink(_ section: WorkLogPage.SettingsSection, on: Bool, error: Bool, detail: String, tip: String?) -> some View {
+        let key = "footer." + section.rawValue
+        return Button {
+            page.settingsSection = section
+            page.showsSettings = true
+        } label: {
+            status(section.rawValue, on: on, error: error, detail: detail)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: WL.inner, style: .continuous)
+                    .fill(hover.key == key ? WL.hover : .clear))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hover.update("footer", $0) }
-        .tip("연동 설정")
+        .onHover { hover.update(key, $0) }
+        .tip(tip ?? "\(section.rawValue) 설정 열기")
     }
 
     private func status(_ name: String, on: Bool, error: Bool, detail: String) -> some View {

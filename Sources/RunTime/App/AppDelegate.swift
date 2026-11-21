@@ -267,15 +267,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             .store(in: &cancellables)
 
-        GlobalHotKey.shared.action = { [weak self] in
-            // 다른 앱이 앞에 있을 때 누르므로, 열 때는 앱을 앞으로 가져와야 키 입력과 바깥 클릭 닫기가 된다
-            if self?.popover?.isShown != true { NSApp.activate(ignoringOtherApps: true) }
-            self?.togglePopover()
-        }
-        engine.settings.$globalHotKeyEnabled
-            .removeDuplicates()
-            .sink { GlobalHotKey.shared.setEnabled($0) }
-            .store(in: &cancellables)
         WindowLayout.shared.openSettings = { [weak self] in
             NSApp.activate(ignoringOtherApps: true)
             self?.openSettings(tab: .windows)
@@ -336,8 +327,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
             MainActor.assumeIsolated { HostsStore.shared.remindExpired() }
         }
-        GlobalHotKey.shared.quickAction = { QuickAddPanel.shared.toggle() }
-        GlobalHotKey.shared.setQuickAdd(WorkLogSettings.shared.quickAddEnabled)
         // 처음 설치한 사람에게만 한 번. 러너가 메뉴바에 자리 잡은 뒤에 띄운다
         if LegacyMigration.isFreshInstall && LaunchAtLogin.available {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.openWelcome() }
@@ -458,19 +447,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menu.addItem(withTitle: line, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         // 앱 창의 아이콘 막대와 같은 묶음 순서로 둔다: 사용량, 업무 기록, 개발 도구, 러너
-        add(engine.settings.globalHotKeyEnabled && GlobalHotKey.shared.isRegistered
-            ? "사용량 보기 (\(GlobalHotKey.displayName))" : "사용량 보기") { [weak self] in self?.togglePopover() }
+        add("사용량 보기") { [weak self] in self?.togglePopover() }
         add("새로고침") { [weak self] in self?.engine.refreshNow(forceOfficial: true) }
         addAccountMenu(to: menu)
         menu.addItem(.separator())
         add("업무 일지") { [weak self] in self?.openWorkLog() }
-        add(WorkLogSettings.shared.quickAddEnabled ? "업무 한 줄 적기 (\(GlobalHotKey.quickCombo.label))" : "업무 한 줄 적기") {
+        add("업무 한 줄 적기") {
             QuickAddPanel.shared.show()
         }
         add("레드마인") { [weak self] in self?.showMain(.redmine) }
         menu.addItem(.separator())
         let unseenDesign = MainActor.assumeIsolated { DesignSync.shared.unseenCount }
-        add(unseenDesign > 0 ? "디자인 변경 (\(unseenDesign))" : "디자인 변경") { [weak self] in self?.showMain(.design) }
+        add(unseenDesign > 0 ? "피그마 변경 (\(unseenDesign))" : "피그마 변경") { [weak self] in self?.showMain(.design) }
         addHostsMenu(to: menu)
         menu.addItem(.separator())
         if WindowLayout.shared.enabled {
@@ -528,7 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if !switcher.accounts.isEmpty { sub.addItem(.separator()) }
         let manage = NSMenuItem(title: "계정 관리…", action: #selector(runMenuAction(_:)), keyEquivalent: "")
         manage.target = self
-        manage.representedObject = MenuAction { [weak self] in self?.openSettings(tab: .usage) }
+        manage.representedObject = MenuAction { [weak self] in self?.openSettings(tab: .accounts) }
         sub.addItem(manage)
         parent.submenu = sub
         menu.addItem(parent)

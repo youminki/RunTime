@@ -377,9 +377,8 @@ final class WindowKeyRecorder: ObservableObject {
     private func start(_ slot: WindowShortcutSlot) {
         recording = slot
         hint = nil
-        // RunTime의 다른 단축키(사용량 열기·한 줄 적기·펫)도 놓아야 그 조합을 눌렀을 때 기록기에 온다
+        // 펫 단축키도 놓아야 그 조합을 눌렀을 때 기록기에 온다
         WindowControl.shared.suspendKeys()
-        GlobalHotKey.shared.suspend()
         petKeysHeld = DesktopPet.shared.isShown
         if petKeysHeld { PetKeys.shared.unregister() }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .otherMouseDown]) { [weak self] event in
@@ -404,7 +403,6 @@ final class WindowKeyRecorder: ObservableObject {
         observers = []
         recording = nil
         WindowControl.shared.resumeKeys()
-        GlobalHotKey.shared.resume()
         if petKeysHeld { PetKeys.shared.register() }
         petKeysHeld = false
     }
@@ -439,7 +437,7 @@ final class WindowKeyRecorder: ObservableObject {
             return
         }
         guard !WindowLayout.reservedKeys.contains(key) else {
-            hint = "\(key.label)는 RunTime의 사용량 열기·한 줄 적기·펫 단축키입니다. 다른 조합을 눌러 주세요."
+            hint = "\(key.label)는 RunTime의 펫·클립보드 단축키입니다. 다른 조합을 눌러 주세요."
             return
         }
         hint = nil
@@ -455,7 +453,6 @@ final class WindowKeyRecorder: ObservableObject {
         observers.forEach(NotificationCenter.default.removeObserver)
         if recording != nil {
             WindowControl.shared.resumeKeys()
-            GlobalHotKey.shared.resume()
             if petKeysHeld { PetKeys.shared.register() }
         }
     }

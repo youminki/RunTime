@@ -31,7 +31,6 @@ struct WorkLogView: View {
     }
 
     private func appeared() {
-        store.applyRecurringToday()
         // 앱 창 안에서 다른 화면을 오갈 때마다 GitLab·레드마인을 다시 부르지 않게 5분에 한 번만 받는다
         if let last = page.lastAutoSync, Date().timeIntervalSince(last) < 300 { return }
         page.lastAutoSync = Date()
@@ -333,7 +332,7 @@ struct WorkLogView: View {
                 Text(page.day == WorkDay.today() ? "오늘 적은 일이 아직 없습니다" : "이 날은 기록이 없습니다")
                     .font(.system(size: 13.5, weight: .semibold))
                 Text(settings.captureEnabled
-                     ? "머지한 MR과 머지 전 커밋은 10분마다 자동으로 들어옵니다. 회의처럼 git에 남지 않는 일만 아래에서 프로젝트를 골라 적으세요.\(quickAddHint)"
+                     ? "머지한 MR과 머지 전 커밋은 10분마다 자동으로 들어옵니다. 회의처럼 git에 남지 않는 일만 아래에서 프로젝트를 골라 적으세요."
                      : "GitLab을 연결하면 머지한 MR과 커밋이 자동으로 들어옵니다. 지금은 프로젝트를 골라 직접 적거나 써 둔 보고서를 붙여 넣을 수 있습니다.")
                     .font(.system(size: 13)).foregroundStyle(WL.muted).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
@@ -348,11 +347,6 @@ struct WorkLogView: View {
             }
         }
         .padding(.bottom, 20)
-    }
-
-    /// 한 줄 적기 단축키는 설정에서 끌 수 있어 켜져 있을 때만 알린다.
-    private var quickAddHint: String {
-        settings.quickAddEnabled ? " 다른 앱에서는 \(GlobalHotKey.quickCombo.label)로 바로 적을 수 있습니다." : ""
     }
 
     private func projectSection(_ project: String, entries: [WorkEntry]) -> some View {

@@ -197,7 +197,7 @@ struct ClipboardSettingsView: View {
     }
 }
 
-/// 클립보드 기록 단축키를 새로 기록한다. 사용량 단축키의 HotKeyRecorder와 같은 방식이다.
+/// 클립보드 기록 단축키를 새로 기록한다. 창 배치 단축키 기록기와 같은 방식이다.
 @MainActor
 final class ClipKeyRecorder: ObservableObject {
     @Published private(set) var recording = false
@@ -241,7 +241,7 @@ final class ClipKeyRecorder: ObservableObject {
     }
 
     func reset(_ clipboard: Clipboard) {
-        let combo = GlobalHotKey.Combo(keyCode: UInt32(ClipPreferences.defaultHotKeyCode),
+        let combo = KeyCombo(keyCode: UInt32(ClipPreferences.defaultHotKeyCode),
                                        modifiers: UInt32(ClipPreferences.defaultHotKeyModifiers), label: "⇧⌘V")
         hint = clipboard.setHotKey(combo)
     }
@@ -251,7 +251,7 @@ final class ClipKeyRecorder: ObservableObject {
             stop()
             return
         }
-        guard let combo = GlobalHotKey.Combo(event: event) else {
+        guard let combo = KeyCombo(event: event) else {
             hint = "⌘·⌥·⌃ 가운데 하나와 함께 눌러 주세요."
             return
         }

@@ -219,8 +219,6 @@ if CommandLine.arguments.contains("--window-keys-audit") {
     let control = WindowControl.shared
     control.reservedKeys = { WindowLayout.reservedKeys }
     var others: [(String, WindowKey)] = [
-        ("RunTime 사용량 열기", WindowKey(carbonKeyCode: GlobalHotKey.shared.combo.keyCode, carbonModifiers: GlobalHotKey.shared.combo.modifiers)),
-        ("RunTime 한 줄 적기", WindowKey(carbonKeyCode: GlobalHotKey.quickCombo.keyCode, carbonModifiers: GlobalHotKey.quickCombo.modifiers)),
         ("명령 찾기", WindowPalette.defaultKey),
     ]
     others += PetKeys.fallbackKeys.map { ("펫 (창 배치를 켰을 때)", $0) }

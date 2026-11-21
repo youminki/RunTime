@@ -87,7 +87,7 @@ struct DesignCompareView: View {
                 Text(model.progress).font(WL.caption).foregroundStyle(WL.muted).lineLimit(1)
             }
             if model.source == .figma && !sync.settings.hasToken {
-                Button("피그마 버전 비교는 토큰이 있어야 합니다 (file_versions:read 범위)") { page.openSettings(.figma) }
+                Button("피그마 버전 비교는 토큰이 있어야 합니다 (file_versions:read 범위)") { page.openSettings() }
                     .buttonStyle(TextLinkButtonStyle()).font(WL.caption)
             } else if model.source == .figma && model.resultIsStale {
                 Text("조건을 바꿨습니다. ‘비교’를 누르면 새 조건으로 견줍니다.").font(WL.caption).foregroundStyle(WL.muted)

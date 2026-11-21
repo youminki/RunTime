@@ -25,16 +25,6 @@ import Testing
         #expect(text.hasSuffix("[차주 계획]\n1. A\n- 이어서 (60%)"))
     }
 
-    @Test func recurringWorkIsAddedOncePerMatchingDay() {
-        var log = WorkLog()
-        log.recurring = [RecurringWork(project: "uxhub", title: "주간 회의", weekdays: [2])]   // 월요일
-        #expect(log.applyRecurring(on: "2026-10-19") == 1)
-        #expect(log.applyRecurring(on: "2026-10-19") == 0)
-        #expect(log.applyRecurring(on: "2026-10-20") == 0)   // 화요일
-        log.remove(log.entries[0].id)
-        #expect(log.applyRecurring(on: "2026-10-19") == 0)   // 지운 날은 되살리지 않는다
-    }
-
     @Test func estimatesHoursFromClaudeCodeFolders() {
         let entries = [
             WorkEntry(day: "2026-10-20", project: "velox", title: "a", issue: 1, source: "mr:velox/velox-web-portal!14"),
@@ -129,7 +119,7 @@ import Testing
     }
 }
 
-@Suite struct CarryAndRecurringTests {
+@Suite struct CarryOverTests {
     @Test func carryOverSkipsBranchLineAlreadyCapturedToday() {
         let source = "branch:a/b:feat/x"
         var log = WorkLog(projects: ["a"], entries: [
@@ -143,11 +133,6 @@ import Testing
         #expect(log.carryCandidates(from: "2026-10-26", to: "2026-10-27").isEmpty)
     }
 
-    @Test func recurringSkipsSameTitleWrittenByHand() {
-        var log = WorkLog(projects: ["a"], entries: [WorkEntry(day: "2026-10-26", project: "a", title: "주간 회의 참석", status: .ongoing)])
-        log.recurring = [RecurringWork(project: "a", title: "주간회의 참석", weekdays: [2])]
-        #expect(log.applyRecurring(on: "2026-10-26") == 0)
-    }
 }
 
 @Suite struct WorkLogBackupTests {

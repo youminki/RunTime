@@ -49,11 +49,9 @@ final class Clipboard: ObservableObject {
     }
 
     /// 새 조합을 쓸 수 있으면 nil, 아니면 까닭.
-    @MainActor func setHotKey(_ combo: GlobalHotKey.Combo) -> String? {
+    @MainActor func setHotKey(_ combo: KeyCombo) -> String? {
         let key = WindowKey(carbonKeyCode: combo.keyCode, carbonModifiers: combo.modifiers)
-        let taken = [GlobalHotKey.shared.combo, GlobalHotKey.quickCombo]
-            .map { WindowKey(carbonKeyCode: $0.keyCode, carbonModifiers: $0.modifiers) } + PetKeys.fallbackKeys
-        if taken.contains(key) { return "RunTime의 다른 단축키가 쓰는 조합입니다." }
+        if PetKeys.fallbackKeys.contains(key) { return "RunTime의 다른 단축키가 쓰는 조합입니다." }
         ClipPreferences.shared.setHotKey(code: Int(combo.keyCode), modifiers: Int(combo.modifiers))
         WindowControl.shared.reservedKeysChanged()
         return enabled && !ClipRuntime.hotKeyRegistered ? "다른 앱이 이 조합을 쓰고 있어 등록하지 못했습니다." : nil

@@ -9,7 +9,7 @@ final class AppSettings: ObservableObject {
     static let pollIntervalOptions: [Double] = [1, 3, 5, 10]
 
     private enum Key: String {
-        case officialEnabled, sensitivity, pollInterval, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, globalHotKeyEnabled, spriteTheme, typingRunnerEnabled
+        case officialEnabled, sensitivity, pollInterval, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, spriteTheme, typingRunnerEnabled
         case menuBarLabel, menuBarLabelLast, runner, smoothness, tricksEnabled, customRunner, runnerSize, desktopPet
         case desktopPetSize, desktopPetEdges, desktopPetMode, desktopPetSpot
     }
@@ -28,8 +28,6 @@ final class AppSettings: ObservableObject {
 
     /// 5시간 블록 리셋 알림 (§F4 — 기본 off).
     @Published var newSessionAlertEnabled: Bool { didSet { save(newSessionAlertEnabled, .newSessionAlertEnabled) } }
-    /// ⌃⌥U로 어디서든 사용량 창 열기 (기본 켬).
-    @Published var globalHotKeyEnabled: Bool { didSet { save(globalHotKeyEnabled, .globalHotKeyEnabled) } }
     /// 주간 사용량이 초기화되면 알림 (기본 끔).
     @Published var weeklyResetAlertEnabled: Bool { didSet { save(weeklyResetAlertEnabled, .weeklyResetAlertEnabled) } }
     /// 사용량 창이 닫혀 있을 때 1분 넘게 걸린 Claude 작업이 끝나면 알린다.
@@ -167,7 +165,6 @@ final class AppSettings: ObservableObject {
         weeklyResetAlertEnabled = bool(.weeklyResetAlertEnabled, false)
         claudeDoneAlertEnabled = bool(.claudeDoneAlertEnabled, true)
         weeklySummaryEnabled = bool(.weeklySummaryEnabled, true)
-        globalHotKeyEnabled = bool(.globalHotKeyEnabled, true)
         runner = Runner(rawValue: string(.runner)) ?? .cat
         spriteTheme = SpriteTheme(rawValue: string(.spriteTheme)) ?? .auto
         // 내 러너 목록에서 사라진 id는 버린다 (그대로 두면 메뉴·고르기에서 아무 것도 선택되지 않아 보인다)

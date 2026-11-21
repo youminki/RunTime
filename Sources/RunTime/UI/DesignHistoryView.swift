@@ -171,13 +171,10 @@ final class DesignHistoryPage: ObservableObject {
     private static func stored(_ key: String, _ fallback: CGFloat) -> CGFloat {
         (UserDefaults.standard.object(forKey: key) as? Double).map { CGFloat($0) } ?? fallback
     }
-    /// 설정의 디자인 칸으로 가 달라는 신호. 앱 창이 받아 설정 화면을 연다.
+    /// 설정의 피그마 칸으로 가 달라는 신호. 앱 창이 받아 설정 화면을 연다.
     @Published var showsSettings = false
-    /// 그때 열 칸 (연결 또는 알림).
-    var settingsSection: DesignSettingsView.Section = .figma
 
-    func openSettings(_ section: DesignSettingsView.Section) {
-        settingsSection = section
+    func openSettings() {
         showsSettings = true
     }
 
@@ -1548,7 +1545,7 @@ private struct DesignSidebar: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
-            Button { page.openSettings(.figma) } label: {
+            Button { page.openSettings() } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Circle().fill(problem != nil ? WL.waiting : settings.hasToken && !settings.sources.isEmpty ? WL.done : Color.secondary.opacity(0.4))
@@ -1644,9 +1641,9 @@ private struct DesignOnboarding: View {
                     }
                     .buttonStyle(NotionButtonStyle(kind: .primary))
                     .disabled(page.addingLink)
-                    Button("설정 열기") { page.openSettings(.figma) }.buttonStyle(NotionButtonStyle())
+                    Button("설정 열기") { page.openSettings() }.buttonStyle(NotionButtonStyle())
                 } else {
-                    Button("피그마 연결하기") { page.openSettings(.figma) }
+                    Button("피그마 연결하기") { page.openSettings() }
                         .buttonStyle(NotionButtonStyle(kind: .primary))
                 }
             }
@@ -2672,7 +2669,7 @@ private struct DesignEventDetail: View {
                             VStack(spacing: 8) {
                                 Text(reason).font(WL.caption).foregroundStyle(WL.waiting).multilineTextAlignment(.center)
                                 if reason.contains("토큰") {
-                                    Button("피그마 토큰 넣기") { page.openSettings(.figma) }.buttonStyle(NotionButtonStyle())
+                                    Button("피그마 토큰 넣기") { page.openSettings() }.buttonStyle(NotionButtonStyle())
                                 }
                             }
                             .padding(10)

@@ -17,9 +17,6 @@ final class WorkLogSettings: ObservableObject {
     /// 로컬 커밋을 찾을 폴더. 두 단계 아래까지 본다.
     @Published var repoFolder: String { didSet { defaults.set(repoFolder, forKey: "workLog.repoFolder") } }
     @Published var redmineURL: String { didSet { defaults.set(redmineURL, forKey: "workLog.redmineURL") } }
-    @Published var reminderEnabled: Bool { didSet { defaults.set(reminderEnabled, forKey: "workLog.reminder") } }
-    /// 평일 이 시각(분)에 오늘 기록과 보낼 일감을 알린다. 기본 18:00.
-    @Published var reminderMinutes: Int { didSet { defaults.set(reminderMinutes, forKey: "workLog.reminderMinutes") } }
     @Published private(set) var hasRedmineKey: Bool
     @Published private(set) var hasTeamsWebhook: Bool
     @Published private(set) var hasTeamsMeWebhook: Bool
@@ -37,8 +34,6 @@ final class WorkLogSettings: ObservableObject {
     @Published var weeklyPlan: Bool { didSet { defaults.set(weeklyPlan, forKey: "workLog.weeklyPlan") } }
     /// 사내 보고처럼 짧게: 메뉴 경로·비슷한 커밋을 한 줄로, 되돌린 일과 곁가지 브랜치는 뺀다. 켜면 묶어 쓰기보다 앞선다.
     @Published var reportCompact: Bool { didSet { defaults.set(reportCompact, forKey: "workLog.reportCompact") } }
-    /// ⌃⌥L로 어디서든 한 줄 적기.
-    @Published var quickAddEnabled: Bool { didSet { defaults.set(quickAddEnabled, forKey: "workLog.quickAdd") } }
     /// 보낼 때 일감 상태·시작일·완료 기한도 일지에 맞춘다. 진행·완료로 쓸 상태는 레드마인마다 달라 고른다.
     @Published var syncIssueFields: Bool { didSet { defaults.set(syncIssueFields, forKey: "workLog.syncIssueFields") } }
     @Published var progressStatusID: Int? { didSet { defaults.set(progressStatusID ?? 0, forKey: "workLog.progressStatus") } }
@@ -55,8 +50,6 @@ final class WorkLogSettings: ObservableObject {
         captureEnabled = defaults.object(forKey: "workLog.capture") as? Bool ?? false
         repoFolder = defaults.string(forKey: "workLog.repoFolder") ?? (NSHomeDirectory() + "/GitHub")
         redmineURL = defaults.string(forKey: "workLog.redmineURL") ?? ""
-        reminderEnabled = defaults.object(forKey: "workLog.reminder") as? Bool ?? false
-        reminderMinutes = defaults.object(forKey: "workLog.reminderMinutes") as? Int ?? 18 * 60
         // 값을 읽지 않고 있는지만 본다 (값을 읽으면 다른 서명의 빌드에서 키체인 창이 뜬다)
         hasRedmineKey = !Self.keychainOff && Keychain.exists(Self.keyAccount)
         hasTeamsWebhook = !Self.keychainOff && Keychain.exists(TeamsTarget.chat.account)
@@ -73,7 +66,6 @@ final class WorkLogSettings: ObservableObject {
         teamsMeHint = defaults.string(forKey: "workLog.teamsMeHost")
         weeklyPlan = defaults.object(forKey: "workLog.weeklyPlan") as? Bool ?? false
         reportCompact = defaults.object(forKey: "workLog.reportCompact") as? Bool ?? true
-        quickAddEnabled = defaults.object(forKey: "workLog.quickAdd") as? Bool ?? true
         syncIssueFields = defaults.object(forKey: "workLog.syncIssueFields") as? Bool ?? true
         let ratio = defaults.object(forKey: "workLog.inProgressRatio") as? Int ?? -1
         inProgressRatio = (0...100).contains(ratio) ? ratio : nil
@@ -487,9 +479,6 @@ final class WorkLogSync: ObservableObject {
             issuesTriedAt = Date()
             loadMyIssues()
         }
-        // 자정을 넘기면 그날 고정 업무를 넣는다 (가져오기를 꺼 두었거나 창을 켜 둔 채여도). 이미 있으면 아무것도 하지 않는다
-        store.applyRecurringToday()
-        remindIfDue()
         TeamsWeb.shared.refreshIfDue()
     }
 
@@ -538,7 +527,6 @@ final class WorkLogSync: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.lastAdded = self.store.applyCapture(mrs: mrs, commits: commits)
-                self.store.applyRecurringToday()
                 self.capturing = false
                 // MR을 못 받았으면(잠에서 막 깨 VPN이 붙기 전 등) 10분을 다 기다리지 않고 2분 뒤 다시 해 본다
                 self.lastCapture = gotMRs ? Date() : Date().addingTimeInterval(-480)
@@ -1681,32 +1669,6 @@ final class WorkLogSync: ObservableObject {
         case 422: return "레드마인이 값을 받지 않았습니다 (422)"
         default: return "HTTP \(http.statusCode)"
         }
-    }
-
-    // MARK: 알림
-
-    private func remindIfDue() {
-        guard settings.reminderEnabled else { return }
-        let calendar = WorkDay.calendar
-        let now = Date()
-        let weekday = calendar.component(.weekday, from: now)
-        let minutes = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
-        let today = WorkDay.today()
-        guard (2...6).contains(weekday), KoreanHolidays.name(on: today) == nil, minutes >= settings.reminderMinutes,
-              defaults.string(forKey: "workLog.lastReminder") != today else { return }
-        defaults.set(today, forKey: "workLog.lastReminder")
-        // 알리기 전에 마지막으로 한 번 더 가져와 퇴근 직전 머지도 넣는다
-        let notify = { [weak self] in
-            guard let self else { return }
-            let entries = self.store.log.entries(on: today)
-            guard !entries.isEmpty else { return }
-            let waiting = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
-            Notifier.shared.send(title: "오늘 업무 일지 \(entries.count)줄",
-                                 body: waiting > 0 ? "레드마인에 보낼 일감 \(waiting)개. 눌러서 확인하고 보내세요."
-                                                   : "눌러서 일일보고를 복사하세요.",
-                                 opens: .workLog)
-        }
-        if settings.captureEnabled { capture(completion: notify) } else { notify() }
     }
 }
 

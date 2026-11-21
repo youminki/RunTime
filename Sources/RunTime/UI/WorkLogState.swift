@@ -179,10 +179,6 @@ final class WorkLogPage: ObservableObject {
     @Published var showsSettings = false
     /// 저장하기 전 API 키·웹훅. 저장하면 비운다.
     @Published var keyDraft = ""
-    /// 고정 업무 새로 만들기 칸.
-    @Published var recurringProject = ""
-    @Published var recurringTitle = ""
-    @Published var recurringDays: Set<Int> = [2]
     @Published var confirmingTeams = false
     @Published var teamsTestResult: String?
     @Published var teamsTestFailed = false
@@ -191,17 +187,26 @@ final class WorkLogPage: ObservableObject {
 
     /// 설정 창에서 고른 칸.
     @Published var settingsSection = SettingsSection.gitlab
+    /// 저장소 폴더와 그 아래 git 저장소 수. 설정 화면이 폴더가 바뀔 때만 다시 센다.
+    @Published var repoScan: (folder: String, count: Int)?
 
     enum SettingsSection: String, CaseIterable {
-        case gitlab = "GitLab", redmine = "레드마인", teams = "팀즈", recurring = "고정 업무", shortcuts = "단축키·알림"
+        case gitlab = "GitLab", redmine = "레드마인", teams = "팀즈"
 
         var icon: String {
             switch self {
             case .gitlab: return "arrow.triangle.merge"
-            case .redmine: return "paperplane"
-            case .teams: return "bubble.left.and.bubble.right"
-            case .recurring: return "repeat"
-            case .shortcuts: return "keyboard"
+            case .redmine: return "paperplane.fill"
+            case .teams: return "bubble.left.and.bubble.right.fill"
+            }
+        }
+
+        /// 설정 왼쪽 목록 아이콘 바탕색. 서로 가리기 쉽게 칸마다 다르게 둔다.
+        var tint: Color {
+            switch self {
+            case .gitlab: return Palette.orange
+            case .redmine: return Palette.pink
+            case .teams: return Palette.indigo
             }
         }
     }

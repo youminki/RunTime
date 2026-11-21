@@ -134,27 +134,6 @@ public struct WorkEntry: Codable, Equatable, Identifiable {
     }
 }
 
-/// 정한 요일마다 넣는 일.
-public struct RecurringWork: Codable, Equatable, Identifiable {
-    public var id: UUID
-    public var project: String
-    public var title: String
-    public var status: WorkStatus
-    public var issue: Int?
-    /// 그레고리력 요일 (1 일요일 … 7 토요일).
-    public var weekdays: Set<Int>
-
-    public init(id: UUID = UUID(), project: String, title: String, status: WorkStatus = .ongoing,
-                issue: Int? = nil, weekdays: Set<Int>) {
-        self.id = id
-        self.project = project
-        self.title = title
-        self.status = status
-        self.issue = issue
-        self.weekdays = weekdays
-    }
-}
-
 /// 프로젝트를 맡은 기간 (`2026-10-01` 꼴, 비우면 그쪽 끝이 없다). 기간 안의 날에는 그날 줄이 없어도 진행 예정에 들어간다.
 public struct ProjectPeriod: Codable, Equatable {
     public var start: String?
@@ -178,8 +157,6 @@ public struct WorkLog: Codable, Equatable {
     public var aliases: [String: String]
     /// 지운 자동 줄(`날짜|출처`). 다음에 가져올 때 되살리지 않는다.
     public var dismissed: Set<String>
-    /// 정한 요일마다 저절로 넣는 일 (주간 회의 같은 상시 업무).
-    public var recurring: [RecurringWork]
     /// 레드마인 일감 장부 (번호 문자열 → 정보). JSON에서 번호를 키로 쓰려고 문자열로 둔다.
     public var issues: [String: IssueInfo]
     /// 레드마인 프로젝트 이름 → 보고서 프로젝트 이름. 예: `목포 데이터밸류 체인 구축` → `uxhub`.
@@ -193,12 +170,11 @@ public struct WorkLog: Codable, Equatable {
     public var projectPeriods: [String: ProjectPeriod]
 
     public init(projects: [String] = [], entries: [WorkEntry] = [], aliases: [String: String] = [:],
-                dismissed: Set<String> = [], recurring: [RecurringWork] = []) {
+                dismissed: Set<String> = []) {
         self.projects = projects
         self.entries = entries
         self.aliases = aliases
         self.dismissed = dismissed
-        self.recurring = recurring
         self.issues = [:]
         self.redmineProjects = [:]
         self.hiddenProjects = []
@@ -225,7 +201,6 @@ public struct WorkLog: Codable, Equatable {
         entries = try c.decodeIfPresent([WorkEntry].self, forKey: .entries) ?? []
         aliases = try c.decodeIfPresent([String: String].self, forKey: .aliases) ?? [:]
         dismissed = try c.decodeIfPresent(Set<String>.self, forKey: .dismissed) ?? []
-        recurring = try c.decodeIfPresent([RecurringWork].self, forKey: .recurring) ?? []
         issues = try c.decodeIfPresent([String: IssueInfo].self, forKey: .issues) ?? [:]
         redmineProjects = try c.decodeIfPresent([String: String].self, forKey: .redmineProjects) ?? [:]
         hiddenProjects = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenProjects) ?? []
@@ -275,27 +250,6 @@ public struct WorkLog: Codable, Equatable {
             result[name] = merged
         }
         return result
-    }
-
-    /// 그날 요일에 맞는 고정 업무를 넣는다. 이미 있거나 그날 지운 것은 건너뛴다.
-    @discardableResult
-    public mutating func applyRecurring(on day: String, now: Date = Date()) -> Int {
-        guard let date = WorkDay.date(day) else { return 0 }
-        let weekday = WorkDay.calendar.component(.weekday, from: date)
-        var added = 0
-        for item in recurring where item.weekdays.contains(weekday) {
-            let source = "recurring:\(item.id.uuidString)"
-            // 고정 업무를 지웠다 다시 만들면 id가 바뀌므로, 같은 프로젝트에 같은 제목 줄이 그날 있으면(손으로 적은 것 포함) 넣지 않는다
-            let title = Self.titleKey(item.title)
-            guard !dismissed.contains(day + "|" + source),
-                  !entries.contains(where: { $0.day == day && ($0.source == source
-                      || ($0.project == item.project && Self.titleKey($0.title) == title)) }) else { continue }
-            register(project: item.project)
-            entries.append(WorkEntry(day: day, project: item.project, title: item.title, status: item.status,
-                                     issue: item.issue, updatedAt: now, source: source))
-            added += 1
-        }
-        return added
     }
 
     /// 줄을 지운다. 자동으로 가져온 줄이면 다시 가져오지 않게 적어 둔다.
@@ -382,6 +336,7 @@ public struct WorkLog: Codable, Equatable {
         // 오늘 지운 줄도 되살리지 않는다
         let sources = Set(today.compactMap(\.source))
         return entries(on: source).filter {
+            // 예전 고정 업무 기능이 넣은 줄(recurring:)은 옮기지 않는다
             !$0.status.isFinished && $0.source?.hasPrefix("recurring:") != true
                 && !$0.title.trimmingCharacters(in: .whitespaces).isEmpty
                 && !existing.contains($0.project + "\u{1F}" + $0.title)
@@ -440,7 +395,6 @@ public struct WorkLog: Codable, Equatable {
         // 양쪽이 마지막으로 읽은 뒤 더하거나 뺀 것만 반영한다 (한쪽이 지운 줄을 되살리면 지움 표시가 다시 붙지 않게)
         merged.dismissed = disk.dismissed.subtracting(base.dismissed.subtracting(mine.dismissed))
             .union(mine.dismissed.subtracting(base.dismissed))
-        if mine.recurring != base.recurring { merged.recurring = mine.recurring }
         // 장부는 나중에 받은 것이 맞다. 이 창에서 받은 것을 파일 것 위에 얹는다
         merged.issues.merge(mine.issues) { disk, mine in mine.fetchedAt >= disk.fetchedAt ? mine : disk }
         // 지운 이름도 되살아나지 않게 바뀌었으면 통째로 내 것을 쓴다

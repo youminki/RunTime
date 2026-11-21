@@ -15,21 +15,16 @@ struct WorkLogSettingsView: View {
     var body: some View {
         SlimScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Text(sectionNote).font(.system(size: 12.5)).foregroundStyle(WL.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 18)
                 Rectangle().fill(WL.border).frame(height: 1)
                 switch page.settingsSection {
                 case .gitlab: gitlab
                 case .redmine: redmine
                 case .teams: teams
-                case .recurring: recurring
-                case .shortcuts: shortcuts
                 }
             }
             .frame(maxWidth: 680, alignment: .leading)
             .padding(.horizontal, 32)
-            .padding(.top, 10)
+            .padding(.top, 14)
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -46,6 +41,19 @@ struct WorkLogSettingsView: View {
             if settings.redmineReady { sync.loadStatuses() }
         }
         .onDisappear { finish() }
+        .task(id: settings.repoFolder) { await scanRepositories() }
+    }
+
+    /// 저장소 폴더를 훑는 일은 폴더를 네 단계까지 읽어 무겁다. 그릴 때마다 하지 않고 폴더가 바뀔 때 한 번 뒤에서 센다.
+    private func scanRepositories() async {
+        let folder = (settings.repoFolder as NSString).expandingTildeInPath
+        // 화면을 열 때마다 다시 세어 새로 받은 저장소도 잡는다. 세는 동안은 앞서 센 수를 그대로 보인다.
+        // 글자를 칠 때마다 훑지 않게 입력이 멈출 때까지 잠깐 기다린다
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        guard !Task.isCancelled else { return }
+        let count = await Task.detached(priority: .utility) { WorkLogSync.repositories(in: folder).count }.value
+        guard !Task.isCancelled else { return }
+        page.repoScan = (folder, count)
     }
 
     /// 설정을 떠날 때. 칸에 써 두고 저장을 누르지 않은 키·주소도 맞으면 저장하고, 바뀐 연동으로 다시 받는다.
@@ -60,7 +68,6 @@ struct WorkLogSettingsView: View {
         sync.serverChanged()
         if settings.redmineReady { sync.loadMyIssues(force: true) }
         RedmineStore.shared.settingsChanged()
-        GlobalHotKey.shared.setQuickAdd(settings.quickAddEnabled)
     }
 
     /// 칸마다 켜짐(초록)·문제(주황)·꺼짐(빈) 점. 설정 화면 왼쪽 목록에 붙는다.
@@ -70,18 +77,15 @@ struct WorkLogSettingsView: View {
         case .gitlab: return !settings.captureEnabled ? .clear : sync.captureError != nil ? WL.waiting : WL.done
         case .redmine: return sync.issuesError != nil ? WL.waiting : settings.redmineReady ? WL.done : .clear
         case .teams: return settings.hasTeams(.chat) ? WL.done : .clear
-        case .recurring: return store.log.recurring.isEmpty ? .clear : WL.done
-        case .shortcuts: return GlobalHotKey.shared.quickClashes || GlobalHotKey.shared.quickFailed ? WL.waiting : .clear
         }
     }
 
-    private var sectionNote: String {
-        switch page.settingsSection {
+    /// 설정 화면 제목 아래 한 줄.
+    static func note(_ section: WorkLogPage.SettingsSection) -> String {
+        switch section {
         case .gitlab: return "머지한 MR은 머지한 날 완료로, main·dev·release에 들어가지 않은 커밋은 브랜치마다 진행중으로 들어옵니다. MR 설명은 일감별 레드마인 댓글로 나눠 씁니다."
         case .redmine: return "진척률과 댓글을 레드마인 API로 직접 보내 Claude 토큰을 쓰지 않습니다. 레드마인 탭에서 보내기를 눌러야 나갑니다."
         case .teams: return "보고서를 팀즈 채팅에 올립니다. 나에게는 설정 없이 나와의 채팅으로 가고, 보고 채팅은 채팅 링크 하나만 넣으면 됩니다."
-        case .recurring: return "정한 요일이 되면 그날 일지에 자동으로 들어갑니다. 그날 지우면 다시 넣지 않습니다."
-        case .shortcuts: return "어디서든 한 줄 적기와 퇴근 무렵 알림."
         }
     }
 
@@ -103,7 +107,7 @@ struct WorkLogSettingsView: View {
                     .buttonStyle(NotionButtonStyle())
                 }
             }
-            SettingRow("저장소 폴더", repoFolderDetail, detailTint: repoFolderExists && repoCount > 0 ? nil : WL.waiting) {
+            SettingRow("저장소 폴더", repoFolderDetail, detailTint: repoFolderExists && repoCount != 0 ? nil : WL.waiting) {
                 HStack(spacing: 6) {
                     TextField("~/GitHub", text: $settings.repoFolder).textFieldStyle(.roundedBorder).frame(width: 240)
                         .help(settings.repoFolder)
@@ -139,12 +143,15 @@ struct WorkLogSettingsView: View {
         }
     }
 
-    /// 폴더 바로 아래와 그 아래의 git 저장소 수. 폴더 목록만 읽어 빠르다.
-    private var repoCount: Int { WorkLogSync.repositories(in: (settings.repoFolder as NSString).expandingTildeInPath).count }
+    /// 폴더 아래 git 저장소 수. 세는 중이면 nil.
+    private var repoCount: Int? {
+        let folder = (settings.repoFolder as NSString).expandingTildeInPath
+        return page.repoScan?.folder == folder ? page.repoScan?.count : nil
+    }
 
     private var repoFolderDetail: String {
         guard repoFolderExists else { return "폴더가 없습니다. 고르기로 저장소를 둔 폴더를 고르세요." }
-        let count = repoCount
+        guard let count = repoCount else { return "git 저장소를 세는 중…" }
         return count == 0 ? "이 폴더와 그 아래에 git 저장소가 없습니다. 저장소를 둔 폴더를 고르세요."
                           : "git 저장소 \(count)개에서 내 커밋을 찾습니다 (폴더 바로 아래와 그 아래까지)."
     }
@@ -289,7 +296,11 @@ struct WorkLogSettingsView: View {
 
     private var redmineStatus: String {
         if let error = sync.issuesError { return error }
-        guard settings.redmineReady else { return "연결하지 않았습니다." }
+        // 무엇이 빠져 연결하지 못했는지 알려 준다
+        guard settings.redmineReady else {
+            if RedmineAPI.baseURL(settings.effectiveRedmineURL) == nil { return "주소를 넣으면 연결합니다." }
+            return "API 키를 넣으면 연결합니다."
+        }
         return sync.myIssues.isEmpty ? "연결됐습니다." : "연결됐습니다 · 나에게 배정된 열린 일감 \(sync.myIssues.count)개"
     }
 
@@ -425,113 +436,6 @@ struct WorkLogSettingsView: View {
         sync.postTeams(TeamsLinker.testReport, title: TeamsLinker.testTitle, to: target) { message, failed in
             page.teamsTestFailed = failed
             page.teamsTestResult = message
-        }
-    }
-
-    // MARK: 고정 업무
-
-    private var recurring: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(store.log.recurring) { item in
-                HStack(spacing: 10) {
-                    ProjectSwatch(name: item.project, size: 10)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title).font(.system(size: 13.5))
-                        Text("\(item.project) · \(item.status.label) · " + weekdayText(item.weekdays))
-                            .font(.system(size: 12)).foregroundStyle(WL.muted)
-                    }
-                    Spacer()
-                    Button { store.setRecurring(store.log.recurring.filter { $0.id != item.id }) } label: { Image(systemName: "trash") }
-                        .buttonStyle(GhostIconButtonStyle())
-                        .tip("이 고정 업무 빼기")
-                }
-                .padding(.vertical, 10)
-                Rectangle().fill(WL.border).frame(height: 1)
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                Text("새 고정 업무").font(.system(size: 13, weight: .semibold))
-                HStack(spacing: 8) {
-                    Menu {
-                        ForEach(store.log.visibleProjects, id: \.self) { name in Button(name) { page.recurringProject = name } }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if !page.recurringProject.isEmpty { ProjectSwatch(name: page.recurringProject) }
-                            Text(page.recurringProject.isEmpty ? "프로젝트" : page.recurringProject)
-                        }
-                    }
-                    .frame(width: 150)
-                    TextField("주간 회의 참석", text: $page.recurringTitle, onCommit: addRecurring).textFieldStyle(.roundedBorder)
-                }
-                HStack(spacing: 4) {
-                    ForEach(WorkLogFormat.weekdays, id: \.number) { day in
-                        Button(day.name) {
-                            if page.recurringDays.contains(day.number) { page.recurringDays.remove(day.number) }
-                            else { page.recurringDays.insert(day.number) }
-                        }
-                        .buttonStyle(ChipButtonStyle(selected: page.recurringDays.contains(day.number)))
-                    }
-                    Button("평일") { page.recurringDays = [2, 3, 4, 5, 6] }.buttonStyle(TextLinkButtonStyle(tint: WL.muted))
-                        .padding(.leading, 6)
-                    Spacer()
-                    Button("넣기") { addRecurring() }
-                        .buttonStyle(NotionButtonStyle(kind: .primary))
-                        .disabled(page.recurringProject.isEmpty || page.recurringTitle.trimmingCharacters(in: .whitespaces).isEmpty
-                                  || page.recurringDays.isEmpty)
-                }
-                Text("상태를 쓰지 않으면 상시로 넣습니다. 끝에 (완료)·(60%)·#일감번호를 붙일 수 있습니다.")
-                    .font(.system(size: 12)).foregroundStyle(WL.faint)
-            }
-            .padding(.top, 18)
-        }
-    }
-
-    private func addRecurring() {
-        let title = page.recurringTitle.trimmingCharacters(in: .whitespaces)
-        guard !page.recurringProject.isEmpty, !title.isEmpty, !page.recurringDays.isEmpty else { return }
-        let parsed = WorkLogFormat.splitStatus(title)
-        let split = WorkReport.splitIssue(parsed.title)
-        // 상태로 읽히지 않은 괄호(`주간 회의 (A팀)`)는 제목이라 상시로 둔다
-        let status: WorkStatus = parsed.title != title ? parsed.status : .ongoing
-        store.setRecurring(store.log.recurring + [RecurringWork(project: page.recurringProject, title: split.title,
-                                                                status: status, issue: split.issue, weekdays: page.recurringDays)])
-        page.recurringTitle = ""
-        page.flash("고정 업무를 넣었습니다")
-    }
-
-    private func weekdayText(_ days: Set<Int>) -> String {
-        if days == [2, 3, 4, 5, 6] { return "평일" }
-        if days.count == 7 { return "매일" }
-        return WorkLogFormat.weekdays.filter { days.contains($0.number) }.map(\.name).joined()
-    }
-
-    // MARK: 단축키·알림
-
-    private var shortcuts: some View {
-        VStack(spacing: 0) {
-            SettingRow("어디서든 한 줄 적기",
-                       GlobalHotKey.shared.quickClashes ? "사용량 단축키와 같은 조합이라 쓸 수 없습니다."
-                       : GlobalHotKey.shared.quickFailed ? "다른 앱이 이미 쓰는 조합입니다."
-                       : "\(GlobalHotKey.quickCombo.label)을 누르면 작은 창이 떠서 오늘 일지에 바로 적습니다.",
-                       detailTint: GlobalHotKey.shared.quickClashes || GlobalHotKey.shared.quickFailed ? WL.waiting : nil) {
-                Toggle("", isOn: $settings.quickAddEnabled).toggleStyle(.switch).labelsHidden()
-                    .onChange(of: settings.quickAddEnabled) { GlobalHotKey.shared.setQuickAdd($0) }
-            }
-            SettingRow("저녁 알림", "평일 정한 시각에 한 번 더 가져온 뒤 오늘 기록과 보낼 일감을 알립니다.") {
-                HStack(spacing: 10) {
-                    DatePicker("", selection: Binding(
-                        get: { Calendar.current.date(bySettingHour: settings.reminderMinutes / 60,
-                                                     minute: settings.reminderMinutes % 60, second: 0, of: Date()) ?? Date() },
-                        set: { date in
-                            let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-                            settings.reminderMinutes = (parts.hour ?? 18) * 60 + (parts.minute ?? 0)
-                        }
-                    ), displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-                    .disabled(!settings.reminderEnabled)
-                    Toggle("", isOn: $settings.reminderEnabled).toggleStyle(.switch).labelsHidden()
-                }
-            }
-            SettingRow("창 단축키", "⌘[ 이전 · ⌘] 다음 · ⌘T 오늘 · ⌘R 가져오기 · ⇧⌘C 보고서 복사 · ⌘, 설정") { EmptyView() }
         }
     }
 

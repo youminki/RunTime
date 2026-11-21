@@ -37,6 +37,15 @@ enum UIShots {
         return page
     }
 
+    /// 앱 창의 설정 화면을 고른 칸으로 연다.
+    private static func settingsShot(_ tab: SettingsView.Tab, engine: UsageEngine) -> AnyView {
+        let navigator = MainNavigator()
+        navigator.start(at: .settings)
+        return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
+                                      workLogPage: WorkLogPage(), settingsTab: SettingsTabState(tab))
+            .frame(width: mainSize.width, height: mainSize.height))
+    }
+
     private static func settingsPage(_ section: WorkLogPage.SettingsSection) -> WorkLogPage {
         let page = WorkLogPage()
         page.settingsSection = section
@@ -198,20 +207,13 @@ enum UIShots {
                                               workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.general), designPage: page)
                     .frame(width: mainSize.width, height: mainSize.height))
             }()),
-            ("main-settings-design-alerts", .aqua, nil, {
-                let navigator = MainNavigator()
-                navigator.start(at: .settings)
-                return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
-                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.designAlerts))
-                    .frame(width: mainSize.width, height: mainSize.height))
-            }()),
             ("design-alert-picker", .aqua, nil, AnyView(DesignAlertPicker(sync: .shared,
                                                                           fileKey: DesignSync.shared.history.files.keys.first ?? ""))),
             ("main-settings-design", .aqua, nil, {
                 let navigator = MainNavigator()
                 navigator.start(at: .settings)
                 return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
-                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.design))
+                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.figma))
                     .frame(width: mainSize.width, height: mainSize.height))
             }()),
         ]
@@ -372,14 +374,9 @@ enum UIShots {
             ("main-hosts-add", .aqua, nil, AnyView(HostsSheetShots.add("10.0.1.20 api.dev.example.com new.dev.example.com\n#10.0.2.31 admin.stg.example.com\napi.stg.example.com 10.0.2.40\n문의는 서버팀", group: "Dev"))),
             ("main-hosts-edit", .aqua, nil, AnyView(HostsSheetShots.edit())),
             ("main-settings", .aqua, nil, mainPage(.settings, engine: engine)),
-            // 지금 계정, 세션·주간 사용률, 계정 목록이 한 화면에 보이는지 본다
-            ("main-settings-usage", .darkAqua, nil, {
-                let navigator = MainNavigator()
-                navigator.start(at: .settings)
-                return AnyView(MainWindowView(engine: engine, settings: engine.settings, navigator: navigator,
-                                              workLogPage: WorkLogPage(), settingsTab: SettingsTabState(.usage))
-                    .frame(width: mainSize.width, height: mainSize.height))
-            }()),
+            ("main-settings-usage", .darkAqua, nil, settingsShot(.usage, engine: engine)),
+            ("main-settings-accounts", .aqua, nil, settingsShot(.accounts, engine: engine)),
+            ("main-settings-alerts", .aqua, nil, settingsShot(.alerts, engine: engine)),
             ("decor-scenes", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),
             ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, form: PetdexSearch(), close: {}).background(windowBackground))),
             ("welcome", .darkAqua, nil, AnyView(WelcomeView(settings: engine.settings))),

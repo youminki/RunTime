@@ -16,37 +16,24 @@ final class DesignSettingsForm: ObservableObject {
     @Published var alertPicker: String?
 }
 
-/// 설정 > 디자인. 연결(토큰·화면설계서·주기)과 알림(메뉴·규칙)을 두 칸으로 나눈다.
+/// 설정 > 피그마. 연결, 지켜보는 화면설계서, 알림 받을 메뉴를 한 화면에 차례로 둔다.
+/// 알림을 켜고 끄는 스위치는 설정 > 알림에 모아 두고, 여기서는 어느 메뉴를 알릴지만 고른다.
 /// 업무 일지 연동과 같은 "이름·설명 | 조작" 줄로 두고, 칸 안은 작은 소제목으로 묶는다.
 struct DesignSettingsView: View {
-    enum Section { case figma, alerts }
-
     @ObservedObject var sync: DesignSync
     @ObservedObject var settings: DesignSyncSettings
-    let section: Section
     @StateObject private var form = DesignSettingsForm()
 
     var body: some View {
         SlimScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Text(section == .figma
-                     ? "피그마 화면설계서를 가져와 바뀐 화면을 날짜별로 남깁니다."
-                     : "맡은 메뉴의 변경만 모아 보고 알림도 그 메뉴에서만 받습니다.")
-                    .font(.system(size: 12.5)).foregroundStyle(WL.muted)
+                group("1. 연결", done: settings.hasToken) { token }
+                group("2. 지켜보는 화면설계서", done: !settings.sources.isEmpty) { files; schedule }
+                group("3. 알림 받을 메뉴", done: settings.sources.contains { !$0.alerts.isEmpty }) { alertMenus; rules }
+                Text("피그마에는 읽기만 하고 보내는 것은 없습니다. 가져온 내용은 이 Mac(Application Support/RunTime)에만 둡니다. 알림을 켜고 끄는 것은 설정 > 알림에 있습니다.")
+                    .font(WL.caption).foregroundStyle(WL.faint)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 6)
-                switch section {
-                case .figma:
-                    group("연결") { token }
-                    group("지켜보는 화면설계서") { files; schedule }
-                    Text("피그마에는 읽기만 하고 보내는 것은 없습니다. 가져온 내용은 이 Mac(Application Support/RunTime)에만 둡니다.")
-                        .font(WL.caption).foregroundStyle(WL.faint)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 16)
-                case .alerts:
-                    group("알림 받을 메뉴") { alertMenus }
-                    group("알림 규칙") { rules }
-                }
+                    .padding(.top, 16)
             }
             .frame(maxWidth: 680, alignment: .leading)
             .padding(.horizontal, 32)
@@ -65,10 +52,17 @@ struct DesignSettingsView: View {
     }
 
     /// 소제목과 그 아래 줄들. 첫 줄 위에 선을 그어 묶음이 보이게 한다.
-    private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    /// 처음 쓰는 사람이 차례대로 채우도록 번호를 붙이고, 마친 단계에는 체크를 단다.
+    private func group<Content: View>(_ title: String, done: Bool, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title).font(WL.label).foregroundStyle(.secondary)
-                .padding(.top, 22).padding(.bottom, 6)
+            HStack(spacing: 6) {
+                Text(title).font(WL.label).foregroundStyle(.secondary)
+                if done {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 11)).foregroundStyle(WL.done)
+                        .accessibilityLabel("마침")
+                }
+            }
+            .padding(.top, 22).padding(.bottom, 6)
             Rectangle().fill(WL.border).frame(height: 1)
             content()
         }
@@ -271,7 +265,7 @@ struct DesignSettingsView: View {
     private var alertMenus: some View {
         VStack(alignment: .leading, spacing: 0) {
             if settings.sources.isEmpty {
-                Text("피그마 칸에서 화면설계서를 먼저 더하세요.").font(.system(size: 12)).foregroundStyle(WL.muted).padding(.vertical, 14)
+                Text("위에서 화면설계서를 먼저 더하세요.").font(.system(size: 12)).foregroundStyle(WL.muted).padding(.vertical, 14)
             }
             ForEach(settings.sources) { source in
                 let record = sync.history.files[source.fileKey]
@@ -281,7 +275,7 @@ struct DesignSettingsView: View {
                     Button(source.alerts.isEmpty ? "메뉴 고르기" : "바꾸기") { form.alertPicker = source.fileKey }
                         .buttonStyle(NotionButtonStyle(kind: source.alerts.isEmpty ? .primary : .secondary))
                         .disabled(record == nil)
-                        .tip(record == nil ? "한 번 가져온 뒤에 고를 수 있습니다" : "디자인 화면 왼쪽 메뉴의 종 모양 단추와 같습니다")
+                        .tip(record == nil ? "한 번 가져온 뒤에 고를 수 있습니다" : "피그마 화면 왼쪽 메뉴의 종 모양 단추와 같습니다")
                 }
             }
         }
@@ -289,13 +283,6 @@ struct DesignSettingsView: View {
 
     private var rules: some View {
         VStack(spacing: 0) {
-            SettingRow("macOS 알림", "고른 메뉴의 완료된 화면이 바뀌거나 디자이너가 이력에 적으면 알립니다.") {
-                Toggle("", isOn: $settings.notify).toggleStyle(.switch).labelsHidden()
-            }
-            SettingRow("작업 중 변경도 알림", "[수정중]처럼 작업 중 표시가 붙은 시안은 계속 바뀌어서 기본은 기록만 합니다.") {
-                Toggle("", isOn: $settings.notifyWorking).toggleStyle(.switch).labelsHidden()
-                    .disabled(!settings.notify)
-            }
             SettingRow("상태 표시가 없는 화면", "[완료]·[수정중] 같은 표시가 없는 화면을 어떻게 볼지 정합니다. 프로젝트마다 오른쪽 클릭으로 따로 정합니다.") {
                 Picker("", selection: Binding(get: { settings.untaggedIsDone.map { $0 ? 1 : 2 } ?? 0 },
                                               set: { settings.untaggedIsDone = [1: true, 2: false][$0] })) {

@@ -244,8 +244,6 @@ final class WorkLogStore: ObservableObject {
             }
             // 다음에 GitLab에서 가져올 때도 새 이름으로 넣는다
             for (group, alias) in log.aliases where alias == old { log.aliases[group] = name }
-            // 고정 업무가 옛 이름을 다시 만들지 않게
-            for index in log.recurring.indices where log.recurring[index].project == old { log.recurring[index].project = name }
             if log.hiddenProjects.remove(old) != nil { log.hiddenProjects.insert(name) }
             if let period = log.projectPeriods.removeValue(forKey: old) { log.projectPeriods[name] = period }
             // 레드마인 일감을 옛 이름 아래에 적어 옛 프로젝트를 되살리지 않게
@@ -321,19 +319,6 @@ final class WorkLogStore: ObservableObject {
     private func tidyMRNotes() {
         var copy = log
         if WorkCapture.tidyMRNotes(&copy) > 0 { change { $0 = copy } }
-    }
-
-    func setRecurring(_ items: [RecurringWork]) {
-        change {
-            $0.recurring = items
-            $0.applyRecurring(on: WorkDay.today())
-        }
-    }
-
-    /// 오늘 요일의 고정 업무를 넣는다 (창을 열 때와 가져올 때).
-    func applyRecurringToday() {
-        var copy = log
-        if copy.applyRecurring(on: WorkDay.today()) > 0 { change { $0 = copy } }
     }
 
     /// 받은 일감을 장부에 넣는다. 배정 목록을 통째로 받았으면 거기 없는 일감은 내 일감에서 뺀다.

@@ -142,7 +142,7 @@ private struct OptionsView: View {
     private static let sizes: [(String, CGFloat)] = [("작게", 0.7), ("보통", 1.0), ("크게", 1.4), ("아주 크게", 2.0)]
     private static let pages: [(String, String, MainPage)] = [
         ("사용량", "chart.bar.fill", .usage), ("펫 꾸미기", "pawprint.fill", .runners), ("업무 일지", "list.bullet.rectangle", .workLog),
-        ("레드마인", "checklist", .redmine), ("디자인", "paintpalette", .design), ("설정", "gearshape", .settings),
+        ("레드마인", "checklist", .redmine), ("피그마", "paintpalette", .design), ("설정", "gearshape", .settings),
     ]
 
     var body: some View {

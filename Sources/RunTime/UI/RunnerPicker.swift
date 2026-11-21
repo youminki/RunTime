@@ -769,7 +769,7 @@ enum RunnerImport {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.gif, .png, .jpeg, .heic, .webP, .image]
         panel.allowsMultipleSelection = true
-        panel.message = "움직이는 GIF 하나, 또는 프레임 PNG 여러 장을 고르세요"
+        panel.message = "움직이는 GIF 하나, 또는 프레임 PNG 여러 장을 고르세요. 직접 만들었거나 쓸 권리가 있는 그림만 불러오고, 불러온 그림은 이 Mac에만 둡니다."
         panel.prompt = "불러오기"
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         report("그림을 불러오는 중…", false)

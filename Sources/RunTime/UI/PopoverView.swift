@@ -639,8 +639,8 @@ struct PopoverView: View {
                         }
                     }
             }
-            .tip(design.unseenCount > 0 ? "디자인 변경 · 완료 후 변경 \(design.unseenCount)건" : "디자인 변경")
-            .accessibilityLabel(design.unseenCount > 0 ? "디자인 변경, 확인 안 함 \(design.unseenCount)건" : "디자인 변경")
+            .tip(design.unseenCount > 0 ? "피그마 변경 · 완료 후 변경 \(design.unseenCount)건" : "피그마 변경")
+            .accessibilityLabel(design.unseenCount > 0 ? "피그마 변경, 확인 안 함 \(design.unseenCount)건" : "피그마 변경")
             Button { engine.refreshNow(forceOfficial: true) } label: { Image(systemName: "arrow.clockwise") }
                 .keyboardShortcut("r")
                 .tip("새로고침 (⌘R)")

@@ -18,7 +18,7 @@ enum MainPage: String, CaseIterable {
         case .usage: return "사용량"
         case .runners: return "러너"
         case .workLog: return "업무 일지"
-        case .design: return "디자인"
+        case .design: return "피그마"
         case .hosts: return "호스트"
         case .redmine: return "레드마인"
         case .settings: return "설정"
@@ -45,7 +45,7 @@ enum MainPage: String, CaseIterable {
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
         case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 백업"
         case .redmine: return "레드마인 일감 보기·고치기·댓글, 저장한 질의"
-        case .settings: return "일반, 러너, 사용량, 업무 일지, 디자인 설정"
+        case .settings: return "일반, 알림, 창 배치, 클립보드, GitLab·레드마인·팀즈·피그마 연동"
         }
     }
 
@@ -130,10 +130,10 @@ struct MainWindowView: View {
             settingsTab.selection = .workLog
             navigator.go(.settings)
         }
-        // 디자인 화면의 연동 상태·"피그마 연결하기"는 설정 화면의 디자인 칸으로 간다
+        // 피그마 화면의 연동 상태·"피그마 연결하기"는 설정 화면의 피그마 칸으로 간다
         .onReceive(designPage.$showsSettings.filter { $0 }) { _ in
             designPage.showsSettings = false
-            settingsTab.selection = designPage.settingsSection == .alerts ? .designAlerts : .design
+            settingsTab.selection = .figma
             navigator.go(.settings)
         }
         .frame(minWidth: AppWindow.minSize.width, idealWidth: AppWindow.size.width,

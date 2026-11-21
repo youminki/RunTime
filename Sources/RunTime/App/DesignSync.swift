@@ -902,7 +902,7 @@ final class DesignSync: ObservableObject {
         // 말풍선은 아래에서 따로 띄우니, 펫을 꺼내 두었을 때 알림까지 말풍선으로 돌리면 두 번 뜬다
         Notifier.shared.send(title: title, body: body, opens: .design, bubbles: false, closesAfter: UsageEngine.newsLifetime)
         MenuBarNews.post(.init(title: title, items: names + (picked.count > 3 ? ["외 \(picked.count - 3)건"] : []),
-                               actionTitle: "디자인 변경 보기", action: { MenuBarNews.open(.design) }, link: "page:design",
+                               actionTitle: "피그마 변경 보기", action: { MenuBarNews.open(.design) }, link: "page:design",
                                keeps: false, closesAfter: UsageEngine.newsLifetime))
     }
 
