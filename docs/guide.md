@@ -140,7 +140,7 @@ Claude Code가 대답을 마치면 메뉴바 러너가 축하 동작을 합니�
 
 ## 업무 일지
 
-<img src="../assets/guide/worklog.png" width="760" alt="업무 일지 화면">
+<img src="../assets/guide/workLog.gif" width="760" alt="업무 일지 화면">
 
 러너를 오른쪽 클릭해 "업무 일지"를 고르거나, 사용량 창 아래 체크리스트 단추를 누르면 열립니다.
 하루 한 일을 프로젝트별로 적어 두면 오른쪽에 일일보고와 레드마인 댓글이 만들어지고, 단추 하나로 복사합니다.
@@ -386,7 +386,7 @@ $RT --worklog teams-test [report]       # 팀즈 채팅으로 시험 카드(repo
 
 ## 호스트
 
-<img src="../assets/guide/hosts.png" width="760" alt="호스트 화면">
+<img src="../assets/guide/hosts.gif" width="760" alt="호스트 화면">
 
 앱 창 왼쪽 "호스트"(⌘6)에서 `/etc/hosts`를 묶음(`## 이름` 주석)별로 보고 이름마다 켜고 끕니다. 끄면 줄 앞에 `#`을 붙여 남깁니다. 한 줄에 이름이 여럿이면 그 이름만 아래 줄로 떼어 냅니다. 묶음 제목에 올리면 나오는 "모두 끄기·켜기"로 묶음을 한 번에 바꿉니다.
 

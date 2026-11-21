@@ -783,6 +783,42 @@ if CommandLine.arguments.contains("--diagnose") {
     exit(0)
 }
 
+// 사용법 영상 점검 (`--guide-check`): 주제마다 영상을 앱이 찾아 재생 준비까지 되는지, 단계 시각이 맞는지 본다
+if CommandLine.arguments.contains("--guide-check") {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    Task { @MainActor in
+        var failed = 0
+        for topic in GuideTopic.all {
+            let player = GuidePlayer()
+            player.load(topic)
+            var status = player.player.currentItem?.status ?? .unknown
+            for _ in 0..<50 where status == .unknown {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                status = player.player.currentItem?.status ?? .unknown
+            }
+            let seconds = player.player.currentItem?.duration.seconds ?? 0
+            let times = topic.stepTimes
+            let ok = status == .readyToPlay && times.count == topic.steps.count && seconds > 1
+            if !ok { failed += 1 }
+            print("\(ok ? "OK  " : "FAIL") \(topic.id): 상태 \(status.rawValue), \(String(format: "%.1f", seconds))초, 단계 \(times.count)/\(topic.steps.count)")
+            player.stop()
+        }
+        exit(failed == 0 ? 0 : 1)
+    }
+    app.run()
+}
+
+// 사용법 GIF 프레임 (`--guide-clips <폴더> [장면,...]`): 예시 데이터로 화면을 대본대로 움직여 프레임을 저장한다
+if let index = CommandLine.arguments.firstIndex(of: "--guide-clips") {
+    setenv("RUNTIME_WINDOW_DEFAULTS", "dev.runtime.RunTime.window.check", 0)
+    setenv("RUNTIME_CLIP_DEFAULTS", "dev.runtime.RunTime.clip.check", 0)
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    let path = args.first ?? "guide-clips"
+    let only = args.dropFirst().first.map { $0.split(separator: ",").map(String.init) } ?? []
+    MainActor.assumeIsolated { GuideClips.run(to: URL(fileURLWithPath: path, isDirectory: true), only: only) }
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
     setenv("RUNTIME_WINDOW_DEFAULTS", "dev.runtime.RunTime.window.check", 0)
     // 클립보드 설정 화면이 이 Mac의 기록 폴더를 만들거나 읽지 않게

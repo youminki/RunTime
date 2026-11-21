@@ -117,12 +117,18 @@ struct MainWindowView: View {
 
     static let railWidth: CGFloat = 72
 
+    @StateObject private var guide = GuideState()
+
     var body: some View {
         HStack(spacing: 0) {
             rail
             Rectangle().fill(WL.border).frame(width: 1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .top) { hint }
+        }
+        .sheet(item: $guide.topic) { topic in
+            GuideView(selected: topic, open: openGuideTarget) { guide.topic = nil }
         }
         // 업무 일지의 "연동 설정"·"레드마인 연결" 단추는 이 창의 설정 화면 업무 일지 칸으로 간다
         .onReceive(workLogPage.$showsSettings.filter { $0 }) { _ in
@@ -151,6 +157,7 @@ struct MainWindowView: View {
                 ForEach(group, id: \.self) { page in railItem(page) }
             }
             Spacer()
+            guideButton
             railItem(.settings)
         }
         .padding(.top, 10)
@@ -158,6 +165,51 @@ struct MainWindowView: View {
         .frame(width: Self.railWidth)
         .frame(maxHeight: .infinity)
         .background(SidebarMaterial())
+    }
+
+    private var guideButton: some View {
+        Button { guide.topic = GuideTopic.topic(for: navigator.page) ?? GuideTopic.all[0] } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 17))
+                    .frame(width: 42, height: 30)
+                Text("사용법").font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+            }
+            .foregroundStyle(Color.secondary)
+            .frame(width: Self.railWidth - 6, height: 56)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("/", modifiers: .command)
+        .tip("사용법 (⌘/) · 메뉴마다 처음 하는 순서를 보여 줍니다")
+        .accessibilityLabel("사용법")
+    }
+
+    /// 처음 연 화면 위에 사용법을 권하는 한 줄.
+    @ViewBuilder private var hint: some View {
+        if ProcessInfo.processInfo.environment["RUNTIME_NO_GUIDE_HINT"] == nil,
+           let topic = GuideTopic.topic(for: navigator.page), topic.id != "usage",
+           !guide.dismissed.contains(topic.id), !GuideSeen.has(topic.id) {
+            GuideHint(topic: topic, show: {
+                GuideSeen.mark(topic.id)
+                guide.dismissed.insert(topic.id)
+                guide.topic = topic
+            }, dismiss: {
+                GuideSeen.mark(topic.id)
+                guide.dismissed.insert(topic.id)
+            })
+            .padding(.top, 10)
+            .transition(.opacity)
+        }
+    }
+
+    private func openGuideTarget(_ target: GuideTopic.Target) {
+        switch target {
+        case .page(let page): navigator.go(page)
+        case .settings(let tab):
+            settingsTab.selection = tab
+            navigator.go(.settings)
+        }
     }
 
     private func railItem(_ page: MainPage) -> some View {

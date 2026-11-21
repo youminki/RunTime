@@ -56,7 +56,7 @@ enum ReadmeShots {
     }
 
     /// 하루 몇 시간씩 일한 8일 치 예시 기록과, 세션 42%·주간 18%인 공식 사용량.
-    private static func fill(_ engine: UsageEngine) {
+    static func fill(_ engine: UsageEngine) {
         let now = Date()
         let calendar = Calendar.current
         let projects = ["my-app", "api-server", "blog", "dotfiles"]
