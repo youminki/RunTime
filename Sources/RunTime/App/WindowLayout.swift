@@ -63,7 +63,7 @@ final class WindowLayout: ObservableObject {
 
     static var reservedKeys: [WindowKey] {
         [GlobalHotKey.shared.combo, GlobalHotKey.quickCombo].map { WindowKey(carbonKeyCode: $0.keyCode, carbonModifiers: $0.modifiers) }
-            + PetKeys.fallbackKeys
+            + PetKeys.fallbackKeys + Clipboard.reservedKeys
     }
 
     /// 앱을 켤 때 부른다. 켜 둔 채 권한이 풀렸으면 묻지 않고 기다린다 (켤 때마다 시스템 창이 뜨지 않게).

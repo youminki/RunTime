@@ -6,6 +6,7 @@ import ReportCore
 import UsageCore
 import WorkLogCore
 import WindowKit
+import ClipKit
 
 LegacyMigration.run()
 
@@ -259,6 +260,23 @@ if CommandLine.arguments.contains("--window-check") {
     lines += WindowCheck.measure(extra: WindowLayoutSettingsView.extraSlots)
     for line in lines { print(line.ok ? "✓" : "✗", line.name, "·", line.detail) }
     target.terminate()
+    exit(lines.allSatisfy(\.ok) ? 0 : 1)
+}
+
+// 클립보드 기록 점검 (`--clip-check [그림 폴더]`). 시스템 클립보드에 잠깐 복사했다가 끝나면 되돌린다
+if let index = CommandLine.arguments.firstIndex(of: "--clip-check") {
+    // 이 Mac의 기록과 설정을 건드리지 않게 따로 둔 저장소와 폴더를 쓴다
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-clip-check-\(getpid())")
+    setenv("RUNTIME_CLIP_DEFAULTS", "dev.runtime.RunTime.clip.check", 1)
+    setenv("RUNTIME_CLIP_FOLDER", folder.path, 1)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
+    let shots = CommandLine.arguments.dropFirst(index + 1).first.map { URL(fileURLWithPath: $0) }
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let lines = MainActor.assumeIsolated { ClipCheck.run(shots: shots) }
+    for line in lines { print(line.ok ? "✓" : "✗", line.name, line.detail.isEmpty ? "" : "· \(line.detail)") }
+    try? FileManager.default.removeItem(at: folder)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
     exit(lines.allSatisfy(\.ok) ? 0 : 1)
 }
 
@@ -755,6 +773,9 @@ if CommandLine.arguments.contains("--diagnose") {
 
 if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
     setenv("RUNTIME_WINDOW_DEFAULTS", "dev.runtime.RunTime.window.check", 0)
+    // 클립보드 설정 화면이 이 Mac의 기록 폴더를 만들거나 읽지 않게
+    setenv("RUNTIME_CLIP_DEFAULTS", "dev.runtime.RunTime.clip.check", 0)
+    setenv("RUNTIME_CLIP_FOLDER", FileManager.default.temporaryDirectory.appendingPathComponent("runtime-clip-shots").path, 0)
     let path = CommandLine.arguments.dropFirst(index + 1).first ?? "ui-shots"
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)

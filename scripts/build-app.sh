@@ -43,6 +43,8 @@ for BUNDLE in RunTime_RunTime RunTime_WindowKit; do
     cp -R ".build/release/$BUNDLE.bundle" "$APP/Contents/Resources/"
   fi
 done
+# 클립보드 기록(ClipKit) 문구는 Pesty처럼 앱 번들의 번역표에서 찾는다 (String(localized:)와 SwiftUI Text가 Bundle.main을 본다)
+cp -R Sources/ClipKit/RunTime/ko.lproj "$APP/Contents/Resources/"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
 # 설정 화면에서 지금 설치된 빌드가 어느 커밋인지 확인할 수 있게 남긴다 (+ = 커밋 안 된 변경 포함)
 # 앱 안의 업데이터는 이 클론 위치·저장소·기본 브랜치로 새 커밋을 확인하고, 이 클론에서 다시 빌드한다

@@ -1,5 +1,6 @@
 import AppKit
 import WindowKit
+import ClipKit
 import SwiftUI
 import Combine
 import UsageCore
@@ -39,7 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// 디자인 기록은 뒤에서 저장해서, 확인 표시 직후 끄면 마지막 저장이 빠지지 않게 기다린다.
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { DesignSync.shared.flush() }
+        MainActor.assumeIsolated {
+            DesignSync.shared.flush()
+            ClipRuntime.terminate()
+        }
         HangWatch.appWillTerminate()
     }
 
@@ -277,6 +281,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.openSettings(tab: .windows)
         }
         WindowLayout.shared.launch()
+        Clipboard.shared.openSettings = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.openSettings(tab: .clipboard)
+        }
+        Clipboard.shared.launch()
 
         // 알림을 누르면 그 내용을 볼 수 있는 화면을 연다
         Notifier.shared.onOpen = { [weak self] destination, context in
@@ -473,6 +482,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             parent.submenu = windows.menu
             parent.representedObject = windows
             menu.addItem(parent)
+        }
+        if Clipboard.shared.enabled {
+            add("클립보드 기록 (\(Clipboard.shared.hotKeyLabel))") { Clipboard.shared.toggleBar() }
+        } else {
+            add("클립보드 기록 켜기…") { [weak self] in self?.openSettings(tab: .clipboard) }
         }
         add("러너와 게임") { [weak self] in self?.showMain(.runners) }
         add(DesktopPet.shared.isShown ? "펫 넣기" : "펫 꺼내기 (화면에서 돌아다니기)") { DesktopPet.shared.toggle() }

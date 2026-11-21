@@ -303,6 +303,10 @@ enum UIShots {
             ("main-settings-windows-dark", .darkAqua, 1700,
              AnyView(WindowLayoutSettingsView(layout: .shared, showsAll: true)
                 .frame(width: 760, height: 1700).background(Palette.groupedBackground))),
+            // 클립보드 기록을 켜지 않고도 모든 줄을 보인다
+            ("main-settings-clipboard", .aqua, 1300,
+             AnyView(ClipboardSettingsView(clipboard: .shared, showsAll: true)
+                .frame(width: 760, height: 1300).background(Palette.groupedBackground))),
             ("window-palette", .darkAqua, nil, {
                 let model = WindowPaletteModel()
                 model.prepare()

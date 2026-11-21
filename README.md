@@ -26,6 +26,7 @@ Anthropic이 만든 앱이 아닌 개인 프로젝트입니다.
 | 꾸미기 | 도트 배경 59종, 꼬리, 발먼지, 부딪힘 효과, 함께 달리는 동료 펫 |
 | 알림 | Claude Code가 대답을 마치면 펫이 알려 줍니다 |
 | 일 도구 | 업무 일지와 일일·주간 보고, 레드마인, 피그마 화면설계서 변경 기록, /etc/hosts 관리, Claude 계정 바꾸기 |
+| 클립보드 기록 | 복사한 텍스트·이미지·파일·색을 쌓아 두고 ⇧⌘V로 화면 아래 띠에 띄워 골라 붙입니다. 보드에 모아 두기, 초성 검색, 암호 건너뛰기. 설정 > 클립보드에서 켭니다 |
 
 ## 설치
 
@@ -280,6 +281,7 @@ npx wrangler@4 secret put REPORT_EMAIL     # 받을 주소 (Resend 가입 주소
 - 달리기 게임의 장애물 간격과 속도 규칙은 [Chromium T-Rex Runner](https://chromium.googlesource.com/chromium/src/+/main/components/neterror/resources/)(BSD 3-Clause)를 따랐습니다.
 - 게임 그림과 효과음은 Kenney의 [Pixel Platformer](https://kenney.nl/assets/pixel-platformer), [Digital Audio](https://kenney.nl/assets/digital-audio), [Music Jingles](https://kenney.nl/assets/music-jingles), [Interface Sounds](https://kenney.nl/assets/interface-sounds)(CC0)입니다.
 - 게임 글자는 [Galmuri](https://github.com/quiple/galmuri)(SIL OFL 1.1) 픽셀 글꼴입니다. 한글·영문·기호만 남겨 싣습니다.
+- 클립보드 기록은 [Pesty](https://github.com/momenbasel/pesty)(MIT)의 코드를 옮겨 왔습니다. 저작권 고지는 `Sources/ClipKit/LICENSE`에 있고, `scripts/sync-pesty.py`로 다시 받습니다.
 - 집계 규칙은 [ccusage](https://ccusage.com/guide/blocks-reports)를 참고했습니다.
 - 비용 계산 단가는 ccusage와 같은 [LiteLLM 가격 데이터](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)(MIT)에서 가져옵니다.
 
