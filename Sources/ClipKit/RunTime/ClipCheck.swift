@@ -26,6 +26,10 @@ public enum ClipCheck {
         let first = store.history.first
         check(first?.plainText == "RunTime 클립 점검 hello", "텍스트 기록", first?.plainText ?? "기록 없음")
         check(first?.type == .text, "종류", first.map { "\($0.type)" } ?? "")
+        // 기록 파일은 뒤 큐에서 쓴다. 0.4초 모았다가 쓰므로 조금 기다린다
+        wait(0.6)
+        let file = (try? String(contentsOf: store.dataDirectory.appendingPathComponent("store.json"), encoding: .utf8)) ?? ""
+        check(file.contains("RunTime 클립 점검 hello"), "기록 파일 저장", "\(file.utf8.count)바이트")
 
         copy {
             let rich = NSAttributedString(string: "굵은 글씨", attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])

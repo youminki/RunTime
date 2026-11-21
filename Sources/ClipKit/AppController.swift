@@ -25,6 +25,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private(set) var lastActiveApp: NSRunningApplication?
 
     var suppressAutoHide = false
+    /// 띠를 열 때 키 창이던 RunTime 창. 붙이거나 닫으면 이 창으로 돌아간다.
+    private weak var returnWindow: NSWindow?
 
     /// When the search query last became empty via the keyboard. A bare
     /// Backspace deletes the selected clip, and the keystroke that clears the
@@ -75,7 +77,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         store.forgetDeletions()
-        store.saveNow()
+        store.saveNow(waiting: true)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -287,6 +289,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func showBar() {
         let front = NSWorkspace.shared.frontmostApplication
+        returnWindow = front.map(isPesty) == true && !(NSApp.keyWindow is BarPanel) ? NSApp.keyWindow : nil
         if let front, !isPesty(front) {
             previousApp = front
             lastActiveApp = front
@@ -313,6 +316,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func hideBar() {
         stopKeyMonitor()
         barController?.hide()
+        // 순서는 바꾸지 않고 키만 돌려준다. 바깥 다른 앱을 눌러 닫혔으면 그 앱 위로 올라오지 않는다
+        if let window = returnWindow, window.isVisible { window.makeKey() }
     }
 
     func setBarSearchEditing(_ editing: Bool) {
@@ -359,7 +364,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// `previousApp` is captured before the panel activates, while
     /// `lastActiveApp` covers menu-bar and reopen paths where it is unavailable.
     private var pasteTarget: NSRunningApplication? {
-        [lastActiveApp, previousApp, NSWorkspace.shared.frontmostApplication]
+        if returnWindow?.isVisible == true { return .current }
+        return [lastActiveApp, previousApp, NSWorkspace.shared.frontmostApplication]
             .compactMap { $0 }
             .first { !$0.isTerminated && !isPesty($0) }
     }

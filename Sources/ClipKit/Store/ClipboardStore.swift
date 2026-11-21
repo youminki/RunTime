@@ -757,13 +757,19 @@ final class ClipboardStore: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
-    func saveNow() {
+    private static let saveQueue = DispatchQueue(label: "RunTime.clip.save", qos: .utility)
+
+    func saveNow(waiting: Bool = false) {
         let snap = Snapshot(history: history, pinboards: pinboards)
-        guard let data = try? JSONEncoder().encode(snap) else { return }
+        let url = storeURL
         ignoreWatchUntil = Date().addingTimeInterval(1.5)
-        try? data.write(to: storeURL, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storeURL.path)
-        NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil)
+        Self.saveQueue.async {
+            guard let data = try? JSONEncoder().encode(snap) else { return }
+            try? data.write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            DispatchQueue.main.async { NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil) }
+        }
+        if waiting { Self.saveQueue.sync {} }
     }
 
     // MARK: - Remote (CloudKit) apply

@@ -19,6 +19,10 @@ PUBLISHED = {}
 
 
 def main(src):
+    # 지우기 전에 원본을 확인한다. 경로가 틀리면 Sources/ClipKit만 비우고 멈추게 된다
+    for need in ("LICENSE", "Sources/Pesty/AppController.swift", "Tests/PestyTests"):
+        if not os.path.exists(os.path.join(src, need)):
+            sys.exit(f"Pesty 클론이 아니다: {os.path.join(src, need)} 없음")
     for name in os.listdir(DST):
         if name in KEEP:
             continue
@@ -307,6 +311,48 @@ PATCHES = [
     # RunTime은 macOS 13부터 돈다. 이 SF Symbol은 macOS 14부터라 같은 뜻의 오래된 그림으로 바꾼다 (scripts/check-symbols.py)
     ('Label("Writing Tools", systemImage: "pencil.and.scribble")',
      'Label("Writing Tools", systemImage: "pencil.line")'),
+    # 복사할 때마다 기록 전체(웹에서 복사하면 클립마다 HTML 수십 KB)를 다시 쓴다. 500개면 40MB 가까이 되어
+    # 메인 스레드가 0.1초씩 멈추고 러너가 끊긴다. 쓰기는 뒤 큐에서 차례로 하고, 앱을 끌 때만 끝날 때까지 기다린다
+    ("""    func saveNow() {
+        let snap = Snapshot(history: history, pinboards: pinboards)
+        guard let data = try? JSONEncoder().encode(snap) else { return }
+        ignoreWatchUntil = Date().addingTimeInterval(1.5)
+        try? data.write(to: storeURL, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storeURL.path)
+        NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil)
+    }""",
+     """    private static let saveQueue = DispatchQueue(label: "RunTime.clip.save", qos: .utility)
+
+    func saveNow(waiting: Bool = false) {
+        let snap = Snapshot(history: history, pinboards: pinboards)
+        let url = storeURL
+        ignoreWatchUntil = Date().addingTimeInterval(1.5)
+        Self.saveQueue.async {
+            guard let data = try? JSONEncoder().encode(snap) else { return }
+            try? data.write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            DispatchQueue.main.async { NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil) }
+        }
+        if waiting { Self.saveQueue.sync {} }
+    }"""),
+    ("        store.forgetDeletions()\n        store.saveNow()\n",
+     "        store.forgetDeletions()\n        store.saveNow(waiting: true)\n"),
+    # RunTime은 업무 일지·보고처럼 스스로 복사하는 화면이 많다. 띠가 열려 있을 때만 앞서 쓰던 앱에서 복사한 것으로 본다
+    ("        if front == nil || front?.bundleIdentifier == Bundle.main.bundleIdentifier {",
+     "        if front == nil || (front?.bundleIdentifier == Bundle.main.bundleIdentifier && NSApp.keyWindow is BarPanel) {"),
+    # Pesty는 입력칸이 없는 앱이라 자기를 붙여넣을 곳에서 뺀다. RunTime은 업무 일지처럼 입력칸이 있어,
+    # RunTime 창에서 띠를 열었으면 그 창으로 돌아가 붙인다
+    ("    var suppressAutoHide = false\n",
+     "    var suppressAutoHide = false\n    /// 띠를 열 때 키 창이던 RunTime 창. 붙이거나 닫으면 이 창으로 돌아간다.\n    private weak var returnWindow: NSWindow?\n"),
+    ("    func showBar() {\n        let front = NSWorkspace.shared.frontmostApplication\n",
+     "    func showBar() {\n        let front = NSWorkspace.shared.frontmostApplication\n"
+     "        returnWindow = front.map(isPesty) == true && !(NSApp.keyWindow is BarPanel) ? NSApp.keyWindow : nil\n"),
+    ("    private var pasteTarget: NSRunningApplication? {\n        [lastActiveApp,",
+     "    private var pasteTarget: NSRunningApplication? {\n        if returnWindow?.isVisible == true { return .current }\n        return [lastActiveApp,"),
+    ("    func hideBar() {\n        stopKeyMonitor()\n        barController?.hide()\n    }",
+     "    func hideBar() {\n        stopKeyMonitor()\n        barController?.hide()\n"
+     "        // 순서는 바꾸지 않고 키만 돌려준다. 바깥 다른 앱을 눌러 닫혔으면 그 앱 위로 올라오지 않는다\n"
+     "        if let window = returnWindow, window.isVisible { window.makeKey() }\n    }"),
     # 검색은 초성(ㅋㄹㅂㄷ)으로도 찾는다
     ("return result.filter { $0.searchableText.contains(query) }",
      "return result.filter { ClipSearch.matches($0.searchableText, query: query) }"),

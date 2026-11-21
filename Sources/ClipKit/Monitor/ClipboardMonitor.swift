@@ -50,7 +50,7 @@ final class ClipboardMonitor {
         let declaredSourceID = Self.validatedSourceBundleID(pasteboard.string(forType: Self.sourceType))
         let front = NSWorkspace.shared.frontmostApplication
         let src: NSRunningApplication?
-        if front == nil || front?.bundleIdentifier == Bundle.main.bundleIdentifier {
+        if front == nil || (front?.bundleIdentifier == Bundle.main.bundleIdentifier && NSApp.keyWindow is BarPanel) {
             src = AppController.shared.lastActiveApp
         } else {
             src = front

@@ -23,6 +23,7 @@ struct ClipboardSettingsView: View {
                 history
             }
         }
+        .onAppear { if clipboard.enabled || showsAll { prefs.refreshDataSize() } }
         .onDisappear { recorder.stop() }
     }
 
@@ -138,8 +139,8 @@ struct ClipboardSettingsView: View {
     // MARK: 기록하지 않을 앱
 
     @ViewBuilder private var ignored: some View {
-        GroupedSection("기록하지 않을 앱", footer: "이 앱들이 앞에 있을 때 복사한 것은 남기지 않습니다. 암호 관리자가 숨김 표시를 붙인 항목은 앱과 관계없이 남기지 않습니다.") {
-            ToggleRow(title: "암호(숨김 항목)는 기록하지 않기", icon: "key", isOn: $prefs.ignoreConcealed)
+        GroupedSection("기록하지 않을 앱", footer: "이 앱들이 앞에 있을 때 복사한 것은 남기지 않습니다. 암호 관리자가 숨김 표시를 붙인 암호는 이 설정과 관계없이 늘 남기지 않습니다.") {
+            ToggleRow(title: "자동으로 만든 항목(생성한 암호 등)도 기록하지 않기", icon: "key", isOn: $prefs.ignoreConcealed)
             ForEach(prefs.ignoredApps, id: \.self) { bundleID in
                 GroupedRow(Self.appName(bundleID), icon: "app") {
                     Button("빼기") { prefs.allowApp(bundleID) }.controlSize(.small)
@@ -172,7 +173,7 @@ struct ClipboardSettingsView: View {
 
     @ViewBuilder private var history: some View {
         GroupedSection("기록", footer: "기록은 \((prefs.dataFolder.path as NSString).abbreviatingWithTildeInPath)에 있습니다. 멈추면 그동안 복사한 것은 남기지 않습니다.") {
-            GroupedRow("클립 \(prefs.historyCount)개, 보드 \(prefs.pinboardCount)개 · \(ByteCountFormatter.string(fromByteCount: prefs.dataSize(), countStyle: .file))", icon: "tray.full") {
+            GroupedRow("클립 \(prefs.historyCount)개, 보드 \(prefs.pinboardCount)개 · \(ByteCountFormatter.string(fromByteCount: prefs.dataBytes, countStyle: .file))", icon: "tray.full") {
                 Button("폴더 열기") { NSWorkspace.shared.open(prefs.dataFolder) }.controlSize(.small)
             }
             GroupedRow(prefs.paused ? "기록을 멈췄습니다" : "복사할 때마다 기록합니다", icon: prefs.paused ? "pause.circle" : "record.circle") {
