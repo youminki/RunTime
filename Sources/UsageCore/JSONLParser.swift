@@ -53,6 +53,14 @@ public enum JSONLParser {
         line.range(of: usageKey) != nil || line.range(of: limitMarker) != nil
     }
 
+    /// `mayMatter(Data)`와 같은 판정을 복사 없이 바이트 위에서 한다. 첫 스캔처럼 수백 MB를 훑을 때 쓴다.
+    static func mayMatter(_ line: UnsafeRawBufferPointer) -> Bool {
+        func contains(_ needle: Data) -> Bool {
+            needle.withUnsafeBytes { memmem(line.baseAddress, line.count, $0.baseAddress, $0.count) != nil }
+        }
+        return line.count > 0 && (contains(usageKey) || contains(limitMarker))
+    }
+
     public static func parse(line: Data) -> UsageEvent? {
         guard let record = try? decoder.decode(Record.self, from: line) else { return nil }
         guard record.type == "assistant",

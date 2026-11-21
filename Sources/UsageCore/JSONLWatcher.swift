@@ -97,15 +97,16 @@ public final class JSONLWatcher {
     /// 청크를 개행 단위로 파싱. 마지막 불완전한 줄(쓰기 도중)은 남겨두고,
     /// 소비한 바이트 수를 반환해 다음 스캔에서 이어 읽는다.
     private func parse(chunk: Data, into events: inout [UsageEvent]) -> UInt64 {
-        let newline = UInt8(ascii: "\n")
-        var lineStart = chunk.startIndex
         var consumed = 0
-        var index = chunk.startIndex
-        while index < chunk.endIndex {
-            if chunk[index] == newline {
-                let line = chunk[lineStart..<index]
-                // 사용량이나 한도 표시가 없는 줄(대화 글·이미지·도구 결과)은 JSON으로 풀지 않는다
-                if !line.isEmpty, JSONLParser.mayMatter(line) {
+        chunk.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            guard let base = bytes.baseAddress else { return }
+            var lineStart = 0
+            // memchr로 줄 끝을 찾고, 사용량이나 한도 표시가 없는 줄(대화 글·이미지·도구 결과)은 복사도 JSON 해석도 하지 않는다
+            while lineStart < bytes.count,
+                  let found = memchr(base + lineStart, Int32(UInt8(ascii: "\n")), bytes.count - lineStart) {
+                let lineEnd = base.distance(to: found)
+                let line = UnsafeRawBufferPointer(start: base + lineStart, count: lineEnd - lineStart)
+                if JSONLParser.mayMatter(line) {
                     let data = Data(line)
                     if let event = JSONLParser.parse(line: data) {
                         events.append(event)
@@ -113,10 +114,9 @@ public final class JSONLWatcher {
                         limitHits.append(hit)
                     }
                 }
-                lineStart = chunk.index(after: index)
-                consumed = chunk.distance(from: chunk.startIndex, to: lineStart)
+                lineStart = lineEnd + 1
+                consumed = lineStart
             }
-            index = chunk.index(after: index)
         }
         return UInt64(consumed)
     }
