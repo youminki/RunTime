@@ -216,7 +216,7 @@ struct GuideView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-            Rectangle().fill(Palette.separator).frame(width: 0.5)
+            Rectangle().fill(WL.border).frame(width: 1)   // 0.5pt는 1배율 화면에서 자리에 따라 사라진다
             detail
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -55,7 +55,7 @@ struct SettingsView: View {
             .frame(width: 220)
             .frame(maxHeight: .infinity, alignment: .top)
             .background(Palette.groupedRow.opacity(0.5))
-            Rectangle().fill(Palette.separator.opacity(0.5)).frame(width: 1)
+            Rectangle().fill(WL.border).frame(width: 1)
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
