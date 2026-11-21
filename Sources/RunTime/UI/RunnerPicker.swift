@@ -887,7 +887,7 @@ struct TileName: View {
                 .padding(.horizontal, 6)
         } else {
             Text(name)
-                .font(.system(size: size, weight: selected ? .bold : .medium))
+                .font(.system(size: size, weight: .medium))
                 .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
         }

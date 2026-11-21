@@ -399,7 +399,7 @@ struct PopoverView: View {
                 Button { page.section = section } label: {
                     HStack(spacing: 5) {
                         Image(systemName: section.icon).font(.system(size: 13, weight: .semibold))
-                        Text(section.title).font(.system(size: 14, weight: on ? .bold : .medium))
+                        Text(section.title).font(.system(size: 14, weight: .medium))
                     }
                     .foregroundStyle(on ? Theme.primary : Theme.secondary)
                     .frame(maxWidth: .infinity)

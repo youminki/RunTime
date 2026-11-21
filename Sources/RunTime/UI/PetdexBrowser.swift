@@ -126,7 +126,7 @@ struct PetdexBrowser: View {
                 }
             }
             Text(store.koreanNames[entry.slug] ?? entry.displayName)
-                .font(.system(size: 12, weight: selected ? .bold : .regular))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
         }

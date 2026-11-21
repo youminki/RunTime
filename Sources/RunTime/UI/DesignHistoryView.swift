@@ -942,7 +942,7 @@ private struct DesignSidebar: View {
         return Button { page.scope = target } label: {
             HStack(spacing: 7) {
                 Image(systemName: "bell.fill").font(.system(size: 11)).foregroundStyle(WL.accent).frame(width: 14)
-                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13.5, weight: selected ? .semibold : .regular))
+                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13.5, weight: .medium))
                     .lineLimit(1)
                 if page.project == nil && visibleFiles.count > 1 {
                     Text(project).font(WL.caption).foregroundStyle(WL.projectColor(project)).lineLimit(1)
@@ -1297,7 +1297,7 @@ private struct DesignSidebar: View {
         return Button { page.scope = target } label: {
             HStack(spacing: 7) {
                 Image(systemName: "star.fill").font(.system(size: 11)).foregroundStyle(Color.yellow.opacity(0.85)).frame(width: 14)
-                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13.5, weight: selected ? .semibold : .regular))
+                Text(path.components(separatedBy: " > ").last ?? path).font(.system(size: 13.5, weight: .medium))
                     .lineLimit(1)
                 if page.project == nil && settings.sources.filter({ !$0.isHidden }).count > 1 {
                     Text(project).font(WL.caption).foregroundStyle(WL.projectColor(project)).lineLimit(1)
@@ -1425,7 +1425,7 @@ private struct DesignSidebar: View {
                     if !parent && screens > 0 { statusDot(state(fileKey, node.path)) } else if !parent { Color.clear.frame(width: 6, height: 6) }
                     // 지금 화면이 없는 줄은 이유를 붙인다: 지워진 화면이면 "삭제됨", 페이지 이력만 있으면 "이력"
                     (Text(node.name) + Text(screens == 0 ? "  " + emptyReason(fileKey, node.path) : "").font(WL.caption).foregroundColor(WL.faint))
-                        .font(.system(size: 13.5, weight: selected ? .semibold : parent ? .medium : .regular))
+                        .font(.system(size: 13.5, weight: .medium))
                         .foregroundStyle(selected ? WL.accent : screens == 0 ? WL.muted : WL.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -1514,7 +1514,7 @@ private struct DesignSidebar: View {
             HStack(spacing: 8) {
                 Image(systemName: icon).font(.system(size: 12.5, weight: .medium)).foregroundStyle(showsBadge || selected ? WL.accent : .secondary)
                     .frame(width: 16)
-                Text(title).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(selected ? WL.accent : WL.text)
+                Text(title).font(.system(size: 13.5, weight: .medium)).foregroundStyle(selected ? WL.accent : WL.text)
                 Spacer(minLength: 4)
                 if showsBadge { badge(count, fallback: nil) }
                 else if count > 0 { Text("\(count)").font(WL.number).foregroundStyle(.secondary) }

@@ -149,7 +149,7 @@ struct SettingsView: View {
                     .foregroundStyle(.white)
                     .frame(width: 22, height: 22)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(tint))
-                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                Text(title).font(.system(size: 13, weight: .medium))
                 Spacer()
                 Circle().fill(dot).frame(width: 6, height: 6)
             }

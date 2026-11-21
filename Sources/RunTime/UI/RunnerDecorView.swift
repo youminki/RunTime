@@ -124,7 +124,7 @@ struct RunnerDecorView: View {
                             }
                         }
                         .frame(height: 64)
-                        Text(character.name).font(.system(size: 12, weight: on ? .bold : .medium))
+                        Text(character.name).font(.system(size: 12, weight: .medium))
                             .foregroundStyle(on ? Theme.primary : Theme.secondary).lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
@@ -184,7 +184,7 @@ struct RunnerDecorView: View {
                 let on = filter.group == index
                 Button { filter.group = index } label: {
                     Text(group.name)
-                        .font(.system(size: 12, weight: on ? .bold : .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(on ? Theme.primary : Theme.secondary)
                         .padding(.horizontal, 10)
                         .frame(height: 25)
@@ -227,7 +227,7 @@ struct RunnerDecorView: View {
                 .overlay(alignment: .topTrailing) {
                     if on { EquippedBadge().padding(3) }
                 }
-                Text(item.name).font(.system(size: 12, weight: on ? .bold : .semibold))
+                Text(item.name).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(on ? Theme.primary : Theme.secondary).lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 3)

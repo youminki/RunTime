@@ -252,7 +252,7 @@ struct GuideView: View {
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: topic.icon).frame(width: 18)
-                Text(topic.title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                Text(topic.title).font(.system(size: 13, weight: .medium))
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
@@ -274,13 +274,15 @@ struct GuideView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(selected.title).font(.system(size: 20, weight: .bold))
                     Text(selected.summary).font(.system(size: 12.5)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Button(selected.openTitle) { open(selected.target) }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
             }
+            // 요약이 한 줄이든 두 줄이든 아래 영상이 같은 자리에 있게 머리말 높이를 고정한다
+            .frame(height: 58)
             HStack(alignment: .top, spacing: 18) {
                 video
                 steps

@@ -798,7 +798,7 @@ struct WorkLogPreview: View {
         func cell(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
             Button(action: action) {
                 Text(title)
-                    .font(.system(size: 13, weight: selected ? .semibold : .medium)).monospacedDigit()
+                    .font(.system(size: 13, weight: .medium)).monospacedDigit()
                     .foregroundStyle(selected ? Color.white : WL.text)
                     .frame(maxWidth: .infinity).frame(height: 28)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selected ? WL.accent : Color.primary.opacity(0.05)))

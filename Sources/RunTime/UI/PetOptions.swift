@@ -167,7 +167,7 @@ private struct OptionsView: View {
                     ForEach(Self.sizes, id: \.1) { title, value in
                         let on = abs(model.size - value) < 0.05
                         Button { size(value) } label: {
-                            Text(title).font(.system(size: 12, weight: on ? .bold : .medium))
+                            Text(title).font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(on ? Color(white: 0.1) : .white.opacity(0.8))
                                 .frame(maxWidth: .infinity).frame(height: 26)
                                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous)

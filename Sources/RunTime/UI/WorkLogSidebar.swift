@@ -234,7 +234,7 @@ struct WorkLogSidebar: View {
         } label: {
             HStack(spacing: 8) {
                 ProjectSwatch(name: name)
-                Text(name).font(.system(size: 13.5, weight: selected ? .semibold : .regular)).foregroundStyle(WL.text).lineLimit(1)
+                Text(name).font(.system(size: 13.5, weight: .medium)).foregroundStyle(WL.text).lineLimit(1)
                 Spacer(minLength: 4)
                 if let period = store.log.projectPeriods[name] {
                     // 기간이 끝난 프로젝트는 흐리게 둔다 (진행 예정에서 빠졌다는 뜻)
