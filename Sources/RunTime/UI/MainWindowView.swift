@@ -47,7 +47,7 @@ enum MainPage: String, CaseIterable {
         case .runners: return "게임, 러너 고르기, 꾸미기"
         case .workLog: return "업무 일지와 일일·주간 보고, 레드마인 보내기"
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
-        case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 백업"
+        case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 직전 판 되돌리기"
         case .ports: return "열려 있는 로컬 포트 보기, 종료, 다른 포트로 재시작"
         case .redmine: return "레드마인 일감 보기·고치기·댓글, 저장한 질의"
         case .guide: return "메뉴마다 짧은 영상으로 쓰는 순서 보기"

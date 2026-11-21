@@ -369,7 +369,13 @@ enum UIShots {
             }()),
             ("main-calendar-dark", .darkAqua, nil, mainPage(.workLog, engine: engine, workLog: .month, monthCalendar: true)),
             ("main-worklog-week", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .week)),
-            ("main-hosts", .aqua, nil, mainPage(.hosts, engine: engine)),
+            // RUNTIME_SHOT_HOSTS_ISSUES=1이면 살펴볼 줄 목록을 펼쳐 찍는다
+            ("main-hosts", .aqua, nil, {
+                HostsPage.shared.showAllIssues = ProcessInfo.processInfo.environment["RUNTIME_SHOT_HOSTS_ISSUES"] == "1"
+                // RUNTIME_SHOT_HOSTS_GROUP=Dev처럼 주면 그 묶음을 골라 찍는다
+                HostsPage.shared.selected = ProcessInfo.processInfo.environment["RUNTIME_SHOT_HOSTS_GROUP"].flatMap { $0.isEmpty ? nil : $0 }
+                return mainPage(.hosts, engine: engine)
+            }()),
             // RUNTIME_SHOT_PORTS_OTHERS=1이면 접어 둔 ‘다른 앱’까지 펼쳐 찍는다
             ("main-ports", .aqua, nil, {
                 PortsPage.shared.showOthers = ProcessInfo.processInfo.environment["RUNTIME_SHOT_PORTS_OTHERS"] == "1"
@@ -377,7 +383,7 @@ enum UIShots {
             }()),
             ("main-ports-dark", .darkAqua, nil, mainPage(.ports, engine: engine)),
             ("main-hosts-dark", .darkAqua, nil, mainPage(.hosts, engine: engine)),
-            ("main-hosts-add", .aqua, nil, AnyView(HostsSheetShots.add("10.0.1.20 api.dev.example.com new.dev.example.com\n#10.0.2.31 admin.stg.example.com\napi.stg.example.com 10.0.2.40\n문의는 서버팀", group: "Dev"))),
+            ("main-hosts-add", .aqua, nil, AnyView(HostsSheetShots.add("10.0.1.20 api.dev.example.com new.dev.example.com\n#10.0.2.31 admin.stg.example.com\nhttp://shop.local.test:5173/login\n문의는 서버팀", group: "Dev"))),
             ("main-hosts-edit", .aqua, nil, AnyView(HostsSheetShots.edit())),
             ("main-settings", .aqua, nil, mainPage(.settings, engine: engine)),
             ("main-settings-usage", .darkAqua, nil, settingsShot(.usage, engine: engine)),

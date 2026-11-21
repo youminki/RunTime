@@ -345,11 +345,26 @@ public struct HostsFile: Equatable {
             case .blank, .comment: continue
             case .entry(let record): records.append(record)
             case .invalid:
-                // 메신저로 받은 `api.example.com 10.0.0.1`처럼 이름을 먼저 쓴 줄도 받는다
-                if let record = reversedRecord(raw) { records.append(record) } else { skipped.append(raw.trimmingCharacters(in: .whitespaces)) }
+                // 메신저로 받은 `api.example.com 10.0.0.1`처럼 이름을 먼저 쓴 줄도 받는다.
+                // 주소 없이 이름이나 브라우저 주소(`http://shop.local.test:5173/`)만 있으면 이 맥(127.0.0.1)으로 넣는다
+                if let record = reversedRecord(raw) ?? localRecord(raw) { records.append(record) } else { skipped.append(raw.trimmingCharacters(in: .whitespaces)) }
             }
         }
         return (records, skipped)
+    }
+
+    /// 이름만 적은 줄. 점이 있는 이름만 받아 `not a line` 같은 글은 이름으로 읽지 않는다.
+    static func localRecord(_ raw: String) -> Record? {
+        let body = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+        let names = body[0].split(whereSeparator: { $0 == " " || $0 == "\t" }).map { token -> String in
+            var name = String(token)
+            for scheme in ["http://", "https://"] where name.lowercased().hasPrefix(scheme) { name.removeFirst(scheme.count) }
+            name = String(name.prefix { $0 != "/" && $0 != ":" && $0 != "?" })
+            return name.lowercased()
+        }
+        guard !names.isEmpty, names.allSatisfy({ isHostname($0) && $0.contains(".") && !isIP($0) }) else { return nil }
+        let note = body.count > 1 ? body[1].trimmingCharacters(in: .whitespaces) : ""
+        return Record(ip: "127.0.0.1", names: names, enabled: true, note: note.isEmpty ? nil : note)
     }
 
     private static func reversedRecord(_ raw: String) -> Record? {

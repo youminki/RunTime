@@ -126,6 +126,24 @@ private let sample = """
         #expect(!issues.contains { $0.line < 6 })
     }
 
+    /// 줄 옆 꼬리표는 그 줄, 그 이름에만 붙는다. 한 줄에 이름이 여럿이어도 다른 이름에 번지지 않는다.
+    @Test func attachesIssuesToTheirItems() {
+        let file = HostsFile(sample)
+        let issues = HostsDoctor.issues(in: file)
+        let items = file.sections.flatMap(\.items)
+        func labels(_ name: String, line: Int) -> [String] {
+            issues.filter { $0.concerns(line: line, name: name) }.map(\.label)
+        }
+        #expect(labels("a.example.org", line: 14) == ["중복"])
+        #expect(labels("a.example.org", line: 15) == ["주소 충돌"])
+        #expect(labels("typo.example.net", line: 16) == ["주소 오타?"])
+        #expect(labels("b.example.org", line: 12).isEmpty)
+        // 깨진 묶음 표시는 항목이 아니라 줄에 대한 것이라 어느 항목에도 붙지 않는다
+        #expect(!items.contains { item in issues.contains { $0.kind == .brokenMarker && $0.concerns(line: item.line, name: item.name) } })
+        // 숫자로 끝나는 주소 뒤에 조사를 붙이지 않는다 (191.168.10.40는 → 틀린 조사)
+        #expect(issues.allSatisfy { !$0.message.contains(".40는") && !$0.message.contains(".40를") && !$0.message.contains(".7)과") })
+    }
+
     @Test func cleanFileHasNoIssues() {
         #expect(HostsDoctor.issues(in: HostsFile("127.0.0.1 localhost\n203.0.113.1 a.example.com\n")).isEmpty)
     }
@@ -336,7 +354,7 @@ private let sample = """
         #expect(probe(expiry: now.addingTimeInterval(-60)).verdict(now: now).label == "인증서 만료")
         #expect(probe(expiry: now.addingTimeInterval(5.5 * 86_400)).verdict(now: now).label == "인증서 5일 남음")
         #expect(probe(expiry: now.addingTimeInterval(90 * 86_400)).verdict(now: now).level == .ok)
-        #expect(probe(trusted: false).verdict(now: now).label == "인증서 미신뢰")
+        #expect(probe(trusted: false).verdict(now: now).label == "인증서 신뢰 안 됨")
     }
 
     @Test func allLocalSilentMeansTheConnection() {
@@ -351,9 +369,14 @@ private let sample = """
         #expect(HostProbe.status(fromHead: "SSH-2.0-OpenSSH") == nil)
     }
 
-    @Test func hiddenIssueSurvivesLineMoves() {
-        let first = HostsIssue(kind: .mdns, line: 3, message: "m"), moved = HostsIssue(kind: .mdns, line: 9, message: "m")
-        #expect(first.hideKey == moved.hideKey)
+    /// 프론트 개발에서 흔한 붙여 넣기: 이름만, 브라우저 주소. 이 맥(127.0.0.1)으로 읽는다.
+    @Test func readsBareNamesAsLocal() {
+        let pasted = HostsFile.records(fromPasted: "shop.local.test admin.local.test\nhttp://Api.Local.Test:5173/login?x=1 # 로컬 API\nlocalhost\n10.0.1.20\n")
+        #expect(pasted.records.map(\.ip) == ["127.0.0.1", "127.0.0.1"])
+        #expect(pasted.records[0].names == ["shop.local.test", "admin.local.test"])
+        #expect(pasted.records[1].names == ["api.local.test"])
+        #expect(pasted.records[1].note == "로컬 API")
+        #expect(pasted.skipped == ["localhost", "10.0.1.20"])
     }
 }
 

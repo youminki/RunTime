@@ -126,17 +126,40 @@ enum GuideClips {
                 ClipStep(step: 2, camera: cam(840, 510, width: 400), target: CGRect(x: 936, y: 648, width: 288, height: 32), cursor: CGPoint(x: 1080, y: 663), click: true, hold: 2.2),
             ])
 
-        // 호스트
+        // 호스트: Dev 묶음을 고른 채로 시작해, 2단계에서 눌러 볼 서버 주소 칩이 처음부터 보이게 한다
+        HostsPage.shared.selected = "Dev"
         let hosts = Clip(
             id: "hosts", size: window, scale: 3, appearance: .aqua, frame: CGSize(width: 720, height: 450), animated: false,
             content: mainWindow(.hosts, engine: engine),
             steps: [
-                ClipStep(step: 0, camera: cam(150, 110), target: CGRect(x: 180, y: 306, width: 58, height: 30), cursor: CGPoint(x: 196, y: 321), click: true,
+                // 왼쪽 묶음 스위치로 Stg를 통째로 켠다
+                ClipStep(step: 0, camera: cam(73, 120, width: 560), target: CGRect(x: 84, y: 262, width: 215, height: 36), cursor: CGPoint(x: 105, y: 280), click: true,
                          action: {
-                             if let item = HostsStore.shared.draft.items.first(where: { !$0.enabled }) { HostsStore.shared.draft.setEnabled(item, true) }
+                             if let stg = HostsStore.shared.draft.sections.first(where: { $0.title == "Stg" }) { HostsStore.shared.draft.setEnabled(stg.items, true) }
                          }),
-                ClipStep(step: 1, camera: cam(240, 260, width: 800), target: CGRect(x: 940, y: 700, width: 90, height: 34), cursor: CGPoint(x: 985, y: 717), hold: 2.2),
-                ClipStep(step: 2, camera: cam(220, 30, width: 900), target: CGRect(x: 1027, y: 63, width: 32, height: 32), cursor: CGPoint(x: 1043, y: 79), hold: 2.2),
+                // 묶음 이름 옆 서버 주소를 눌러 Dev 묶음을 이 맥(127.0.0.1)으로 옮긴다
+                ClipStep(step: 1, camera: cam(310, 110, width: 600), target: CGRect(x: 374, y: 194, width: 108, height: 26), cursor: CGPoint(x: 428, y: 207), click: true,
+                         action: {
+                             if let dev = HostsStore.shared.draft.sections.first(where: { $0.title == "Dev" }) {
+                                 HostsStore.shared.draft.replaceIP(in: dev.items, from: "10.0.1.20", to: "127.0.0.1")
+                             }
+                         }),
+                ClipStep(step: 2, camera: cam(420, 260, width: 800), target: CGRect(x: 960, y: 704, width: 66, height: 36), cursor: CGPoint(x: 993, y: 722), hold: 2.2),
+            ])
+
+        // 포트 (RUNTIME_PORTS_DEMO=1이라 이 Mac의 실제 서버가 아니라 예시 서버가 보인다)
+        let ports = Clip(
+            id: "ports", size: window, scale: 3, appearance: .aqua, frame: CGSize(width: 720, height: 450), animated: false,
+            content: mainWindow(.ports, engine: engine),
+            steps: [
+                // 포트 번호를 눌러 브라우저로 연다
+                ClipStep(step: 0, camera: cam(170, 140, width: 980), target: CGRect(x: 960, y: 313, width: 66, height: 28), cursor: CGPoint(x: 992, y: 327), click: true),
+                // admin-web을 종료한다
+                ClipStep(step: 1, camera: cam(170, 140, width: 980), target: CGRect(x: 1054, y: 200, width: 54, height: 34), cursor: CGPoint(x: 1080, y: 217), click: true,
+                         action: { PortsStore.shared.rehearse { $0.removeAll { $0.primaryPort == 3000 } } }),
+                // shop-web을 다른 포트로 다시 시작한다 (⋯ 메뉴의 항목이라 결과만 보인다)
+                ClipStep(step: 2, camera: cam(170, 140, width: 980), target: CGRect(x: 1106, y: 259, width: 30, height: 30), cursor: CGPoint(x: 1121, y: 273), click: true,
+                         action: { PortsStore.shared.rehearseMove(from: 5173, to: 5174) }, hold: 2.2),
             ])
 
         // 창 배치
@@ -242,7 +265,7 @@ enum GuideClips {
                 ClipStep(step: 2, camera: cam(310, 230, width: 720), target: CGRect(x: 706, y: 386, width: 302, height: 34), cursor: CGPoint(x: 970, y: 403), hold: 2.6),
                 ClipStep(step: 3, camera: cam(310, 170, width: 720), target: CGRect(x: 898, y: 268, width: 76, height: 36), cursor: CGPoint(x: 936, y: 287), hold: 2.6),
             ])
-        return [workLog, hosts, windows, clipboard, usage, runners, redmine, figma]
+        return [workLog, hosts, ports, windows, clipboard, usage, runners, redmine, figma]
     }
 
     // MARK: 재생과 합성

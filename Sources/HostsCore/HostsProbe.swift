@@ -43,7 +43,7 @@ public struct HostProbe: Equatable, Sendable {
         func problem(_ label: String, _ detail: String) -> Verdict { Verdict(level: .problem, label: label, detail: detail) }
         func warning(_ label: String, _ detail: String) -> Verdict { Verdict(level: .warning, label: label, detail: detail) }
         if !resolved.isEmpty, !resolved.contains(ip) {
-            return problem("다른 주소로 풀림", "hosts에는 \(ip)인데 맥은 \(resolved.joined(separator: ", "))로 풉니다. 같은 이름의 다른 줄이나 VPN의 DNS를 확인하세요")
+            return problem("다른 주소로 풀림", "hosts에는 \(ip)인데 맥은 다른 주소(\(resolved.joined(separator: ", ")))로 엽니다. 같은 이름의 다른 줄이나 VPN의 DNS를 확인하세요")
         }
         if https == .silent, http == .silent {
             return Self.isLocal(ip) ? problem("응답 없음", "443·80 포트가 답하지 않습니다. 사내망·VPN에 연결됐는지, 서버가 켜져 있는지 확인하세요")
@@ -60,10 +60,10 @@ public struct HostProbe: Equatable, Sendable {
         if status >= 500 { return problem("서버 오류 \(status)", "서버까지는 닿았지만 서버가 오류를 돌려줍니다") }
         if let expiry = certificateExpiry {
             let days = Int(expiry.timeIntervalSince(now) / 86_400)
-            if expiry <= now { return problem("인증서 만료", "HTTPS 인증서가 끝났습니다") }
-            if days < Self.expiryWarningDays { return warning("인증서 \(days)일 남음", "HTTPS 인증서가 곧 끝납니다") }
+            if expiry <= now { return problem("인증서 만료", "HTTPS 인증서가 만료됐습니다") }
+            if days < Self.expiryWarningDays { return warning("인증서 \(days)일 남음", "HTTPS 인증서가 곧 만료됩니다") }
         }
-        if certificateTrusted == false { return warning("인증서 미신뢰", "HTTPS 인증서를 이 맥이 믿지 않습니다. 사내 인증서면 브라우저 경고가 뜰 수 있습니다") }
+        if certificateTrusted == false { return warning("인증서 신뢰 안 됨", "이 맥이 HTTPS 인증서를 신뢰하지 않습니다. 사내 인증서라면 브라우저에 경고가 뜰 수 있습니다") }
         return Verdict(level: .ok, label: "응답 \(status)", detail: "서버가 응답합니다")
     }
 

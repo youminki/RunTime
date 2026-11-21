@@ -5,8 +5,6 @@ public struct HostsIssue: Identifiable, Equatable {
     public enum Kind: Equatable { case duplicate, conflict, invalid, brokenMarker, suspiciousIP, mdns }
 
     public var id: String { "\(line)-\(kind)-\(message)" }
-    /// 숨긴 경고를 기억할 열쇠. 위에 줄을 더해도 숨긴 채로 남게 줄 번호는 넣지 않는다.
-    public var hideKey: String { "\(kind)|\(message)" }
     public let kind: Kind
     /// 0부터 센 줄 번호. 화면에는 1을 더해 보인다.
     public let line: Int
@@ -16,6 +14,28 @@ public struct HostsIssue: Identifiable, Equatable {
     public var fixable: Bool { kind == .duplicate || kind == .brokenMarker }
     /// 이름 풀이를 늦출 뿐 틀리지는 않는 것.
     public var isNotice: Bool { kind == .mdns }
+
+    /// 줄 옆에 붙일 짧은 말.
+    public var label: String {
+        switch kind {
+        case .duplicate: return "중복"
+        case .conflict: return "주소 충돌"
+        case .invalid: return "읽을 수 없는 줄"
+        case .brokenMarker: return "묶음 표시 깨짐"
+        case .suspiciousIP: return "주소 오타?"
+        case .mdns: return ".local 느림"
+        }
+    }
+
+    /// 이 경고가 그 항목에 대한 것인지. 한 줄에 이름이 여럿이면 메시지 앞의 이름으로 가른다.
+    public func concerns(line: Int, name: String) -> Bool {
+        guard self.line == line else { return false }
+        switch kind {
+        case .suspiciousIP: return true
+        case .duplicate, .conflict, .mdns: return message.hasPrefix(name + ":")
+        case .invalid, .brokenMarker: return false
+        }
+    }
 }
 
 public enum HostsDoctor {
@@ -36,7 +56,7 @@ public enum HostsDoctor {
                 }
             case .entry(let record):
                 if let hint = typoHint(record.ip) {
-                    issues.append(.init(kind: .suspiciousIP, line: index, message: "\(record.ip)는 \(hint)의 오타일 수 있습니다"))
+                    issues.append(.init(kind: .suspiciousIP, line: index, message: "\(record.ip): \(hint)의 오타로 보입니다"))
                 }
                 for name in record.names {
                     let pair = record.ip + " " + name.lowercased()
@@ -49,14 +69,14 @@ public enum HostsDoctor {
                         let key = name.lowercased() + (record.ip.contains(":") ? "/6" : "/4")
                         if let first = firstEnabled[key], first.ip != record.ip {
                             issues.append(.init(kind: .conflict, line: index,
-                                                message: "\(name): \(first.line + 1)번째 줄(\(first.ip))과 주소가 다릅니다. 어느 쪽으로 풀릴지 장담할 수 없어 하나를 끄세요"))
+                                                message: "\(name): \(first.line + 1)번째 줄에서 다른 주소(\(first.ip))로 켜져 있습니다. 둘 다 켜 두면 어느 주소로 열릴지 알 수 없어 하나만 켜 두세요"))
                         } else if firstEnabled[key] == nil {
                             firstEnabled[key] = (index, record.ip)
                         }
                     }
                     if name.lowercased().hasSuffix(".local"), mdnsWarned.insert(name.lowercased()).inserted {
                         issues.append(.init(kind: .mdns, line: index,
-                                            message: "\(name): .local은 맥이 mDNS로 먼저 찾아 5초쯤 늦어질 수 있습니다. .test나 .localhost를 권합니다"))
+                                            message: "\(name): .local 주소는 macOS가 mDNS로 먼저 찾아 열릴 때 5초쯤 늦을 수 있습니다. .test나 .localhost로 바꾸면 바로 열립니다"))
                     }
                 }
             default: continue

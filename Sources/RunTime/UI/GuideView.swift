@@ -37,7 +37,8 @@ struct GuideTopic: Identifiable, Hashable {
         case .redmine: id = "redmine"
         case .design: id = "figma"
         case .hosts: id = "hosts"
-        case .settings, .guide, .ports: return nil
+        case .ports: id = "ports"
+        case .settings, .guide: return nil
         }
         return all.first { $0.id == id }
     }
@@ -110,14 +111,24 @@ struct GuideTopic: Identifiable, Hashable {
             target: .settings(.figma), openTitle: "피그마 설정 열기"),
         GuideTopic(
             id: "hosts", group: "도구", title: "호스트", icon: "network",
-            summary: "개발·스테이징 서버 주소(/etc/hosts)를 스위치로 켜고 꺼요.",
+            summary: "로컬·개발·스테이징 서버 주소(/etc/hosts)를 스위치로 켜고 끕니다.",
             steps: [
-                GuideStep(title: "스위치로 켜고 끄기", detail: "끄면 줄이 지워지지 않고 앞에 #만 붙어서, 언제든 다시 켤 수 있습니다."),
-                GuideStep(title: "저장하기", detail: "고친 내용은 아래 ‘저장…’을 눌러야 적용됩니다. 바뀌는 줄을 보여 주고 관리자 암호를 물어봅니다."),
-                GuideStep(title: "되돌리기", detail: "저장할 때마다 이전 판이 백업됩니다. 위쪽 시계 단추에서 골라 되돌립니다."),
+                GuideStep(title: "스위치로 켜고 끄기", detail: "왼쪽 묶음 스위치로 Local·Dev·Stg를 통째로, 오른쪽 줄 스위치로 하나씩 켜고 끕니다. 끄면 줄 앞에 #만 붙어 언제든 다시 켤 수 있습니다."),
+                GuideStep(title: "서버 한 번에 바꾸기", detail: "묶음을 고르고 이름 옆 주소를 누르면 묶음 전체를 127.0.0.1(이 맥)이나 최근에 쓴 서버로 옮깁니다."),
+                GuideStep(title: "저장하기", detail: "고친 내용은 아래 ‘저장’(⌘S)을 눌러야 적용됩니다. 관리자 암호를 묻고(왼쪽 아래 ‘암호 없이 저장’을 켜면 묻지 않습니다), 바뀌는 줄은 ‘바뀐 줄 보기’로 먼저 볼 수 있습니다."),
             ],
-            tips: ["‘추가’(⌘N)에 메신저에서 받은 hosts 줄을 그대로 붙여 넣어도 됩니다.", "‘접속 확인’은 켜 둔 주소가 실제로 열리는지 알려 줍니다."],
+            tips: ["‘추가’(⌘N)에 메신저에서 받은 hosts 줄이나 shop.local.test, 브라우저 주소만 붙여 넣어도 됩니다. 이름만 적으면 127.0.0.1로 넣습니다.", "‘접속 확인’은 켜 둔 주소가 실제로 열리는지 알려 줍니다.", "잘못 저장했으면 왼쪽 아래 ‘마지막 저장 전으로’로 되돌립니다."],
             target: .page(.hosts), openTitle: "호스트 열기"),
+        GuideTopic(
+            id: "ports", group: "도구", title: "포트", icon: "server.rack",
+            summary: "열린 로컬 포트를 보고, 명령어 없이 개발 서버를 끄거나 다른 포트로 다시 띄웁니다.",
+            steps: [
+                GuideStep(title: "열린 서버 보기", detail: "‘개발 서버’에 node·vite·python과 DB가 프로젝트 폴더 이름으로 나옵니다. 포트 번호(:5173)를 누르면 브라우저로 엽니다."),
+                GuideStep(title: "끄기", detail: "‘종료’는 npm run dev까지 함께 끕니다. 응답이 없으면 ⋯ 메뉴의 ‘강제 종료’를 쓰세요."),
+                GuideStep(title: "다른 포트로 다시 시작", detail: "포트가 겹치면 ⋯ 메뉴의 ‘다른 포트로 다시 시작…’을 고르세요. 서버를 끈 뒤 같은 폴더에서 새 포트로 다시 실행합니다."),
+            ],
+            tips: ["찾기 칸에 3000처럼 번호만 치면 누가 쓰는지, 비어 있는지 알려 줍니다.", "5000번은 macOS의 AirPlay 수신이 쓰는 경우가 많습니다. 그 줄의 ‘AirPlay 수신 끄러 가기’로 설정을 엽니다.", "--host로 켠 서버는 ⋯ 메뉴의 ‘휴대폰에서 열기’로 QR을 띄웁니다."],
+            target: .page(.ports), openTitle: "포트 열기"),
         GuideTopic(
             id: "clipboard", group: "도구", title: "클립보드 기록", icon: "doc.on.clipboard",
             summary: "복사한 것을 쌓아 두고, 나중에 골라서 다시 붙여 넣습니다.",

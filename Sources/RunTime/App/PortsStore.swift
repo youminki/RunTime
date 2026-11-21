@@ -94,6 +94,9 @@ final class PortsStore: ObservableObject {
         }
     }
 
+    /// 사용법 영상·화면 점검용. `RUNTIME_PORTS_DEMO=1`이면 이 Mac의 실제 프로세스 대신 예시 서버를 보이고, 끄거나 다시 시작하지 않는다.
+    static let demo = ProcessInfo.processInfo.environment["RUNTIME_PORTS_DEMO"] == "1"
+
     @Published private(set) var servers: [Server] = []
     @Published private(set) var loaded = false
     @Published private(set) var problem: String?
@@ -126,6 +129,10 @@ final class PortsStore: ObservableObject {
     }
 
     func refresh() {
+        if Self.demo {
+            if !loaded { apply(.success(Self.demoServers()), sequence: scanSequence + 1) }
+            return
+        }
         guard !scanning else { return }
         scanning = true
         scanSequence += 1
@@ -143,6 +150,7 @@ final class PortsStore: ObservableObject {
     /// 메뉴바 메뉴처럼 바로 그려야 할 때. 보통 0.1초 안에 끝나지만, 응답 없는 네트워크 드라이브 때문에
     /// lsof가 늦으면 메뉴가 멈추지 않게 `timeout`까지만 기다리고 지난 목록을 쓴다.
     func refreshNow(timeout: TimeInterval = 0.8) {
+        if Self.demo { return refresh() }
         scanSequence += 1
         let sequence = scanSequence
         let box = ScanBox()
@@ -255,12 +263,50 @@ final class PortsStore: ObservableObject {
         return String(data: data, encoding: .utf8)
     }
 
+    // MARK: 시연
+
+    /// 사용법 영상용 예시 서버. pid는 실제 프로세스와 겹치지 않을 큰 값이고, 신호를 보내는 경로는 막혀 있다.
+    private static func demoServers() -> [Server] {
+        func make(_ pid: Int, _ command: [String], _ cwd: String, _ port: Int, outside: Bool = false) -> Server {
+            let root = PortProcess(pid: pid, ppid: 1, command: command.joined(separator: " "), argv: command)
+            let listener = ListeningPort(port: port, addresses: [outside ? "*" : "127.0.0.1"], pid: pid + 1, command: "node", uid: Int(getuid()))
+            let group = PortServer(root: root, chain: [PortProcess(pid: pid + 1, ppid: pid, command: "node", argv: ["node"]), root], ports: [listener])
+            return Server(group: group, kind: .devServer, cwd: cwd, uid: Int(getuid()), path: "/usr/local/bin/node", rootStarted: nil)
+        }
+        return [
+            make(900_100, ["npm", "run", "dev"], "/Users/me/work/shop-web", 5173),
+            make(900_200, ["npm", "run", "dev"], "/Users/me/work/admin-web", 3000),
+            make(900_300, ["node", "server.js", "--host"], "/Users/me/work/mock-api", 3001, outside: true),
+        ]
+    }
+
+    /// 시연 장면에서 예시 목록을 바꿔 서버가 꺼지거나 포트가 옮겨 간 모습을 보인다.
+    func rehearse(_ change: (inout [Server]) -> Void) {
+        guard Self.demo else { return }
+        var list = servers
+        change(&list)
+        servers = list
+    }
+
+    /// 예시 서버 하나의 포트를 바꾼다.
+    func rehearseMove(from old: Int, to new: Int) {
+        rehearse { list in
+            guard let index = list.firstIndex(where: { $0.primaryPort == old }) else { return }
+            let server = list[index]
+            let listener = ListeningPort(port: new, addresses: server.group.ports[0].addresses, pid: server.group.ports[0].pid,
+                                         command: "node", uid: server.uid)
+            let group = PortServer(root: server.group.root, chain: server.group.chain, ports: [listener])
+            list[index] = Server(group: group, kind: server.kind, cwd: server.cwd, uid: server.uid, path: server.path, rootStarted: nil)
+        }
+    }
+
     // MARK: 종료
 
     /// 바깥 실행과 그 아래 프로세스를 모두 끝낸다. 자식만 끄면 `npm run dev`가 남거나 nodemon이 다시 띄운다.
     /// 일반 종료(SIGTERM)는 서버가 정리할 틈을 주고, 강제 종료(SIGKILL)는 바로 끊는다.
     func terminate(_ server: Server, force: Bool, done: @escaping (_ stopped: Bool, _ message: String) -> Void) {
         if let reason = server.lockedReason { return done(false, reason) }
+        guard !Self.demo else { return done(false, "시연 모드에서는 끄지 않습니다") }
         guard busy[server.id] == nil else { return }
         busy[server.id] = "종료 중"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -308,6 +354,7 @@ final class PortsStore: ObservableObject {
 
     /// `brew services stop`으로 서비스를 멈춘다. 종료와 달리 launchd가 다시 띄우지 않는다.
     func stopBrewService(_ server: Server, done: @escaping (_ ok: Bool, _ message: String) -> Void) {
+        guard !Self.demo else { return done(false, "시연 모드에서는 멈추지 않습니다") }
         guard let name = server.brewService, busy[server.id] == nil else { return }
         busy[server.id] = "멈추는 중"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -335,6 +382,7 @@ final class PortsStore: ObservableObject {
     /// 서버를 끝내고 같은 폴더에서 `port`로 다시 띄운다. 같은 포트를 주면 그대로 다시 시작한다.
     func restart(_ server: Server, to port: Int, done: @escaping (_ ok: Bool, _ message: String, _ log: URL?) -> Void) {
         if let reason = server.lockedReason { return done(false, reason, nil) }
+        guard !Self.demo else { return done(false, "시연 모드에서는 다시 시작하지 않습니다", nil) }
         guard busy[server.id] == nil else { return }
         busy[server.id] = "재시작 중"
         let log = Self.logURL(port)
