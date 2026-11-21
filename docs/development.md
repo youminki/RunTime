@@ -365,3 +365,66 @@ Claude Code는 macOS에서 OAuth 토큰을 키체인 항목 `Claude Code-credent
 - Chromium T-Rex Runner (미니게임 장애물 간격·속도 규칙, BSD 3-Clause): https://chromium.googlesource.com/chromium/src/+/main/components/neterror/resources/
 - Kenney 에셋 (미니게임 그림·효과음, CC0): https://kenney.nl/assets/pixel-platformer · https://kenney.nl/assets/digital-audio
 
+## 점검용 실행 옵션과 보고 서버
+
+`.build/debug/RunTime` 뒤에 붙여 실행합니다.
+
+| 옵션 | 하는 일 |
+| --- | --- |
+| `--report` | 집계를 ccusage와 비교 |
+| `--worklog <명령>` | 업무 일지를 보고서 글로 받거나 줄을 넣기 (`--worklog`만 치면 명령 목록). `RUNTIME_WORKLOG`로 다른 파일을 쓰고, `RUNTIME_NO_KEYCHAIN`을 주면 키체인을 읽지 않음 |
+| `--sprite-sheet <폴더>` | 모든 러너의 동작을 시트로 저장 |
+| `--stage-check` | 진짜 키 이벤트로 비행·달리기를 조작하며 시작, 끝남, 다시 시작, 나가기, 삼단 점프 높이 점검 |
+| `--flight-shots <폴더>` | 난이도마다 비행 화면 저장 |
+| `--flight-frames <폴더>` | README 비행 GIF용 장면을 이어 찍기 |
+| `--app-icon <파일.png> [러너 폴더] [동료 폴더]` | 1024px 앱 아이콘 그리기 (`scripts/make-icon.sh`가 짱구·부리부리 대마왕 폴더로 부름) |
+| `--pet-make [--reference <그림>]... <설명>` | 펫 만들기를 실제로 끝까지 돌려 단계마다 상태 출력. `RUNTIME_PET_REVISE=<고칠 점>`이면 다 만든 뒤 한 번 고치고, `RUNTIME_PET_CANCEL_AFTER=<초>`면 그만큼 뒤 멈추기를 눌러 그림 프로세스가 끝나는지 봄 |
+| `--pet-drop-check <그림>...` | 참고 그림 끌어다 놓기·붙여 넣기 처리(세 장 제한 포함) 점검 |
+| `--pet-watch [초]` | 펫 폴더 지켜보기를 돌려 새 펫이 등록되는지 출력 |
+| `--petdex-names [묶음 수]` | Petdex 목록을 받고 공식 이름표에 없는 이름을 Claude로 다듬어 바뀐 이름을 출력 |
+| `--pet-import [폴더 또는 zip]` | `~/.codex/pets`·`~/.petdex/pets`에서 찾은 펫을 적고, 경로를 주면 가져오기 |
+| `--petdex-extract <시트.png> <폴더>` | Petdex 시트를 러너 프레임(서 있기·달리기·점프·생각 등)으로 잘라 저장 |
+| `--menubar-audit <폴더> [화면 배율] [메뉴바 높이] [크기 배율]` | 메뉴바 칸에서 잘림, 키, 어두운 윤곽을 `report.tsv`와 시트로 저장 |
+| `--stage-shots <폴더> [러너 id 또는 sheet:<자른 폴더>] [트랙,...]` | 상태와 사용량 반응마다 무대 장면과 메뉴바 프레임을 PNG로 저장 |
+| `--game-shots <폴더> [러너 id]` | 미니게임을 자동으로 플레이하며 장면을 PNG로 저장 (`RUNTIME_GAME_SCALE=2`면 게임 화면처럼 키워 찍음) |
+| `--game-frames <폴더>` | README 달리기 GIF용 장면을 이어 찍기 (`scripts/make-game-gif.sh`가 달리기·비행 GIF로 만듦) |
+| `--game-bench` | 무대와 게임 한 장면을 그리는 데 드는 시간 재기 (`BENCH_FRAMES`로 장면 수) |
+| `--hero-gif <파일>` | README 맨 위 GIF 만들기 |
+| `RUNTIME_MENU_CHECK=<폴더> RUNTIME_OPEN_PAGE=usage` | 앱 창의 메뉴를 차례로 열어 찍고 전환 시간과 메모리, 화면마다 스크롤을 내릴 때 걸리는 시간을 잼 (`RUNTIME_SCROLL_CHECK`를 주면 일지 주간·월간 스크롤까지 재고 끝냄). `RUNTIME_WORKLOG`, `RUNTIME_DESIGN_HISTORY`, `RUNTIME_HOSTS`로 사본을 가리키고 씀 |
+| `--worklog-flow` | 일지를 레드마인으로 보내는 길을 가짜 응답으로 돌려, 실패 때 줄이 남는지와 겹쳐 나가지 않는지 살핌 (서버에 보내지 않음) |
+| `--redmine-flow` | 레드마인 화면의 받기, 고치기, 댓글, 첨부, 관계, 새 일감, 찾기를 가짜 응답으로 끝까지 돌려 나가는 요청을 살핌 (서버에 보내지 않음) |
+| `--redmine-check dupes` | 보낼 목록을 레드마인 댓글 꼴로 찍고, 일감마다 비슷한 댓글이 이미 있는지 읽어 봄 (쓰지 않음) |
+| `--redmine-check screens <일감 번호>` | 그 일감 줄이 온 MR의 수정 전·후 화면을 GitLab에서 받아 레드마인에 올려만 보고, 보낼 댓글과 바꿀 상태를 찍음 (일감은 고치지 않음) |
+| `--redmine-check share <일감 번호>` | 그 일감 줄이 온 MR의 화면을 GitLab에서 받아, 같은 MR을 나눠 받는 일감마다 어느 화면이 가는지와 그 근거만 찍음 (레드마인에 올리지 않음) |
+| `--redmine-check <일감 번호>` | 앱의 보내기·되돌리기 코드로 시험 댓글을 한 일감에 보내고 줄바꿈이 살았는지 본 뒤 되돌림 (진척률·상태·날짜는 그대로). `RUNTIME_REDMINE_URL`·`RUNTIME_REDMINE_KEY`·`RUNTIME_WORKLOG`로 실행 |
+| `--account-check [switch <이메일> \| simulate-limit \| refresh]` | 기억한 Claude 계정마다 저장본, 토큰 주인, 공식 사용률을 찍음. `refresh`는 쓰지 않는 계정 토큰이 곧 만료되면 먼저 새로 받아 저장함. `switch`는 그 계정으로 바꾸고, `simulate-limit`은 지금 계정이 한도에 막힌 것처럼 넣어 자동 전환을 확인 (설치한 앱 바이너리로 실행) |
+| `--design-check <피그마 주소>` | 설정에 저장한 피그마 토큰으로 화면설계서 하나(주소에 `node-id`가 있으면 그 화면만)를 앱 코드 그대로 받아 보고, 읽은 화면·명세·이력 개수와 요청 수, 비교 이미지 하나를 받아 본 결과만 찍음 (기록은 저장하지 않음) |
+| `--design-compare <파일 키> <기준 날짜> <비교 날짜> [화면 경로 \| screen:화면 ID]` | 날짜 비교를 앱 코드 그대로 두 번 돌려 버전, 변경 종류별 개수, 걸린 시간만 찍음 (두 번째는 저장해 둔 버전을 써서 바로 끝나야 함). 날짜는 `2026-10-25` 꼴 |
+| `--update-check <커밋> <클론 경로> [owner/repo]` | 그 커밋으로 만든 빌드라 치고 GitHub와 견줘, 받을지(낡은 빌드·개발 빌드·판정 미룸) 판정만 찍음 (설치하지 않음) |
+| `--report-preview [screen \| crash [파일.ips] \| hang]` | 만든 사람에게 보낼 때의 본문을 보내지 않고 찍음. `screen`은 화면 오류 본문, `crash`는 그 충돌 보고서(없으면 아직 알리지 않은 가장 최근 충돌)의 본문, `hang`은 메인 스레드를 1.5초 붙잡고 뜬 멈춤 본문 |
+| `--design-qa <파일 키> <메뉴 경로> <폴더> [notoken \| hide \| verify]` | 디자인 화면을 기록 사본(`RUNTIME_DESIGN_HISTORY`)으로 띄워, 메뉴만 가져오기·대기열·반영·날짜 비교를 앱 함수 그대로 돌리고 피그마 요청 수·사본 파일·스냅숏으로 확인 (`RUNTIME_NO_KEYCHAIN`·`RUNTIME_FIGMA_TOKEN`으로 토큰) |
+| `--hosts-check` | 켜진 호스트마다 주소 풀이, 443·80 포트, 웹 응답, 인증서를 앱 코드 그대로 보고 판정을 찍음 (`RUNTIME_HOSTS`로 다른 파일) |
+| `--diagnose` | 이 Mac의 빌드, macOS, 화면 구성, 업데이트 상태, 최근 문제 기록(`~/Library/Logs/RunTime/events.log`)을 찍음 |
+| `--ui-shots <폴더>` | 팝오버, 앱 창 화면, 업무 일지를 실제 데이터로 찍어 PNG로 저장 (`RUNTIME_SHOTS=main-,worklog-day`처럼 이름 앞부분으로 고를 수 있음) |
+| `--readme-shots <폴더>` | README 사용량 창과 펫 화면을 예시 값으로 찍기 (내 사용량은 쓰지 않음) |
+| `--game-sim [판 수] [목표 점수]` | 미니게임을 화면 없이 여러 판 돌려 초반 타이밍 창과 실력별 도달 점수 재기 |
+
+진단 로그는 `log stream --predicate 'subsystem == "dev.runtime.RunTime"' --level debug`로 봅니다.
+
+문제 보고를 받는 서버는 `server/leaderboard/`에 있습니다(Cloudflare Workers + D1).
+
+```bash
+cd server/leaderboard
+npm test                 # 규칙 테스트
+npm run dev              # 로컬 서버를 띄운 뒤, 다른 터미널에서
+node test/e2e.mjs        # 통합 테스트
+npx wrangler@4 login && ./deploy.sh
+```
+
+문제 보고 메일은 [Resend](https://resend.com)로 보냅니다. 받을 주소로 Resend에 가입해 API 키를 만든 뒤 Worker 비밀값으로 넣습니다(저장소에는 넣지 않음). 비밀값이 없으면 보고를 저장만 합니다.
+메일에는 Claude Code에 그대로 붙여 넣을 글(그 빌드 코드 꺼내기·코드 줄 찾기 명령, 할 일, 상황, 같은 줄을 접은 기록)이 들어갑니다. 메일 프로그램은 스크립트를 막아, "복사하기" 단추는 보고마다 무작위 토큰을 붙인 복사 페이지(`/v1/reports/<열쇠>?t=<토큰>`)를 엽니다. 이 페이지도 보고와 함께 30일 뒤 사라집니다.
+
+```bash
+npx wrangler@4 secret put RESEND_API_KEY
+npx wrangler@4 secret put REPORT_EMAIL     # 받을 주소 (Resend 가입 주소)
+```
