@@ -306,6 +306,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 self.showMain(.design)
             case .hosts:
                 self.showMain(.hosts)
+            case .ports:
+                self.showMain(.ports)
             case .claude:
                 // Claude가 일하던 터미널·편집기를 앞으로 가져온다 (Orca면 그 터미널 탭까지). 그새 닫았으면 아무것도 열지 않는다
                 DispatchQueue.global(qos: .userInitiated).async {
@@ -460,6 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let unseenDesign = MainActor.assumeIsolated { DesignSync.shared.unseenCount }
         add(unseenDesign > 0 ? "피그마 변경 (\(unseenDesign))" : "피그마 변경") { [weak self] in self?.showMain(.design) }
         addHostsMenu(to: menu)
+        addPortsMenu(to: menu)
         menu.addItem(.separator())
         if WindowLayout.shared.enabled {
             // 따로 둔 메뉴바 아이콘의 메뉴와 같은 것을 하나 더 만든다 (한 메뉴는 한 자리에만 붙는다)
@@ -522,6 +525,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menu.addItem(parent)
     }
 
+    /// 포트 하위 메뉴를 펼칠 때 채우는 대리자. NSMenu는 대리자를 약하게 잡아 여기서 붙들어 둔다.
+    private var portsMenuFiller: PortsMenuFiller?
+
     /// 호스트 묶음을 바로 켜고 끄는 하위 메뉴. 고르면 그 자리에서 관리자 암호를 묻고 저장한다.
     private func addHostsMenu(to menu: NSMenu) {
         MainActor.assumeIsolated {
@@ -562,6 +568,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             sub.addItem(manage)
             parent.submenu = sub
             menu.addItem(parent)
+        }
+    }
+
+    /// 실행 중인 개발 서버를 바로 열거나 끄는 하위 메뉴. 메뉴바 메뉴가 늦게 뜨지 않게, 하위 메뉴를 펼칠 때 읽는다.
+    private func addPortsMenu(to menu: NSMenu) {
+        let parent = NSMenuItem(title: "포트", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        sub.autoenablesItems = false
+        let filler = PortsMenuFiller { [weak self] in self?.fillPortsMenu($0) }
+        sub.delegate = filler
+        portsMenuFiller = filler
+        // 비어 있으면 macOS가 하위 메뉴 화살표를 그리지 않아 자리만 잡아 둔다
+        sub.addItem(withTitle: "읽는 중…", action: nil, keyEquivalent: "").isEnabled = false
+        parent.submenu = sub
+        menu.addItem(parent)
+    }
+
+    private func fillPortsMenu(_ sub: NSMenu) {
+        MainActor.assumeIsolated {
+            let store = PortsStore.shared
+            store.refreshNow()
+            sub.removeAllItems()
+            func item(_ title: String, enabled: Bool = true, _ action: @escaping () -> Void) -> NSMenuItem {
+                let item = NSMenuItem(title: title, action: #selector(runMenuAction(_:)), keyEquivalent: "")
+                item.target = self
+                item.isEnabled = enabled
+                item.representedObject = MenuAction(action)
+                return item
+            }
+            let servers = store.devServers
+            if servers.isEmpty {
+                sub.addItem(withTitle: "실행 중인 개발 서버가 없습니다", action: nil, keyEquivalent: "").isEnabled = false
+            }
+            let report: (Bool, String) -> Void = { stopped, message in
+                // 메뉴에서 끈 결과는 목록에서 사라지는 것으로 보이니 실패만 알린다
+                if !stopped { Notifier.shared.send(title: "포트", body: message, opens: .ports) }
+            }
+            for server in servers.prefix(12) {
+                let port = String(server.primaryPort)
+                let row = NSMenuItem(title: "\(port)  \(server.title)", action: nil, keyEquivalent: "")
+                let actions = NSMenu()
+                actions.autoenablesItems = false
+                if server.isWeb {
+                    actions.addItem(item("브라우저로 열기") { NSWorkspace.shared.open(URL(string: "http://localhost:\(port)")!) })
+                    actions.addItem(item("주소 복사") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString("http://localhost:\(port)", forType: .string)
+                    })
+                    actions.addItem(.separator())
+                }
+                if server.brewService != nil {
+                    // 종료해도 Homebrew가 다시 켜므로 서비스를 멈추는 것만 둔다
+                    actions.addItem(item("Homebrew 서비스 멈추기", enabled: server.mine) {
+                        MainActor.assumeIsolated {
+                            store.stopBrewService(server) { ok, message in
+                                if !ok { Notifier.shared.send(title: "포트", body: message, opens: .ports) }
+                            }
+                        }
+                    })
+                } else {
+                    actions.addItem(item("종료", enabled: server.canTerminate) {
+                        MainActor.assumeIsolated { store.terminate(server, force: false, done: report) }
+                    })
+                    actions.addItem(item("강제 종료…", enabled: server.canTerminate) {
+                        MainActor.assumeIsolated {
+                            let alert = NSAlert()
+                            alert.messageText = "\(port)번 포트를 쓰는 프로세스를 강제 종료할까요?"
+                            alert.informativeText = "정리할 틈 없이 바로 끊어서, 저장하지 않은 내용이 있으면 사라집니다."
+                            alert.addButton(withTitle: "강제 종료")
+                            alert.addButton(withTitle: "취소")
+                            alert.buttons.first?.hasDestructiveAction = true
+                            NSApp.activate(ignoringOtherApps: true)
+                            guard alert.runModal() == .alertFirstButtonReturn else { return }
+                            store.terminate(server, force: true, done: report)
+                        }
+                    })
+                }
+                row.submenu = actions
+                sub.addItem(row)
+            }
+            sub.addItem(.separator())
+            sub.addItem(item("포트 관리…") { [weak self] in self?.showMain(.ports) })
         }
     }
 
@@ -1040,4 +1128,13 @@ final class PassthroughLabel: NSTextField {
 /// 클릭은 아래 상태바 버튼으로 넘기는 레이어 전용 뷰.
 final class PassthroughLayerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// 하위 메뉴를 펼치기 직전에 내용을 채운다.
+final class PortsMenuFiller: NSObject, NSMenuDelegate {
+    private let fill: (NSMenu) -> Void
+
+    init(fill: @escaping (NSMenu) -> Void) { self.fill = fill }
+
+    func menuNeedsUpdate(_ menu: NSMenu) { fill(menu) }
 }

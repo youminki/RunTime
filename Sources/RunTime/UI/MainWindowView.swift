@@ -3,7 +3,7 @@ import SwiftUI
 
 /// 한 창 안에서 오가는 화면. 메뉴바·팝오버·알림의 단추도 새 창을 띄우지 않고 이 창의 화면을 바꾼다.
 enum MainPage: String, CaseIterable {
-    case usage, runners, workLog, redmine, design, hosts, guide, settings
+    case usage, runners, workLog, redmine, design, hosts, ports, guide, settings
 
     /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 게임은 러너, 캘린더는 업무 일지).
     init?(windowName: String) {
@@ -20,6 +20,7 @@ enum MainPage: String, CaseIterable {
         case .workLog: return "업무 일지"
         case .design: return "피그마"
         case .hosts: return "호스트"
+        case .ports: return "포트"
         case .redmine: return "레드마인"
         case .guide: return "사용법"
         case .settings: return "설정"
@@ -33,6 +34,7 @@ enum MainPage: String, CaseIterable {
         case .workLog: return "checklist"
         case .design: return "paintpalette"
         case .hosts: return "network"
+        case .ports: return "server.rack"
         case .redmine: return "list.bullet.rectangle.portrait"
         case .guide: return "questionmark.circle"
         case .settings: return "gearshape"
@@ -46,6 +48,7 @@ enum MainPage: String, CaseIterable {
         case .workLog: return "업무 일지와 일일·주간 보고, 레드마인 보내기"
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
         case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 백업"
+        case .ports: return "열려 있는 로컬 포트 보기, 종료, 다른 포트로 재시작"
         case .redmine: return "레드마인 일감 보기·고치기·댓글, 저장한 질의"
         case .guide: return "메뉴마다 짧은 영상으로 쓰는 순서 보기"
         case .settings: return "일반, 알림, 창 배치, 클립보드, GitLab·레드마인·팀즈·피그마 연동"
@@ -61,7 +64,7 @@ enum MainPage: String, CaseIterable {
     var hasStage: Bool { self == .runners }
 
     /// 아이콘 막대의 묶음: Claude 사용량, 업무 기록, 개발 도구. 묶음 사이에 줄을 긋는다.
-    static let groups: [[MainPage]] = [[.usage, .runners], [.workLog, .redmine], [.design, .hosts]]
+    static let groups: [[MainPage]] = [[.usage, .runners], [.workLog, .redmine], [.design, .hosts, .ports]]
 }
 
 /// 창 안의 이동 기록. Finder·시스템 설정처럼 뒤로·앞으로를 쓴다.
@@ -289,6 +292,8 @@ struct MainWindowView: View {
             DesignHistoryView(sync: .shared, settings: .shared, page: designPage)
         case .hosts:
             HostsView(store: .shared, page: .shared)
+        case .ports:
+            PortsView(store: .shared, page: .shared)
         case .redmine:
             RedmineView(store: .shared, settings: .shared, workLogPage: workLogPage,
                         openWorkLogSend: { [navigator, workLogPage] in

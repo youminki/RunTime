@@ -37,7 +37,7 @@ struct GuideTopic: Identifiable, Hashable {
         case .redmine: id = "redmine"
         case .design: id = "figma"
         case .hosts: id = "hosts"
-        case .settings, .guide: return nil
+        case .settings, .guide, .ports: return nil
         }
         return all.first { $0.id == id }
     }

@@ -727,6 +727,30 @@ if CommandLine.arguments.contains("--hosts-check") {
     RunLoop.main.run()
 }
 
+// 포트 점검: 열린 포트를 실행 단위로 찍는다. `--ports-check stop 5173`, `--ports-check restart 5173 5174`처럼 주면 그 서버에 실제로 해 본다
+if let index = CommandLine.arguments.firstIndex(of: "--ports-check") {
+    let args = Array(CommandLine.arguments.dropFirst(index + 1))
+    MainActor.assumeIsolated {
+        let store = PortsStore.shared
+        store.refreshNow(timeout: 10)
+        for server in store.servers {
+            print("\(server.kind)\t\(server.ports.map(String.init).joined(separator: ","))\t\(server.title)\t\(server.detail)\t\(server.note ?? "")")
+        }
+        guard args.count >= 2, let port = Int(args[1]), let server = store.servers.first(where: { $0.ports.contains(port) }) else { exit(0) }
+        switch args[0] {
+        case "stop", "kill":
+            store.terminate(server, force: args[0] == "kill") { stopped, message in print(stopped, message); exit(stopped ? 0 : 1) }
+        case "restart":
+            store.restart(server, to: args.count > 2 ? Int(args[2]) ?? port : port) { ok, message, log in
+                print(ok, message, log?.path ?? "")
+                exit(ok ? 0 : 1)
+            }
+        default: exit(2)
+        }
+    }
+    RunLoop.main.run()
+}
+
 // 업데이트 말풍선 점검: 커밋 제목 몇 줄(표준 입력)로 메뉴바 아래 말풍선을 띄우고 PNG로 남긴 뒤 종료.
 if let index = CommandLine.arguments.firstIndex(of: "--update-bubble-check") {
     let app = NSApplication.shared

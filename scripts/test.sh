@@ -6,7 +6,7 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT/.build/core-package"
 mkdir -p "$PKG/Sources" "$PKG/Tests"
-for MODULE in UsageCore GameCore SearchCore WorkLogCore DesignSyncCore HostsCore ReportCore WindowKit ClipKit; do
+for MODULE in UsageCore GameCore SearchCore WorkLogCore DesignSyncCore HostsCore PortsCore ReportCore WindowKit ClipKit; do
     ln -sfn "$ROOT/Sources/$MODULE" "$PKG/Sources/$MODULE"
     ln -sfn "$ROOT/Tests/${MODULE}Tests" "$PKG/Tests/${MODULE}Tests"
 done
@@ -24,6 +24,7 @@ let package = Package(
         .target(name: "WorkLogCore"),
         .target(name: "DesignSyncCore"),
         .target(name: "HostsCore"),
+        .target(name: "PortsCore"),
         .target(name: "ReportCore"),
         .target(name: "WindowKit", exclude: ["LICENSE"], resources: [.copy("Icons")]),
         .target(name: "ClipKit", exclude: ["LICENSE", "RunTime/ko.lproj"]),
@@ -33,6 +34,7 @@ let package = Package(
         .testTarget(name: "WorkLogCoreTests", dependencies: ["WorkLogCore"]),
         .testTarget(name: "DesignSyncCoreTests", dependencies: ["DesignSyncCore"]),
         .testTarget(name: "HostsCoreTests", dependencies: ["HostsCore"]),
+        .testTarget(name: "PortsCoreTests", dependencies: ["PortsCore"]),
         .testTarget(name: "ReportCoreTests", dependencies: ["ReportCore"]),
         .testTarget(name: "WindowKitTests", dependencies: ["WindowKit"]),
         .testTarget(name: "ClipKitTests", dependencies: ["ClipKit"]),

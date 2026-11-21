@@ -370,6 +370,12 @@ enum UIShots {
             ("main-calendar-dark", .darkAqua, nil, mainPage(.workLog, engine: engine, workLog: .month, monthCalendar: true)),
             ("main-worklog-week", .aqua, nil, mainPage(.workLog, engine: engine, workLog: .week)),
             ("main-hosts", .aqua, nil, mainPage(.hosts, engine: engine)),
+            // RUNTIME_SHOT_PORTS_OTHERS=1이면 접어 둔 ‘다른 앱’까지 펼쳐 찍는다
+            ("main-ports", .aqua, nil, {
+                PortsPage.shared.showOthers = ProcessInfo.processInfo.environment["RUNTIME_SHOT_PORTS_OTHERS"] == "1"
+                return mainPage(.ports, engine: engine)
+            }()),
+            ("main-ports-dark", .darkAqua, nil, mainPage(.ports, engine: engine)),
             ("main-hosts-dark", .darkAqua, nil, mainPage(.hosts, engine: engine)),
             ("main-hosts-add", .aqua, nil, AnyView(HostsSheetShots.add("10.0.1.20 api.dev.example.com new.dev.example.com\n#10.0.2.31 admin.stg.example.com\napi.stg.example.com 10.0.2.40\n문의는 서버팀", group: "Dev"))),
             ("main-hosts-edit", .aqua, nil, AnyView(HostsSheetShots.edit())),

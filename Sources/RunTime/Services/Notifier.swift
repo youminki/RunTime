@@ -23,7 +23,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// 알림을 눌렀을 때 열 화면.
     enum Destination: String {
-        case usage, daily, workLog, design, hosts
+        case usage, daily, workLog, design, hosts, ports
         /// Claude Code가 일하던 앱. `context`에 작업 폴더 이름을 싣는다.
         case claude
     }
