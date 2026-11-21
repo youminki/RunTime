@@ -328,8 +328,7 @@ struct SettingsView: View {
             }
             .onAppear { permissionHook.refresh() }
 
-            GroupedSection("알림", footer: "펫을 화면에 꺼내 두면 알림이 펫 위 말풍선으로 뜹니다. 한도나 실패처럼 할 일이 남은 알림은 직접 닫을 때까지 남고, 요약·새 일감·디자인 변경·새 버전 소식은 1분쯤 보인 뒤 저절로 닫힙니다. 마우스를 올려 읽는 동안과 자리를 비운 동안에는 닫히지 않습니다. 한도 알림은 세션·주간 사용률이 80%, 95%에 닿을 때, 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
-                ToggleRow(title: "한도 임박 알림", icon: "bell.badge.fill", isOn: $settings.limitAlertsEnabled)
+            GroupedSection("알림", footer: "펫을 화면에 꺼내 두면 알림이 펫 위 말풍선으로 뜹니다. 실패처럼 할 일이 남은 알림은 직접 닫을 때까지 남고, 요약·새 일감·디자인 변경·새 버전 소식은 1분쯤 보인 뒤 저절로 닫힙니다. 마우스를 올려 읽는 동안과 자리를 비운 동안에는 닫히지 않습니다. 초기화 알림은 창이 새로 시작될 때 한 번씩 보냅니다. 작업 끝 알림은 러너가 보이지 않을 때 1분 넘게 걸린 작업만 알립니다. 주간 초기화는 공식 사용량 연동을 켜야 알 수 있습니다.") {
                 ToggleRow(title: "세션 초기화 알림", icon: "arrow.clockwise",
                           isOn: $settings.newSessionAlertEnabled)
                 ToggleRow(title: "주간 초기화 알림", icon: "calendar",
@@ -341,7 +340,7 @@ struct SettingsView: View {
                           isOn: $settings.weeklySummaryEnabled)
                 GroupedRow("알림 보내 보기", icon: "paperplane.fill") {
                     Button("보내기") {
-                        Notifier.shared.send(title: "RunTime 알림", body: "알림이 이렇게 와요. 사용률이 80%, 95%에 닿으면 알려 드릴게요.")
+                        Notifier.shared.send(title: "RunTime 알림", body: "알림이 이렇게 와요.")
                     }
                     .controlSize(.small)
                     .disabled(!Notifier.shared.available)

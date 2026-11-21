@@ -20,8 +20,6 @@ final class WorkLogSettings: ObservableObject {
     @Published var reminderEnabled: Bool { didSet { defaults.set(reminderEnabled, forKey: "workLog.reminder") } }
     /// 평일 이 시각(분)에 오늘 기록과 보낼 일감을 알린다. 기본 18:00.
     @Published var reminderMinutes: Int { didSet { defaults.set(reminderMinutes, forKey: "workLog.reminderMinutes") } }
-    /// 펫을 꺼내 두었으면 평일 10시에 진행 예정, 18시에 진행 사항을 펫 위 말풍선으로 띄운다.
-    @Published var petReportBubble: Bool { didSet { defaults.set(petReportBubble, forKey: "workLog.petReportBubble") } }
     @Published private(set) var hasRedmineKey: Bool
     @Published private(set) var hasTeamsWebhook: Bool
     @Published private(set) var hasTeamsMeWebhook: Bool
@@ -59,7 +57,6 @@ final class WorkLogSettings: ObservableObject {
         redmineURL = defaults.string(forKey: "workLog.redmineURL") ?? ""
         reminderEnabled = defaults.object(forKey: "workLog.reminder") as? Bool ?? false
         reminderMinutes = defaults.object(forKey: "workLog.reminderMinutes") as? Int ?? 18 * 60
-        petReportBubble = defaults.object(forKey: "workLog.petReportBubble") as? Bool ?? true
         // 값을 읽지 않고 있는지만 본다 (값을 읽으면 다른 서명의 빌드에서 키체인 창이 뜬다)
         hasRedmineKey = !Self.keychainOff && Keychain.exists(Self.keyAccount)
         hasTeamsWebhook = !Self.keychainOff && Keychain.exists(TeamsTarget.chat.account)
@@ -493,7 +490,6 @@ final class WorkLogSync: ObservableObject {
         // 자정을 넘기면 그날 고정 업무를 넣는다 (가져오기를 꺼 두었거나 창을 켜 둔 채여도). 이미 있으면 아무것도 하지 않는다
         store.applyRecurringToday()
         remindIfDue()
-        DailyReportBubble.showIfDue()
         TeamsWeb.shared.refreshIfDue()
     }
 
@@ -1705,8 +1701,6 @@ final class WorkLogSync: ObservableObject {
             let entries = self.store.log.entries(on: today)
             guard !entries.isEmpty else { return }
             let waiting = Set(entries.filter(\.needsRedmine).compactMap(\.issue)).count
-            // 펫 위에 진행 사항 말풍선이 뜨면 같은 때 같은 말을 두 번 하지 않는다
-            if waiting == 0, DailyReportBubble.coversEvening { return }
             Notifier.shared.send(title: "오늘 업무 일지 \(entries.count)줄",
                                  body: waiting > 0 ? "레드마인에 보낼 일감 \(waiting)개. 눌러서 확인하고 보내세요."
                                                    : "눌러서 일일보고를 복사하세요.",

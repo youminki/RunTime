@@ -32,7 +32,7 @@ struct WelcomeView: View {
             GroupedSection("처음 한 번만", footer: "토큰은 읽기만 하고 Anthropic 말고는 어디에도 보내지 않습니다.") {
                 tip("key.fill", "키체인 창에서 '항상 허용'",
                     "Claude Code 로그인 정보로 공식 사용률을 받습니다. '허용'만 누르면 다음에 또 물어요.")
-                tip("bell.badge.fill", "알림 허용", "사용률이 80%, 95%에 닿으면 알려 드려요")
+                tip("bell.badge.fill", "알림 허용", "Claude 작업이 끝나면 알려 드려요")
             }
 
             HStack {

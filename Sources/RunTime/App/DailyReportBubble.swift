@@ -1,48 +1,13 @@
 import AppKit
 import WorkLogCore
 
-/// 펫을 꺼내 두었으면 평일 10시에 진행 예정, 18시에 진행 사항을 펫 위 말풍선으로 띄운다.
-/// 일지 창을 열지 않고 말풍선에서 바로 복사하거나 팀즈로 보낸다. 늦게 꺼냈어도 그 보고를 올릴 때 안이면 그때 띄운다.
+/// 펫 메뉴에서 고르면 진행 예정·진행 사항을 펫 위 말풍선으로 띄운다.
+/// 일지 창을 열지 않고 말풍선에서 바로 복사하거나 팀즈로 보낸다.
 enum DailyReportBubble {
     enum Kind: String, CaseIterable {
         case plan, progress
 
-        /// 띄우기 시작하는 때와 더는 띄우지 않는 때 (분).
-        var window: Range<Int> { self == .plan ? 10 * 60 ..< 13 * 60 : 18 * 60 ..< 24 * 60 }
         var name: String { self == .plan ? "진행 예정" : "진행 사항" }
-    }
-
-    private static func shownKey(_ kind: Kind) -> String { "workLog.petReport.\(kind.rawValue)" }
-
-    /// 지금 저녁 알림 대신 진행 사항 말풍선이 뜨는지. 둘이 같은 때 겹치지 않게 저녁 알림이 묻는다.
-    static var coversEvening: Bool {
-        WorkLogSettings.shared.petReportBubble && DesktopPet.shared.isShown
-            && minutes(Date()) >= Kind.progress.window.lowerBound
-    }
-
-    private static func minutes(_ date: Date) -> Int {
-        let calendar = WorkDay.calendar
-        return calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
-    }
-
-    /// 1분마다 부른다. 평일(공휴일 빼고)에 그 보고를 올릴 때이고 오늘 아직 띄우지 않았으면 띄운다.
-    static func showIfDue(now: Date = Date()) {
-        guard WorkLogSettings.shared.petReportBubble, DesktopPet.shared.isShown else { return }
-        let today = WorkDay.today()
-        let weekday = WorkDay.calendar.component(.weekday, from: now)
-        guard (2...6).contains(weekday), KoreanHolidays.name(on: today) == nil else { return }
-        let defaults = UserDefaults.standard
-        for kind in Kind.allCases where kind.window.contains(minutes(now)) && defaults.string(forKey: shownKey(kind)) != today {
-            // 가져오는 사이 다음 분에 또 띄우지 않게 먼저 적고, 올릴 글이 없었으면 지워 일지를 적은 뒤에 다시 띄운다
-            defaults.set(today, forKey: shownKey(kind))
-            let present = { if !show(kind) { defaults.removeObject(forKey: shownKey(kind)) } }
-            // 퇴근 전 머지까지 넣게 한 번 더 가져온 뒤 띄운다
-            if kind == .progress, WorkLogSettings.shared.captureEnabled {
-                WorkLogSync.shared.capture(completion: present)
-            } else {
-                present()
-            }
-        }
     }
 
     /// 일지에서 만든 글 (고쳐 쓰기 전). 일지 창의 보고서와 같은 글을 만든다.

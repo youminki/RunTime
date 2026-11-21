@@ -9,7 +9,7 @@ final class AppSettings: ObservableObject {
     static let pollIntervalOptions: [Double] = [1, 3, 5, 10]
 
     private enum Key: String {
-        case officialEnabled, sensitivity, pollInterval, limitAlertsEnabled, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, globalHotKeyEnabled, spriteTheme, typingRunnerEnabled
+        case officialEnabled, sensitivity, pollInterval, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, globalHotKeyEnabled, spriteTheme, typingRunnerEnabled
         case menuBarLabel, menuBarLabelLast, runner, smoothness, tricksEnabled, customRunner, runnerSize, desktopPet
         case desktopPetSize, desktopPetEdges, desktopPetMode, desktopPetSpot
     }
@@ -25,9 +25,6 @@ final class AppSettings: ObservableObject {
 
     /// 키보드·마우스 입력에 반응한다 (기본 켬). 타자 빠르기로 움직이고, 마우스만 쓰면 둘러본다.
     @Published var typingRunnerEnabled: Bool { didSet { save(typingRunnerEnabled, .typingRunnerEnabled) } }
-
-    /// 80%/95% 한도 알림 (기본 on).
-    @Published var limitAlertsEnabled: Bool { didSet { save(limitAlertsEnabled, .limitAlertsEnabled) } }
 
     /// 5시간 블록 리셋 알림 (§F4 — 기본 off).
     @Published var newSessionAlertEnabled: Bool { didSet { save(newSessionAlertEnabled, .newSessionAlertEnabled) } }
@@ -166,7 +163,6 @@ final class AppSettings: ObservableObject {
         let poll = d.double(forKey: Key.pollInterval.rawValue)
         pollInterval = poll > 0 ? poll : 3.0
         typingRunnerEnabled = bool(.typingRunnerEnabled, true)
-        limitAlertsEnabled = bool(.limitAlertsEnabled, true)
         newSessionAlertEnabled = bool(.newSessionAlertEnabled, false)
         weeklyResetAlertEnabled = bool(.weeklyResetAlertEnabled, false)
         claudeDoneAlertEnabled = bool(.claudeDoneAlertEnabled, true)
