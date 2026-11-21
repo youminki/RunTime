@@ -1,12 +1,12 @@
 #!/bin/zsh
-# 코어 단위 테스트 (사용량 계산, 게임 규칙, 한글 검색, 업무 일지, 디자인 변경 기록, 호스트, 충돌 보고서, 창 배치).
+# 코어 단위 테스트 (사용량 계산, 게임 규칙, 한글 검색, 업무 일지, 디자인 변경 기록, 호스트, 충돌 보고서, 창 배치, 클립보드 기록).
 # Command Line Tools만 있는 환경에선 실행 타깃과 같은 패키지에서 swift-testing 매크로를 찾지 못한다.
 # 코어 소스와 테스트를 링크한 별도 패키지를 .build 안에 만들어 그쪽에서 돌린다.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT/.build/core-package"
 mkdir -p "$PKG/Sources" "$PKG/Tests"
-for MODULE in UsageCore GameCore SearchCore WorkLogCore DesignSyncCore HostsCore ReportCore WindowKit; do
+for MODULE in UsageCore GameCore SearchCore WorkLogCore DesignSyncCore HostsCore ReportCore WindowKit ClipKit; do
     ln -sfn "$ROOT/Sources/$MODULE" "$PKG/Sources/$MODULE"
     ln -sfn "$ROOT/Tests/${MODULE}Tests" "$PKG/Tests/${MODULE}Tests"
 done
@@ -26,6 +26,7 @@ let package = Package(
         .target(name: "HostsCore"),
         .target(name: "ReportCore"),
         .target(name: "WindowKit", exclude: ["LICENSE"], resources: [.copy("Icons")]),
+        .target(name: "ClipKit", exclude: ["LICENSE", "RunTime/ko.lproj"]),
         .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"]),
         .testTarget(name: "GameCoreTests", dependencies: ["GameCore"]),
         .testTarget(name: "SearchCoreTests", dependencies: ["SearchCore"]),
@@ -34,12 +35,16 @@ let package = Package(
         .testTarget(name: "HostsCoreTests", dependencies: ["HostsCore"]),
         .testTarget(name: "ReportCoreTests", dependencies: ["ReportCore"]),
         .testTarget(name: "WindowKitTests", dependencies: ["WindowKit"]),
+        .testTarget(name: "ClipKitTests", dependencies: ["ClipKit"]),
     ]
 )
 MANIFEST
 # 창 배치 테스트가 이 Mac의 창 배치 설정을 읽거나 바꾸지 않게 빈 저장소를 쓴다
 export RUNTIME_WINDOW_DEFAULTS=dev.runtime.RunTime.window.tests
 defaults delete "$RUNTIME_WINDOW_DEFAULTS" >/dev/null 2>&1 || true
+# 클립보드 기록 테스트도 이 Mac의 기록 설정을 건드리지 않게
+export RUNTIME_CLIP_DEFAULTS=dev.runtime.RunTime.clip.tests
+defaults delete "$RUNTIME_CLIP_DEFAULTS" >/dev/null 2>&1 || true
 cd "$PKG"
 # 이 툴체인은 매크로 플러그인(TestingMacros) 로드나 빌드 단계가 가끔 실패한다.
 # 그 경우에만 다시 빌드하고, 소스 위치가 찍힌 컴파일 오류는 바로 보여 준다.

@@ -1,0 +1,240 @@
+import AppKit
+import Carbon.HIToolbox
+import SwiftUI
+
+/// Lets the Paste Bar's local key monitor leave Escape and drag-time keys to
+/// the handle while it temporarily owns first-responder status.
+@MainActor
+protocol BarResizeHandleResponder: AnyObject {
+    /// True only while a resize drag is in progress. The key monitor must not
+    /// hand the bar's keys to the handle outside a drag: if the handle ever
+    /// holds first responder without tracking, every key (arrows, Escape,
+    /// Return, letters) would be swallowed and only beep.
+    var isTrackingDrag: Bool { get }
+}
+
+/// A compact drag target for resizing the Paste Bar vertically.
+///
+/// Drag callbacks use AppKit's global screen coordinate space so the owner can
+/// keep its resize geometry independent of the handle's position in SwiftUI.
+@MainActor
+struct BarResizeHandle: View {
+    private static let size = NSSize(width: 42, height: 14)
+
+    private let accessibilityValue: CGFloat?
+    private let onBegin: (NSPoint) -> Void
+    private let onChange: (NSPoint) -> Void
+    private let onEnd: (NSPoint) -> Void
+    private let onCancel: () -> Void
+    private let onAccessibilityAdjustment: (CGFloat) -> Void
+
+    init(
+        accessibilityValue: CGFloat? = nil,
+        onBegin: @escaping (NSPoint) -> Void,
+        onChange: @escaping (NSPoint) -> Void,
+        onEnd: @escaping (NSPoint) -> Void,
+        onCancel: @escaping () -> Void,
+        onAccessibilityAdjustment: @escaping (CGFloat) -> Void
+    ) {
+        self.accessibilityValue = accessibilityValue
+        self.onBegin = onBegin
+        self.onChange = onChange
+        self.onEnd = onEnd
+        self.onCancel = onCancel
+        self.onAccessibilityAdjustment = onAccessibilityAdjustment
+    }
+
+    var body: some View {
+        BarResizeHandleRepresentable(
+            accessibilityValue: accessibilityValue,
+            callbacks: .init(
+                onBegin: onBegin,
+                onChange: onChange,
+                onEnd: onEnd,
+                onCancel: onCancel,
+                onAccessibilityAdjustment: onAccessibilityAdjustment))
+        .frame(width: Self.size.width, height: Self.size.height)
+    }
+}
+
+@MainActor
+private struct BarResizeHandleRepresentable: NSViewRepresentable {
+    let accessibilityValue: CGFloat?
+    let callbacks: BarResizeHandleView.Callbacks
+
+    func makeNSView(context: Context) -> BarResizeHandleView {
+        BarResizeHandleView(callbacks: callbacks, accessibilityValue: accessibilityValue)
+    }
+
+    func updateNSView(_ nsView: BarResizeHandleView, context: Context) {
+        nsView.callbacks = callbacks
+        nsView.accessibilityHeight = accessibilityValue
+    }
+}
+
+@MainActor
+private final class BarResizeHandleView: NSView, BarResizeHandleResponder {
+    static let accessibilityStep: CGFloat = 10
+
+    struct Callbacks {
+        let onBegin: (NSPoint) -> Void
+        let onChange: (NSPoint) -> Void
+        let onEnd: (NSPoint) -> Void
+        let onCancel: () -> Void
+        let onAccessibilityAdjustment: (CGFloat) -> Void
+    }
+
+    var callbacks: Callbacks
+    var accessibilityHeight: CGFloat? {
+        didSet { updateAccessibilityValue() }
+    }
+
+    var isTrackingDrag = false
+    private var ownsResizeCursor = false
+    private weak var previousFirstResponder: NSResponder?
+
+    // Being first responder means owning every key the Paste Bar receives, so
+    // only become one for the duration of a drag (mouseDown sets the flag
+    // before asking the window for focus).
+    override var acceptsFirstResponder: Bool { isTrackingDrag }
+    override var intrinsicContentSize: NSSize { NSSize(width: 42, height: 14) }
+
+    init(callbacks: Callbacks, accessibilityValue: CGFloat?) {
+        self.callbacks = callbacks
+        accessibilityHeight = accessibilityValue
+        super.init(frame: NSRect(x: 0, y: 0, width: 42, height: 14))
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.slider)
+        setAccessibilityLabel(String(localized: "Resize Paste Bar"))
+        setAccessibilityHelp(String(localized: "Drag vertically, or increment and decrement in ten-point steps."))
+        updateAccessibilityValue()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidResignKey(_:)),
+            name: NSWindow.didResignKeyNotification,
+            object: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) unavailable")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let line = NSRect(x: bounds.midX - 21, y: bounds.midY - 2, width: 42, height: 4)
+        NSColor.secondaryLabelColor.withAlphaComponent(0.55).setFill()
+        NSBezierPath(roundedRect: line, xRadius: 2, yRadius: 2).fill()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .resizeUpDown)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard !isTrackingDrag else { return }
+        isTrackingDrag = true
+        previousFirstResponder = window?.firstResponder
+        window?.makeFirstResponder(self)
+        NSCursor.resizeUpDown.push()
+        ownsResizeCursor = true
+        callbacks.onBegin(screenPoint(for: event))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isTrackingDrag else { return }
+        callbacks.onChange(screenPoint(for: event))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isTrackingDrag else { return }
+        let point = screenPoint(for: event)
+        finishTracking()
+        callbacks.onEnd(point)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isTrackingDrag, Int(event.keyCode) == kVK_Escape else {
+            super.keyDown(with: event)
+            return
+        }
+        cancelTracking()
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        guard isTrackingDrag else {
+            super.cancelOperation(sender)
+            return
+        }
+        cancelTracking()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if isTrackingDrag, newWindow !== window {
+            cancelTracking()
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func accessibilityPerformIncrement() -> Bool {
+        callbacks.onAccessibilityAdjustment(Self.accessibilityStep)
+        return true
+    }
+
+    override func accessibilityPerformDecrement() -> Bool {
+        callbacks.onAccessibilityAdjustment(-Self.accessibilityStep)
+        return true
+    }
+
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        guard isTrackingDrag,
+              let notificationWindow = notification.object as? NSWindow,
+              notificationWindow === window else { return }
+        cancelTracking()
+    }
+
+    private func cancelTracking() {
+        guard isTrackingDrag else { return }
+        finishTracking()
+        callbacks.onCancel()
+    }
+
+    private func finishTracking() {
+        isTrackingDrag = false
+        if ownsResizeCursor {
+            NSCursor.pop()
+            ownsResizeCursor = false
+        }
+        // If the previous responder refuses, the window itself takes over;
+        // the handle must never keep the bar's keys after a drag. Restoring to
+        // the handle itself would re-trap the keys when the handle already
+        // owned focus before the drag, so that case also falls back to the
+        // window.
+        if let window, window.firstResponder === self {
+            let restored: Bool
+            if let previousFirstResponder, previousFirstResponder !== self {
+                restored = window.makeFirstResponder(previousFirstResponder)
+            } else {
+                restored = window.makeFirstResponder(nil)
+            }
+            if !restored { window.makeFirstResponder(nil) }
+        }
+        previousFirstResponder = nil
+    }
+
+    private func screenPoint(for event: NSEvent) -> NSPoint {
+        guard let eventWindow = event.window else { return NSEvent.mouseLocation }
+        return eventWindow.convertPoint(toScreen: event.locationInWindow)
+    }
+
+    private func updateAccessibilityValue() {
+        let value = accessibilityHeight.map { NSNumber(value: Double($0)) }
+        setAccessibilityValue(value)
+    }
+}

@@ -1,0 +1,456 @@
+import AppKit
+import Carbon.HIToolbox
+
+enum ShortcutModifier: CaseIterable, Identifiable {
+    case command
+    case option
+    case control
+    case shift
+
+    var id: Int { carbonValue }
+
+    var carbonValue: Int {
+        switch self {
+        case .command: return cmdKey
+        case .option: return optionKey
+        case .control: return controlKey
+        case .shift: return shiftKey
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .command: return String(localized: "Command")
+        case .option: return String(localized: "Option")
+        case .control: return String(localized: "Control")
+        case .shift: return String(localized: "Shift")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .command: return "⌘"
+        case .option: return "⌥"
+        case .control: return "⌃"
+        case .shift: return "⇧"
+        }
+    }
+
+    init?(carbonValue: Int) {
+        guard let modifier = Self.allCases.first(where: { $0.carbonValue == carbonValue }) else {
+            return nil
+        }
+        self = modifier
+    }
+}
+
+enum HistoryRetentionMode: String, CaseIterable, Identifiable {
+    case itemCount
+    case timeInterval
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .itemCount: return String(localized: "Number of clips")
+        case .timeInterval: return String(localized: "Age of clips")
+        }
+    }
+}
+
+/// The discrete stops on the time-based retention slider. `historyRetentionDays`
+/// stays the underlying source of truth (a raw day count, with 0 meaning
+/// "forever" - never prune by age) - this just names the stops so the slider
+/// can snap between them instead of offering a raw number field.
+enum HistoryRetentionPreset: Int, CaseIterable, Identifiable {
+    case day
+    case week
+    case twoWeeks
+    case threeWeeks
+    case month
+    case twoMonths
+    case threeMonths
+    case sixMonths
+    case year
+    case forever
+
+    var id: Int { rawValue }
+
+    /// 0 means forever - no automatic time-based pruning.
+    var days: Int {
+        switch self {
+        case .day: return 1
+        case .week: return 7
+        case .twoWeeks: return 14
+        case .threeWeeks: return 21
+        case .month: return 30
+        case .twoMonths: return 60
+        case .threeMonths: return 90
+        case .sixMonths: return 180
+        case .year: return 365
+        case .forever: return 0
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .day: return String(localized: "1 Day")
+        case .week: return String(localized: "1 Week")
+        case .twoWeeks: return String(localized: "2 Weeks")
+        case .threeWeeks: return String(localized: "3 Weeks")
+        case .month: return String(localized: "1 Month")
+        case .twoMonths: return String(localized: "2 Months")
+        case .threeMonths: return String(localized: "3 Months")
+        case .sixMonths: return String(localized: "6 Months")
+        case .year: return String(localized: "1 Year")
+        case .forever: return String(localized: "Forever")
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .day: return "1d"
+        case .week: return "1w"
+        case .twoWeeks: return "2w"
+        case .threeWeeks: return "3w"
+        case .month: return "1m"
+        case .twoMonths: return "2m"
+        case .threeMonths: return "3m"
+        case .sixMonths: return "6m"
+        case .year: return "1y"
+        case .forever: return "∞"
+        }
+    }
+
+    var sliderIndex: Double { Double(rawValue) }
+
+    /// Snaps an arbitrary day count (including ones from before this preset
+    /// set existed) to its nearest stop, so old UserDefaults values still
+    /// land on a sensible position on the slider.
+    init(nearestDays days: Int) {
+        self = Self.allCases.min(by: { abs($0.days - days) < abs($1.days - days) }) ?? .month
+    }
+
+    init(sliderIndex: Double) {
+        let index = min(Self.allCases.count - 1, max(0, Int(sliderIndex.rounded())))
+        self = Self.allCases[index]
+    }
+}
+
+enum ClipColorTheme: Int, CaseIterable, Identifiable {
+    case `default`
+    case vibrant
+    case accentShades
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .default: String(localized: "Default")
+        case .vibrant: String(localized: "Vibrant")
+        case .accentShades: String(localized: "Accent shades")
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .default:
+            String(localized: "Match each clip to its source app\u{2019}s familiar card color.")
+        case .vibrant:
+            String(localized: "Use a stronger, higher-contrast version of each source app color.")
+        case .accentShades:
+            String(localized: "Give each source app a stable lighter or darker shade of one color.")
+        }
+    }
+}
+
+enum SelectedClipPosition: Int, CaseIterable, Identifiable {
+    case center
+    case rightEdge
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .center: String(localized: "Center")
+        case .rightEdge: String(localized: "Right edge")
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .center: String(localized: "Keep the selected clip centered with surrounding context visible.")
+        case .rightEdge: String(localized: "Place the selected clip at the far right, like Paste.")
+        }
+    }
+}
+
+@MainActor
+final class Settings: ObservableObject {
+    static let shared = Settings()
+
+    private let d = ClipDefaults.store
+    private var isLoaded = false
+
+    enum Keys {
+        static let historyLimit = "historyLimit"
+        static let historyRetentionMode = "historyRetentionMode"
+        static let historyRetentionDays = "historyRetentionDays"
+        static let hotkeyKeyCode = "hotkeyKeyCode"
+        static let hotkeyModifiers = "hotkeyModifiers"
+        static let quickPasteModifier = "quickPasteModifier"
+        static let plainTextModifier = "plainTextModifier"
+        static let launchAtLogin = "launchAtLogin"
+        static let hideOnClickOutside = "hideOnClickOutside"
+        static let pasteDirectly = "pasteDirectly"
+        static let playSound = "playSound"
+        static let playSoundOnCopy = "playSoundOnCopy"
+        static let promoteOnPaste = "promoteOnPaste"
+        static let ignoreConcealed = "ignoreConcealed"
+        static let deletePermanently = "deletePermanently"
+        static let ignoredSourceAppBundleIDs = "ignoredSourceAppBundleIDs"
+        static let barHeight = "barHeight"
+        static let showBarResizeHandle = "showBarResizeHandle"
+        static let showMenuBarIcon = "showMenuBarIcon"
+        static let onboarded = "onboarded"
+        static let iCloudSync = "iCloudSync"
+        static let cloudKitSync = "cloudKitSync"
+        static let clipColorTheme = "clipColorTheme"
+        static let clipColorAccentHex = "clipColorAccentHex"
+        static let selectedClipPosition = "selectedClipPosition"
+    }
+
+    @Published var historyLimit: Int {
+        didSet {
+            guard isLoaded else { return }
+            if historyLimit < 20 { historyLimit = 20; return }
+            d.set(historyLimit, forKey: Keys.historyLimit)
+        }
+    }
+
+    @Published var historyRetentionMode: HistoryRetentionMode {
+        didSet {
+            guard isLoaded else { return }
+            d.set(historyRetentionMode.rawValue, forKey: Keys.historyRetentionMode)
+        }
+    }
+
+    /// A raw day count for time-based pruning; 0 means forever (no automatic
+    /// pruning by age). See `HistoryRetentionPreset` for the named stops the
+    /// Settings slider snaps this to.
+    @Published var historyRetentionDays: Int {
+        didSet {
+            guard isLoaded else { return }
+            if historyRetentionDays < 0 { historyRetentionDays = 0; return }
+            d.set(historyRetentionDays, forKey: Keys.historyRetentionDays)
+        }
+    }
+
+    @Published var hotkeyKeyCode: Int {
+        didSet { guard isLoaded else { return }
+            d.set(hotkeyKeyCode, forKey: Keys.hotkeyKeyCode); HotKeyCenter.shared.reload() }
+    }
+
+    @Published var hotkeyModifiers: Int {
+        didSet { guard isLoaded else { return }
+            d.set(hotkeyModifiers, forKey: Keys.hotkeyModifiers); HotKeyCenter.shared.reload() }
+    }
+
+    @Published var quickPasteModifier: Int {
+        didSet {
+            guard isLoaded else { return }
+            if quickPasteModifier == plainTextModifier { plainTextModifier = oldValue }
+            d.set(quickPasteModifier, forKey: Keys.quickPasteModifier)
+        }
+    }
+
+    @Published var plainTextModifier: Int {
+        didSet {
+            guard isLoaded else { return }
+            if plainTextModifier == quickPasteModifier { quickPasteModifier = oldValue }
+            d.set(plainTextModifier, forKey: Keys.plainTextModifier)
+        }
+    }
+
+    @Published var launchAtLogin: Bool {
+        didSet { guard isLoaded else { return }
+            d.set(launchAtLogin, forKey: Keys.launchAtLogin); LaunchAtLogin.set(enabled: launchAtLogin) }
+    }
+
+    @Published var hideOnClickOutside: Bool {
+        didSet { guard isLoaded else { return }; d.set(hideOnClickOutside, forKey: Keys.hideOnClickOutside) }
+    }
+
+    @Published var pasteDirectly: Bool {
+        didSet { guard isLoaded else { return }; d.set(pasteDirectly, forKey: Keys.pasteDirectly) }
+    }
+
+    @Published var playSound: Bool {
+        didSet { guard isLoaded else { return }; d.set(playSound, forKey: Keys.playSound) }
+    }
+
+    @Published var playSoundOnCopy: Bool {
+        didSet { guard isLoaded else { return }; d.set(playSoundOnCopy, forKey: Keys.playSoundOnCopy) }
+    }
+
+    /// Pasting a clip moves it to the front of history the way copying it
+    /// from the bar does. Off by default: history has always been ordered by
+    /// when a clip was copied, and the quick-paste numbers would shift on
+    /// every paste.
+    @Published var promoteOnPaste: Bool {
+        didSet { guard isLoaded else { return }; d.set(promoteOnPaste, forKey: Keys.promoteOnPaste) }
+    }
+
+    @Published var ignoreConcealed: Bool {
+        didSet { guard isLoaded else { return }; d.set(ignoreConcealed, forKey: Keys.ignoreConcealed) }
+    }
+
+    /// Deleted clips are purged at once instead of staying restorable with
+    /// Command-Z for five minutes.
+    @Published var deletePermanently: Bool {
+        didSet { guard isLoaded else { return }; d.set(deletePermanently, forKey: Keys.deletePermanently) }
+    }
+
+    /// Applications whose copied content should never be recorded in history.
+    /// Store bundle identifiers rather than paths so the choice continues to work
+    /// when an app is updated or moved.
+    @Published private(set) var ignoredSourceAppBundleIDs: [String] {
+        didSet { guard isLoaded else { return }; d.set(ignoredSourceAppBundleIDs, forKey: Keys.ignoredSourceAppBundleIDs) }
+    }
+
+    @Published var barHeight: Double {
+        didSet {
+            guard isLoaded else { return }
+            let normalized = BarResizeGeometry.normalizedPersistedHeight(barHeight)
+            if normalized != barHeight { barHeight = normalized; return }
+            d.set(barHeight, forKey: Keys.barHeight)
+        }
+    }
+
+    @Published var showBarResizeHandle: Bool {
+        didSet {
+            guard isLoaded else { return }
+            d.set(showBarResizeHandle, forKey: Keys.showBarResizeHandle)
+        }
+    }
+
+    @Published var showMenuBarIcon: Bool {
+        didSet {
+            guard isLoaded else { return }
+            d.set(showMenuBarIcon, forKey: Keys.showMenuBarIcon)
+            AppController.shared.setMenuBarIconVisible(showMenuBarIcon)
+        }
+    }
+
+    @Published var onboarded: Bool {
+        didSet { guard isLoaded else { return }; d.set(onboarded, forKey: Keys.onboarded) }
+    }
+
+    @Published var iCloudSync: Bool {
+        didSet { guard isLoaded else { return }; d.set(iCloudSync, forKey: Keys.iCloudSync) }
+    }
+
+    @Published var cloudKitSync: Bool {
+        didSet { guard isLoaded else { return }; d.set(cloudKitSync, forKey: Keys.cloudKitSync) }
+    }
+
+    @Published var clipColorTheme: ClipColorTheme {
+        didSet { guard isLoaded else { return }; d.set(clipColorTheme.rawValue, forKey: Keys.clipColorTheme) }
+    }
+
+    @Published var clipColorAccentHex: String {
+        didSet { guard isLoaded else { return }; d.set(clipColorAccentHex, forKey: Keys.clipColorAccentHex) }
+    }
+
+    @Published var selectedClipPosition: SelectedClipPosition {
+        didSet { guard isLoaded else { return }; d.set(selectedClipPosition.rawValue, forKey: Keys.selectedClipPosition) }
+    }
+
+    private init() {
+        d.register(defaults: [
+            Keys.historyLimit: 500,
+            Keys.historyRetentionMode: HistoryRetentionMode.itemCount.rawValue,
+            Keys.historyRetentionDays: 30,
+            Keys.hotkeyKeyCode: kVK_ANSI_V,
+            Keys.hotkeyModifiers: cmdKey | shiftKey,
+            Keys.quickPasteModifier: cmdKey,
+            Keys.plainTextModifier: shiftKey,
+            Keys.launchAtLogin: false,
+            Keys.hideOnClickOutside: true,
+            Keys.pasteDirectly: true,
+            Keys.playSound: false,
+            // Off by default, matching the paste sound: existing users
+            // shouldn't gain a new audible behavior from an update.
+            Keys.playSoundOnCopy: false,
+            Keys.promoteOnPaste: false,
+            Keys.ignoreConcealed: true,
+            Keys.deletePermanently: false,
+            Keys.ignoredSourceAppBundleIDs: [],
+            Keys.barHeight: BarResizeGeometry.defaultHeight,
+            Keys.showBarResizeHandle: false,
+            Keys.showMenuBarIcon: true,
+            Keys.onboarded: false,
+            Keys.iCloudSync: false,
+            Keys.cloudKitSync: true,
+            Keys.clipColorTheme: ClipColorTheme.default.rawValue,
+            Keys.clipColorAccentHex: "#FF5A9F",
+            Keys.selectedClipPosition: SelectedClipPosition.center.rawValue
+        ])
+        historyLimit = d.integer(forKey: Keys.historyLimit)
+        historyRetentionMode = HistoryRetentionMode(rawValue: d.string(forKey: Keys.historyRetentionMode) ?? "")
+            ?? .itemCount
+        historyRetentionDays = max(0, d.integer(forKey: Keys.historyRetentionDays))
+        hotkeyKeyCode = d.integer(forKey: Keys.hotkeyKeyCode)
+        hotkeyModifiers = d.integer(forKey: Keys.hotkeyModifiers)
+        quickPasteModifier = d.integer(forKey: Keys.quickPasteModifier)
+        plainTextModifier = d.integer(forKey: Keys.plainTextModifier)
+        launchAtLogin = d.bool(forKey: Keys.launchAtLogin)
+        hideOnClickOutside = d.bool(forKey: Keys.hideOnClickOutside)
+        pasteDirectly = d.bool(forKey: Keys.pasteDirectly)
+        playSound = d.bool(forKey: Keys.playSound)
+        playSoundOnCopy = d.bool(forKey: Keys.playSoundOnCopy)
+        promoteOnPaste = d.bool(forKey: Keys.promoteOnPaste)
+        ignoreConcealed = d.bool(forKey: Keys.ignoreConcealed)
+        deletePermanently = d.bool(forKey: Keys.deletePermanently)
+        ignoredSourceAppBundleIDs = (d.stringArray(forKey: Keys.ignoredSourceAppBundleIDs) ?? [])
+            .filter { !$0.isEmpty }
+        let storedBarHeight = d.double(forKey: Keys.barHeight)
+        let normalizedBarHeight = BarResizeGeometry.normalizedPersistedHeight(storedBarHeight)
+        barHeight = normalizedBarHeight
+        showBarResizeHandle = d.bool(forKey: Keys.showBarResizeHandle)
+        showMenuBarIcon = d.bool(forKey: Keys.showMenuBarIcon)
+        onboarded = d.bool(forKey: Keys.onboarded)
+        iCloudSync = d.bool(forKey: Keys.iCloudSync)
+        cloudKitSync = d.bool(forKey: Keys.cloudKitSync)
+        clipColorTheme = ClipColorTheme(rawValue: d.integer(forKey: Keys.clipColorTheme)) ?? .default
+        clipColorAccentHex = d.string(forKey: Keys.clipColorAccentHex) ?? "#FF5A9F"
+        selectedClipPosition = SelectedClipPosition(rawValue: d.integer(forKey: Keys.selectedClipPosition)) ?? .center
+        isLoaded = true
+        if normalizedBarHeight != storedBarHeight {
+            d.set(normalizedBarHeight, forKey: Keys.barHeight)
+        }
+    }
+
+    var hotkeyDisplay: String {
+        HotKeyCenter.describe(keyCode: hotkeyKeyCode, modifiers: hotkeyModifiers)
+    }
+
+    var quickPasteModifierDisplay: String {
+        ShortcutModifier(carbonValue: quickPasteModifier)?.symbol ?? "⌘"
+    }
+
+    func isIgnoringSourceApp(_ bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        return ignoredSourceAppBundleIDs.contains(bundleID)
+    }
+
+    func addIgnoredSourceApp(_ bundleID: String) {
+        guard !bundleID.isEmpty, !ignoredSourceAppBundleIDs.contains(bundleID) else { return }
+        ignoredSourceAppBundleIDs.append(bundleID)
+        ignoredSourceAppBundleIDs.sort()
+    }
+
+    func removeIgnoredSourceApp(_ bundleID: String) {
+        ignoredSourceAppBundleIDs.removeAll { $0 == bundleID }
+    }
+}

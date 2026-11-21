@@ -1,0 +1,200 @@
+import AppKit
+import Carbon.HIToolbox
+import Combine
+
+/// RunTime이 클립보드 기록(Pesty에서 옮긴 기능)을 켜고 끄는 자리. Pesty 코드는 internal이라 RunTime은 이것만 본다.
+@MainActor
+public enum ClipRuntime {
+    public private(set) static var running = false
+    /// 띠의 '설정'(⇧⌘S, 더 보기 메뉴)이 RunTime 설정의 클립보드 구역을 연다.
+    public static var openSettings: () -> Void = {}
+    private static var launched = false
+
+    public static func start() {
+        guard !running else { return }
+        running = true
+        if launched {
+            AppController.shared.monitor.start()
+            HotKeyCenter.shared.start()
+        } else {
+            // Pesty의 앱 시작 처리 (감시, 단축키, 깨어남·화면 바뀜 알림). 메뉴와 첫 실행 안내는 sync-pesty.py가 뺐다
+            launched = true
+            AppController.shared.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        }
+    }
+
+    public static func stop() {
+        guard running else { return }
+        running = false
+        AppController.shared.hideBar()
+        AppController.shared.monitor.stop()
+        HotKeyCenter.shared.stop()
+        ClipboardStore.shared.saveNow()
+    }
+
+    public static func toggleBar() {
+        guard running else { return }
+        AppController.shared.toggleBar()
+    }
+
+    /// 앱을 끌 때. 지운 항목 되살리기 목록을 비우고 기록을 바로 쓴다.
+    public static func terminate() {
+        guard launched else { return }
+        AppController.shared.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+    }
+
+    /// 단축키를 새로 기록하는 동안 잠깐 놓는다. 잡아 두면 같은 조합을 눌렀을 때 Carbon이 먼저 가져간다.
+    public static func suspendHotKey() { HotKeyCenter.shared.stop() }
+    public static func resumeHotKey() { HotKeyCenter.shared.reload() }
+    public static var hotKeyRegistered: Bool { HotKeyCenter.shared.isRegistered }
+}
+
+/// 설정 화면이 보는 클립보드 기록 설정. Pesty 설정(Settings)과 기록(ClipboardStore)이 바뀌면 함께 알린다.
+@MainActor
+public final class ClipPreferences: ObservableObject {
+    public static let shared = ClipPreferences()
+    private var subscriptions: [AnyCancellable] = []
+    private var settings: Settings { Settings.shared }
+
+    private init() {
+        subscriptions = [
+            Settings.shared.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() },
+        ]
+    }
+
+    /// 기록을 처음 읽는 것은 띠를 열거나 설정에서 개수를 볼 때다. 기능을 켜지 않았으면 폴더를 만들지 않는다.
+    private var store: ClipboardStore {
+        let store = ClipboardStore.shared
+        if subscriptions.count == 1 {
+            subscriptions.append(store.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() })
+        }
+        return store
+    }
+
+    public nonisolated static let defaultHotKeyCode = kVK_ANSI_V
+    public nonisolated static let defaultHotKeyModifiers = cmdKey | shiftKey
+
+    /// 저장한 단축키를 어느 스레드에서든 읽는다 (창 배치가 겹침을 볼 때). Settings가 기본값을 등록하기 전이면 기본 조합.
+    public nonisolated static var storedHotKey: (code: Int, modifiers: Int) {
+        let store = ClipDefaults.store
+        guard store.object(forKey: Settings.Keys.hotkeyKeyCode) != nil else { return (defaultHotKeyCode, defaultHotKeyModifiers) }
+        return (store.integer(forKey: Settings.Keys.hotkeyKeyCode), store.integer(forKey: Settings.Keys.hotkeyModifiers))
+    }
+
+    /// Carbon 키 번호와 보조키 (cmdKey 등).
+    public var hotKeyCode: Int { settings.hotkeyKeyCode }
+    public var hotKeyModifiers: Int { settings.hotkeyModifiers }
+    public var hotKeyLabel: String { settings.hotkeyDisplay }
+
+    /// 값마다 다시 등록한다 (Settings의 didSet). 마지막 등록이 새 조합이다.
+    public func setHotKey(code: Int, modifiers: Int) {
+        settings.hotkeyModifiers = modifiers
+        settings.hotkeyKeyCode = code
+    }
+
+    public var pasteDirectly: Bool {
+        get { settings.pasteDirectly }
+        set { settings.pasteDirectly = newValue }
+    }
+
+    public var ignoreConcealed: Bool {
+        get { settings.ignoreConcealed }
+        set { settings.ignoreConcealed = newValue }
+    }
+
+    public var promoteOnPaste: Bool {
+        get { settings.promoteOnPaste }
+        set { settings.promoteOnPaste = newValue }
+    }
+
+    public var hideOnClickOutside: Bool {
+        get { settings.hideOnClickOutside }
+        set { settings.hideOnClickOutside = newValue }
+    }
+
+    public var playSound: Bool {
+        get { settings.playSound }
+        set { settings.playSound = newValue }
+    }
+
+    public var deletePermanently: Bool {
+        get { settings.deletePermanently }
+        set { settings.deletePermanently = newValue }
+    }
+
+    /// 고른 카드를 띠 오른쪽 끝에 둔다 (Paste처럼). 끄면 가운데.
+    public var selectedAtRightEdge: Bool {
+        get { settings.selectedClipPosition == .rightEdge }
+        set { settings.selectedClipPosition = newValue ? .rightEdge : .center }
+    }
+
+    public var showResizeHandle: Bool {
+        get { settings.showBarResizeHandle }
+        set { settings.showBarResizeHandle = newValue }
+    }
+
+    // MARK: 보관
+
+    public static let historyLimits = [100, 200, 500, 1000, 2000, 5000]
+    /// 0은 기간으로 지우지 않는다.
+    public static let retentionDays = HistoryRetentionPreset.allCases.map(\.days)
+
+    public var keepByAge: Bool { settings.historyRetentionMode == .timeInterval }
+    public var historyLimit: Int { settings.historyLimit }
+    public var historyDays: Int { settings.historyRetentionDays }
+
+    /// 이 보관 기준으로 바꾸면 지워질 기록 수.
+    public func removalCount(byAge: Bool, limit: Int, days: Int) -> Int {
+        store.retentionRemovalCount(mode: byAge ? .timeInterval : .itemCount, limit: limit, days: days)
+    }
+
+    public func setRetention(byAge: Bool, limit: Int, days: Int) {
+        settings.historyRetentionMode = byAge ? .timeInterval : .itemCount
+        settings.historyLimit = limit
+        settings.historyRetentionDays = days
+        store.applyRetentionPolicy()
+    }
+
+    public static func dayLabel(_ days: Int) -> String {
+        switch days {
+        case 0: return "계속"
+        case 1: return "1일"
+        case 7, 14, 21: return "\(days / 7)주"
+        case 365: return "1년"
+        default: return "\(days / 30)개월"
+        }
+    }
+
+    // MARK: 무시할 앱
+
+    public var ignoredApps: [String] { settings.ignoredSourceAppBundleIDs }
+    public func ignoreApp(_ bundleID: String) { settings.addIgnoredSourceApp(bundleID) }
+    public func allowApp(_ bundleID: String) { settings.removeIgnoredSourceApp(bundleID) }
+
+    // MARK: 기록
+
+    public var historyCount: Int { store.history.count }
+    public var pinboardCount: Int { store.pinboards.count }
+    public var paused: Bool { AppController.shared.monitor.isPaused }
+
+    public func togglePause() {
+        AppController.shared.togglePestyPause()
+        objectWillChange.send()
+    }
+
+    public func clearHistory() { store.clearHistory() }
+
+    public var dataFolder: URL { store.dataDirectory }
+
+    /// 기록 폴더가 차지하는 바이트 수 (저장한 그림 포함).
+    public func dataSize() -> Int64 {
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        guard let files = FileManager.default.enumerator(at: dataFolder, includingPropertiesForKeys: keys) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in files {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            total += Int64(values.totalFileAllocatedSize ?? 0)
+        }
+        return total
+    }
+}

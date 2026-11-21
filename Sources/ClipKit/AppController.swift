@@ -1,0 +1,838 @@
+import AppKit
+import SwiftUI
+import Carbon.HIToolbox
+
+@MainActor
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    static let shared = AppController()
+
+    let store = ClipboardStore.shared
+    let monitor = ClipboardMonitor()
+    private let copyToast = CopyToastController()
+
+    private var barController: BarWindowController?
+    private var statusItem: NSStatusItem?
+    private var pauseMenuItem: NSMenuItem?
+    private var settingsWindow: NSWindow?
+    private var previewWindow: NSWindow?
+    private var previewedItemID: UUID?
+    private var keyMonitor: Any?
+    #if !MAS
+    private var notedBlockedDirectPaste = false
+    #endif
+
+    private(set) var previousApp: NSRunningApplication?
+    private(set) var lastActiveApp: NSRunningApplication?
+
+    var suppressAutoHide = false
+
+    /// When the search query last became empty via the keyboard. A bare
+    /// Backspace deletes the selected clip, and the keystroke that clears the
+    /// query must stay unambiguously separate from the keystroke that deletes.
+    private var searchClearedAt: Date = .distantPast
+    private static let deleteAfterSearchClearCooldown: TimeInterval = 0.6
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(appActivated(_:)),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification, object: nil)
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(screenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+
+        monitor.start()
+
+        HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
+        HotKeyCenter.shared.start()
+
+        #if MAS
+        // CKSyncEngine handles the push payloads itself; the app only registers.
+        NSApplication.shared.registerForRemoteNotifications()
+        if Settings.shared.cloudKitSync { CloudSyncService.shared.start() }
+        #endif
+
+        if CommandLine.arguments.contains("--demo") {
+            store.seedDemo()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.showBar()
+            }
+            return
+        }
+
+    }
+
+    @objc private func appActivated(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        if app.bundleIdentifier != Bundle.main.bundleIdentifier {
+            lastActiveApp = app
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        store.forgetDeletions()
+        store.saveNow()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if notification.object as? NSWindow === previewWindow {
+            previewedItemID = nil
+        }
+    }
+
+    /// Reopening from Finder, Spotlight, or the Dock surfaces the app.
+    ///
+    /// The escape hatch comes first: Pesty is an accessory app, so with the status
+    /// item hidden there is no Dock icon, no window, and no menu - and if the global
+    /// hotkey failed to register because another app already owns the combination,
+    /// there is no way back in at all short of deleting the preference from Terminal.
+    /// Opening Pesty again brings the icon back and shows Settings so the user can
+    /// fix whatever forced the relaunch.
+    ///
+    /// A normal reopen shows the Paste Bar - the primary interface should be
+    /// discoverable without the keyboard shortcut. `hasVisibleWindows` cannot be
+    /// trusted for that decision because the bar is an NSPanel, so ask the explicit
+    /// presentation state instead; a duplicate reopen event coalesces naturally
+    /// because `isPresented` flips as soon as the first show begins.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !Settings.shared.showMenuBarIcon {
+            Settings.shared.showMenuBarIcon = true
+            setMenuBarIconVisible(true)
+            showSettings()
+            return true
+        }
+        if barController?.isPresented != true {
+            showBar()
+        }
+        return true
+    }
+
+    private func installMainMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: String(localized: "About Pesty"), action: #selector(menuAbout), keyEquivalent: "").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: String(localized: "Settings…"), action: #selector(menuSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: String(localized: "Hide Pesty"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: String(localized: "Quit Pesty"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: String(localized: "Edit"))
+        editMenu.addItem(withTitle: String(localized: "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: String(localized: "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: String(localized: "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: String(localized: "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: String(localized: "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: String(localized: "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        let find = editMenu.addItem(withTitle: String(localized: "Find…"),
+                                    action: #selector(NSTextView.performTextFinderAction(_:)),
+                                    keyEquivalent: "f")
+        find.tag = NSTextFinder.Action.showFindInterface.rawValue
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: String(localized: "Window"))
+        windowMenu.addItem(withTitle: String(localized: "Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: String(localized: "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowItem.submenu = windowMenu
+        main.addItem(windowItem)
+        NSApp.windowsMenu = windowMenu
+
+        NSApp.mainMenu = main
+    }
+
+    private func setupStatusItem() {
+        guard statusItem == nil else { return }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        updateStatusItemIcon(item)
+        let menu = NSMenu()
+        menu.addItem(withTitle: String(localized: "Open Pesty   \(Settings.shared.hotkeyDisplay)"),
+                     action: #selector(menuOpen), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: String(localized: "Settings…"), action: #selector(menuSettings), keyEquivalent: ",").target = self
+        let pause = menu.addItem(withTitle: String(localized: "Pause Pesty"), action: #selector(menuTogglePause), keyEquivalent: "")
+        pause.target = self
+        pauseMenuItem = pause
+        menu.addItem(withTitle: String(localized: "Clear History"), action: #selector(menuClear), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        let about = menu.addItem(withTitle: String(localized: "About Pesty"), action: #selector(menuAbout), keyEquivalent: "")
+        about.target = self
+        menu.addItem(withTitle: String(localized: "Quit Pesty"), action: #selector(menuQuit), keyEquivalent: "q").target = self
+        item.menu = menu
+        statusItem = item
+    }
+
+    func setMenuBarIconVisible(_ visible: Bool) {
+        if visible {
+            setupStatusItem()
+        } else if let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
+    }
+
+    @objc private func menuOpen() { showBar() }
+    @objc private func menuSettings() { showSettings() }
+    @objc private func menuClear() { store.clearHistory() }
+    @objc private func menuTogglePause() { togglePestyPause() }
+    @objc private func menuQuit() { NSApp.terminate(nil) }
+    @objc private func menuAbout() { showAbout() }
+
+    func togglePestyPause() {
+        monitor.togglePause()
+        pauseMenuItem?.title = monitor.isPaused ? String(localized: "Resume Pesty") : String(localized: "Pause Pesty")
+        if let item = statusItem { updateStatusItemIcon(item) }
+    }
+
+    private func updateStatusItemIcon(_ item: NSStatusItem) {
+        item.button?.image = NSImage(
+            systemSymbolName: monitor.isPaused ? "pause.circle" : "doc.on.clipboard",
+            accessibilityDescription: "Pesty")
+        item.button?.image?.isTemplate = true
+    }
+
+    func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Pesty",
+            .applicationVersion: Bundle.main.appVersion,
+            .credits: NSAttributedString(
+                string: String(localized: "A free, open-source clipboard manager for macOS.\nInspired by Paste."),
+                attributes: [.font: NSFont.systemFont(ofSize: 11)])
+        ])
+    }
+
+    func toggleICloudSync() {
+        let enabling = !Settings.shared.iCloudSync
+        if enabling && !ClipboardStore.shared.iCloudAvailable {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "iCloud Drive Unavailable")
+            alert.informativeText = String(localized: "Sign in to iCloud and enable iCloud Drive in System Settings to sync your clipboard across your Macs.")
+            alert.runModal()
+            return
+        }
+        Settings.shared.iCloudSync = enabling
+        ClipboardStore.shared.setICloudSync(enabling)
+    }
+
+    func beginBarResize(at screenPoint: NSPoint) {
+        barController?.beginBarResize(at: screenPoint)
+    }
+
+    func updateBarResize(at screenPoint: NSPoint) {
+        barController?.updateBarResize(at: screenPoint)
+    }
+
+    func endBarResize(at screenPoint: NSPoint) {
+        barController?.endBarResize(at: screenPoint)
+    }
+
+    func cancelBarResize() {
+        barController?.cancelBarResize()
+    }
+
+    func adjustBarHeight(by delta: CGFloat) {
+        barController?.adjustBarHeight(by: delta)
+    }
+
+    static func restart() {
+        let path = Bundle.main.bundlePath
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-n", path]
+        try? task.run()
+        NSApp.terminate(nil)
+    }
+
+    func toggleBar() {
+        if let bar = barController, bar.isPresented {
+            hideBar()
+        } else {
+            showBar()
+        }
+    }
+
+    /// A sleep cycle can strand the bar mid-transition and can drop the Carbon hotkey.
+    /// Reset both rather than trying to reason about what survived.
+    @objc private func systemDidWake() {
+        barController?.forceHide()
+        stopKeyMonitor()
+        HotKeyCenter.shared.reload()
+    }
+
+    /// Docking, undocking, and resolution changes can leave the bar sized for a screen
+    /// that no longer exists. Drop it so the next open re-measures.
+    ///
+    /// This deliberately does NOT re-register the hotkey. That notification also fires
+    /// for things as minor as a colour-profile change, and a transient
+    /// RegisterEventHotKey failure during display churn would leave the app with no
+    /// hotkey at all until the next relaunch - the exact bug this is meant to fix.
+    @objc private func screenParametersChanged() {
+        barController?.forceHide()
+        stopKeyMonitor()
+    }
+
+    func showBar() {
+        let front = NSWorkspace.shared.frontmostApplication
+        if let front, !isPesty(front) {
+            previousApp = front
+            lastActiveApp = front
+        }
+        // The panel keeps its first responder across orderOut, so a field
+        // left focused by a hide mid-search would otherwise own the next
+        // presentation's keys: Return would not paste and arrows would move
+        // a caret in an empty query.
+        barController?.resignSearch()
+        store.barInputMode = .cards
+        store.searchText = ""
+        store.source = .history
+        store.prepareForBarPresentation()
+
+        // Rebuild if the panel was ever torn down - a nil window is another way the
+        // bar silently stops appearing.
+        if barController == nil || barController?.window == nil {
+            barController = BarWindowController()
+        }
+        barController?.show()
+        startKeyMonitor()
+    }
+
+    func hideBar() {
+        stopKeyMonitor()
+        barController?.hide()
+    }
+
+    func setBarSearchEditing(_ editing: Bool) {
+        let mode: BarInputMode = editing ? .search : .cards
+        guard store.barInputMode != mode else { return }
+        store.barInputMode = mode
+    }
+
+    /// Routes every edit from the native search field through here instead
+    /// of writing `store.searchText` directly, so the selection follows the
+    /// filtered results as you type instead of staying on whatever was
+    /// selected before the query changed.
+    func updateBarSearchText(_ text: String) {
+        guard store.searchText != text else { return }
+        store.searchText = text
+        store.selectFirst()
+    }
+
+    func clearBarSearch() {
+        let hadQuery = !store.searchText.isEmpty
+        barController?.resignSearch()
+        store.searchText = ""
+        store.barInputMode = .cards
+        if hadQuery { store.selectFirst(); searchClearedAt = Date() }
+    }
+
+    func cancelBarSearchOrHide() {
+        if !store.multiSelectedIDs.isEmpty {
+            store.clearMultiSelection()
+        } else if !store.searchText.isEmpty {
+            clearBarSearch()
+        } else if store.typeFilter != nil {
+            store.typeFilter = nil
+        } else {
+            hideBar()
+        }
+    }
+
+    func pasteSelected() {
+        pasteItems(store.selectedItems)
+    }
+
+    /// The app that will receive a paste after the floating Pesty panel closes.
+    /// `previousApp` is captured before the panel activates, while
+    /// `lastActiveApp` covers menu-bar and reopen paths where it is unavailable.
+    private var pasteTarget: NSRunningApplication? {
+        [lastActiveApp, previousApp, NSWorkspace.shared.frontmostApplication]
+            .compactMap { $0 }
+            .first { !$0.isTerminated && !isPesty($0) }
+    }
+
+    private func isPesty(_ app: NSRunningApplication) -> Bool {
+        if app.processIdentifier == ProcessInfo.processInfo.processIdentifier { return true }
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        return app.bundleIdentifier == bundleID
+    }
+
+    func pasteItem(_ item: ClipItem, format: PasteFormat = .original) {
+        let target = pasteTarget
+        hideBar()
+        let previousChange = NSPasteboard.general.changeCount
+        PasteService.paste(item, into: target, monitor: monitor, format: format)
+        if Settings.shared.promoteOnPaste, NSPasteboard.general.changeCount != previousChange {
+            store.promoteCopiedItem(item)
+        }
+    }
+
+    /// Pastes a whole selection in strip order. `ClipComposer` decides how:
+    /// text goes out joined in one paste, images and mixed selections one
+    /// clip after another.
+    func pasteItems(_ items: [ClipItem], format: PasteFormat = .original) {
+        guard items.count > 1 else {
+            if let item = items.first { pasteItem(item, format: format) }
+            return
+        }
+        let steps = ClipComposer.steps(for: items, format: format)
+        guard !steps.isEmpty else { return }
+        let target = pasteTarget
+        hideBar()
+        let previousChange = NSPasteboard.general.changeCount
+        PasteService.paste(steps, into: target, monitor: monitor)
+        if Settings.shared.promoteOnPaste, NSPasteboard.general.changeCount != previousChange {
+            store.promoteCopiedItems(items)
+        }
+    }
+
+    /// What a card's context-menu command acts on: the whole multi-selection
+    /// when the card is part of it, otherwise that card alone.
+    func selection(containing item: ClipItem) -> [ClipItem] {
+        store.multiSelectedIDs.contains(item.id) ? store.selectedItems : [item]
+    }
+
+    func pasteSelection(containing item: ClipItem, format: PasteFormat = .original) {
+        pasteItems(selection(containing: item), format: format)
+    }
+
+    func copySelection(containing item: ClipItem) {
+        copyItems(selection(containing: item))
+    }
+
+    #if !MAS
+    /// A direct paste that quietly falls back to a copy reads as "paste is
+    /// broken". Say so once per launch, in the toast rather than a modal:
+    /// the clip is on the pasteboard and Command-V finishes the job.
+    func noteBlockedDirectPaste() {
+        guard !notedBlockedDirectPaste else { return }
+        notedBlockedDirectPaste = true
+        copyToast.show(message: String(localized: "Copied. Grant Accessibility in System Settings to paste directly."),
+                       symbol: "exclamationmark.triangle.fill",
+                       linger: 4)
+    }
+    #endif
+
+    func copyItem(_ item: ClipItem) {
+        let previousChange = NSPasteboard.general.changeCount
+        let change = PasteService.copy(item)
+        monitor.suppressUntilChangeCount = change
+        // PasteService.copy leaves the pasteboard alone when an image file is
+        // missing; neither the promotion nor the toast should claim otherwise.
+        if change != previousChange {
+            store.promoteCopiedItem(item)
+            copyToast.show()
+        }
+        // Tink, not Pop: copy and paste stay audibly distinct.
+        if Settings.shared.playSoundOnCopy { NSSound(named: "Tink")?.play() }
+        hideBar()
+    }
+
+    /// Copies a whole selection in strip order. Text lands as one joined
+    /// string; anything `ClipComposer` cannot merge is written as separate
+    /// pasteboard items.
+    func copyItems(_ items: [ClipItem]) {
+        guard items.count > 1 else {
+            if let item = items.first { copyItem(item) }
+            return
+        }
+        let previousChange = NSPasteboard.general.changeCount
+        let change = PasteService.copy(ClipComposer.steps(for: items))
+        monitor.suppressUntilChangeCount = change
+        if change != previousChange {
+            store.promoteCopiedItems(items)
+            copyToast.show(message: String(localized: "Copied \(items.count) Clips"))
+        }
+        if Settings.shared.playSoundOnCopy { NSSound(named: "Tink")?.play() }
+        hideBar()
+    }
+
+    func copySelected() {
+        copyItems(store.selectedItems)
+    }
+
+    func pasteMenuTitle(clipCount: Int = 1) -> String {
+        guard let name = pasteTarget?.localizedName,
+              !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return clipCount > 1 ? String(localized: "Paste \(clipCount) Clips") : String(localized: "Paste")
+        }
+        return clipCount > 1
+            ? String(localized: "Paste \(clipCount) Clips to \(name)")
+            : String(localized: "Paste to \(name)")
+    }
+
+    func editItem(_ item: ClipItem, launchWritingTools: Bool = false) {
+        suppressAutoHide = true
+        defer { suppressAutoHide = false }
+
+        guard let edit = ClipEditor.run(for: item, launchWritingTools: launchWritingTools) else { return }
+
+        let changed: Bool
+        switch edit {
+        case let .text(text, richTextData):
+            changed = store.updateTextContent(text, richTextData: richTextData, for: item)
+        case let .color(hex):
+            changed = store.updateColorContent(hex, for: item)
+        }
+        guard changed, let updated = store.item(withID: item.id) else { return }
+        if previewedItemID == item.id { showPreview(for: updated) }
+    }
+
+    func showPreview(for item: ClipItem) {
+        suppressAutoHide = true
+        defer { suppressAutoHide = false }
+        NSApp.activate(ignoringOtherApps: true)
+
+        let host = NSHostingController(rootView: ClipPreviewView(item: item))
+        let title = String(localized: "Preview — \(item.displayTitle)")
+        previewedItemID = item.id
+
+        if let window = previewWindow {
+            window.title = title
+            window.contentViewController = host
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let window = NSWindow(contentViewController: host)
+        window.title = title
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 540, height: 400))
+        window.minSize = NSSize(width: 400, height: 260)
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        previewWindow = window
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func showSharePicker(for item: ClipItem) {
+        let items = shareItems(for: item)
+        guard !items.isEmpty,
+              let view = barController?.window?.contentView ?? NSApp.keyWindow?.contentView else { return }
+        suppressAutoHide = true
+        defer { suppressAutoHide = false }
+        let picker = NSSharingServicePicker(items: items)
+        let anchor = NSRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+        picker.show(relativeTo: anchor, of: view, preferredEdge: .maxY)
+    }
+
+    private func shareItems(for item: ClipItem) -> [Any] {
+        switch item.type {
+        case .image:
+            return store.loadImage(for: item).map { [$0] } ?? []
+        case .file:
+            let urls = item.fileURLs.compactMap(URL.init(string:)).filter(\.isFileURL)
+            return urls.isEmpty ? (item.plainText.map { [$0 as NSString] } ?? []) : urls
+        case .color, .text, .richText, .link:
+            return item.plainText.map { [$0 as NSString] } ?? []
+        }
+    }
+
+    /// `permanently` skips Undo for this one deletion: the user held Option.
+    func deleteEffectiveSelection(permanently: Bool = false) {
+        let selection = store.effectiveSelectionIDs
+        let targets = store.visibleItems.filter { selection.contains($0.id) }
+        guard !targets.isEmpty else { return }
+        if targets.count == 1 {
+            store.delete(targets[0], permanently: permanently)
+            return
+        }
+        suppressAutoHide = true
+        defer { suppressAutoHide = false }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Delete \(targets.count) Clips?")
+        let noUndo = permanently || Settings.shared.deletePermanently
+        #if MAS
+        alert.informativeText = noUndo
+            ? String(localized: "This cannot be undone. When iCloud sync is on, these clips are also removed from your other devices.")
+            : String(localized: "You can undo this with ⌘Z for the next 5 minutes. When iCloud sync is on, these clips are also removed from your other devices.")
+        #else
+        alert.informativeText = noUndo
+            ? String(localized: "This cannot be undone.")
+            : String(localized: "You can undo this with ⌘Z for the next 5 minutes.")
+        #endif
+        let confirm = alert.addButton(withTitle: String(localized: "Delete \(targets.count) Clips"))
+        confirm.hasDestructiveAction = true
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        store.delete(items: targets, permanently: permanently)
+    }
+
+    func deleteSelection(containing item: ClipItem) {
+        if store.multiSelectedIDs.contains(item.id) {
+            deleteEffectiveSelection()
+        } else {
+            store.delete(item)
+        }
+    }
+
+    func showSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let win = settingsWindow {
+            win.makeKeyAndOrderFront(nil)
+            return
+        }
+        hideBar()
+        ClipRuntime.openSettings()
+    }
+
+    /// Handles commands that only apply while the Paste Bar owns keyboard focus.
+    /// The panel's key-equivalent path calls this before SwiftUI receives command keys.
+    func handleBarCommandShortcut(_ event: NSEvent) -> Bool {
+        guard barController?.window?.isKeyWindow == true else { return false }
+
+        let flags = event.modifierFlags
+        guard flags.contains(.command), flags.contains(.shift),
+              !flags.contains(.control), !flags.contains(.option) else { return false }
+
+        switch Int(event.keyCode) {
+        case kVK_ANSI_S:
+            showSettings()
+            return true
+        case kVK_ANSI_P:
+            togglePestyPause()
+            return true
+        case kVK_ANSI_F:
+            // Quick content-type filter: All -> each type present -> All.
+            store.cycleTypeFilter()
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func startKeyMonitor() {
+        stopKeyMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.handleKey(event)
+        }
+    }
+
+    private func stopKeyMonitor() {
+        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+    }
+
+    private func handleKey(_ event: NSEvent) -> NSEvent? {
+        // Events belonging to a native context menu, editor, alert, or the
+        // Settings window must stay with their own responder chain. The bar
+        // monitor is only responsible for keys delivered to the panel itself.
+        guard let barWindow = barController?.window,
+              event.window === barWindow else { return event }
+
+        // Only a handle that is actively dragging may own the bar's keys.
+        // A handle left holding first responder outside a drag (interrupted
+        // drag, focus moved onto it) used to swallow every key here, which made
+        // the bar look focused while arrows, Escape and typing all just beeped.
+        if let handle = barWindow.firstResponder as? BarResizeHandleResponder,
+           handle.isTrackingDrag {
+            return event
+        }
+
+        if handleBarCommandShortcut(event) { return nil }
+
+        let code = Int(event.keyCode)
+        let flags = event.modifierFlags
+        let cmd = flags.contains(.command)
+        let ctrl = flags.contains(.control)
+        let opt = flags.contains(.option)
+        let shift = flags.contains(.shift)
+
+        if let digit = Self.quickPasteDigit(for: code),
+           includes(Settings.shared.quickPasteModifier, in: flags) {
+            let items = store.visibleItems
+            if digit <= items.count {
+                let plain = includes(Settings.shared.plainTextModifier, in: flags)
+                    && Settings.shared.plainTextModifier != Settings.shared.quickPasteModifier
+                pasteItem(items[digit - 1], format: plain ? .plainText : .original)
+            }
+            return nil
+        }
+
+        // Past the quick-paste digits, the native search field owns the event
+        // while it is editing: selection, clipboard commands, deletion, spaces,
+        // keyboard layouts, and composed text all need real AppKit
+        // text-editing behavior. Return and the arrows come back through the
+        // field's delegate.
+        if barController?.searchOwnsFirstResponder == true {
+            return event
+        }
+
+        switch code {
+        case kVK_Escape:
+            if !store.multiSelectedIDs.isEmpty {
+                store.clearMultiSelection()
+            } else if !store.searchText.isEmpty {
+                store.searchText = ""; store.selectFirst()
+                searchClearedAt = Date()
+            } else if store.typeFilter != nil {
+                store.typeFilter = nil
+            } else { hideBar() }
+            return nil
+        case kVK_Return, kVK_ANSI_KeypadEnter:
+            pasteSelected(); return nil
+        case kVK_LeftArrow:
+            if cmd { moveBarSection(by: -1) } else { moveBarSelection(by: -1, extending: shift) }
+            return nil
+        case kVK_RightArrow:
+            if cmd { moveBarSection(by: 1) } else { moveBarSelection(by: 1, extending: shift) }
+            return nil
+        case kVK_UpArrow:
+            moveBarSelection(by: -1, extending: shift); return nil
+        case kVK_DownArrow:
+            moveBarSelection(by: 1, extending: shift); return nil
+        case kVK_Delete:
+            if cmd { deleteEffectiveSelection(permanently: opt); return nil }
+            // Backspace edits the query before it can remove a filtered clip,
+            // even when focus has already moved back to the cards (e.g.
+            // after Return submitted the search). Refocusing the native
+            // field and returning the same event lets it handle the
+            // backspace itself, rather than manually mutating the string.
+            if !store.searchText.isEmpty {
+                store.barInputMode = .search
+                if barController?.focusSearchAtEnd() == true {
+                    return event
+                }
+                store.searchText.removeLast(); store.selectFirst()
+                if store.searchText.isEmpty { searchClearedAt = Date() }
+                return nil
+            }
+            // A bare Backspace deletes the selected clip, but only as a
+            // deliberate, separate keypress. Auto-repeat is ignored - a held
+            // Backspace that just finished clearing a query must not start
+            // deleting clips at the key-repeat rate - and a short cooldown
+            // after the search empties separates "clear the query" from
+            // "delete a clip". Command-Z brings a deleted clip back for five
+            // minutes unless Option was held, and deletions replicate to
+            // other devices when sync is on.
+            if !event.isARepeat,
+               Date().timeIntervalSince(searchClearedAt) > Self.deleteAfterSearchClearCooldown {
+                deleteEffectiveSelection(permanently: opt)
+            }
+            return nil
+        case kVK_ForwardDelete:
+            deleteEffectiveSelection(permanently: opt)
+            return nil
+        case kVK_ANSI_Z:
+            if cmd, !ctrl, !opt, !flags.contains(.shift), store.undoLastDelete() { return nil }
+        case kVK_ANSI_C:
+            if cmd, !ctrl, !opt, !flags.contains(.shift) { copySelected(); return nil }
+        default:
+            break
+        }
+
+        if isPrintableTextIntent(event) {
+            store.barInputMode = .search
+            if barController?.focusSearchAtEnd() == true {
+                // The local monitor runs before responder dispatch. Returning
+                // the same event now sends its very first character directly
+                // to the newly focused native field editor — no character is
+                // lost transferring focus mid-keystroke.
+                return event
+            }
+            if let chars = fallbackSearchCharacters(from: event) {
+                store.searchText.append(chars)
+                store.selectFirst()
+            }
+            return nil
+        }
+        return event
+    }
+
+    /// A bare arrow moves the selection and drops any multi-selection; with
+    /// Shift it extends the selection from its anchor instead.
+    private func moveBarSelection(by delta: Int, extending: Bool) {
+        if extending {
+            store.extendSelection(by: delta)
+        } else {
+            store.moveSelection(by: delta)
+        }
+    }
+
+    /// Cycles the same sources, in the same order, that the tab bar presents.
+    /// The plus button is intentionally excluded: it creates a new pinboard
+    /// rather than representing a navigable section.
+    private func moveBarSection(by delta: Int) {
+        let sources: [BarSource] = [.history] + store.pinboards.map { .pinboard($0.id) }
+        guard !sources.isEmpty else { return }
+
+        let currentIndex = sources.firstIndex(of: store.source) ?? 0
+        let nextIndex = (currentIndex + delta % sources.count + sources.count) % sources.count
+        store.source = sources[nextIndex]
+        store.selectFirst()
+    }
+
+    private func isPrintableTextIntent(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags
+        guard !flags.contains(.command),
+              !flags.contains(.control),
+              let chars = event.charactersIgnoringModifiers,
+              !chars.isEmpty else { return false }
+        return chars.unicodeScalars.contains {
+            $0.value >= 0x20
+                && $0.value != 0x7F
+                && !(0xF700...0xF8FF).contains($0.value)
+        }
+    }
+
+    private func fallbackSearchCharacters(from event: NSEvent) -> String? {
+        let flags = event.modifierFlags
+        guard !flags.contains(.command),
+              !flags.contains(.control),
+              let chars = event.characters,
+              !chars.isEmpty,
+              chars.unicodeScalars.allSatisfy({
+                  $0.value >= 0x20
+                      && $0.value != 0x7F
+                      && !(0xF700...0xF8FF).contains($0.value)
+              }) else { return nil }
+        return chars
+    }
+
+    private static func quickPasteDigit(for keyCode: Int) -> Int? {
+        switch keyCode {
+        case kVK_ANSI_1, kVK_ANSI_Keypad1: return 1
+        case kVK_ANSI_2, kVK_ANSI_Keypad2: return 2
+        case kVK_ANSI_3, kVK_ANSI_Keypad3: return 3
+        case kVK_ANSI_4, kVK_ANSI_Keypad4: return 4
+        case kVK_ANSI_5, kVK_ANSI_Keypad5: return 5
+        case kVK_ANSI_6, kVK_ANSI_Keypad6: return 6
+        case kVK_ANSI_7, kVK_ANSI_Keypad7: return 7
+        case kVK_ANSI_8, kVK_ANSI_Keypad8: return 8
+        case kVK_ANSI_9, kVK_ANSI_Keypad9: return 9
+        default: return nil
+        }
+    }
+
+    private func includes(_ carbonModifier: Int, in flags: NSEvent.ModifierFlags) -> Bool {
+        switch carbonModifier {
+        case cmdKey: return flags.contains(.command)
+        case optionKey: return flags.contains(.option)
+        case controlKey: return flags.contains(.control)
+        case shiftKey: return flags.contains(.shift)
+        default: return false
+        }
+    }
+}
+
+extension Bundle {
+    var appVersion: String {
+        let short = infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
+        let build = infoDictionary?["CFBundleVersion"] as? String ?? "0"
+        return "\(short) (\(build))"
+    }
+}
