@@ -280,6 +280,20 @@ if let index = CommandLine.arguments.firstIndex(of: "--clip-check") {
     exit(lines.allSatisfy(\.ok) ? 0 : 1)
 }
 
+// 클립보드 기록 띠 화면 찍기 (`--clip-shots <폴더>`). 이 Mac의 기록 대신 따로 둔 저장소에 예시 클립을 넣는다
+if let index = CommandLine.arguments.firstIndex(of: "--clip-shots") {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-clip-shots-\(getpid())")
+    setenv("RUNTIME_CLIP_DEFAULTS", "dev.runtime.RunTime.clip.check", 1)
+    setenv("RUNTIME_CLIP_FOLDER", folder.path, 1)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
+    let shots = URL(fileURLWithPath: CommandLine.arguments.dropFirst(index + 1).first ?? "clip-shots")
+    NSApplication.shared.setActivationPolicy(.accessory)
+    MainActor.assumeIsolated { ClipShots.run(to: shots) }
+    try? FileManager.default.removeItem(at: folder)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
+    exit(0)
+}
+
 // README용: 고스트와 겨루는 게임 장면을 이어 찍어 PNG로 저장하고 종료.
 if CommandLine.arguments.contains("--stage-check") {
     Task { @MainActor in exit(StageCheck.run(character: Runner.cat.character) ? 0 : 1) }
@@ -783,6 +797,14 @@ if let index = CommandLine.arguments.firstIndex(of: "--ui-shots") {
     engine.start()
     MainActor.assumeIsolated { UIShots.run(to: URL(fileURLWithPath: path), engine: engine) }
     app.run()
+}
+
+// 같은 앱이 둘 뜨면 메뉴바 러너가 둘이 되고, 클립보드 감시·단축키·기록 파일이 겹쳐 띠도 두 개 뜬다.
+// 이미 떠 있으면 새로 뜬 쪽이 끝낸다. 번들 없이 돌리는 개발 빌드(swift run)는 번들 ID가 없어 막지 않는다
+if let bundleID = Bundle.main.bundleIdentifier,
+   NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+       .contains(where: { $0.processIdentifier != getpid() && !$0.isTerminated }) {
+    exit(0)
 }
 
 CrashReports.captureOutput()

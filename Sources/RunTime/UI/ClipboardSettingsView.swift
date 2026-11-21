@@ -33,7 +33,7 @@ struct ClipboardSettingsView: View {
         GroupedSection(footer: "복사한 텍스트·이미지·파일·색을 이 Mac에 쌓아 두고, 단축키로 화면 아래에 띄워 골라 붙입니다. 기록은 어디로도 보내지 않습니다.") {
             ToggleRow(title: "클립보드 기록 켜기", icon: "doc.on.clipboard", isOn: $clipboard.enabled)
             if clipboard.enabled || showsAll {
-                GroupedRow("기록 열기", icon: "keyboard") {
+                GroupedRow("열기 단축키", icon: "keyboard") {
                     HStack(spacing: 6) {
                         if !isDefaultKey && !recorder.recording {
                             Button("기본으로") { recorder.reset(clipboard) }
@@ -136,10 +136,10 @@ struct ClipboardSettingsView: View {
         prefs.setRetention(byAge: byAge, limit: limit, days: days)
     }
 
-    // MARK: 기록하지 않을 앱
+    // MARK: 기록하지 않을 것
 
     @ViewBuilder private var ignored: some View {
-        GroupedSection("기록하지 않을 앱", footer: "이 앱들이 앞에 있을 때 복사한 것은 남기지 않습니다. 암호 관리자가 숨김 표시를 붙인 암호는 이 설정과 관계없이 늘 남기지 않습니다.") {
+        GroupedSection("기록하지 않을 것", footer: "이 앱들이 앞에 있을 때 복사한 것은 남기지 않습니다. 암호 관리자가 숨김 표시를 붙인 암호는 이 설정과 관계없이 늘 남기지 않습니다.") {
             ToggleRow(title: "자동으로 만든 항목(생성한 암호 등)도 기록하지 않기", icon: "key", isOn: $prefs.ignoreConcealed)
             ForEach(prefs.ignoredApps, id: \.self) { bundleID in
                 GroupedRow(Self.appName(bundleID), icon: "app") {
