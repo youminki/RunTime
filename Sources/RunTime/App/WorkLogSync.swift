@@ -572,7 +572,11 @@ final class WorkLogSync: ObservableObject {
             return "로그인이 필요합니다. 터미널에서 glab auth login --hostname \(host)"
         }
         if lower.contains("timeout") || lower.contains("no such host") || lower.contains("connection refused")
-            || lower.contains("network is unreachable") {
+            || lower.contains("network is unreachable") || lower.contains("no route to host")
+            // VPN이 끊기거나 붙는 중이면 glab(Go)은 연결이 닫혀 `...: EOF`나 connection reset을 낸다
+            || lower.hasSuffix(": eof") || lower.hasSuffix(": eof.") || lower.contains("unexpected eof")
+            || lower.contains("connection reset") || lower.contains("tls handshake")
+            || lower.contains("bad gateway") || lower.contains("service unavailable") {
             return "\(host)에 닿지 않습니다. VPN이나 회사망 연결을 확인하세요"
         }
         if lower.contains("403") || lower.contains("forbidden") || lower.contains("insufficient_scope") {
