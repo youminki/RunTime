@@ -379,14 +379,14 @@ struct PopoverView: View {
                 Label(windowed ? "Petdex에서 펫 찾기" : "Petdex", systemImage: "square.and.arrow.down")
             }
             .buttonStyle(GameButtonStyle(height: height, fontSize: size))
-            .tip("petdex.dev에 올라온 펫 수천 개 중에서 골라 받아요")
+            .tip("petdex.dev에 올라온 펫 수천 개 중에서 골라 받습니다")
             Button { DesktopPet.shared.toggle() } label: {
                 Label(settings.desktopPet ? "펫 넣기" : (windowed ? "화면에 펫 꺼내기" : "꺼내기"),
                       systemImage: settings.desktopPet ? "tray.and.arrow.down.fill" : "macwindow.on.rectangle")
             }
             .buttonStyle(GameButtonStyle(height: height, fontSize: size))
-            .tip(settings.desktopPet ? "화면에 꺼내 둔 펫을 넣어요"
-                 : "펫이 화면 가장자리를 돌아다녀요. 끌어다 놓으면 그 자리에 머물고, 오른쪽 클릭하면 크기를 바꾸거나 앱 화면으로 바로 가요")
+            .tip(settings.desktopPet ? "화면에 꺼내 둔 펫을 넣습니다"
+                 : "펫이 화면 가장자리를 돌아다닙니다. 끌어다 놓으면 그 자리에 머물고, 오른쪽 클릭하면 크기를 바꾸거나 앱 화면으로 바로 갑니다")
         }
         .fixedSize()
     }

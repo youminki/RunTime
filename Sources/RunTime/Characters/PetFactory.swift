@@ -194,9 +194,9 @@ final class PetFactory: ObservableObject {
                 guard self.job == current else { return }
                 switch result {
                 case .submitted:
-                    self.state = .done("'\(last.pet.name)'을(를) Petdex에 올렸어요. 심사가 끝나면 이메일로 알려 주고, 그 뒤 누구나 받을 수 있어요")
+                    self.state = .done("'\(last.pet.name)'을(를) Petdex에 올렸습니다. 심사가 끝나면 이메일로 알려 주고, 그 뒤 누구나 받을 수 있습니다")
                 case .web:
-                    self.state = .done("Node가 없어 웹으로 올려요. 다운로드 폴더의 zip을 열린 Petdex 페이지에 끌어다 놓아 주세요")
+                    self.state = .done("Node가 없어 웹으로 올립니다. 다운로드 폴더의 zip을 열린 Petdex 페이지에 끌어다 놓아 주세요")
                 case .failed(let reason):
                     self.state = .failed(reason)
                 }
@@ -216,14 +216,14 @@ final class PetFactory: ObservableObject {
         if run(npx, ["--yes", "petdex", "whoami"], path: environment, timeout: 120).status != 0 {
             progress("브라우저에서 Petdex에 로그인해 주세요 (처음 한 번)…")
             let login = run(npx, ["--yes", "petdex", "login"], path: environment, timeout: 300)
-            guard login.status == 0 else { return .failed("Petdex 로그인을 마치지 못했어요. 다시 눌러 주세요") }
+            guard login.status == 0 else { return .failed("Petdex 로그인을 마치지 못했습니다. 다시 눌러 주세요") }
         }
         progress("Petdex에 올리는 중…")
         let result = run(npx, ["--yes", "petdex", "submit", folder.path], path: environment, timeout: 180)
         if result.status == 0 { return .submitted }
         let output = result.output
-        if output.contains("429") { return .failed("Petdex에는 하루 10개까지 올릴 수 있어요. 내일 다시 해 주세요") }
-        if output.contains("401") { return .failed("Petdex 로그인이 만료됐어요. 다시 눌러 로그인해 주세요") }
+        if output.contains("429") { return .failed("Petdex에는 하루 10개까지 올릴 수 있습니다. 내일 다시 해 주세요") }
+        if output.contains("401") { return .failed("Petdex 로그인이 만료됐습니다. 다시 눌러 로그인해 주세요") }
         if output.contains("invalid_spritesheet") || output.contains("missing_field") { return .failed("Petdex가 그림 파일을 받지 않았어요: \(output.suffix(120))") }
         let reason = "Petdex에 올리지 못했어요: \(String(output.split(separator: "\n").last ?? "알 수 없는 오류").prefix(160))"
         // 망 오류는 이 Mac 사정이다. 출력은 요청마다 달라 문구는 고정하고 세부에만 둔다
@@ -267,7 +267,7 @@ final class PetFactory: ObservableObject {
         try? FileManager.default.removeItem(at: zip)
         // Petdex는 zip 맨 위에 pet.json과 시트가 있어야 받는다
         guard run("/usr/bin/ditto", ["-c", "-k", folder.path, zip.path], path: "/usr/bin:/bin", timeout: 60).status == 0 else {
-            return .failed("zip을 만들지 못했어요")
+            return .failed("zip을 만들지 못했습니다")
         }
         DispatchQueue.main.async {
             NSWorkspace.shared.activateFileViewerSelecting([zip])
@@ -384,7 +384,7 @@ final class PetFactory: ObservableObject {
     /// 그림 스크립트를 돌린다. `original`·`originalReferences`는 다시 그리기·고치기에 남길 처음 요청이다.
     private func start(description: String, edit: String? = nil, references: [URL], original: String,
                        originalReferences: [URL], settings: AppSettings, job current: Int) {
-        state = .working(isPrepared ? "그림 모델을 띄우는 중…" : "처음 한 번 그림 도구와 모델을 받는 중이에요 (약 5GB)…",
+        state = .working(isPrepared ? "그림 모델을 띄우는 중…" : "처음 한 번 그림 도구와 모델을 받는 중입니다 (약 5GB)…",
                          since: Date(), done: 0, total: 9)
         let name = pendingName
         DispatchQueue.global(qos: .userInitiated).async {
@@ -447,8 +447,8 @@ final class PetFactory: ObservableObject {
                     }
                     self.lastMade = Made(pet: pet, description: description, references: references, folder: folder)
                     self.state = .done(self.guessing
-                        ? "'\(pet.name)'을(를) 그려 러너로 골랐어요. 원작과 다르면 참고 그림을 넣고 다시 그려 보세요"
-                        : "'\(pet.name)'을(를) 그려 러너로 골랐어요")
+                        ? "'\(pet.name)'을(를) 그려 러너로 골랐습니다. 원작과 다르면 참고 그림을 넣고 다시 그려 보세요"
+                        : "'\(pet.name)'을(를) 그려 러너로 골랐습니다")
                 case .failure(let error):
                     self.state = .failed(error.localizedDescription)
                     ProblemReporter.screen("펫 만들기", "그린 펫을 가져오지 못함", detail: "오류: \(error)")
@@ -473,11 +473,11 @@ final class PetFactory: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .noPython: "파이썬 3.10 이상이 필요해요. 터미널에서 `brew install python` 으로 깔아 주세요."
-            case .noSpace(let gigabytes): "디스크 여유가 모자라요. 처음 한 번 \(Int(gigabytes.rounded()))GB쯤 필요해요."
+            case .noPython: "파이썬 3.10 이상이 필요합니다. 터미널에서 `brew install python` 으로 깔아 주세요."
+            case .noSpace(let gigabytes): "디스크 여유가 모자랍니다. 처음 한 번 \(Int(gigabytes.rounded()))GB쯤 필요합니다."
             case .setup(let reason): "그림 도구를 준비하지 못했어요: \(reason)"
             case .failed(let reason): "펫을 그리지 못했어요: \(reason)"
-            case .timedOut: "50분이 지나도 끝나지 않아 멈췄어요. 다시 해 보세요."
+            case .timedOut: "50분이 지나도 끝나지 않아 멈췄습니다. 다시 해 보세요."
             }
         }
     }
@@ -492,7 +492,7 @@ final class PetFactory: ObservableObject {
     private func run(description: String, edit: String?, name: String, references: [URL], job current: Int) throws -> URL {
         try prepare(job: current)
         guard let script = Bundle.assets.resourceURL?.appendingPathComponent("Assets/PetMaker/petmaker.py"),
-              FileManager.default.fileExists(atPath: script.path) else { throw Failure.failed("앱에 그림 스크립트가 없어요") }
+              FileManager.default.fileExists(atPath: script.path) else { throw Failure.failed("앱에 그림 스크립트가 없습니다") }
         let id = "made-\(UUID().uuidString.prefix(8).lowercased())"
         let output = Self.made.appendingPathComponent(id, isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -549,13 +549,13 @@ final class PetFactory: ObservableObject {
     /// 참고 그림을 흰 바탕 PNG로 바꿔 둔다 (투명 그림, WebP, HEIC도 받게).
     private static func normalized(_ url: URL, index: Int) throws -> URL {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw Failure.failed("참고 그림을 읽지 못했어요") }
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw Failure.failed("참고 그림을 읽지 못했습니다") }
         let side = 768
         let scale = min(CGFloat(side) / CGFloat(image.width), CGFloat(side) / CGFloat(image.height))
         let size = CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
         guard let cg = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw Failure.failed("참고 그림을 읽지 못했어요") }
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw Failure.failed("참고 그림을 읽지 못했습니다") }
         cg.setFillColor(NSColor.white.cgColor)
         cg.fill(CGRect(x: 0, y: 0, width: side, height: side))
         // 작은 도트 그림은 흐려지지 않게 그대로 키운다
@@ -564,7 +564,7 @@ final class PetFactory: ObservableObject {
                                   width: size.width, height: size.height))
         guard let flat = cg.makeImage(),
               let png = NSBitmapImageRep(cgImage: flat).representation(using: .png, properties: [:]) else {
-            throw Failure.failed("참고 그림을 읽지 못했어요")
+            throw Failure.failed("참고 그림을 읽지 못했습니다")
         }
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         let path = temp.appendingPathComponent("reference-\(index).png")
@@ -581,7 +581,7 @@ final class PetFactory: ObservableObject {
                 .volumeAvailableCapacityForImportantUsage ?? .max
             guard Double(free) / 1e9 > Self.setupSize + 2 else { throw Failure.noSpace(Self.setupSize + 2) }
             guard let system = Self.systemPython() else { throw Failure.noPython }
-            progress("처음 한 번 그림 도구를 받는 중이에요 (약 1GB)…", done: 0, total: 9, job: current)
+            progress("처음 한 번 그림 도구를 받는 중입니다 (약 1GB)…", done: 0, total: 9, job: current)
             try? manager.removeItem(at: Self.venv)
             try manager.createDirectory(at: Self.support, withIntermediateDirectories: true)
             try shellRun([system, "-m", "venv", Self.venv.path])
@@ -591,14 +591,14 @@ final class PetFactory: ObservableObject {
                            "opencv-python-headless", "matplotlib", "sympy", "networkx"])
         }
         if !manager.fileExists(atPath: Self.models.appendingPathComponent("hub").path) {
-            progress("처음 한 번 그림 모델을 받는 중이에요 (약 4.3GB)…", done: 0, total: 9, job: current)
+            progress("처음 한 번 그림 모델을 받는 중입니다 (약 4.3GB)…", done: 0, total: 9, job: current)
             guard let script = Bundle.assets.resourceURL?.appendingPathComponent("Assets/PetMaker/petmaker.py") else { return }
             var failure: String?
             let status = try self.python([script.path, "--prepare-only", "--description", "-", "--out",
                                           Self.temp.appendingPathComponent("prepare").path], job: current) { event in
                 if event["step"] as? String == "failed" { failure = event["reason"] as? String }
             }
-            guard status == 0 else { throw Failure.setup(failure ?? "모델을 받지 못했어요") }
+            guard status == 0 else { throw Failure.setup(failure ?? "모델을 받지 못했습니다") }
         }
     }
 
@@ -741,7 +741,7 @@ final class PetWatcher {
             store.importLocal(from: pet.folder) { [weak self] result in
                 if case .success(let imported) = result {
                     self?.settings?.customRunnerID = PetdexStore.storageID(imported.slug)
-                    PetFactory.shared.announce("새 펫 '\(imported.name)'을(를) 데려왔어요")
+                    PetFactory.shared.announce("새 펫 '\(imported.name)'을(를) 데려왔습니다")
                 }
             }
         }

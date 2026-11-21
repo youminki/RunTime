@@ -219,7 +219,7 @@ struct DifficultyCard: View {
                 Image(systemName: flight ? "paperplane.fill" : "figure.run").font(.system(size: z(10.5), weight: .bold))
                     .foregroundStyle(GameKit.gold)
                 Text(flight ? "비행" : "달리기").font(.system(size: z(12.5), weight: .bold)).foregroundStyle(.white)
-                Text("난이도를 고르면 바로 시작해요").font(.system(size: z(10))).foregroundStyle(.white.opacity(0.6))
+                Text("난이도를 고르면 바로 시작합니다").font(.system(size: z(10))).foregroundStyle(.white.opacity(0.6))
                 Spacer(minLength: z(4))
                 Button(action: close) {
                     Image(systemName: "xmark").font(.system(size: z(8.5), weight: .bold)).foregroundStyle(.white.opacity(0.6))
@@ -258,7 +258,7 @@ struct DifficultyCard: View {
                     .accessibilityLabel("\(level.title)로 시작")
                 }
             }
-            Text(flight ? "누르는 동안 올라가요 · 1·2·3 또는 return" : "스페이스로 점프, ↓ 숙이기 · 1·2·3 또는 return")
+            Text(flight ? "누르는 동안 올라갑니다 · 1·2·3 또는 return" : "스페이스로 점프, ↓ 숙이기 · 1·2·3 또는 return")
                 .font(.system(size: z(9.5))).foregroundStyle(.white.opacity(0.55))
         }
         .padding(z(10))

@@ -30,7 +30,7 @@ struct DesignSettingsView: View {
                 group("1. 연결", done: settings.hasToken) { token }
                 group("2. 지켜보는 화면설계서", done: !settings.sources.isEmpty) { files; schedule }
                 group("3. 알림 받을 메뉴", done: settings.sources.contains { !$0.alerts.isEmpty }) { alertMenus; rules }
-                Text("피그마에는 읽기만 하고 보내는 것은 없습니다. 가져온 내용은 이 Mac(Application Support/RunTime)에만 둡니다. 알림을 켜고 끄는 것은 설정 > 알림에 있습니다.")
+                Text("피그마에서 읽기만 하고, 가져온 내용은 이 Mac에만 저장합니다.")
                     .font(WL.caption).foregroundStyle(WL.faint)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 16)

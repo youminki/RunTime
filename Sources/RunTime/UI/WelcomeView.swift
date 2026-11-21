@@ -15,23 +15,23 @@ struct WelcomeView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("RunTime을 설치했어요").font(.system(size: 20, weight: .bold))
+                    Text("RunTime을 설치했습니다").font(.system(size: 20, weight: .bold))
                     Text("Claude Code로 토큰을 빨리 쓸수록 메뉴바의 러너가 빨리 달립니다.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            GroupedSection("이렇게 써요") {
+            GroupedSection("이렇게 씁니다") {
                 tip("cursorarrow.click", "러너 누르기", "세션·주간 사용률과 최근 30분 그래프")
                 tip("cursorarrow.click.2", "오른쪽 클릭", "업무 일지, 러너, 설정, 종료")
-                tip("menubar.rectangle", "러너는 메뉴바 오른쪽 끝에", "⌘를 누른 채 끌면 자리를 옮길 수 있어요")
+                tip("menubar.rectangle", "러너는 메뉴바 오른쪽 끝에", "⌘를 누른 채 끌면 자리를 옮길 수 있습니다")
             }
 
             GroupedSection("처음 한 번만", footer: "토큰은 읽기만 하고 Anthropic 말고는 어디에도 보내지 않습니다.") {
                 tip("key.fill", "키체인 창에서 '항상 허용'",
-                    "Claude Code 로그인 정보로 공식 사용률을 받습니다. '허용'만 누르면 다음에 또 물어요.")
-                tip("bell.badge.fill", "알림 허용", "Claude 작업이 끝나면 알려 드려요")
+                    "Claude Code 로그인 정보로 공식 사용률을 받습니다. '허용'만 누르면 다음에 또 뭅니다.")
+                tip("bell.badge.fill", "알림 허용", "Claude 작업이 끝나면 알려 드립니다")
             }
 
             HStack {

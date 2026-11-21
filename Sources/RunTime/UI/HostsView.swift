@@ -397,7 +397,7 @@ struct HostsView: View {
                 }
                 .buttonStyle(TextLinkButtonStyle())
                 .disabled(!page.search.isEmpty || page.filter != .all)
-                .tip(page.search.isEmpty && page.filter == .all ? "묶음 이름만 남겨 한눈에 봅니다" : "찾거나 골라 보는 동안은 모두 펼쳐 둡니다")
+                .tip(page.search.isEmpty && page.filter == .all ? "묶음 이름만 남기고 접습니다" : "찾거나 골라 보는 동안은 모두 펼쳐 둡니다")
             }
         }
         .padding(.bottom, 6)

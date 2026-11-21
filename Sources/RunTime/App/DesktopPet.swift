@@ -34,9 +34,9 @@ final class DesktopPet {
         /// 옵션 창 카드에 붙는 한 줄 설명과 그림.
         var detail: String {
             switch self {
-            case .roam: "바닥·벽·천장을 따라 한 바퀴씩 돌아요"
-            case .floor: "화면 아래를 오가며 걸어요"
-            case .pinned: "놓은 자리에서 쉬고, 끌어서 옮겨요"
+            case .roam: "바닥·벽·천장을 따라 한 바퀴씩 돕니다"
+            case .floor: "화면 아래를 오가며 겁니다"
+            case .pinned: "놓은 자리에서 쉬고, 끌어서 옮깁니다"
             }
         }
 

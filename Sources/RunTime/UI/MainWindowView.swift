@@ -208,12 +208,12 @@ struct MainWindowView: View {
         } label: {
             VStack(spacing: 3) {
                 Image(systemName: page.icon)
-                    .font(.system(size: 17, weight: on ? .semibold : .regular))
+                    .font(.system(size: 17, weight: .regular))   // 굵기를 바꾸면 글리프 폭이 달라져 누를 때마다 위치가 흔들린다
                     .frame(width: 42, height: 30)
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(on ? Color.accentColor.opacity(0.18) : .clear))
                 Text(page.title)
-                    .font(.system(size: 11.5, weight: on ? .semibold : .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }

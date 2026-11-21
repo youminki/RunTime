@@ -78,13 +78,13 @@ final class ProblemReportModel: ObservableObject {
 
     func add(_ sources: [Source]) {
         for load in sources {
-            guard canAdd else { result = "그림은 \(Self.maxShots)장까지 붙일 수 있어요"; return }
+            guard canAdd else { result = "그림은 \(Self.maxShots)장까지 붙일 수 있습니다"; return }
             converting += 1
             DispatchQueue.global(qos: .userInitiated).async {
                 let jpeg = load().flatMap(Self.jpeg(from:))
                 DispatchQueue.main.async {
                     self.converting -= 1
-                    guard let jpeg, let thumbnail = NSImage(data: jpeg) else { self.result = "그림을 읽지 못했어요"; return }
+                    guard let jpeg, let thumbnail = NSImage(data: jpeg) else { self.result = "그림을 읽지 못했습니다"; return }
                     self.shots.append(Shot(jpeg: jpeg, thumbnail: thumbnail))
                     self.result = nil
                 }
@@ -101,7 +101,7 @@ final class ProblemReportModel: ObservableObject {
                                       options: [.urlReadingContentsConformToTypes: [UTType.image.identifier]]) as? [URL] ?? []
         let sources = files.isEmpty ? (board.readObjects(forClasses: [NSImage.self]) as? [NSImage] ?? []).map(Self.source)
                                     : files.map(Self.source)
-        if sources.isEmpty { result = "클립보드에 그림이 없어요. ⌃⌘⇧4로 찍으면 클립보드에 담겨요" } else { add(sources) }
+        if sources.isEmpty { result = "클립보드에 그림이 없습니다. ⌃⌘⇧4로 찍으면 클립보드에 담깁니다" } else { add(sources) }
     }
 
     func choose() {
@@ -139,13 +139,13 @@ final class ProblemReportModel: ObservableObject {
                 self.clear()
                 close()
             case -1:
-                self.result = "설치한 앱에서만 보낼 수 있어요"
+                self.result = "설치한 앱에서만 보낼 수 있습니다"
             case _ where ProblemReporter.retryable(status):
                 // 글은 다시 보낼 줄에 남겼다. 그림은 크기 때문에 남기지 않는다
                 self.clear()
-                self.result = images.isEmpty ? "지금 못 보내 나중에 다시 보내요" : "지금 못 보내 글만 나중에 다시 보내요"
+                self.result = images.isEmpty ? "지금 못 보내 나중에 다시 보냅니다" : "지금 못 보내 글만 나중에 다시 보냅니다"
             default:
-                self.result = "보내지 못했어요 (HTTP \(status))"
+                self.result = "보내지 못했습니다 (HTTP \(status))"
             }
         }
     }

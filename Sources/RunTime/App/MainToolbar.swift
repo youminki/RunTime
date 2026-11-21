@@ -54,8 +54,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         let settings = AppSettings.shared
         let shown = settings.desktopPet
         petButton.title = shown ? "펫 넣기" : "펫 꺼내기"
-        petButton.toolTip = shown ? "화면에 꺼내 둔 펫을 넣어요"
-            : "펫을 화면에 꺼내요. 끌어다 놓으면 그 자리에 머물고, 오른쪽 클릭하면 옵션이 나와요"
+        petButton.toolTip = shown ? "화면에 꺼내 둔 펫을 넣습니다"
+            : "펫을 화면에 꺼냅니다. 끌어다 놓으면 그 자리에 머물고, 오른쪽 클릭하면 옵션이 나옵니다"
         petButton.setAccessibilityLabel(petButton.title)
         guard iconRunner != settings.runnerID else { return }
         iconRunner = settings.runnerID

@@ -141,7 +141,7 @@ final class FlightSession {
     private func handle(_ event: FlightGame.Event) {
         switch event {
         case .started:
-            banner = ("누르는 동안 올라가요", 2)
+            banner = ("누르는 동안 올라갑니다", 2)
         case .candy:
             play(.coin)
             puffs.append((here, 0, "plasmaSparkle"))
@@ -154,13 +154,13 @@ final class FlightSession {
             puffs.append((here, 0, "pumpingHeart"))
         case .stuck:
             play(.hit)
-            banner = ("슬라임이 붙어서 무거워요!", 1.4)
+            banner = ("슬라임이 붙어서 무겁습니다!", 1.4)
         case .nearMiss:
             play(.nearmiss)
             banner = ("아슬!", 0.6)
         case .zone(let number):
             play(.milestone)
-            banner = ("구역 \(number) · 더 빨라져요", 1.8)
+            banner = ("구역 \(number) · 더 빨라집니다", 1.8)
         case .newBest:
             play(.record)
             banner = ("신기록!", 1.6)
@@ -411,7 +411,7 @@ final class FlightSession {
             labels.append(.init(text: Text("비행").font(GameFont.pixel(20)).foregroundColor(.white), position: CGPoint(mid, box.minY + 18)))
             labels.append(.init(text: Text("\(game.difficulty.title) · 최고 \(game.best)점").font(caption).foregroundColor(gold),
                                 position: CGPoint(mid, box.minY + 37)))
-            labels.append(.init(text: Text("누르는 동안 올라가요 · → 가속").font(caption).foregroundColor(.white.opacity(0.8)),
+            labels.append(.init(text: Text("누르는 동안 올라갑니다 · → 가속").font(caption).foregroundColor(.white.opacity(0.8)),
                                 position: CGPoint(mid, box.minY + 51)))
             labels.append(.init(text: Text("스페이스 또는 클릭으로 시작").font(caption).foregroundColor(.white.opacity(0.6)),
                                 position: CGPoint(mid, box.minY + 65)))

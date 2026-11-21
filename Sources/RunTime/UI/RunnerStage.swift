@@ -126,7 +126,7 @@ struct RunnerStage: View {
         .overlay(alignment: .topTrailing) { controls }
         .overlay { updateLayer }
         .onChange(of: updater.state) { state in
-            if state == .updating, !updater.isSilent { model.say("새 버전 받아 올게요", seconds: 2.6) }
+            if state == .updating, !updater.isSilent { model.say("새 버전 받아 옵니다", seconds: 2.6) }
         }
         .background(WindowReader(found: attach))
         .onHover(perform: hover)
@@ -138,7 +138,7 @@ struct RunnerStage: View {
             model.hovering = false
             model.popoverClosed()
         }
-        .tip(model.isPlaying ? (model.flight != nil ? "누르는 동안 올라가요. →·오른쪽 클릭 가속, esc 나가기"
+        .tip(model.isPlaying ? (model.flight != nil ? "누르는 동안 올라갑니다. →·오른쪽 클릭 가속, esc 나가기"
               : "스페이스·↑·클릭 점프(길게 누르면 높이), ↓·오른쪽 클릭 숙이기, ←→ 이동, G 고스트와 겨루기, esc 나가기") : "")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(character.name)
@@ -154,11 +154,11 @@ struct RunnerStage: View {
                 StageButton(systemImage: "figure.run", title: "달리기", selected: model.chooser == .game) {
                     model.chooser = model.chooser == .game ? nil : .game
                 }
-                .tip("장애물을 넘으며 끝없이 달려요")
+                .tip("장애물을 넘으며 끝없이 달립니다")
                 StageButton(systemImage: "paperplane.fill", title: "비행", selected: model.chooser == .flight) {
                     model.chooser = model.chooser == .flight ? nil : .flight
                 }
-                .tip("누르는 동안 올라가며 끝없이 날아요")
+                .tip("누르는 동안 올라가며 끝없이 납니다")
             } else {
                 StageButton(systemImage: model.soundOn ? "speaker.wave.2.fill" : "speaker.slash.fill",
                             label: model.soundOn ? "효과음 끄기" : "효과음 켜기") {
@@ -229,8 +229,8 @@ struct RunnerStage: View {
 
     private func hintItem(_ key: String, _ action: String) -> some View {
         HStack(spacing: 3) {
-            Text(key).font(.system(size: 10.5, weight: .bold)).foregroundStyle(.white)
-            Text(action).font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.7))
+            Text(key).font(.system(size: 11.5, weight: .bold)).foregroundStyle(.white)
+            Text(action).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.7))
         }
     }
 
@@ -256,8 +256,8 @@ struct RunnerStage: View {
             let scale = geo.size.height / Self.height
             if updater.hasPendingUpdate, model.bubble == nil, !model.isPlaying {
                 UpdateBubble(text: updater.pendingPrompt) { updater.update() }
-                    .tip(updater.incoming.isEmpty ? "누르면 바로 업데이트해요"
-                         : "누르면 바로 업데이트해요\n" + updater.incoming.map { "· \($0)" }.joined(separator: "\n"))
+                    .tip(updater.incoming.isEmpty ? "누르면 바로 업데이트합니다"
+                         : "누르면 바로 업데이트합니다\n" + updater.incoming.map { "· \($0)" }.joined(separator: "\n"))
                     .scaleEffect(scale)
                     // 오른쪽 위 게임 단추 줄 아래에 둔다
                     .position(x: min(geo.size.width * StageModel.runnerAnchor + 100 * scale, geo.size.width - 100 * scale),
@@ -318,8 +318,8 @@ private struct PetChip: View {
                     title: settings.desktopPet ? "넣기" : "꺼내기", selected: settings.desktopPet) {
             DesktopPet.shared.toggle()
         }
-        .tip(settings.desktopPet ? "화면에 꺼내 둔 펫을 넣어요"
-             : "펫을 화면에 꺼내요. 끌어다 놓으면 그 자리에 머물고, 오른쪽 클릭하면 옵션이 나와요")
+        .tip(settings.desktopPet ? "화면에 꺼내 둔 펫을 넣습니다"
+             : "펫을 화면에 꺼냅니다. 끌어다 놓으면 그 자리에 머물고, 오른쪽 클릭하면 옵션이 나옵니다")
     }
 }
 
@@ -786,7 +786,7 @@ final class StageModel: ObservableObject {
             say("\(Int((turn.duration / 60).rounded()))분짜리 작업 끝\(name)", seconds: 3.5)
         } else {
             play(.greet)
-            say("Claude가 끝났어요\(name)", seconds: 3)
+            say("Claude가 끝났습니다\(name)", seconds: 3)
         }
     }
 

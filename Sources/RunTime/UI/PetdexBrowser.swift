@@ -64,7 +64,7 @@ struct PetdexBrowser: View {
                 .padding(.vertical, 2)
             }
             if results.isEmpty, store.catalogState == .loaded {
-                Text("찾는 펫이 없어요. 다른 이름으로 찾거나, 펫 탭의 '펫 만들기'로 직접 만들어 보세요")
+                Text("찾는 펫이 없습니다. 다른 이름으로 찾거나, 펫 탭의 '펫 만들기'로 직접 만들어 보세요")
                     .font(.system(size: 12.5)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
             }
@@ -85,7 +85,7 @@ struct PetdexBrowser: View {
             .font(.system(size: 12)).foregroundStyle(.secondary)
         case .failed(let reason):
             HStack(spacing: 6) {
-                Text("목록을 받지 못했어요 (\(reason))").foregroundStyle(.orange)
+                Text("목록을 받지 못했습니다 (\(reason))").foregroundStyle(.orange)
                 Button("다시 시도") { store.loadCatalog(force: true) }.controlSize(.small)
             }
             .font(.system(size: 12))

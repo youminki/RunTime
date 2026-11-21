@@ -42,7 +42,7 @@ struct WorkLogPreview: View {
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("#\(page.confirmingUndo?.issue ?? 0)에서 앱이 바꾼 진척률·상태·날짜·담당자를 보내기 전 값으로 돌리고, 보낸 댓글을 지웁니다. 보낸 뒤 다른 사람이 바꾼 칸은 그대로 둡니다. 그 줄들은 다시 보낼 목록으로 돌아옵니다."
+            Text("#\(page.confirmingUndo?.issue ?? 0)에서 앱이 바꾼 값을 보내기 전으로 돌리고 보낸 댓글을 지웁니다. 보낸 뒤 다른 사람이 바꾼 항목은 그대로 두고, 해당 줄은 다시 보낼 목록에 올라옵니다."
                  + (sync.journalAPI ? "" : "\n\n이 레드마인은 API로 댓글을 지우게 두지 않아, 댓글 자리를 브라우저로 열어 드립니다. 연필 > 지우기로 지우세요."))
         }
         .alert("보고 채팅에 올릴까요?", isPresented: $page.confirmingTeams) {
@@ -1005,7 +1005,7 @@ struct WorkLogPreview: View {
                     }
             }
             if fields.isEmpty {
-                Text("바꿀 칸 없음 · 상태\(current?.status.isEmpty == false ? "(\(current!.status))" : "")는 그대로 둡니다")
+                Text("바꿀 항목 없음 · 상태\(current?.status.isEmpty == false ? "(\(current!.status))" : "")는 그대로 둡니다")
                     .font(WL.caption).foregroundStyle(WL.muted)
             } else {
                 FlowLayout(spacing: 4) {

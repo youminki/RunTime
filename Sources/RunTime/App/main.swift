@@ -737,7 +737,7 @@ if let index = CommandLine.arguments.firstIndex(of: "--update-bubble-check") {
         let items = UpdateDigest.make(lines.filter { !$0.isEmpty })
         print(items.map { "· \($0)" }.joined(separator: "\n"))
         let screen = NSScreen.main?.frame ?? .zero
-        MenuBarBubble.shared.show(.init(title: "새 버전이 있어요", items: items, actionTitle: "지금 업데이트", action: {}),
+        MenuBarBubble.shared.show(.init(title: "새 버전이 있습니다", items: items, actionTitle: "지금 업데이트", action: {}),
                                   below: NSRect(x: screen.maxX - 300, y: screen.maxY - 30, width: 40, height: 30))
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             MenuBarBubble.shared.snapshot(to: file)

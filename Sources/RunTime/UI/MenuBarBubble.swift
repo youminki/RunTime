@@ -397,7 +397,7 @@ final class MenuBarBubble {
                     if total > 1 {
                         HStack(spacing: 2) {
                             arrow("chevron.left", label: "앞 소식") { turn(-1) }
-                            Text("\(position)/\(total)").font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                            Text("\(position)/\(total)").font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(.white.opacity(0.6))
                             arrow("chevron.right", label: "다음 소식") { turn(1) }
                         }
@@ -434,7 +434,7 @@ final class MenuBarBubble {
                         .overlay(alignment: .topTrailing) {
                             if content.editing != nil {
                                 Button(action: edit) {
-                                    Label("고치기", systemImage: "pencil").font(.system(size: 10.5, weight: .semibold))
+                                    Label("고치기", systemImage: "pencil").font(.system(size: 11.5, weight: .semibold))
                                         .foregroundStyle(.white.opacity(0.75))
                                         .padding(.horizontal, 7).frame(height: 20)
                                         .background(Capsule().fill(Color(white: 0.2)))
@@ -458,7 +458,7 @@ final class MenuBarBubble {
                 }
                 if total > 1 {
                     HStack(spacing: 6) {
-                        Text("소식 \(total)건 · 닫으면 다음 소식이 나와요").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        Text("소식 \(total)건 · 닫으면 다음 소식이 나옵니다").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
                         Spacer(minLength: 4)
                         Button("모두 닫기", action: closeAll)
                             .buttonStyle(.plain)
@@ -531,7 +531,7 @@ final class MenuBarBubble {
                         .padding(4)
                         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.08)))
                         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(GameKit.gold.opacity(0.6)))
-                    Text("⌘S 저장 · Esc 취소").font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.4))
+                    Text("⌘S 저장 · Esc 취소").font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.6))
                 }
             }
         }

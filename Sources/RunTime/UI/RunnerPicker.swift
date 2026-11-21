@@ -166,8 +166,8 @@ struct RunnerPicker: View {
                 }
                 .buttonStyle(PrimaryGameButtonStyle(height: 44, fontSize: 15))
                 .disabled(maker.text.trimmingCharacters(in: .whitespaces).isEmpty && maker.references.isEmpty)
-                Text(factory.isPrepared ? "이 Mac에서 무료로 그려요. 6~8분쯤 걸려요."
-                     : "처음 한 번 그림 모델(약 5GB)을 받아요. 그 뒤로는 6~8분이면 그려요.")
+                Text(factory.isPrepared ? "이 Mac에서 무료로 그립니다. 6~8분쯤 걸립니다."
+                     : "처음 한 번 그림 모델(약 5GB)을 받습니다. 그 뒤로는 6~8분이면 그립니다.")
                     .font(.system(size: 13)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
                 factoryStatus
             }
@@ -201,7 +201,7 @@ struct RunnerPicker: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .tip("원작 캐릭터를 똑같이 그리고 싶을 때 그림을 넣어요 (세 장까지, 끌어다 놓거나 붙여 넣어도 돼요)")
+                .tip("원작 캐릭터를 똑같이 그리고 싶을 때 그림을 넣습니다 (세 장까지, 끌어다 놓거나 붙여 넣어도 됩니다)")
             }
             Spacer(minLength: 0)
         }
@@ -224,7 +224,7 @@ struct RunnerPicker: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("펫 만들기").font(.system(size: 13.5, weight: .bold)).foregroundStyle(Theme.primary)
-                Text("설명이나 그림으로 이 Mac에서 새로 그려요").font(.system(size: 12)).foregroundStyle(Theme.tertiary).lineLimit(1)
+                Text("설명이나 그림으로 이 Mac에서 새로 그립니다").font(.system(size: 12)).foregroundStyle(Theme.tertiary).lineLimit(1)
             }
             if factory.isWorking {
                 progressView
@@ -255,7 +255,7 @@ struct RunnerPicker: View {
                 Button(action: chooseReference) {
                     VStack(spacing: 1) {
                         Image(systemName: "plus").font(.system(size: 11, weight: .bold))
-                        Text("그림").font(.system(size: 10.5))
+                        Text("그림").font(.system(size: 11.5))
                     }
                     .foregroundStyle(Theme.secondary)
                     .frame(width: 40, height: 40)
@@ -267,8 +267,8 @@ struct RunnerPicker: View {
                 .accessibilityLabel("참고 그림 넣기")
             }
             Text(maker.references.isEmpty
-                 ? "원작이 있는 캐릭터는 그림을 끌어다 놓거나 붙여 넣으면 똑같이 그려요 (세 장까지, 다른 각도면 더 좋아요)"
-                 : "이 그림을 따라 그려요. 다른 각도 그림을 더 넣으면 옆모습이 더 닮아요")
+                 ? "원작이 있는 캐릭터는 그림을 끌어다 놓거나 붙여 넣으면 똑같이 그립니다 (세 장까지, 다른 각도면 더 좋습니다)"
+                 : "이 그림을 따라 그립니다. 다른 각도 그림을 더 넣으면 옆모습이 더 닮습니다")
                 .font(.system(size: 12)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -306,7 +306,7 @@ struct RunnerPicker: View {
                         }
                     }
                     if factory.guessing {
-                        Text("원작 그림 없이 글로 그리는 중이라 원작과 다를 수 있어요. 끝나면 그림을 넣고 다시 그려 보세요")
+                        Text("원작 그림 없이 글로 그리는 중이라 원작과 다를 수 있습니다. 끝나면 그림을 넣고 다시 그려 보세요")
                             .font(.system(size: 12)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -318,7 +318,7 @@ struct RunnerPicker: View {
     static func remaining(elapsed: TimeInterval, done: Int, total: Int) -> String {
         guard done > 0 else { return "보통 6~8분" }
         let left = elapsed / Double(done) * Double(max(total - done, 0))
-        return left < 60 ? "곧 끝나요" : "약 \(Int((left / 60).rounded(.up)))분 남음"
+        return left < 60 ? "곧 끝납니다" : "약 \(Int((left / 60).rounded(.up)))분 남음"
     }
 
     /// 내 펫 머리: 이름과 찾기. Petdex에서 받기는 화면 머리줄(팝오버는 아래 줄)에 둔다.
@@ -370,8 +370,8 @@ struct RunnerPicker: View {
         }
         .buttonStyle(PrimaryGameButtonStyle(height: 36))
         .disabled((maker.text.trimmingCharacters(in: .whitespaces).isEmpty && maker.references.isEmpty) || factory.isWorking)
-        .tip(factory.isPrepared ? "이 Mac에서 새로 그려요 (6~8분, 무료)"
-             : "처음 한 번 그림 도구와 모델(약 5GB)을 받고 이 Mac에서 그려요. 무료이고 그림은 밖으로 보내지 않아요")
+        .tip(factory.isPrepared ? "이 Mac에서 새로 그립니다 (6~8분, 무료)"
+             : "처음 한 번 그림 도구와 모델(약 5GB)을 받고 이 Mac에서 그립니다. 무료이고 그림은 밖으로 보내지 않습니다")
     }
 
     private func textLink(_ title: String, action: @escaping () -> Void) -> some View {
@@ -414,10 +414,10 @@ struct RunnerPicker: View {
             if redraw {
                 Button("다시 그리기") { factory.redraw(settings: settings) }
                     .buttonStyle(.plain).font(.system(size: 12.5, weight: .bold)).foregroundStyle(GameKit.gold)
-                    .tip("같은 설명과 그림으로 다시 그려요")
+                    .tip("같은 설명과 그림으로 다시 그립니다")
                 Button("Petdex에 올리기") { factory.shareToPetdex() }
                     .buttonStyle(.plain).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.secondary)
-                    .tip("zip을 다운로드 폴더에 만들고 Petdex 제출 페이지를 열어요. 올리면 다른 Mac에서도 바로 받아요")
+                    .tip("zip을 다운로드 폴더에 만들고 Petdex 제출 페이지를 엽니다. 올리면 다른 Mac에서도 바로 받습니다")
             }
             Button { factory.dismiss() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
                 .buttonStyle(.plain).foregroundStyle(Theme.tertiary).accessibilityLabel("닫기")
@@ -437,7 +437,7 @@ struct RunnerPicker: View {
             Button("고치기", action: revise)
                 .buttonStyle(GameButtonStyle(height: 28))
                 .disabled(maker.revision.trimmingCharacters(in: .whitespaces).isEmpty)
-                .tip("지금 펫에서 그 부분만 바꿔 다시 그리고, 다 되면 지금 펫을 바꿔요 (6~8분)")
+                .tip("지금 펫에서 그 부분만 바꿔 다시 그리고, 다 되면 지금 펫을 바꿉니다 (6~8분)")
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
@@ -471,7 +471,7 @@ struct RunnerPicker: View {
             switch result {
             case .success(let pet):
                 settings.customRunnerID = PetdexStore.storageID(pet.slug)
-                factory.announce("'\(pet.name)'을(를) 데려왔어요")
+                factory.announce("'\(pet.name)'을(를) 데려왔습니다")
             case .failure(let error):
                 importState.show(error.localizedDescription, error: true)
             }

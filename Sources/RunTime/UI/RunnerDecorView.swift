@@ -53,10 +53,10 @@ struct RunnerDecorView: View {
     }
 
     private var hintText: String {
-        if filter.companion { return "고른 펫이 러너 뒤를 따라 달려요. 다시 누르면 혼자 달려요." }
-        if filter.kind == .aura { return "서 있어도 펫 둘레를 늘 감돌아요. 무대와 꺼낸 펫에서 보여요. 다시 누르면 떼요." }
-        return filter.kind == .track ? "누르면 무대 배경이 바뀌어요. 고른 배경을 다시 누르면 기본 배경으로 돌아가요."
-            : "고른 것을 다시 누르면 떼요. 달릴 때와 게임에서 보여요."
+        if filter.companion { return "고른 펫이 러너 뒤를 따라 달립니다. 다시 누르면 혼자 달립니다." }
+        if filter.kind == .aura { return "서 있어도 펫 둘레를 늘 감돕니다. 무대와 꺼낸 펫에서 보입니다. 다시 누르면 뗍니다." }
+        return filter.kind == .track ? "누르면 무대 배경이 바뀝니다. 고른 배경을 다시 누르면 기본 배경으로 돌아갑니다."
+            : "고른 것을 다시 누르면 뗍니다. 달릴 때와 게임에서 보입니다."
     }
 
     /// 넓은 화면의 왼쪽 칸: 꾸밀 곳마다 지금 쓰는 것과 떼기.
@@ -239,7 +239,7 @@ struct RunnerDecorView: View {
         .buttonStyle(.plain)
         // 마우스를 올리면 칸 안 미리보기만 돌린다. 무대 배경은 눌러 고를 때만 바꾼다
         .onHover { inside in hover.update(item.rawValue, inside) }
-        .tip(on ? "다시 누르면 떼요" : "\(item.name) 쓰기")
+        .tip(on ? "다시 누르면 뗍니다" : "\(item.name) 쓰기")
         .accessibilityLabel("\(item.name), \(on ? "쓰는 중" : "쓰지 않음")")
     }
 

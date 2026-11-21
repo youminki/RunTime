@@ -527,7 +527,7 @@ struct WorkLogView: View {
                 mergedSection(project, merged: merged.filter { $0.project == project }, entries: entries)
             }
             hiddenToggle(merged)
-            Text("같은 프로젝트의 같은 일은 한 줄로 모으고 \(span) 마지막 상태를 씁니다. 줄을 누르면 그날로 갑니다.")
+            Text("같은 프로젝트의 같은 일은 한 줄로 모으고 \(span) 마지막 상태를 씁니다.")
                 .font(.system(size: 13)).foregroundStyle(WL.quiet)
         }
     }

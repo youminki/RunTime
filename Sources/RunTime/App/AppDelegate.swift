@@ -227,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 // 일하던 앱을 찾았을 때만 '열기'를 둔다. 세션을 닫았으면 열어 볼 곳이 없다
                 DispatchQueue.global(qos: .utility).async {
                     let host = turn.project.flatMap(ClaudeHost.find(project:))
-                    Notifier.shared.send(title: "Claude 작업이 끝났어요", body: body,
+                    Notifier.shared.send(title: "Claude 작업이 끝났습니다", body: body,
                                          opens: host == nil ? nil : .claude, context: turn.project,
                                          actionTitle: host.map { "\($0.app.localizedName ?? "작업하던 앱")에서 보기" },
                                          closesAfter: 20)
@@ -390,7 +390,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             let notes = updater.patchSource
             guard notes.at > 0 else { return }
-            showOnce("notes-\(Int(notes.at))", title: "업데이트했어요", lines: notes.lines, action: nil, closesAfter: 30)
+            showOnce("notes-\(Int(notes.at))", title: "업데이트했습니다", lines: notes.lines, action: nil, closesAfter: 30)
         }
         // 자동으로 받지 못한 새 버전: 무엇이 바뀌는지와 함께 바로 받을 단추를 둔다
         updater.$target
@@ -398,7 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
             .sink { target, _ in
                 guard let target, updater.hasPendingUpdate else { return }
-                showOnce("pending-\(target)", title: "새 버전이 있어요", lines: updater.incomingLines,
+                showOnce("pending-\(target)", title: "새 버전이 있습니다", lines: updater.incomingLines,
                          action: ("지금 업데이트", { updater.update() }), keeps: false, closesAfter: UsageEngine.newsLifetime)
             }
             .store(in: &cancellables)

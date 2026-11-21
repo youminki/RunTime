@@ -268,7 +268,7 @@ enum UIShots {
 
     /// 문제 보내기 창. 앱 아이콘을 찍은 그림 대신 붙인다.
     private static func problemReport() -> AnyView {
-        let model = ProblemReportModel.rehearsal(draft: "펫이 화면 오른쪽 끝에서 멈춰 움직이지 않아요\n외부 모니터를 뺀 뒤부터 그래요",
+        let model = ProblemReportModel.rehearsal(draft: "펫이 화면 오른쪽 끝에서 멈춰 움직이지 않습니다\n외부 모니터를 뺀 뒤부터 그렇습니다",
                                                  images: [NSApp.applicationIconImage].compactMap { $0 })
         return AnyView(ProblemReportView(model: model) {}.background(Color(nsColor: .windowBackgroundColor)))
     }

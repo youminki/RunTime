@@ -1622,7 +1622,7 @@ private struct DesignOnboarding: View {
             Image(systemName: "paintpalette").font(.system(size: 30, weight: .light)).foregroundStyle(WL.accent)
             VStack(alignment: .leading, spacing: 6) {
                 Text("화면설계서의 변경을 메뉴별로 모읍니다").font(WL.title)
-                Text("피그마 화면설계서를 연결하면 어느 메뉴의 어느 화면이 언제 바뀌었는지 날짜별로 남깁니다. 기능 명세, 목업 문구, 컴포넌트, 디자이너가 적은 제·개정 이력까지 봅니다.")
+                Text("연결하면 어느 화면이 언제 바뀌었는지 날짜별로 남깁니다. 기능 명세, 문구, 컴포넌트, 제·개정 이력을 봅니다.")
                     .font(WL.body).foregroundStyle(WL.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }

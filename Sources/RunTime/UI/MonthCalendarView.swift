@@ -323,7 +323,7 @@ struct MonthCalendarView: View {
 
     private func tip(_ day: String, holiday: String?, entries: [WorkEntry], due: [IssueInfo]) -> String {
         let head = [WorkLogFormat.dayTitle(day), holiday].compactMap { $0 }.joined(separator: " · ")
-        guard !entries.isEmpty || !due.isEmpty else { return head + " · 누르면 이날 일지를 엽니다" }
+        guard !entries.isEmpty || !due.isEmpty else { return head }
         let lines = due.map { "마감 · #\($0.id) " + ($0.path + [$0.subject]).joined(separator: " > ") }
             + entries.map { "\($0.project) · \(WorkReport.line($0))" + ($0.needsRedmine ? " · 레드마인에 아직 안 보냄" : "") }
         return ([head] + lines.prefix(12) + (lines.count > 12 ? ["… \(lines.count - 12)줄 더"] : []))

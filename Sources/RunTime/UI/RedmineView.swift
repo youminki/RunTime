@@ -440,7 +440,7 @@ private struct RedmineIssueTable: View {
         return HStack(spacing: 10) {
             Text(store.bulkRunning ? "고치는 중…" : ids.isEmpty ? "고른 일감이 모두 가려졌습니다" : "\(ids.count)건 고름").font(WL.meta.weight(.semibold))
             if store.checked.count > ids.count {
-                Text("\(store.checked.count - ids.count)건은 가려져 빠짐").font(WL.caption).foregroundStyle(WL.waiting)
+                Text("\(store.checked.count - ids.count)건은 숨겨져 제외").font(WL.caption).foregroundStyle(WL.waiting)
             }
             Group {
             Menu("상태") {

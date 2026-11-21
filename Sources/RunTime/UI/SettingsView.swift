@@ -364,7 +364,7 @@ struct SettingsView: View {
                 if Notifier.shared.available { NotificationStyleRow() }
                 GroupedRow("알림 보내 보기", icon: "paperplane") {
                     Button("보내기") {
-                        Notifier.shared.send(title: "RunTime 알림", body: "알림이 이렇게 와요.")
+                        Notifier.shared.send(title: "RunTime 알림", body: "알림이 이렇게 옵니다.")
                     }
                     .controlSize(.small)
                     .disabled(!Notifier.shared.available)
@@ -483,9 +483,9 @@ private struct NotificationStyleRow: View {
 
     private var label: String {
         switch model.style {
-        case .alert: "직접 닫을 때까지 남아요"
-        case .banner: "잠깐 뜨고 사라져요"
-        case .off: "꺼져 있어요"
+        case .alert: "직접 닫을 때까지 남습니다"
+        case .banner: "잠깐 뜨고 사라집니다"
+        case .off: "꺼져 있습니다"
         case nil: ""
         }
     }

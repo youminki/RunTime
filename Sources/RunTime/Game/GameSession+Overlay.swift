@@ -113,7 +113,7 @@ extension GameSession {
             labels.append(Label(text: (Text("스페이스") .foregroundColor(.white) + Text(" 또는 ").foregroundColor(.white.opacity(0.6))
                                        + Text("클릭").foregroundColor(.white) + Text("으로 시작").foregroundColor(.white.opacity(0.6)))
                                     .font(caption), position: CGPoint(inset, cardTop + 38), anchor: .topLeading))
-            labels.append(Label(text: Text("↑ 길게 높이  ↓ 숙이기  ←→ 이동").font(.system(size: 9.5, weight: .medium))
+            labels.append(Label(text: Text("↑ 길게 높이  ↓ 숙이기  ←→ 이동").font(.system(size: 11, weight: .medium))
                                     .foregroundColor(.white.opacity(0.5)), position: CGPoint(inset, cardTop + 54), anchor: .topLeading))
             var height: CGFloat = 72
             if let raceText {

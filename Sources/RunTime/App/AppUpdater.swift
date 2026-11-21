@@ -139,7 +139,7 @@ final class AppUpdater: ObservableObject {
                 defaults.set(lines, forKey: Key.notes)
                 defaults.set(Date().timeIntervalSince1970, forKey: Key.notesAt)
             } else if !defaults.bool(forKey: Key.silent) {
-                bubble = build.subject.isEmpty ? "새 버전으로 업데이트했어요" : "업데이트했어요: \(Self.title(of: build.subject))"
+                bubble = build.subject.isEmpty ? "새 버전으로 업데이트했습니다" : "업데이트했어요: \(Self.title(of: build.subject))"
             }
             defaults.removeObject(forKey: Key.silent)
             let started = defaults.double(forKey: Key.startedAt)
@@ -388,9 +388,9 @@ final class AppUpdater: ObservableObject {
 
     /// 러너 말풍선 글. 누르면 `update()`.
     var pendingPrompt: String {
-        if installFailed { return "업데이트하지 못했어요 · 눌러서 다시" }
+        if installFailed { return "업데이트하지 못했습니다 · 눌러서 다시" }
         if blocked != nil { return "새 버전을 기다리는 중 · 눌러서 다시" }
-        return "새 버전이 있어요 · 눌러서 업데이트"
+        return "새 버전이 있습니다 · 눌러서 업데이트"
     }
 
     /// 커밋 메시지 첫 줄에서 "feat: ", "fix(ui): " 같은 머리말을 뺀다.

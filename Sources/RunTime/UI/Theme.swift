@@ -39,8 +39,8 @@ enum Theme {
     }
 
     /// 섹션 이름 (세션, 주간, 속도…).
-    static let label = Font.system(size: 11, weight: .medium)
-    static let caption = Font.system(size: 11)
+    static let label = Font.system(size: 11.5, weight: .medium)
+    static let caption = Font.system(size: 12)
     static let value = Font.system(size: 13, weight: .medium).monospacedDigit()
 }
 
@@ -76,7 +76,7 @@ struct PaceBadge: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

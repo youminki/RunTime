@@ -8,7 +8,7 @@ struct StatColumn: View {
 
     var body: some View {
         VStack(spacing: 3) {
-            Text(label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.tertiary)
+            Text(label).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.tertiary)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
                     .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
@@ -16,7 +16,7 @@ struct StatColumn: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if !unit.isEmpty {
-                    Text(unit).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.tertiary)
+                    Text(unit).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
                 }
             }
         }

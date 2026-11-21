@@ -65,7 +65,7 @@ struct UpdateProgressPanel: View {
 
     /// 5초 단위로 반올림해 숫자가 매번 흔들리지 않게 한다.
     static func remainingText(_ seconds: TimeInterval) -> String {
-        guard seconds >= 8 else { return "곧 끝나요" }
+        guard seconds >= 8 else { return "곧 끝납니다" }
         let rounded = Int((seconds / 5).rounded()) * 5
         let minutes = rounded / 60, rest = rounded % 60
         if minutes == 0 { return "약 \(rest)초 남음" }
@@ -133,9 +133,9 @@ struct PatchNotesBubble: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text("업데이트했어요").font(.system(size: 12, weight: .bold))
+                Text("업데이트했습니다").font(.system(size: 12, weight: .bold))
                 Text(Self.version.map { "\($0) · 이번에 바뀐 것" } ?? "이번에 바뀐 것")
-                    .font(.system(size: 10.5)).foregroundStyle(Self.ink.opacity(0.5))
+                    .font(.system(size: 11.5)).foregroundStyle(Self.ink.opacity(0.65))
                 Spacer(minLength: 4)
                 Button(action: dismiss) {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
@@ -160,7 +160,7 @@ struct PatchNotesBubble: View {
                 }
             }
             if notes.hiddenCount > 0 {
-                Text("외 \(notes.hiddenCount)개 더 바뀌었어요").font(.system(size: 10.5)).foregroundStyle(Self.ink.opacity(0.5))
+                Text("외 \(notes.hiddenCount)개 더 바뀌었습니다").font(.system(size: 11.5)).foregroundStyle(Self.ink.opacity(0.65))
             }
         }
         .foregroundStyle(Self.ink)
