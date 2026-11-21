@@ -21,6 +21,26 @@ struct UsageStoreTests {
         #expect(store.snapshot(now: now).todayTokens == 500)
     }
 
+    /// 같은 응답의 앞 줄은 스트리밍 도중 값이라, 뒤 줄의 최종 출력 토큰과 비용으로 고쳐야 한다.
+    @Test func laterLineOfSameResponseReplacesPartialTokens() {
+        let store = UsageStore()
+        let now = Date()
+        func line(output: Int, minutesAgo: Double) -> UsageEvent {
+            UsageEvent(timestamp: now.addingTimeInterval(-minutesAgo * 60), model: "claude-sonnet-5",
+                       requestId: "req_s", messageId: "msg_s", inputTokens: 100, outputTokens: output,
+                       cacheCreationTokens: 0, cacheReadTokens: 0)
+        }
+        #expect(store.add([line(output: 3, minutesAgo: 2)]) == 1)
+        let partial = store.snapshot(now: now)
+        #expect(partial.todayTokens == 103)
+        // 최종 줄이 와도 새 응답이 아니고, 작은 값이 뒤늦게 와도 되돌아가지 않는다
+        #expect(store.add([line(output: 748, minutesAgo: 1), line(output: 3, minutesAgo: 2)]) == 0)
+        let final = store.snapshot(now: now)
+        #expect(final.todayTokens == 848)
+        #expect(final.todayCostUSD > partial.todayCostUSD)
+        #expect(final.totalEventCount == 1)
+    }
+
     @Test func tokensLast60s() {
         let store = UsageStore()
         let now = Date()

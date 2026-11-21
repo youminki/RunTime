@@ -40,6 +40,14 @@ public final class UsageStore {
         public var projectCostUSD: [String: Double] = [:]
         /// 폴더별로 Claude Code를 쓴 시간(분). 기록이 있는 5분 칸을 센다. 업무 일지의 작업 시간 추정에 쓴다.
         public var projectActiveMinutes: [String: Int] = [:]
+        /// 모델이 쓴 출력 토큰과 캐시에서 읽은 토큰. 총 토큰은 캐시 읽기가 대부분이라 작업량은 출력, 효율은 캐시 읽기 비율로 본다.
+        public var outputTokens: Int = 0
+        public var cacheReadTokens: Int = 0
+        /// 입력 쪽(새 입력 + 캐시 쓰기 + 캐시 읽기) 중 캐시에서 읽은 비율 (0~1). 입력이 없으면 nil.
+        public var cacheHitRate: Double? {
+            let input = tokens - outputTokens
+            return input > 0 ? Double(cacheReadTokens) / Double(input) : nil
+        }
     }
 
     /// 활동 시간을 셀 때 한 칸의 길이(분).
@@ -51,7 +59,8 @@ public final class UsageStore {
     private var costs: [Double] = []
     private var dayStarts: [Date] = []
     private var dayCalendar: Calendar?
-    private var seenKeys: Set<String> = []
+    /// 응답별로 지금까지 반영한 총 토큰. 같은 응답의 뒤 줄이 더 크면 최종값으로 고친다.
+    private var seenKeys: [String: Int] = [:]
     private var sorted = true
     /// 이보다 오래된 이벤트는 스냅샷 때 버린다. 장기 실행 시 메모리·틱 비용이 계속 늘지 않게.
     private let retention: TimeInterval
@@ -61,12 +70,30 @@ public final class UsageStore {
         self.retention = retention
     }
 
-    /// 이벤트 추가. dedupKey 기준 최초 1회만 반영. 추가된 건수 반환.
+    /// 이벤트 추가. dedupKey 기준 최초 1회만 새로 넣는다. 추가된 건수 반환.
+    /// 같은 응답은 스트리밍 도중 줄(출력 토큰 한 자리)부터 마지막 줄(최종값)까지 여러 번 기록되어,
+    /// 뒤 줄이 더 크면 시각은 두고 토큰만 최종값으로 바꾼다.
     @discardableResult
     public func add(_ newEvents: [UsageEvent]) -> Int {
         queue.sync {
             var added = 0
-            for event in newEvents where seenKeys.insert(event.dedupKey).inserted {
+            for event in newEvents {
+                if let seen = seenKeys[event.dedupKey] {
+                    guard event.totalTokens > seen,
+                          let index = events.lastIndex(where: { $0.dedupKey == event.dedupKey }) else { continue }
+                    let old = events[index]
+                    events[index] = UsageEvent(
+                        timestamp: old.timestamp, model: old.model, requestId: old.requestId, messageId: old.messageId,
+                        inputTokens: event.inputTokens, outputTokens: event.outputTokens,
+                        cacheCreationTokens: event.cacheCreationTokens, cacheReadTokens: event.cacheReadTokens,
+                        entrypoint: old.entrypoint, clientVersion: old.clientVersion,
+                        endsTurn: old.endsTurn || event.endsTurn, project: old.project)
+                    seenKeys[event.dedupKey] = event.totalTokens
+                    // 이 기록부터 비용을 다시 구한다
+                    if costs.count > index { costs.removeSubrange(index...) }
+                    continue
+                }
+                seenKeys[event.dedupKey] = event.totalTokens
                 if let last = events.last, event.timestamp < last.timestamp { sorted = false }
                 events.append(event)
                 added += 1
@@ -100,7 +127,7 @@ public final class UsageStore {
             var weeklyModelTokens: [String: Int] = [:]
             var sparkline = [Int](repeating: 0, count: Self.sparklineMinutes)
             var daily: [Date: (tokens: Int, cost: Double, models: [String: Int], projects: [String: Int],
-                               projectCost: [String: Double])] = [:]
+                               projectCost: [String: Double], output: Int, cacheRead: Int)] = [:]
             var slots: [Date: [String: Set<Int>]] = [:]
 
             for index in events.indices where events[index].timestamp <= now {
@@ -114,8 +141,10 @@ public final class UsageStore {
                 }
                 let eventDay = dayStarts[index]
                 if eventDay >= firstDay {
-                    daily[eventDay, default: (0, 0, [:], [:], [:])].tokens += tokens
+                    daily[eventDay, default: (0, 0, [:], [:], [:], 0, 0)].tokens += tokens
                     daily[eventDay]!.cost += cost
+                    daily[eventDay]!.output += event.outputTokens
+                    daily[eventDay]!.cacheRead += event.cacheReadTokens
                     daily[eventDay]!.models[event.model, default: 0] += tokens
                     daily[eventDay]!.projects[event.project ?? "", default: 0] += tokens
                     daily[eventDay]!.projectCost[event.project ?? "", default: 0] += cost
@@ -154,7 +183,8 @@ public final class UsageStore {
                     .map { DailyTotal(dayStart: $0.key, tokens: $0.value.tokens, costUSD: $0.value.cost,
                                       modelTokens: $0.value.models, projectTokens: $0.value.projects,
                                       projectCostUSD: $0.value.projectCost,
-                                      projectActiveMinutes: (slots[$0.key] ?? [:]).mapValues { $0.count * Self.activitySlotMinutes }) }
+                                      projectActiveMinutes: (slots[$0.key] ?? [:]).mapValues { $0.count * Self.activitySlotMinutes },
+                                      outputTokens: $0.value.output, cacheReadTokens: $0.value.cacheRead) }
                     .sorted { $0.dayStart > $1.dayStart },
                 latestClientVersion: events.last { $0.clientVersion != nil }?.clientVersion
             )
@@ -210,7 +240,7 @@ public final class UsageStore {
             return
         }
         guard keep > 0 else { return }
-        for event in events[..<keep] { seenKeys.remove(event.dedupKey) }
+        for event in events[..<keep] { seenKeys.removeValue(forKey: event.dedupKey) }
         events.removeFirst(keep)
         if costs.count >= keep { costs.removeFirst(keep) } else { costs = [] }
         if dayStarts.count >= keep { dayStarts.removeFirst(keep) } else { dayStarts = [] }

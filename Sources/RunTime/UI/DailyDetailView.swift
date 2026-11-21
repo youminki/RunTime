@@ -1,7 +1,7 @@
 import SwiftUI
 import UsageCore
 
-/// 일별 사용량 (iOS 스크린 타임처럼): 왼쪽에 하루 평균과 날짜별 막대·평균선, 오른쪽에 날짜별 목록과 프로젝트별.
+/// 일별 사용량 (iOS 스크린 타임처럼): 왼쪽에 지표 3칸(일평균·오늘 대비·비용)과 날짜별 막대·평균선, 오른쪽에 모델별과 프로젝트별.
 /// 최근 8일, 이 Mac의 Claude Code 기록 기준. 앱 창 사용량 화면의 아래쪽 구역으로 들어간다.
 struct DailyDetailView: View {
     @ObservedObject var engine: UsageEngine
@@ -21,9 +21,7 @@ struct DailyDetailView: View {
                 }
                 .frame(maxWidth: .infinity)
                 VStack(alignment: .leading, spacing: 18) {
-                    GroupedSection("날짜별", footer: "비용은 API 단가로 환산한 참고값입니다. 날짜에 마우스를 올리면 모델과 프로젝트별로 나눠 보여 줍니다.") {
-                        ForEach(totals, id: \.dayStart) { row($0) }
-                    }
+                    models(totals)
                     projects(totals)
                 }
                 .frame(width: 360)
@@ -34,18 +32,48 @@ struct DailyDetailView: View {
     // MARK: 요약
 
     private func summary(_ totals: [UsageStore.DailyTotal]) -> some View {
-        let total = totals.map(\.tokens).reduce(0, +)
         let cost = totals.map(\.costUSD).reduce(0, +)
-        return VStack(alignment: .leading, spacing: 2) {
-            Text("쓴 날 평균").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(Format.tokens(total / totals.count))
-                    .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
-                Text("토큰").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-            }
-            Text("최근 8일 중 쓴 날 \(totals.count)일 · 합계 \(Format.tokens(total)) 토큰 · 약 \(Format.usd(cost))")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+        let tokens = totals.map(\.tokens).reduce(0, +)
+        let output = totals.map(\.outputTokens).reduce(0, +)
+        let cacheRead = totals.map(\.cacheReadTokens).reduce(0, +)
+        // 오늘은 아직 끝나지 않은 날이라 평소 값은 오늘을 뺀 쓴 날로 낸다
+        let past = totals.filter { !isToday($0.dayStart) }
+        let usual = past.isEmpty ? nil : past.map(\.costUSD).reduce(0, +) / Double(past.count)
+        let today = totals.first { isToday($0.dayStart) }?.costUSD ?? 0
+        let input = tokens - output
+        return HStack(spacing: 12) {
+            kpi("8일 비용", value: Format.usd(cost), unit: nil,
+                note: "쓴 날 \(totals.count)일 · 하루 약 \(Format.usd(cost / Double(totals.count)))")
+                .tip("API 단가로 환산한 참고값입니다. 토큰 합계는 \(Format.tokens(tokens))이며 대부분 캐시 읽기라 비용으로 봐야 작업량이 보입니다")
+            kpi("평소 대비", value: usual.map { versus(today, usual: $0) } ?? "-", unit: nil,
+                note: usual.map { "오늘 \(Format.usd(today)) · 평소 \(Format.usd($0))" } ?? "비교할 지난 기록 없음")
+                .tip("오늘 쓴 비용을 오늘을 뺀 쓴 날의 하루 평균과 견준 값입니다")
+            kpi("캐시 적중", value: input > 0 ? "\(Int((Double(cacheRead) / Double(input) * 100).rounded()))%" : "-", unit: nil,
+                note: "출력 \(Format.tokens(output)) 토큰")
+                .tip("입력 쪽 토큰 중 캐시에서 읽은 비율입니다. 낮아지면 대화를 새로 열거나 맥락이 자주 바뀌어 같은 내용을 다시 내는 중입니다")
         }
+    }
+
+    private func kpi(_ title: String, value: String, unit: String?, note: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(value).font(.system(size: 26, weight: .bold, design: .rounded).monospacedDigit())
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                if let unit { Text(unit).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary) }
+            }
+            Text(note).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.groupedRow))
+    }
+
+    /// 오늘을 지난 날들의 하루 평균과 견준 증감률.
+    private func versus(_ today: Double, usual: Double) -> String {
+        guard usual > 0 else { return "-" }
+        let change = Int(((today - usual) / usual * 100).rounded())
+        return change == 0 ? "같음" : "\(change > 0 ? "▲" : "▼") \(abs(change))%"
     }
 
     // MARK: 막대
@@ -55,6 +83,7 @@ struct DailyDetailView: View {
         let dayStart: Date
         let total: UsageStore.DailyTotal?
         var tokens: Int { total?.tokens ?? 0 }
+        func value(byCost: Bool) -> Double { total.map { byCost ? $0.costUSD : Double($0.tokens) } ?? 0 }
     }
 
     /// 오늘부터 거슬러 올라간 8일 (오래된 날부터).
@@ -69,9 +98,11 @@ struct DailyDetailView: View {
 
     private func chart(_ totals: [UsageStore.DailyTotal]) -> some View {
         let days = chartDays(totals)
-        let peak = CGFloat(max(days.map(\.tokens).max() ?? 1, 1))
+        let byCost = hover.byCost
+        func label(_ value: Double) -> String { byCost ? Format.usd(value) : Format.tokens(Int(value)) }
+        let peak = CGFloat(max(days.map { $0.value(byCost: byCost) }.max() ?? 1, 0.0001))
         // 위 요약과 같게 쓴 날만으로 평균을 낸다
-        let average = CGFloat(totals.map(\.tokens).reduce(0, +)) / CGFloat(max(totals.count, 1))
+        let average = CGFloat(totals.map { byCost ? $0.costUSD : Double($0.tokens) }.reduce(0, +)) / CGFloat(max(totals.count, 1))
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 if let index = hover.index, days.indices.contains(index) {
@@ -80,11 +111,18 @@ struct DailyDetailView: View {
                     Text(day.total.map { "\(Format.tokens($0.tokens)) · \(Format.usd($0.costUSD))" } ?? "쓰지 않음")
                         .font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 } else {
-                    Text("날짜별 토큰").font(.system(size: 12, weight: .semibold))
+                    Text(byCost ? "날짜별 비용" : "날짜별 토큰").font(.system(size: 12, weight: .semibold))
                 }
                 Spacer()
+                Picker("", selection: $hover.byCost) {
+                    Text("토큰").tag(false)
+                    Text("비용").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 110)
             }
-            .frame(height: 16)
+            .frame(height: 22)
             GeometryReader { geo in
                 let height = geo.size.height
                 ZStack(alignment: .bottomLeading) {
@@ -92,7 +130,13 @@ struct DailyDetailView: View {
                         ForEach(Array(days.enumerated()), id: \.element.dayStart) { index, day in
                             Group {
                                 if let total = day.total {
-                                    stackedBar(total, height: max(height * CGFloat(total.tokens) / peak, 3))
+                                    let barHeight = max(height * CGFloat(day.value(byCost: byCost)) / peak, 3)
+                                    if byCost {
+                                        RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Palette.blue)
+                                            .frame(height: barHeight).tip(breakdown(total))
+                                    } else {
+                                        stackedBar(total, height: barHeight)
+                                    }
                                 } else {
                                     RoundedRectangle(cornerRadius: 1.5).fill(Color.primary.opacity(0.08)).frame(height: 3)
                                 }
@@ -103,6 +147,20 @@ struct DailyDetailView: View {
                             .onHover { hover.update(index, $0) }
                         }
                     }
+                    // 눈금선: 맨 위(최고)와 절반
+                    ForEach([1.0, 0.5], id: \.self) { fraction in
+                        let gy = height * (1 - CGFloat(fraction))
+                        Path { path in
+                            path.move(to: CGPoint(x: 0, y: gy))
+                            path.addLine(to: CGPoint(x: geo.size.width, y: gy))
+                        }
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                        Text(label(Double(peak) * fraction))
+                            .font(.system(size: 10.5).monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                            .position(x: 22, y: fraction == 1 ? gy + 8 : gy - 8)
+                    }
+                    .allowsHitTesting(false)
                     // 평균선
                     let y = height * (1 - average / peak)
                     Path { path in
@@ -130,7 +188,11 @@ struct DailyDetailView: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            legend(families(in: totals))
+            if byCost {
+                Text("비용은 API 단가로 환산한 참고값입니다.").font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                legend(families(in: totals))
+            }
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.groupedRow))
@@ -161,6 +223,25 @@ struct DailyDetailView: View {
         }
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
+    }
+
+    // MARK: 모델
+
+    /// 최근 8일 모델 계열별 토큰 비중.
+    @ViewBuilder
+    private func models(_ totals: [UsageStore.DailyTotal]) -> some View {
+        let byFamily = totals.reduce(into: [String: Int]()) { sum, day in
+            for (model, tokens) in day.modelTokens { sum[Self.family(of: model), default: 0] += tokens }
+        }
+        let rows = byFamily.sorted { Self.rank($0.key) < Self.rank($1.key) }
+        let total = max(rows.map(\.value).reduce(0, +), 1)
+        if !rows.isEmpty {
+            GroupedSection("모델별", footer: "최근 8일 토큰 비중입니다. 비용은 API 단가로 환산한 참고값입니다.") {
+                ForEach(rows, id: \.key) { family, value in
+                    shareRow(family, tokens: value, cost: nil, share: Double(value) / Double(total), color: Self.color(for: family))
+                }
+            }
+        }
     }
 
     // MARK: 프로젝트
@@ -200,15 +281,19 @@ struct DailyDetailView: View {
     }
 
     private func projectRow(_ name: String, tokens: Int, cost: Double, share: Double) -> some View {
+        shareRow(name, tokens: tokens, cost: cost, share: share, color: Palette.blue)
+    }
+
+    /// 이름, 비중 막대, %, 토큰, 비용(있으면)을 한 줄에 둔다. 열 너비를 고정해 줄마다 같은 자리에 오게 한다.
+    private func shareRow(_ name: String, tokens: Int, cost: Double?, share: Double, color: Color) -> some View {
         // 긴 폴더 이름은 두 줄로 꺾이지 않게 줄이고, 마우스를 올리면 전체 이름을 보여 준다
         GroupedRow(name.count > 12 ? name.prefix(11) + "…" : name) {
-            // 열 너비를 고정해 줄마다 막대와 숫자가 같은 자리에 오게 한다
             HStack(spacing: 8) {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.08)).frame(width: 44, height: 5)
-                    // 1%가 안 되는 폴더는 막대를 비우고 <1%로 적는다 (0%에 막대가 있으면 어긋나 보인다)
+                    // 1%가 안 되는 항목은 막대를 비우고 <1%로 적는다 (0%에 막대가 있으면 어긋나 보인다)
                     if share >= 0.005 {
-                        Capsule().fill(Palette.blue).frame(width: max(3, 44 * share), height: 5)
+                        Capsule().fill(color).frame(width: max(3, 44 * share), height: 5)
                     }
                 }
                 Text(share < 0.005 ? "<1%" : "\(Int((share * 100).rounded()))%").foregroundStyle(.secondary)
@@ -216,28 +301,16 @@ struct DailyDetailView: View {
                     .frame(width: 38, alignment: .trailing)
                 Text(Format.tokens(tokens))
                     .frame(width: 58, alignment: .trailing)
-                Text(Format.usd(cost)).foregroundStyle(.secondary)
-                    .frame(width: 56, alignment: .trailing)
+                if let cost {
+                    Text(Format.usd(cost)).foregroundStyle(.secondary)
+                        .frame(width: 56, alignment: .trailing)
+                }
             }
             .font(.system(size: 12).monospacedDigit())
             .lineLimit(1)
             .fixedSize()
         }
         .tip(name)
-    }
-
-    // MARK: 목록
-
-    private func row(_ day: UsageStore.DailyTotal) -> some View {
-        GroupedRow(dayTitle(day.dayStart)) {
-            HStack(spacing: 10) {
-                Text(Format.tokens(day.tokens)).monospacedDigit()
-                Text(Format.usd(day.costUSD)).monospacedDigit().foregroundStyle(.secondary)
-                    .frame(minWidth: 52, alignment: .trailing)
-            }
-            .font(.system(size: 13, weight: isToday(day.dayStart) ? .semibold : .regular))
-        }
-        .tip(breakdown(day))
     }
 
     // MARK: 날짜
@@ -322,6 +395,8 @@ struct DailyDetailView: View {
 /// 마우스를 올린 날. `@State`를 못 쓰는 이유는 HoverFlag 참고.
 final class HoveredDay: ObservableObject {
     @Published var index: Int?
+    /// 막대를 토큰이 아니라 비용으로 그릴지.
+    @Published var byCost = false
 
     func update(_ index: Int, _ inside: Bool) {
         if inside { self.index = index } else if self.index == index { self.index = nil }

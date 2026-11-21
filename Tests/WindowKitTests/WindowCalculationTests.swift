@@ -46,7 +46,15 @@ private func rect(_ action: WindowAction, last: RectangleAction? = nil, in frame
 }
 
 @Test func repeatingLeftHalfCyclesThroughSizes() {
-    // 기본 순서는 1/2 → 2/3 → 1/3
+    // 기본 순서는 1/2 → 2/3 → 1/3. 이 Mac에 저장된 순환 크기·모서리 설정을 읽지 않게 기본값으로 고정하고 끝나면 되돌린다
+    let savedChanged = Defaults.cycleSizesIsChanged.enabled
+    let savedCooperative = Defaults.cooperativeCornerResize.enabled
+    Defaults.cycleSizesIsChanged.enabled = false
+    Defaults.cooperativeCornerResize.enabled = false
+    defer {
+        Defaults.cycleSizesIsChanged.enabled = savedChanged
+        Defaults.cooperativeCornerResize.enabled = savedCooperative
+    }
     let half = LeftRightHalfCalculation()
     func repeated(_ count: Int) -> CGRect {
         let last = count == 0 ? nil : RectangleAction(action: .leftHalf, rect: .zero, count: count)

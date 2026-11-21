@@ -139,7 +139,7 @@ struct PopoverView: View {
                 .frame(minHeight: 28)
                 usageCards
                 Text("최근 8일").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.primary)
-                    .padding(.top, 28).padding(.bottom, 10)
+                    .padding(.top, 24).padding(.bottom, 10)
                 DailyDetailView(engine: engine)
             }
             .frame(maxWidth: 1080, alignment: .leading)
@@ -578,7 +578,7 @@ struct PopoverView: View {
                     caption("쓴 기록 없음", color: Theme.tertiary)
                 }
             }
-            Sparkline(values: values, hoverIndex: $sparklineHover.index, height: windowed ? 150 : 44)
+            Sparkline(values: values, hoverIndex: $sparklineHover.index, height: windowed ? 96 : 44)
             HStack {
                 Text("30분 전")
                 Spacer()
