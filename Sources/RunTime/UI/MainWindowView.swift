@@ -3,7 +3,7 @@ import SwiftUI
 
 /// 한 창 안에서 오가는 화면. 메뉴바·팝오버·알림의 단추도 새 창을 띄우지 않고 이 창의 화면을 바꾼다.
 enum MainPage: String, CaseIterable {
-    case usage, runners, workLog, redmine, design, hosts, settings
+    case usage, runners, workLog, redmine, design, hosts, guide, settings
 
     /// 예전 버전이 따로 띄우던 창 이름. 지금은 합친 화면으로 연다 (일별 사용량은 사용량, 게임은 러너, 캘린더는 업무 일지).
     init?(windowName: String) {
@@ -21,6 +21,7 @@ enum MainPage: String, CaseIterable {
         case .design: return "피그마"
         case .hosts: return "호스트"
         case .redmine: return "레드마인"
+        case .guide: return "사용법"
         case .settings: return "설정"
         }
     }
@@ -33,6 +34,7 @@ enum MainPage: String, CaseIterable {
         case .design: return "paintpalette"
         case .hosts: return "network"
         case .redmine: return "list.bullet.rectangle.portrait"
+        case .guide: return "questionmark.circle"
         case .settings: return "gearshape"
         }
     }
@@ -45,6 +47,7 @@ enum MainPage: String, CaseIterable {
         case .design: return "피그마 화면설계서의 메뉴·화면별 변경 기록"
         case .hosts: return "/etc/hosts 묶음별 켜기·끄기, 정리, 백업"
         case .redmine: return "레드마인 일감 보기·고치기·댓글, 저장한 질의"
+        case .guide: return "메뉴마다 짧은 영상으로 쓰는 순서 보기"
         case .settings: return "일반, 알림, 창 배치, 클립보드, GitLab·레드마인·팀즈·피그마 연동"
         }
     }
@@ -127,9 +130,7 @@ struct MainWindowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .top) { hint }
         }
-        .sheet(item: $guide.topic) { topic in
-            GuideView(selected: topic, open: openGuideTarget) { guide.topic = nil }
-        }
+
         // 업무 일지의 "연동 설정"·"레드마인 연결" 단추는 이 창의 설정 화면 업무 일지 칸으로 간다
         .onReceive(workLogPage.$showsSettings.filter { $0 }) { _ in
             workLogPage.showsSettings = false
@@ -157,7 +158,7 @@ struct MainWindowView: View {
                 ForEach(group, id: \.self) { page in railItem(page) }
             }
             Spacer()
-            guideButton
+            railItem(.guide)
             railItem(.settings)
         }
         .padding(.top, 10)
@@ -167,33 +168,16 @@ struct MainWindowView: View {
         .background(SidebarMaterial())
     }
 
-    private var guideButton: some View {
-        Button { guide.topic = GuideTopic.topic(for: navigator.page) ?? GuideTopic.all[0] } label: {
-            VStack(spacing: 3) {
-                Image(systemName: "questionmark.circle")
-                    .font(.system(size: 17))
-                    .frame(width: 42, height: 30)
-                Text("사용법").font(.system(size: 11.5, weight: .medium)).lineLimit(1)
-            }
-            .foregroundStyle(Color.secondary)
-            .frame(width: Self.railWidth - 6, height: 56)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut("/", modifiers: .command)
-        .tip("사용법 (⌘/) · 메뉴마다 처음 하는 순서를 보여 줍니다")
-        .accessibilityLabel("사용법")
-    }
-
     /// 처음 연 화면 위에 사용법을 권하는 한 줄.
     @ViewBuilder private var hint: some View {
         if ProcessInfo.processInfo.environment["RUNTIME_NO_GUIDE_HINT"] == nil,
            let topic = GuideTopic.topic(for: navigator.page), topic.id != "usage",
-           !guide.dismissed.contains(topic.id), !GuideSeen.has(topic.id) {
+           !guide.dismissed.contains(topic.id), !GuideSeen.has(topic.id), navigator.page != .guide {
             GuideHint(topic: topic, show: {
                 GuideSeen.mark(topic.id)
                 guide.dismissed.insert(topic.id)
-                guide.topic = topic
+                guide.selected = topic
+                navigator.go(.guide)
             }, dismiss: {
                 GuideSeen.mark(topic.id)
                 guide.dismissed.insert(topic.id)
@@ -216,8 +200,12 @@ struct MainWindowView: View {
         let on = navigator.page == page
         // 설정은 macOS 관례대로 ⌘,로, 나머지는 위에서부터 ⌘1, ⌘2…
         let number = MainPage.allCases.firstIndex(of: page).map { $0 + 1 } ?? 0
-        let key: KeyEquivalent = page == .settings ? "," : KeyEquivalent(Character(String(number)))
-        return Button { navigator.go(page) } label: {
+        let key: KeyEquivalent = page == .settings ? "," : page == .guide ? "/" : KeyEquivalent(Character(String(number)))
+        return Button {
+            // 사용법은 지금 보던 화면의 주제로 열린다
+            if page == .guide, let topic = GuideTopic.topic(for: navigator.page) { guide.selected = topic }
+            navigator.go(page)
+        } label: {
             VStack(spacing: 3) {
                 Image(systemName: page.icon)
                     .font(.system(size: 17, weight: on ? .semibold : .regular))
@@ -235,7 +223,7 @@ struct MainWindowView: View {
         }
         .buttonStyle(.plain)
         .keyboardShortcut(key, modifiers: .command)
-        .tip("\(page.title) (⌘\(page == .settings ? "," : String(number))) · \(page.detail)")
+        .tip("\(page.title) (⌘\(page == .settings ? "," : page == .guide ? "/" : String(number))) · \(page.detail)")
         .accessibilityLabel(page.title)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
@@ -310,6 +298,8 @@ struct MainWindowView: View {
                             workLogPage.preview = .redmine
                             navigator.go(.workLog)
                         })
+        case .guide:
+            GuideView(state: guide, open: openGuideTarget)
         case .settings:
             SettingsView(settings: settings, engine: engine, tab: settingsTab, workLog: workLogPage,
                          openRunners: { [navigator] in navigator.go(.runners) })

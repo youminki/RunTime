@@ -406,6 +406,9 @@ Claude Code는 macOS에서 OAuth 토큰을 키체인 항목 `Claude Code-credent
 | `--hosts-check` | 켜진 호스트마다 주소 풀이, 443·80 포트, 웹 응답, 인증서를 앱 코드 그대로 보고 판정을 찍음 (`RUNTIME_HOSTS`로 다른 파일) |
 | `--diagnose` | 이 Mac의 빌드, macOS, 화면 구성, 업데이트 상태, 최근 문제 기록(`~/Library/Logs/RunTime/events.log`)을 찍음 |
 | `--ui-shots <폴더>` | 팝오버, 앱 창 화면, 업무 일지를 실제 데이터로 찍어 PNG로 저장 (`RUNTIME_SHOTS=main-,worklog-day`처럼 이름 앞부분으로 고를 수 있음) |
+| `--guide-clips <폴더> [장면,...]` | 사용법 영상 프레임을 예시 데이터로 만들기. 보통 `scripts/make-guide-gifs.sh`가 부르고 mp4와 README GIF까지 만듦 |
+| `--guide-check` | 사용법 영상 8개를 앱이 찾아 재생 준비까지 되는지, 단계 시각이 맞는지 점검 |
+| `--guide-show [주제]` | 사용법 화면을 실제 창으로 띄워 영상이 그려지는지 눈으로 확인 |
 | `--readme-shots <폴더>` | README 사용량 창과 펫 화면을 예시 값으로 찍기 (내 사용량은 쓰지 않음) |
 | `--game-sim [판 수] [목표 점수]` | 미니게임을 화면 없이 여러 판 돌려 초반 타이밍 창과 실력별 도달 점수 재기 |
 

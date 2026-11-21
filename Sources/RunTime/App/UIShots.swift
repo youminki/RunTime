@@ -379,8 +379,8 @@ enum UIShots {
             ("main-settings-alerts", .aqua, nil, settingsShot(.alerts, engine: engine)),
             ("decor-scenes", .darkAqua, nil, AnyView(RunnerDecorView(settings: engine.settings).padding(14).frame(width: 376).background(Theme.background))),
             ("petdex", .darkAqua, nil, AnyView(PetdexBrowser(settings: engine.settings, form: PetdexSearch(), close: {}).background(windowBackground))),
-            ("guide", .aqua, nil, AnyView(GuideView(selected: GuideTopic.all[2], open: { _ in }, close: {}))),
-            ("guide-dark", .darkAqua, nil, AnyView(GuideView(selected: GuideTopic.all[6], open: { _ in }, close: {}))),
+            ("main-guide", .aqua, nil, mainPage(.guide, engine: engine)),
+            ("main-guide-dark", .darkAqua, nil, mainPage(.guide, engine: engine)),
             ("welcome", .darkAqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("welcome-light", .aqua, nil, AnyView(WelcomeView(settings: engine.settings))),
             ("popover-pets", .darkAqua, nil, AnyView(PopoverView(engine: engine, settings: engine.settings, startSection: .pets)

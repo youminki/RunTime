@@ -37,7 +37,7 @@ struct GuideTopic: Identifiable, Hashable {
         case .redmine: id = "redmine"
         case .design: id = "figma"
         case .hosts: id = "hosts"
-        case .settings: return nil
+        case .settings, .guide: return nil
         }
         return all.first { $0.id == id }
     }
@@ -206,23 +206,12 @@ struct VideoSurface: NSViewRepresentable {
     func updateNSView(_ view: AVPlayerView, context: Context) {}
 }
 
-final class GuideModel: ObservableObject {
-    @Published var selected: GuideTopic
-    init(_ topic: GuideTopic) { selected = topic }
-}
-
+/// 앱 창 안의 사용법 화면 (설정처럼 왼쪽 목록과 오른쪽 내용). 뒤로 단추로 돌아간다.
 struct GuideView: View {
-    @StateObject private var model: GuideModel
+    @ObservedObject var state: GuideState
     @StateObject private var player = GuidePlayer()
     var open: (GuideTopic.Target) -> Void
-    var close: () -> Void
-    private var selected: GuideTopic { model.selected }
-
-    init(selected: GuideTopic, open: @escaping (GuideTopic.Target) -> Void, close: @escaping () -> Void) {
-        _model = StateObject(wrappedValue: GuideModel(selected))
-        self.open = open
-        self.close = close
-    }
+    private var selected: GuideTopic { state.selected }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -230,9 +219,10 @@ struct GuideView: View {
             Rectangle().fill(Palette.separator).frame(width: 0.5)
             detail
         }
-        .frame(width: 1120, height: 700)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { player.load(selected) }
         .onDisappear { player.stop() }
+        .onReceive(state.$selected.dropFirst()) { player.load($0) }
     }
 
     // MARK: 왼쪽 목록
@@ -250,15 +240,15 @@ struct GuideView: View {
             Spacer()
         }
         .padding(14)
-        .frame(width: 210)
+        .frame(width: 188)
+        .frame(maxHeight: .infinity)
         .background(Palette.groupedBackground)
     }
 
     private func row(_ topic: GuideTopic) -> some View {
         let on = selected == topic
         return Button {
-            model.selected = topic
-            player.load(topic)
+            state.selected = topic
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: topic.icon).frame(width: 18)
@@ -287,6 +277,9 @@ struct GuideView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
+                Button(selected.openTitle) { open(selected.target) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
             }
             HStack(alignment: .top, spacing: 18) {
                 video
@@ -294,17 +287,6 @@ struct GuideView: View {
             }
             if !selected.tips.isEmpty { tips }
             Spacer(minLength: 0)
-            HStack {
-                Button("닫기", action: close).keyboardShortcut(.cancelAction)
-                Spacer()
-                Button(selected.openTitle) {
-                    open(selected.target)
-                    close()
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            }
         }
         .padding(22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -319,7 +301,7 @@ struct GuideView: View {
             }
         }
         .aspectRatio(776.0 / 586.0, contentMode: .fit)
-        .frame(width: 600)
+        .frame(width: 540)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Palette.separator))
         .accessibilityLabel("\(selected.title) 사용 영상")
@@ -336,7 +318,7 @@ struct GuideView: View {
                             .frame(width: 22, height: 22)
                             .background(Circle().fill(on ? Color.accentColor : Color.accentColor.opacity(0.14)))
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(step.title).font(.system(size: 13.5, weight: .semibold))
+                            Text(step.title).font(.system(size: 13.5, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
                             Text(step.detail).font(.system(size: 12)).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -404,8 +386,8 @@ enum GuideSeen {
     }
 }
 
-/// 앱 창이 드는 사용법 상태: 열린 사용법 창과, 이번에 안내를 닫은 화면.
+/// 앱 창이 드는 사용법 상태: 사용법 화면에서 고른 주제와, 이번에 안내를 닫은 화면.
 final class GuideState: ObservableObject {
-    @Published var topic: GuideTopic?
+    @Published var selected: GuideTopic = GuideTopic.all[0]
     @Published var dismissed: Set<String> = []
 }

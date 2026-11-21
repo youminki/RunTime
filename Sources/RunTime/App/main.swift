@@ -1,6 +1,7 @@
 import UniformTypeIdentifiers
 import Combine
 import AppKit
+import SwiftUI
 import HostsCore
 import ReportCore
 import UsageCore
@@ -781,6 +782,25 @@ if CommandLine.arguments.contains("--diagnose") {
     _ = NSApplication.shared
     print(Diagnostics.report())
     exit(0)
+}
+
+// 사용법 창을 실제 화면에 띄워 본다 (`--guide-show [주제]`): 영상이 그려지는지 눈으로 보려고
+if let index = CommandLine.arguments.firstIndex(of: "--guide-show") {
+    let id = CommandLine.arguments.dropFirst(index + 1).first ?? "workLog"
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    MainActor.assumeIsolated {
+        let topic = GuideTopic.all.first { $0.id == id } ?? GuideTopic.all[0]
+        let state = GuideState()
+        state.selected = topic
+        let window = NSWindow(contentViewController: NSHostingController(rootView: GuideView(state: state, open: { _ in }).frame(width: 1160, height: 700)))
+        window.styleMask = [.titled, .closable]
+        window.setFrameOrigin(NSPoint(x: 60, y: 60))
+        window.makeKeyAndOrderFront(nil)
+        app.activate(ignoringOtherApps: true)
+        print("window: \(window.windowNumber)"); fflush(stdout)
+    }
+    app.run()
 }
 
 // 사용법 영상 점검 (`--guide-check`): 주제마다 영상을 앱이 찾아 재생 준비까지 되는지, 단계 시각이 맞는지 본다
