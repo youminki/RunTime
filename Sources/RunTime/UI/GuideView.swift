@@ -135,11 +135,11 @@ struct GuideTopic: Identifiable, Hashable {
             steps: [
                 GuideStep(title: "⇧⌘V로 열기", detail: "복사해 둔 텍스트, 이미지, 파일, 색이 화면 아래 띠에 최근 순으로 뜹니다."),
                 GuideStep(title: "골라서 붙이기", detail: "방향키로 고르고 Enter를 누르면 쓰던 앱에 바로 붙습니다."),
-                GuideStep(title: "종류로 거르기", detail: "위쪽 단추로 링크나 이미지처럼 한 종류만 모아 봅니다."),
+                GuideStep(title: "종류로 거르기", detail: "오른쪽 위 거르기 메뉴로 링크나 이미지처럼 한 종류만 모아 봅니다."),
                 GuideStep(title: "초성으로 찾기", detail: "ㅇㅁ ㅇㅈ처럼 초성만 쳐도 ‘업무 일지’를 찾아 줍니다."),
-                GuideStep(title: "보드에 모아 두기", detail: "자주 쓰는 것은 보드에 담아 두면 지워지지 않습니다."),
+                GuideStep(title: "고정해 두기", detail: "자주 쓰는 것은 카드의 핀 단추나 ⌘P로 고정하면 고정 탭에 모이고 지워지지 않습니다."),
             ],
-            tips: ["처음에는 설정 > 클립보드에서 ‘클립보드 기록 켜기’를 눌러야 합니다.", "암호 관리자에서 복사한 암호는 기록하지 않습니다. 기록은 이 Mac에만 있습니다."],
+            tips: ["처음에는 설정 > 클립보드에서 ‘클립보드 기록 켜기’를 눌러야 합니다.", "암호 관리자에서 복사한 암호는 기록하지 않습니다. 기록은 이 Mac에만 있습니다.", "계정 탭(⌘→)에 아이디·비밀번호를 두면 로그인 화면에서 Enter 한 번으로 넣습니다. 비밀번호는 키체인에만 둡니다."],
             target: .settings(.clipboard), openTitle: "클립보드 설정 열기"),
         GuideTopic(
             id: "windows", group: "도구", title: "창 배치", icon: "rectangle.split.2x1",

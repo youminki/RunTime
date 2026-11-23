@@ -1,5 +1,6 @@
 import AppKit
 import ClipKit
+import UsageCore
 import WindowKit
 
 /// 클립보드 기록(Pesty에서 옮긴 기능)을 켜고 끈다. 복사한 내용을 이 Mac에 남기므로 기본은 꺼 둔다.
@@ -30,8 +31,31 @@ final class Clipboard: ObservableObject {
         enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
     }
 
+    /// 앱이 뜰 때 한 번 (메인 스레드). shared는 창 배치가 다른 스레드에서 먼저 만들 수 있어 init에서 하지 않는다.
+    @MainActor private static func installSecrets() {
+        if !WorkLogSettings.keychainOff { ClipRuntime.secrets = keychainSecrets }
+    }
+
+    /// 계정 비밀번호는 업무 일지 키처럼 `security`로 만든 키체인 항목에 둔다. 다시 빌드해도 허용을 또 묻지 않는다.
+    /// 한글·기호가 섞인 값도 `security -w`가 그대로 돌려주게 base64로 감싸 둔다.
+    private static let keychainService = "RunTime clipboard accounts"
+    private static let keychainSecrets = ClipSecrets(
+        read: { account in
+            guard let data = ClaudeLogin.readKeychain(service: keychainService, account: account),
+                  let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let raw = Data(base64Encoded: text) else { return nil }
+            return String(data: raw, encoding: .utf8)
+        },
+        write: { value, account in
+            ClaudeLogin.writeKeychain(Data(Data(value.utf8).base64EncodedString().utf8), service: keychainService, account: account)
+        },
+        delete: { account in ClaudeLogin.deleteKeychain(service: keychainService, account: account) })
+
     func launch() {
-        if enabled { MainActor.assumeIsolated { ClipRuntime.start() } }
+        MainActor.assumeIsolated {
+            Self.installSecrets()
+            if enabled { ClipRuntime.start() }
+        }
     }
 
     func toggleBar() { MainActor.assumeIsolated { ClipRuntime.toggleBar() } }

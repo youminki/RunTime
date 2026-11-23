@@ -1,3 +1,4 @@
+import SwiftUI
 import AppKit
 
 /// 띠 화면 찍기 (`--clip-shots <폴더>`). 여러 종류의 클립을 넣고 기본·검색·거르기·보드·빈 결과 상태를 찍는다.
@@ -5,6 +6,7 @@ import AppKit
 @MainActor
 public enum ClipShots {
     public static func run(to folder: URL) {
+        ClipRuntime.secrets = .memory()
         let store = ClipboardStore.shared
         store.clearHistory()
         Settings.shared.hideOnClickOutside = false
@@ -26,11 +28,39 @@ public enum ClipShots {
         shoot("clip-5-filter-link", folder, reset: false)
         store.typeFilter = nil
 
-        let board = store.addPinboard(name: "자주 쓰는 것")
-        for item in store.history.prefix(3) { store.saveToPinboard(item, boardID: board.id) }
-        store.source = .pinboard(board.id)
-        shoot("clip-6-pinboard", folder, reset: false)
-        store.source = .history
+        Pinned.toggle(Array(store.history.prefix(3)))
+        BarMode.shared.select(.pinned)
+        shoot("clip-6-pinned", folder, reset: false)
+
+        // 계정 탭. 비밀번호는 메모리에만 둔다
+        let accounts = AccountStore.shared
+        for account in accounts.accounts { accounts.delete(account.id) }
+        accounts.save(title: "네이버", username: "runtime.dev", password: "Abc!2345xyz", site: "naver.com")
+        accounts.save(title: "사내 메일", username: "me@company.co.kr", password: "Pw#77889900", site: "mail.company.co.kr", submit: true)
+        accounts.save(title: "GitHub", username: "youminki", password: "Gh!secret99", site: "github.com")
+        BarMode.shared.select(.accounts)
+        shoot("clip-8-accounts", folder, reset: false)
+        if let account = accounts.accounts.first {
+            for (name, dark) in [("clip-10-account-editor", false), ("clip-11-account-editor-dark", true)] {
+                let draft = AccountDraft(account: account, password: "Abc!2345xyz", heading: "계정 수정", existing: true)
+                draft.onDelete = {}
+                shootEditor(draft, dark: dark, to: folder.appendingPathComponent(name + ".png"))
+            }
+            let blank = AccountDraft(account: Account(title: "", username: ""), password: "", heading: "계정 추가", existing: false)
+            shootEditor(blank, dark: false, to: folder.appendingPathComponent("clip-12-account-add.png"))
+        }
+        BarMode.shared.select(.recent)
+
+        // 카드 단추 줄은 마우스를 올려야 떠서 따로 그린다
+        if let first = store.history.first {
+            let bar = CardActionBar(item: first).padding(24).background(Theme.cardBody)
+            let renderer = ImageRenderer(content: bar)
+            renderer.scale = 2
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: folder.appendingPathComponent("clip-9-card-actions.png"))
+            }
+        }
 
         store.clearHistory()
         shoot("clip-7-empty", folder)
@@ -53,6 +83,8 @@ public enum ClipShots {
                      sourceBundleID: "com.apple.finder", sourceAppName: "Finder", createdAt: at(3600)),
             ClipItem(type: .text, text: "업무 일지: 클립보드 기록 띠 점검, 초성 검색 확인",
                      sourceBundleID: "com.apple.Notes", sourceAppName: "메모", createdAt: at(7200)),
+            ClipItem(type: .text, text: "Xk9#mP2v!Lq7",
+                     sourceBundleID: "com.apple.Notes", sourceAppName: "메모", createdAt: at(43_200)),
             ClipItem(type: .link, text: "https://pasteapp.io",
                      sourceBundleID: "com.apple.Safari", sourceAppName: "Safari", createdAt: at(86_400)),
         ]
@@ -62,6 +94,20 @@ public enum ClipShots {
         }
         for item in items.reversed() { store.addCaptured(item) }
         store.selectFirst()
+    }
+
+    private static func shootEditor(_ draft: AccountDraft, dark: Bool, to url: URL) {
+        let panel = AccountEditorPanel.make(draft)
+        panel.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        guard let host = panel.contentView else { return }
+        panel.center()
+        panel.orderFrontRegardless()
+        wait(0.8)
+        if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: url)
+        }
+        panel.orderOut(nil)
     }
 
     private static func sampleImage() -> Data? {
@@ -92,8 +138,9 @@ public enum ClipShots {
     /// showBar는 검색어·거르기·보드를 비운다. 그 상태를 찍을 때는 띠만 다시 올린다.
     private static func showKeepingState() {
         let store = ClipboardStore.shared
-        let (search, filter, source) = (store.searchText, store.typeFilter, store.source)
+        let (search, filter, source, tab) = (store.searchText, store.typeFilter, store.source, BarMode.shared.tab)
         AppController.shared.showBar()
+        BarMode.shared.select(tab)
         store.source = source
         store.typeFilter = filter
         store.searchText = search

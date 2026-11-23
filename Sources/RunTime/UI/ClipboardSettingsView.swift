@@ -18,6 +18,7 @@ struct ClipboardSettingsView: View {
             header
             if clipboard.enabled || showsAll {
                 pasting
+                accounts
                 retention
                 ignored
                 history
@@ -62,7 +63,7 @@ struct ClipboardSettingsView: View {
     // MARK: 붙여넣기
 
     @ViewBuilder private var pasting: some View {
-        GroupedSection("붙여넣기", footer: "띠에서 ⌘1~9로 앞의 아홉 개를 바로 붙이고, ⇧을 함께 누르면 서식 없이 붙입니다. 바로 붙여넣기는 창 배치와 같은 손쉬운 사용 권한을 씁니다.") {
+        GroupedSection("붙여넣기", footer: pastingFooter) {
             ToggleRow(title: "쓰던 앱에 바로 붙여넣기", icon: "arrow.down.doc", isOn: $prefs.pasteDirectly)
             if prefs.pasteDirectly && !layout.trusted {
                 GroupedRow("권한이 없어 복사만 합니다. ⌘V는 직접 누르세요", icon: "lock") {
@@ -71,17 +72,45 @@ struct ClipboardSettingsView: View {
                 .foregroundStyle(Palette.orange)
             }
             ToggleRow(title: "붙여넣은 클립을 맨 앞으로", icon: "arrow.left.to.line", isOn: $prefs.promoteOnPaste)
-            ToggleRow(title: "고른 클립을 오른쪽 끝에 두기", icon: "rectangle.righthalf.inset.filled", isOn: $prefs.selectedAtRightEdge)
+            GroupedRow("선택한 카드 위치", icon: "rectangle.righthalf.inset.filled") {
+                Picker("선택한 카드 위치", selection: $prefs.selectedAtRightEdge) {
+                    Text("가운데").tag(false)
+                    Text("오른쪽 끝").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+            }
             ToggleRow(title: "띠 바깥을 누르면 닫기", icon: "xmark.rectangle", isOn: $prefs.hideOnClickOutside)
             ToggleRow(title: "띠에 크기 손잡이 보이기", icon: "arrow.up.and.down", isOn: $prefs.showResizeHandle)
             ToggleRow(title: "붙여넣을 때 소리 내기", icon: "speaker.wave.2", isOn: $prefs.playSound)
         }
     }
 
+    /// 띠의 키 안내와 같은 내용. 여는 단축키가 ⌘V 계열이면 한 번 더 눌러 서식 없이 붙이는 것도 알린다.
+    private var pastingFooter: String {
+        var text = "띠에서 ↩로 붙이고 ⇧↩는 서식 없이 붙입니다. ⌘1~9는 앞의 아홉 개를 바로 붙이고, ⇧을 함께 누르면 서식 없이 붙입니다. 자주 쓰는 클립은 ⌘P로 고정합니다."
+        if prefs.hotKeyCode == kVK_ANSI_V {
+            text += " 띠가 떠 있을 때 \(clipboard.hotKeyLabel)를 한 번 더 누르면 맨 앞 클립을 서식 없이 붙입니다."
+        }
+        return text + " 바로 붙여넣기는 창 배치와 같은 손쉬운 사용 권한을 씁니다."
+    }
+
+    // MARK: 계정
+
+    @ViewBuilder private var accounts: some View {
+        GroupedSection("계정", footer: "띠의 계정 탭(⌘→)에서 계정을 고르고 ↩를 누르면 쓰던 앱의 입력칸에 아이디, Tab, 비밀번호를 넣습니다. 비밀번호 칸에 있으면 비밀번호만 넣습니다. 비밀번호는 이 Mac의 키체인에만 두고 기록 파일에는 남기지 않습니다.") {
+            GroupedRow("저장한 계정 \(prefs.accountCount)개", icon: "key") {
+                Button("띠에서 열기") { clipboard.toggleBar() }.controlSize(.small)
+                    .disabled(!clipboard.enabled)
+            }
+            ToggleRow(title: "“아이디: … 비밀번호: …”를 복사하면 계정으로 저장", icon: "square.and.arrow.down", isOn: $prefs.autoSaveAccounts)
+            ToggleRow(title: "넣거나 복사하기 전에 Touch ID로 확인 (5분 유지)", icon: "touchid", isOn: $prefs.accountsRequireAuth)
+        }
+    }
+
     // MARK: 보관
 
     @ViewBuilder private var retention: some View {
-        GroupedSection("보관", footer: "기준을 넘은 기록은 저절로 지웁니다. 보드에 담은 클립은 지우지 않습니다.") {
+        GroupedSection("보관", footer: "기준을 넘은 기록은 저절로 지웁니다. 고정한 클립과 계정은 지우지 않습니다.") {
             GroupedRow("정리 기준", icon: "line.3.horizontal.decrease") {
                 Picker("정리 기준", selection: Binding(
                     get: { prefs.keepByAge },
@@ -128,7 +157,7 @@ struct ClipboardSettingsView: View {
         if removed > 0 {
             let alert = NSAlert()
             alert.messageText = "클립 \(removed)개를 지울까요?"
-            alert.informativeText = "바꾼 기준을 넘는 기록을 지금 지우고, 앞으로도 저절로 정리합니다. 보드는 그대로이고 되돌릴 수 없습니다."
+            alert.informativeText = "바꾼 기준을 넘는 기록을 지금 지우고, 앞으로도 저절로 정리합니다. 고정한 클립은 그대로이고 되돌릴 수 없습니다."
             alert.addButton(withTitle: "지우기").hasDestructiveAction = true
             alert.addButton(withTitle: "취소")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -173,7 +202,7 @@ struct ClipboardSettingsView: View {
 
     @ViewBuilder private var history: some View {
         GroupedSection("기록", footer: "기록은 \((prefs.dataFolder.path as NSString).abbreviatingWithTildeInPath)에 있습니다. 멈추면 그동안 복사한 것은 남기지 않습니다.") {
-            GroupedRow("클립 \(prefs.historyCount)개, 보드 \(prefs.pinboardCount)개 · \(ByteCountFormatter.string(fromByteCount: prefs.dataBytes, countStyle: .file))", icon: "tray.full") {
+            GroupedRow("클립 \(prefs.historyCount)개, 고정 \(prefs.pinnedCount)개, 계정 \(prefs.accountCount)개 · \(ByteCountFormatter.string(fromByteCount: prefs.dataBytes, countStyle: .file))", icon: "tray.full") {
                 Button("폴더 열기") { NSWorkspace.shared.open(prefs.dataFolder) }.controlSize(.small)
             }
             GroupedRow(prefs.paused ? "기록을 멈췄습니다" : "복사할 때마다 기록합니다", icon: prefs.paused ? "pause.circle" : "record.circle") {
@@ -190,7 +219,7 @@ struct ClipboardSettingsView: View {
     private func confirmClear() {
         let alert = NSAlert()
         alert.messageText = "클립 \(prefs.historyCount)개를 모두 지울까요?"
-        alert.informativeText = "보드에 담은 클립은 남습니다. 되돌릴 수 없습니다."
+        alert.informativeText = "고정한 클립과 계정은 남습니다. 되돌릴 수 없습니다."
         alert.addButton(withTitle: "지우기").hasDestructiveAction = true
         alert.addButton(withTitle: "취소")
         if alert.runModal() == .alertFirstButtonReturn { prefs.clearHistory() }

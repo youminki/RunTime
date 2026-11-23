@@ -279,6 +279,39 @@ if let index = CommandLine.arguments.firstIndex(of: "--clip-check") {
     exit(lines.allSatisfy(\.ok) ? 0 : 1)
 }
 
+// 계정 창·계정 넣기 실제 입력 점검 (`--clip-live-check`). 포인터와 키를 실제로 쓰므로 그동안 Mac을 만지지 않는다
+if CommandLine.arguments.contains("--clip-live-check") {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-clip-live-\(getpid())")
+    setenv("RUNTIME_CLIP_DEFAULTS", "dev.runtime.RunTime.clip.check", 1)
+    setenv("RUNTIME_CLIP_FOLDER", folder.path, 1)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    app.finishLaunching()
+    let lines = MainActor.assumeIsolated { ClipLiveCheck.run() }
+    for line in lines { print(line.ok ? "✓" : "✗", line.name, line.detail.isEmpty ? "" : "· \(line.detail)") }
+    try? FileManager.default.removeItem(at: folder)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
+    exit(lines.allSatisfy(\.ok) ? 0 : 1)
+}
+
+// 브라우저 연습 로그인 페이지에 계정 넣기 점검 (`--clip-browser-check <번들 id> <주소>`). 새 창을 열어 실제 포인터·키로 넣고 닫는다
+if let index = CommandLine.arguments.firstIndex(of: "--clip-browser-check"), CommandLine.arguments.count > index + 2 {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-clip-browser-\(getpid())")
+    setenv("RUNTIME_CLIP_DEFAULTS", "dev.runtime.RunTime.clip.check", 1)
+    setenv("RUNTIME_CLIP_FOLDER", folder.path, 1)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    app.finishLaunching()
+    let bundleID = CommandLine.arguments[index + 1], url = CommandLine.arguments[index + 2]
+    let lines = MainActor.assumeIsolated { ClipLiveCheck.runBrowser(bundleID: bundleID, url: url) }
+    for line in lines { print(line.ok ? "✓" : "✗", line.name, line.detail.isEmpty ? "" : "· \(line.detail)") }
+    try? FileManager.default.removeItem(at: folder)
+    UserDefaults.standard.removePersistentDomain(forName: "dev.runtime.RunTime.clip.check")
+    exit(lines.allSatisfy(\.ok) ? 0 : 1)
+}
+
 // 클립보드 기록 띠 화면 찍기 (`--clip-shots <폴더>`). 이 Mac의 기록 대신 따로 둔 저장소에 예시 클립을 넣는다
 if let index = CommandLine.arguments.firstIndex(of: "--clip-shots") {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-clip-shots-\(getpid())")

@@ -16,10 +16,15 @@ final class QuickPasteKeys {
     private var refs: [EventHotKeyRef] = []
     private var handlerRef: EventHandlerRef?
 
+    private var startedAt = Date.distantPast
+    /// 띠가 뜬 뒤 지난 시간. 열리는 중에 여는 단축키를 두 번 누른 것을 가려낸다.
+    var shownFor: TimeInterval { Date().timeIntervalSince(startedAt) }
+
     private init() {}
 
     func start() {
         stop()
+        startedAt = Date()
         installHandlerIfNeeded()
         let quick = Settings.shared.quickPasteModifier
         let plain = Settings.shared.plainTextModifier
@@ -59,6 +64,11 @@ final class QuickPasteKeys {
     }
 
     private func paste(digit: Int, plain: Bool) {
+        if BarMode.shared.tab == .accounts {
+            let accounts = BarMode.shared.visibleAccounts
+            if digit >= 1, digit <= accounts.count { AccountFill.fill(accounts[digit - 1], part: plain ? .password : .auto) }
+            return
+        }
         let items = ClipboardStore.shared.visibleItems
         guard digit >= 1, digit <= items.count else { return }
         AppController.shared.pasteItem(items[digit - 1], format: plain ? .plainText : .original)

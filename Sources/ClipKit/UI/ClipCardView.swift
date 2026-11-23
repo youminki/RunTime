@@ -45,10 +45,10 @@ struct ClipCardView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .modifier(ClipCardInteractions(
-            select: { store.select(item.id) },
-            extendSelection: { store.extendSelection(to: item.id) },
-            toggleSelection: { store.toggleSelection(item.id) },
-            paste: { AppController.shared.pasteItem(item) }))
+            select: { CardActions.shared.cardClicked { store.select(item.id) } },
+            extendSelection: { CardActions.shared.cardClicked { store.extendSelection(to: item.id) } },
+            toggleSelection: { CardActions.shared.cardClicked { store.toggleSelection(item.id) } },
+            paste: { if !CardActions.shared.blocksPaste { AppController.shared.pasteItem(item) } }))
         .onDrag { ClipDragProvider.make(for: item) }
         .contextMenu { menu }
         .task(id: item.id) { await loadPreview() }
@@ -59,7 +59,12 @@ struct ClipCardView: View {
             headerColor
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(cardTypeLabel)
+                    HStack(spacing: 5) {
+                        if Pinned.contains(item) {
+                            Image(systemName: "pin.fill").font(.system(size: 11, weight: .bold))
+                        }
+                        Text(cardTypeLabel)
+                    }
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(Theme.headerText)
                     Text(item.createdAt.clipRelativeLong)
@@ -77,6 +82,7 @@ struct ClipCardView: View {
     }
 
     private var cardTypeLabel: String {
+        if CardActions.looksSecret(item) { return "비밀번호" }
         if item.type == .file, item.fileURLs.count > 1 { return String(localized: "\(item.fileURLs.count) files") }
         return item.type.label
     }
@@ -109,6 +115,13 @@ struct ClipCardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.cardBody)
+        .overlay(alignment: .bottom) {
+            if hovering {
+                CardActionBar(item: item)
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+            }
+        }
     }
 
     /// Image clips, and file clips pointing at an image, which is how a copied
@@ -137,15 +150,19 @@ struct ClipCardView: View {
                 fileContent
             }
         case .link:
-            VStack(spacing: 10) {
-                Spacer(minLength: 0)
-                Image(systemName: "safari").font(.system(size: 34, weight: .light))
-                    .foregroundStyle(Theme.cardTextTertiary)
-                Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.displayTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.cardTextPrimary)
+                    .lineLimit(2)
+                Text(BarGuide.highlighted(metaLeft, query: store.searchText, size: 12))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.cardTextSecondary)
+                    .lineLimit(6)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         default:
-            Text(item.text ?? "")
+            Text(BarGuide.cardText(item, query: store.searchText))
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.cardTextPrimary.opacity(0.9))
                 .lineLimit(10)
@@ -217,15 +234,10 @@ struct ClipCardView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 3) {
-            if item.type == .link {
-                Text(item.displayTitle)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.cardTextPrimary).lineLimit(1)
-            }
             HStack(alignment: .bottom, spacing: 6) {
                 // A path is worth reading in full, so it wraps rather than
                 // collapsing to an ellipsis; everything else stays one line.
-                Text(metaLeft)
+                Text(footerLeft)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.cardTextSecondary)
                     .lineLimit(item.type == .file ? 3 : 1)
@@ -261,6 +273,17 @@ struct ClipCardView: View {
         if path == homePath { return "~" }
         guard path.hasPrefix(homePath + "/") else { return path }
         return "~" + path.dropFirst(homePath.count)
+    }
+
+    /// 링크 주소와 색 값은 카드 가운데에 이미 크게 있으니 아래에는 다른 정보를 둔다.
+    private var footerLeft: String {
+        switch item.type {
+        case .link: return ""
+        case .color:
+            guard let hex = item.colorHex, let c = NSColor(hex: hex)?.usingColorSpace(.sRGB) else { return metaLeft }
+            return "RGB \(Int((c.redComponent * 255).rounded())), \(Int((c.greenComponent * 255).rounded())), \(Int((c.blueComponent * 255).rounded()))"
+        default: return metaLeft
+        }
     }
 
     private var metaLeft: String {
@@ -310,16 +333,6 @@ struct ClipCardView: View {
         }
         .disabled(!selection.contains { $0.plainText != nil })
 
-        Button { AppController.shared.pasteSelection(containing: item, format: .cleanFormatting) } label: {
-            Label("Paste with Clean Formatting", systemImage: "paintbrush")
-        }
-        .disabled(!selection.contains(where: FormatConverter.canConvert))
-
-        Button { AppController.shared.pasteSelection(containing: item, format: .markdown) } label: {
-            Label("Paste as Markdown", systemImage: "number")
-        }
-        .disabled(!selection.contains(where: FormatConverter.canConvert))
-
         Button { AppController.shared.copySelection(containing: item) } label: {
             Label(selection.count > 1 ? "Copy \(selection.count) Clips" : "Copy",
                   systemImage: "doc.on.doc")
@@ -327,55 +340,31 @@ struct ClipCardView: View {
 
         Divider()
 
+        Button { Pinned.toggle(selection) } label: {
+            if selection.allSatisfy(Pinned.contains) {
+                Label("고정 풀기 (⌘P)", systemImage: "pin.slash")
+            } else {
+                Label("고정 (⌘P)", systemImage: "pin")
+            }
+        }
+
+        if item.type == .text || item.type == .richText {
+            Button { AccountActions.save(from: item) } label: {
+                Label("계정으로 저장…", systemImage: "key")
+            }
+        }
+
         Button { AppController.shared.editItem(item) } label: {
             Label("Edit", systemImage: "pencil")
         }
         .disabled(!isEditable)
 
-        if writingToolsAvailable {
-            Button { AppController.shared.editItem(item, launchWritingTools: true) } label: {
-                Label("Writing Tools", systemImage: "pencil.line")
-            }
-        }
-
         Button { renameItem() } label: {
             Label("Rename…", systemImage: "pencil.line")
         }
 
-        Divider()
-
-        Menu {
-            if store.pinboards.isEmpty {
-                Button("No Pinboards Yet") {}
-                    .disabled(true)
-            } else {
-                ForEach(store.pinboards) { b in
-                    Button { store.saveToPinboard(item, boardID: b.id) } label: {
-                        Label {
-                            Text(b.name)
-                        } icon: {
-                            Image(nsImage: Self.pinboardMenuIcon(color: NSColor(b.color)))
-                                .renderingMode(.original)
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button { pinToNewBoard() } label: {
-                Label("Create Pinboard…", systemImage: "plus")
-            }
-        } label: {
-            Label("Pin", systemImage: "pin")
-        }
-
-        Divider()
-
         Button { AppController.shared.showPreview(for: item) } label: {
-            Label("Preview", systemImage: "eye")
-        }
-
-        Button { AppController.shared.showSharePicker(for: item) } label: {
-            Label("Share", systemImage: "square.and.arrow.up")
+            Label("미리보기 (⌘Y)", systemImage: "eye")
         }
 
         Divider()
@@ -407,24 +396,6 @@ struct ClipCardView: View {
                                       defaultValue: item.customTitle ?? "") {
             store.setTitle(title, for: item)
         }
-    }
-
-    private func pinToNewBoard() {
-        if let name = TextPrompt.run(title: String(localized: "Create Pinboard"), message: String(localized: "Name")) {
-            let board = store.addPinboard(name: name)
-            store.saveToPinboard(item, boardID: board.id)
-        }
-    }
-
-    private static func pinboardMenuIcon(color: NSColor) -> NSImage {
-        let size = NSSize(width: 12, height: 12)
-        let image = NSImage(size: size, flipped: false) { rect in
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
-            return true
-        }
-        image.isTemplate = false
-        return image
     }
 }
 

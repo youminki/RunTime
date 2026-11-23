@@ -49,7 +49,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         monitor.start()
 
-        HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
+        HotKeyCenter.shared.onTrigger = { [weak self] in self?.hotKeyPressed() }
         HotKeyCenter.shared.start()
 
         #if MAS
@@ -259,6 +259,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.terminate(nil)
     }
 
+    /// 띠가 떠 있을 때 여는 단축키(⇧⌘V)를 한 번 더 누르면 맨 앞 클립을 서식 없이 붙인다. 크롬·슬랙의 서식 없이 붙여넣기 손버릇을 살린다.
+    private func hotKeyPressed() {
+        // 띠가 떠 있어도 다른 앱에서 일하는 중(키 창이 아님)이면 여닫기만 한다
+        guard let bar = barController, bar.isPresented, bar.window?.isKeyWindow == true, BarGuide.repeatPastesPlain else { toggleBar(); return }
+        // 열리는 중에 빠르게 두 번 누른 것은 붙이지 않는다
+        guard QuickPasteKeys.shared.shownFor > 0.35 else { return }
+        guard let first = store.history.first else { hideBar(); return }
+        pasteItem(first, format: .plainText)
+    }
+
     func toggleBar() {
         if let bar = barController, bar.isPresented {
             hideBar()
@@ -302,6 +312,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.barInputMode = .cards
         store.searchText = ""
         store.source = .history
+        BarMode.shared.reset()
         store.prepareForBarPresentation()
 
         // Rebuild if the panel was ever torn down - a nil window is another way the
@@ -357,13 +368,18 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func pasteSelected() {
-        pasteItems(store.selectedItems)
+        // 계정 탭이면 계정을 넣는다
+        if BarKeys.submitFromSearch() { return }
+        // ⇧↩는 서식 없이 (⇧⌘1~9와 같은 규칙)
+        let event = NSApp.currentEvent
+        let plain = event?.type == .keyDown && event?.modifierFlags.contains(.shift) == true
+        pasteItems(store.selectedItems, format: plain ? .plainText : .original)
     }
 
     /// The app that will receive a paste after the floating Pesty panel closes.
     /// `previousApp` is captured before the panel activates, while
     /// `lastActiveApp` covers menu-bar and reopen paths where it is unavailable.
-    private var pasteTarget: NSRunningApplication? {
+    var pasteTarget: NSRunningApplication? {
         if returnWindow?.isVisible == true { return .current }
         return [lastActiveApp, previousApp, NSWorkspace.shared.frontmostApplication]
             .compactMap { $0 }
@@ -633,6 +649,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func stopKeyMonitor() {
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
         QuickPasteKeys.shared.stop()
+        CardActions.shared.barClosed()
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
@@ -652,6 +669,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         if handleBarCommandShortcut(event) { return nil }
+        // ⌘P 고정, ⌘Y 미리보기, 계정 탭의 키. 검색창이 키를 갖고 있어도 ⌘P·⌘Y를 듣게 검색창보다 앞에서 받는다
+        if BarKeys.handle(event, searchOwns: barController?.searchOwnsFirstResponder == true) { return nil }
 
         let code = Int(event.keyCode)
         let flags = event.modifierFlags
@@ -775,13 +794,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The plus button is intentionally excluded: it creates a new pinboard
     /// rather than representing a navigable section.
     private func moveBarSection(by delta: Int) {
-        let sources: [BarSource] = [.history] + store.pinboards.map { .pinboard($0.id) }
-        guard !sources.isEmpty else { return }
-
-        let currentIndex = sources.firstIndex(of: store.source) ?? 0
-        let nextIndex = (currentIndex + delta % sources.count + sources.count) % sources.count
-        store.source = sources[nextIndex]
-        store.selectFirst()
+        BarKeys.moveTab(by: delta)
     }
 
     private func isPrintableTextIntent(_ event: NSEvent) -> Bool {

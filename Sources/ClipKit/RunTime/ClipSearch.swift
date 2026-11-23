@@ -32,3 +32,42 @@ enum ClipSearch {
         return out
     }
 }
+
+extension ClipSearch {
+    /// 카드에서 강조할 곳. 글자 그대로 맞은 곳을 모두, 없으면 초성으로 맞은 글자들을 돌려준다.
+    static func ranges(in text: String, query rawQuery: String) -> [Range<String.Index>] {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return [] }
+        var found: [Range<String.Index>] = []
+        var from = text.startIndex
+        while from < text.endIndex,
+              let hit = text.range(of: query, options: [.caseInsensitive], range: from..<text.endIndex) {
+            found.append(hit)
+            from = hit.upperBound
+        }
+        if !found.isEmpty { return found }
+
+        let compact = query.filter { !$0.isWhitespace }
+        guard !compact.isEmpty, compact.unicodeScalars.allSatisfy(isConsonantScalar) else { return [] }
+        // initials(of:)와 같은 규칙으로 글자마다 초성 한 자를 만들되, 원문 위치를 함께 둔다
+        var letters: [Character] = []
+        var spots: [Range<String.Index>] = []
+        for index in text.indices {
+            let char = text[index]
+            guard let scalar = char.unicodeScalars.first,
+                  let initial = initials(of: String(scalar)).first else { continue }
+            letters.append(initial)
+            spots.append(index..<text.index(after: index))
+        }
+        let needle = Array(compact)
+        guard needle.count <= letters.count else { return [] }
+        for start in 0...(letters.count - needle.count) where Array(letters[start..<start + needle.count]) == needle {
+            return Array(spots[start..<start + needle.count])
+        }
+        return []
+    }
+
+    private static func isConsonantScalar(_ scalar: Unicode.Scalar) -> Bool {
+        (0x3131...0x314E).contains(scalar.value)
+    }
+}

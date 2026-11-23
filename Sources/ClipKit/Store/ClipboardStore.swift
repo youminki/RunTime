@@ -451,6 +451,58 @@ final class ClipboardStore: ObservableObject {
         scheduleSave()
     }
 
+    /// 고정에서 같은 내용의 카드를 뺀다.
+    func removeFromPinboard(_ item: ClipItem, boardID: UUID) {
+        guard let i = pinboards.firstIndex(where: { $0.id == boardID }),
+              let j = pinboards[i].items.firstIndex(where: { $0.sameContent(as: item) }) else { return }
+        let removed = pinboards[i].items.remove(at: j)
+        deleteImageFile(removed)
+        reconcileMultiSelection()
+        // 보고 있던 고정 탭에서 고른 카드를 빼면 선택이 사라진 카드를 가리킨다
+        if let id = selectedID, !visibleItems.contains(where: { $0.id == id }) { selectFirst() }
+        scheduleSave()
+    }
+
+    /// 기록에서만 조건에 맞는 클립을 되살릴 수 없게 지운다. 비밀번호로 보이는 클립을 기록 파일에 오래 두지 않을 때 쓴다.
+    func removeFromHistory(where match: (ClipItem) -> Bool) {
+        let removed = history.filter(match)
+        guard !removed.isEmpty else { return }
+        history.removeAll(where: match)
+        for gone in removed { deleteImageFile(gone) }
+        reconcileMultiSelection()
+        if let id = selectedID, !visibleItems.contains(where: { $0.id == id }) { selectFirst() }
+        scheduleSave()
+    }
+
+    /// 기록과 고정에서 같은 내용을 모두 지운다. 계정으로 옮긴 비밀번호를 평문으로 남기지 않는다.
+    func purge(sameAs item: ClipItem) {
+        let removed = history.filter { $0.sameContent(as: item) } + pinboards.flatMap(\.items).filter { $0.sameContent(as: item) }
+        history.removeAll { $0.sameContent(as: item) }
+        for i in pinboards.indices { pinboards[i].items.removeAll { $0.sameContent(as: item) } }
+        for gone in removed { deleteImageFile(gone) }
+        reconcileMultiSelection()
+        if let id = selectedID, !visibleItems.contains(where: { $0.id == id }) { selectFirst() }
+        scheduleSave()
+    }
+
+    /// 보드를 맨 앞 하나(고정)로 합친다. 같은 내용은 하나만 남긴다. 합치기 전 기록 파일을 옆에 한 번 남겨 둔다.
+    func mergePinboards() {
+        guard pinboards.count > 1 else { return }
+        // 백업을 남기지 못하면 합치지 않는다
+        let backup = baseDir.appendingPathComponent("store-before-pinned.json")
+        if !FileManager.default.fileExists(atPath: backup.path) {
+            guard (try? FileManager.default.copyItem(at: storeURL, to: backup)) != nil else { return }
+        }
+        var merged = pinboards[0]
+        for item in pinboards.dropFirst().flatMap(\.items) where !merged.items.contains(where: { $0.sameContent(as: item) }) {
+            merged.items.append(item)
+        }
+        // 겹쳐 빠진 카드의 그림 파일은 지우지 않는다. 백업으로 되돌리면 다시 쓴다
+        pinboards = [merged]
+        if case .pinboard(let id) = source, id != merged.id { source = .pinboard(merged.id) }
+        saveNow(waiting: true)
+    }
+
     /// A copy with its own UUID and its own image file, so no two containers
     /// ever share an identity (one sync record per container) or a file.
     private func independentCopy(of item: ClipItem, createdAt: Date) -> ClipItem {

@@ -4,6 +4,7 @@ struct BarView: View {
     let searchBridge: BarSearchFieldBridge
     @ObservedObject private var store = ClipboardStore.shared
     @ObservedObject private var settings = Settings.shared
+    @ObservedObject private var mode = BarMode.shared
 
     private var searchIsActive: Bool {
         store.barInputMode == .search || !store.searchText.isEmpty
@@ -23,8 +24,11 @@ struct BarView: View {
         .overlay(alignment: .top) {
             VStack(spacing: 0) {
                 topBar
-                ClipTypeFilterBar()
-                strip
+                if mode.tab == .accounts {
+                    AccountStrip()
+                } else {
+                    strip
+                }
             }
         }
         .overlay(alignment: .top) {
@@ -62,16 +66,17 @@ struct BarView: View {
             #else
             if settings.iCloudSync { syncButton }
             #endif
+            BarTabs()
             searchIndicator
-            PinboardTabs()
-                .layoutPriority(1)
             Spacer(minLength: 8)
+            BarKeyHints()
             if store.multiSelectedIDs.count > 1 {
                 bulkDeleteButton
             }
             if store.hasUndoableDeletion {
                 undoButton
             }
+            if mode.tab != .accounts { TypeFilterMenu() }
             moreMenu
         }
         .padding(.horizontal, 18)
@@ -107,7 +112,7 @@ struct BarView: View {
                 onEnd: { AppController.shared.setBarSearchEditing(false) },
                 onSubmit: { AppController.shared.pasteSelected() },
                 onCancel: { AppController.shared.cancelBarSearchOrHide() },
-                onMoveSelection: { store.moveSelection(by: $0) }
+                onMoveSelection: { BarKeys.moveSelection(by: $0) }
             )
             .frame(minWidth: searchIsActive ? 120 : 0,
                    idealWidth: searchIsActive ? 180 : 0,
@@ -175,10 +180,7 @@ struct BarView: View {
             Button { AppController.shared.showSettings() } label: {
                 Label("Settings…", systemImage: "gearshape")
             }
-            Button { store.cycleTypeFilter() } label: {
-                Label("Cycle Type Filter", systemImage: "line.3.horizontal.decrease.circle")
-            }
-            Button { store.clearHistory() } label: {
+            Button { CardActions.confirmClearHistory() } label: {
                 Label("Clear History", systemImage: "trash")
             }
             Divider()
@@ -273,6 +275,9 @@ struct BarView: View {
                 .controlSize(.small)
                 .help("Show every clip type again")
             }
+            if store.searchText.isEmpty, store.sourceItems.isEmpty, store.typeFilter == nil {
+                BarEmptyGuide(paused: AppController.shared.monitor.isPaused)
+            }
         }
     }
 
@@ -297,7 +302,7 @@ struct BarView: View {
         if let filteredType, !store.sourceItems.isEmpty {
             return String(localized: "No \(filteredType.label.lowercased()) clips in this collection")
         }
-        return String(localized: "Nothing copied yet")
+        return mode.tab == .pinned ? "고정한 클립이 없습니다" : String(localized: "Nothing copied yet")
     }
 }
 

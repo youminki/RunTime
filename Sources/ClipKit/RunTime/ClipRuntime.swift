@@ -8,6 +8,8 @@ public enum ClipRuntime {
     public private(set) static var running = false
     /// 띠의 '설정'(⇧⌘S, 더 보기 메뉴)이 RunTime 설정의 클립보드 구역을 연다.
     public static var openSettings: () -> Void = {}
+    /// 계정 비밀번호를 두는 곳. RunTime이 키체인으로 바꿔 끼운다.
+    public static var secrets: ClipSecrets = .memory()
     private static var launched = false
 
     public static func start() {
@@ -20,7 +22,11 @@ public enum ClipRuntime {
             // Pesty의 앱 시작 처리 (감시, 단축키, 깨어남·화면 바뀜 알림). 메뉴와 첫 실행 안내는 sync-pesty.py가 뺐다
             launched = true
             AppController.shared.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+            // 예전에 여럿 만든 보드는 '고정' 하나로 합친다. 합치기 전 기록 파일은 옆에 남겨 둔다
+            ClipboardStore.shared.mergePinboards()
         }
+        // 끈 동안 쌓인, 비밀번호로 보이는 오래된 클립을 지운다
+        AccountCapture.sweepSecrets()
     }
 
     public static func stop() {
@@ -171,6 +177,22 @@ public final class ClipPreferences: ObservableObject {
         }
     }
 
+    // MARK: 계정
+
+    /// 로그인 정보로 보이는 복사(“아이디: … 비밀번호: …”)는 기록에 두지 않고 계정으로 옮긴다.
+    public var autoSaveAccounts: Bool {
+        get { AccountPrefs.autoSave }
+        set { AccountPrefs.autoSave = newValue; objectWillChange.send() }
+    }
+
+    /// 계정을 넣거나 복사하기 전에 Touch ID로 확인한다.
+    public var accountsRequireAuth: Bool {
+        get { AccountPrefs.requireAuth }
+        set { AccountPrefs.requireAuth = newValue; objectWillChange.send() }
+    }
+
+    public var accountCount: Int { AccountStore.shared.accounts.count }
+
     // MARK: 무시할 앱
 
     public var ignoredApps: [String] { settings.ignoredSourceAppBundleIDs }
@@ -180,7 +202,7 @@ public final class ClipPreferences: ObservableObject {
     // MARK: 기록
 
     public var historyCount: Int { store.history.count }
-    public var pinboardCount: Int { store.pinboards.count }
+    public var pinnedCount: Int { store.pinboards.first?.items.count ?? 0 }
     public var paused: Bool { AppController.shared.monitor.isPaused }
 
     public func togglePause() {

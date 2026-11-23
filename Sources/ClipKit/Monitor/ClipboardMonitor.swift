@@ -36,6 +36,7 @@ final class ClipboardMonitor {
         guard !isPaused else { return }
         if current == suppressUntilChangeCount { return }
         guard let item = makeItem() else { return }
+        if AccountCapture.absorb(item) { return }
         ClipboardStore.shared.addCaptured(item)
     }
 
