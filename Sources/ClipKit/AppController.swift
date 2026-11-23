@@ -627,10 +627,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return event }
             return self.handleKey(event)
         }
+        QuickPasteKeys.shared.start()
     }
 
     private func stopKeyMonitor() {
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+        QuickPasteKeys.shared.stop()
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {

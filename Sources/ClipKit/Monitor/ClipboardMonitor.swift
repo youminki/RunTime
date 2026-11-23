@@ -90,6 +90,11 @@ final class ClipboardMonitor {
         }
 
         if types.contains(.png) || types.contains(.tiff) {
+            // TIFF만 있으면 PNG로 바꾸는 데 5K 한 장에 0.2초 걸려 메인에서 하면 러너가 멈춘다. 바꾸기만 뒤에서 한다
+            if pasteboard.data(forType: .png) == nil, let tiff = pasteboard.data(forType: .tiff) {
+                Self.captureInBackground(tiff: tiff, bundleID: bundleID, appName: appName)
+                return nil
+            }
             if let data = pngData() {
                 let hash = Self.sha256Hex(data)
                 guard let name = ClipboardStore.shared.storeImageData(data) else { return nil }
@@ -136,7 +141,25 @@ final class ClipboardMonitor {
         types.contains { $0.rawValue.localizedCaseInsensitiveContains("color") }
     }
 
-    private static func sha256Hex(_ data: Data) -> String {
+    private static let convertQueue = DispatchQueue(label: "RunTime.clip.convert", qos: .userInitiated)
+
+    private static func captureInBackground(tiff: Data, bundleID: String?, appName: String?) {
+        convertQueue.async {
+            guard let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }
+            let hash = sha256Hex(png)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let name = ClipboardStore.shared.storeImageData(png) else { return }
+                    var item = ClipItem(type: .image, imageFileName: name, imageHash: hash)
+                    item.sourceBundleID = bundleID
+                    item.sourceAppName = appName
+                    ClipboardStore.shared.addCaptured(item)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func sha256Hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 

@@ -260,6 +260,16 @@ PATCHES = [
      "        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in\n            guard let self, generation == self.retryGeneration else { return }"),
     ("    func reload() {\n        let previous = hotKeyRef",
      "    func reload() {\n        retryGeneration += 1\n        guard ClipRuntime.running else { return }\n        let previous = hotKeyRef"),
+    # 띠는 활성화하지 않는 창이라 크롬이 ⌘1~9를 탭 이동으로 먼저 가져간다. 띠가 떠 있는 동안만 Carbon으로 잡는다 (RunTime/QuickPasteKeys.swift)
+    ("            return self.handleKey(event)\n        }\n    }\n\n    private func stopKeyMonitor() {\n"
+     "        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }\n    }",
+     "            return self.handleKey(event)\n        }\n        QuickPasteKeys.shared.start()\n    }\n\n    private func stopKeyMonitor() {\n"
+     "        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }\n        QuickPasteKeys.shared.stop()\n    }"),
+    # TIFF만 있는 이미지는 PNG 변환(5K 한 장 0.2초)을 뒤 큐에서 한다
+    ('        if types.contains(.png) || types.contains(.tiff) {\n            if let data = pngData() {',
+     '        if types.contains(.png) || types.contains(.tiff) {\n            // TIFF만 있으면 PNG로 바꾸는 데 5K 한 장에 0.2초 걸려 메인에서 하면 러너가 멈춘다. 바꾸기만 뒤에서 한다\n            if pasteboard.data(forType: .png) == nil, let tiff = pasteboard.data(forType: .tiff) {\n                Self.captureInBackground(tiff: tiff, bundleID: bundleID, appName: appName)\n                return nil\n            }\n            if let data = pngData() {'),
+    ('    private static func sha256Hex(_ data: Data) -> String {',
+     '    private static let convertQueue = DispatchQueue(label: "RunTime.clip.convert", qos: .userInitiated)\n\n    private static func captureInBackground(tiff: Data, bundleID: String?, appName: String?) {\n        convertQueue.async {\n            guard let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }\n            let hash = sha256Hex(png)\n            DispatchQueue.main.async {\n                MainActor.assumeIsolated {\n                    guard let name = ClipboardStore.shared.storeImageData(png) else { return }\n                    var item = ClipItem(type: .image, imageFileName: name, imageHash: hash)\n                    item.sourceBundleID = bundleID\n                    item.sourceAppName = appName\n                    ClipboardStore.shared.addCaptured(item)\n                }\n            }\n        }\n    }\n\n    private nonisolated static func sha256Hex(_ data: Data) -> String {'),
     # 앱 진입점은 RunTime이다. 메뉴, 메뉴바 아이콘, 로그인 시 실행, 첫 실행 안내는 RunTime 것을 쓴다
     ("        NSApp.setActivationPolicy(.accessory)\n        installMainMenu()\n\n", ""),
     ("        setMenuBarIconVisible(Settings.shared.showMenuBarIcon)\n\n"
