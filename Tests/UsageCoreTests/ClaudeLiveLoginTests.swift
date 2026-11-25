@@ -239,6 +239,10 @@ struct LiveTokenRefreshEdgeTests {
     typealias Box = LiveTokenRefreshTests.Box
 
     final class Clock: @unchecked Sendable { var now = Date() }
+    final class Flag<Value>: @unchecked Sendable {
+        var value: Value
+        init(_ value: Value) { self.value = value }
+    }
 
     private func provider(_ box: Box, clock: Clock, refresh: @escaping () -> ClaudeLogin.RefreshResult,
                           write: Bool = true) throws -> OAuthUsageProvider {
@@ -253,6 +257,7 @@ struct LiveTokenRefreshEdgeTests {
         provider.currentAccountID = { "acc" }
         provider.lockPaths = { [dir.appendingPathComponent("a.lock"), dir.appendingPathComponent("b.lock")] }
         provider.clock = { clock.now }
+        provider.unsavedRetryDelays = []   // 예약 재시도를 보는 시험만 켠다
         provider.refreshLive = { _, _, _ in box.refreshCalls += 1; return refresh() }
         provider.send = { token, _ in box.sent.append(token); throw OAuthUsageProvider.ProviderError.http(401) }
         return provider
@@ -338,6 +343,216 @@ struct LiveTokenRefreshEdgeTests {
         #expect(!box.sent.contains("new"))
         #expect(box.refreshCalls == 1)
         #expect(provider.lockPaths().allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    @Test func unsavedLoginIsWrittenLaterWithoutAskingServerAgain() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        })
+        let failing = Flag(true)
+        provider.writeCredentials = { data in
+            guard !failing.value else { return false }
+            box.written.append(data); box.credentials = data; return true
+        }
+        _ = try? await provider.fetch()
+        #expect(box.refreshCalls == 1)
+        #expect(box.written.isEmpty)
+        // 저장소가 풀린 뒤에는 서버를 다시 부르지 않고(옛 리프레시 토큰은 이미 죽었다) 받아 둔 로그인을 써 넣는다
+        failing.value = false
+        clock.now = clock.now.addingTimeInterval(120)
+        _ = try? await provider.fetch()
+        #expect(box.refreshCalls == 1)
+        let written = try #require(box.written.last)
+        #expect(ClaudeLogin.refreshToken(in: written) == "r-2")
+        #expect(OAuthUsageProvider.parseCredentials(written)?.token == "new")
+        let root = try #require(JSONSerialization.jsonObject(with: written) as? [String: Any])
+        #expect((root["mcpOAuth"] as? [String: Any])?["srv"] as? String == "keep")
+    }
+
+    @Test func unsavedLoginIsRetriedWithoutWaitingForTheDelay() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        })
+        let failing = Flag(true)
+        provider.writeCredentials = { data in
+            guard !failing.value else { return false }
+            box.written.append(data); box.credentials = data; return true
+        }
+        _ = try? await provider.fetch()
+        failing.value = false
+        // 시계를 앞으로 돌리지 않아도(재시도 대기 60초 안) 로컬 쓰기는 바로 다시 한다
+        _ = try? await provider.fetch()
+        #expect(box.refreshCalls == 1)
+        #expect(ClaudeLogin.refreshToken(in: try #require(box.written.last)) == "r-2")
+    }
+
+    @Test func flushWritesHeldLoginBeforeSwitchingAccount() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        })
+        let failing = Flag(true)
+        provider.writeCredentials = { data in
+            guard !failing.value else { return false }
+            box.written.append(data); box.credentials = data; return true
+        }
+        #expect(provider.flushUnsavedLogin())   // 쥔 것이 없으면 할 일이 없다
+        _ = try? await provider.fetch()
+        #expect(!provider.flushUnsavedLogin())  // 쓰지 못하면 전환을 막도록 알린다
+        failing.value = false
+        #expect(provider.flushUnsavedLogin())
+        #expect(ClaudeLogin.refreshToken(in: try #require(box.written.last)) == "r-2")
+        #expect(provider.flushUnsavedLogin())   // 한 번 쓴 뒤에는 다시 쓰지 않는다
+        #expect(box.written.count == 1)
+    }
+
+    @Test func foreignLoginWrittenLaterIsNotShownAsThisAccount() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            // 키체인 토큰 주인이 `~/.claude.json` 계정과 다르다
+            .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"b-new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "b")
+        })
+        let failing = Flag(true)
+        provider.writeCredentials = { data in
+            guard !failing.value else { return false }
+            box.written.append(data); box.credentials = data; return true
+        }
+        _ = try? await provider.fetch()
+        failing.value = false
+        #expect(provider.flushUnsavedLogin())
+        #expect(box.written.count == 1)
+        box.sent = []
+        _ = try? await provider.fetch()
+        #expect(!box.sent.contains("b-new"))
+    }
+
+    @Test func failedWriteIsRetriedSoonWithoutPolling() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        })
+        provider.unsavedRetryDelays = [0.05, 0.05]
+        let failing = Flag(true)
+        provider.writeCredentials = { data in
+            guard !failing.value else { return false }
+            box.written.append(data); box.credentials = data; return true
+        }
+        _ = try? await provider.fetch()
+        failing.value = false
+        // 다음 폴링 없이 예약된 재시도가 써 넣는다
+        for _ in 0..<40 where box.written.isEmpty { try await Task.sleep(nanoseconds: 25_000_000) }
+        #expect(box.refreshCalls == 1)
+        #expect(ClaudeLogin.refreshToken(in: try #require(box.written.last)) == "r-2")
+    }
+
+    @Test func heldLoginOfLeftAccountIsHandedToItsSnapshot() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        }, write: false)
+        provider.unsavedRetryDelays = []
+        let account = Flag("acc")
+        provider.currentAccountID = { account.value }
+        let handed = Flag<[(Data, String)]>([])
+        provider.setDroppedLoginHandler { part, owner in handed.value.append((part, owner)) }
+        _ = try? await provider.fetch()
+        // 저장소에 다른 계정 로그인이 있다
+        account.value = "other"
+        box.credentials = LiveTokenRefreshTests.credentials(token: "b", expiresIn: -60, refresh: "rb")
+        provider.resetForAccountChange()
+        _ = try? await provider.fetch()
+        #expect(handed.value.count == 1)
+        #expect(handed.value.first?.1 == "acc")
+        #expect(handed.value.first.flatMap { ClaudeLogin.refreshToken(in: $0.0) } == "r-2")
+        // 넘기는 것은 Claude 로그인 부분뿐이다 (MCP 토큰은 계정 저장본에 넣지 않는다)
+        let root = try #require(handed.value.first.flatMap { try? JSONSerialization.jsonObject(with: $0.0) as? [String: Any] })
+        #expect(root["mcpOAuth"] == nil)
+    }
+
+    @Test func accountChangeHandsHeldLoginOverWithoutWaitingForExpiry() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        }, write: false)
+        let account = Flag("acc")
+        provider.currentAccountID = { account.value }
+        let handed = Flag<[String]>([])
+        provider.setDroppedLoginHandler { _, owner in handed.value.append(owner) }
+        _ = try? await provider.fetch()
+        // 새 계정 토큰은 살아 있어 갱신 경로가 돌지 않는다. 그래도 예약된 재시도가 곧 넘긴다
+        provider.unsavedRetryDelays = [0.05]
+        account.value = "other"
+        box.credentials = LiveTokenRefreshTests.credentials(token: "b", expiresIn: 3600, refresh: "rb")
+        provider.resetForAccountChange()
+        for _ in 0..<40 where handed.value.isEmpty { try await Task.sleep(nanoseconds: 25_000_000) }
+        #expect(handed.value == ["acc"])
+        #expect(box.refreshCalls == 1)
+    }
+
+    @Test func loginOfAccountSwitchedWhileWaitingIsKept() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60, refresh: "r-1"))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let account = Flag("acc")
+        let provider = try provider(box, clock: clock, refresh: {
+            // 기다리는 사이 다른 계정으로 /login 했다
+            box.credentials = LiveTokenRefreshTests.credentials(token: "theirs", expiresIn: 3600, refresh: "r-9")
+            account.value = "other"
+            return .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        })
+        provider.currentAccountID = { account.value }
+        provider.send = { token, _ in box.sent.append(token); return LiveTokenRefreshTests.usage }
+        let handed = Flag<[(Data, String)]>([])
+        provider.setDroppedLoginHandler { part, owner in handed.value.append((part, owner)) }
+        _ = try? await provider.fetch()
+        // 서버가 앞 계정 리프레시 토큰을 이미 돌렸으므로 방금 받은 값은 그 계정 저장본으로 넘긴다
+        #expect(handed.value.count == 1)
+        #expect(handed.value.first?.1 == "acc")
+        #expect(handed.value.first.flatMap { ClaudeLogin.refreshToken(in: $0.0) } == "r-2")
+        // 바뀐 계정의 로그인을 앞 계정 토큰으로 덮지 않고, 서버도 한 번만 부른다.
+        // 이어서 저장소를 다시 읽어 보내는 조회는 엔진이 계정 세대로 걸러 낸다
+        #expect(box.written.isEmpty)
+        #expect(box.refreshCalls == 1)
+        #expect(ClaudeLogin.refreshToken(in: box.credentials) == "r-9")
+    }
+
+    @Test func loginWrittenByOthersWhileWaitingIsNotOverwritten() async throws {
+        let box = Box(LiveTokenRefreshTests.credentials(token: "old", expiresIn: -60, refresh: "r-1"))
+        let clock = Clock()
+        let ms = Int64((Date().timeIntervalSince1970 + 3600) * 1000)
+        let provider = try provider(box, clock: clock, refresh: {
+            // 서버 응답을 기다리는 사이 다른 쪽이 새 로그인을 써 넣었다
+            if box.refreshCalls == 1 {
+                box.credentials = LiveTokenRefreshTests.credentials(token: "theirs", expiresIn: 3600, refresh: "r-9")
+            }
+            return .refreshed(Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"r-2","expiresAt":\#(ms)}}"#.utf8), owner: "acc")
+        })
+        provider.send = { token, _ in
+            box.sent.append(token)
+            guard token == "theirs" else { throw OAuthUsageProvider.ProviderError.http(401) }
+            return LiveTokenRefreshTests.usage
+        }
+        _ = try await provider.fetch()
+        #expect(box.refreshCalls == 1)
+        #expect(box.sent == ["theirs"])
+        #expect(box.written.isEmpty)
+        #expect(ClaudeLogin.refreshToken(in: box.credentials) == "r-9")
     }
 }
 

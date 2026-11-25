@@ -60,6 +60,8 @@ final class AccountSwitcher: ObservableObject {
 
     /// 로그인 정보를 바꾼 직후, 지금 계정 표시를 바꾸기 전에 부른다. 계정 큐에서 부른다.
     var willActivate: () -> Void = {}
+    /// 사용량 조회가 새로 받고도 못 써 넣은 로그인을 저장소에 써 넣는다. 못 쓰면 false.
+    var flushLogin: () -> Bool = { true }
     /// 계정을 바꾼 뒤 부른다. 메인 스레드.
     var onSwitched: (Account, _ automatic: Bool) -> Void = { _, _ in }
 
@@ -283,6 +285,8 @@ final class AccountSwitcher: ObservableObject {
         }
         var held: ClaudeRefreshLock? = lock
         defer { held?.release() }
+        // 못 써 넣은 새 로그인이 남은 채 떠나면 앞 계정의 저장본에 죽은 리프레시 토큰이 남아 그 계정 로그인이 풀린다
+        guard flushLogin() else { return "지금 계정의 새 로그인 정보를 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요" }
         // Claude Code가 그동안 토큰을 새로 받았을 수 있어, 떠나는 계정은 지금 토큰으로 다시 남긴다
         if let current = ClaudeLogin.currentAccount() {
             switch saveSnapshot(current) {
@@ -442,6 +446,16 @@ final class AccountSwitcher: ObservableObject {
         }
     }
 
+    /// 사용량 조회가 받아 두고 Claude Code 저장소에 쓸 수 없던 다른 계정 로그인을 그 계정 저장본에 남긴다.
+    /// 서버는 그 계정의 앞 리프레시 토큰을 이미 무효로 했으므로 버리면 그 계정으로 돌아갈 때 로그인이 풀린다.
+    /// 계정 전환 중에도 불리므로 큐에 미루지 않고 그 자리에서 저장한다. 메인 스레드에서 부르지 않는다
+    /// (메인은 이 큐나 사용량 조회 큐를 기다리지 않으므로 `keep`의 메인 동기 호출이 막히지 않는다).
+    func keepDroppedLogin(_ part: Data, for id: String) {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        guard isNewer(part, than: storedCredentials(for: id)) else { return }
+        keep(part, for: id)
+    }
+
     /// 앞 토큰보다 만료가 늦은지. 앞 토큰이 없으면 새것으로 본다.
     private func isNewer(_ part: Data, than other: Data?) -> Bool {
         guard let other, let theirs = OAuthUsageProvider.parseCredentials(other)?.expiresAt else { return true }
@@ -484,6 +498,11 @@ final class AccountSwitcher: ObservableObject {
             DispatchQueue.main.sync { self.setNeedsLogin(id, true) }
             return .rejected
         case .rejected:
+            // 보내는 사이 사용량 조회가 이 계정의 새 로그인을 넘겨 저장했으면 거절된 것은 옛 토큰이다
+            if let latest = storedCredentials(for: id).flatMap(ClaudeLogin.oauthPart(of:)),
+               ClaudeLogin.refreshToken(in: latest) != refresh {
+                return .usable(latest)
+            }
             DispatchQueue.main.sync { self.setNeedsLogin(id, true) }
             return .rejected
         case .unknown, .rateLimited:
@@ -491,7 +510,7 @@ final class AccountSwitcher: ObservableObject {
         }
     }
 
-    /// queue 전용. 기억한 계정의 토큰을 저장하고 다시 로그인할 필요 표시를 지운다.
+    /// 메인이 아닌 스레드 전용. 기억한 계정의 토큰을 저장하고 다시 로그인할 필요 표시를 지운다.
     @discardableResult
     private func keep(_ part: Data, for id: String) -> Bool {
         guard DispatchQueue.main.sync(execute: { self.accounts.contains { $0.id == id } }),

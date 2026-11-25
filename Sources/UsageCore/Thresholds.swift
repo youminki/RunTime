@@ -97,4 +97,29 @@ public struct Thresholds: Sendable {
         default: return .rainbow
         }
     }
+
+    /// 단계를 내릴 때는 그 단계의 아래 경계보다 이만큼 더 느려져야 내린다: 경계의 20%, 최소 25.
+    /// 3초 구간에서 키 한 타가 빠지면 타/분이 15~20 흔들리므로, 낮은 경계에서도 그보다 넓게 잡아 경계 근처에서 깜빡이지 않게 한다.
+    /// (토큰 속도에서는 EMA라 흔들림이 작아 단계 내림을 조금 늦출 뿐이다)
+    static func downshiftMargin(below floor: Double) -> Double { max(floor * 0.2, 25) }
+
+    /// 앞 단계를 이어 가는 움직임 단계. 올라갈 때는 바로 올리고, 내려갈 때만 경계에 여유를 둔다.
+    public func moving(burnRate rate: Double, holding previous: CatState?) -> CatState {
+        let state = moving(burnRate: rate)
+        guard let previous, let floor = lowerBound(of: previous),
+              CatState.allCases.firstIndex(of: previous)! > CatState.allCases.firstIndex(of: state)!,
+              rate >= floor - Self.downshiftMargin(below: floor)
+        else { return state }
+        return previous
+    }
+
+    /// 움직이는 단계의 아래 경계. 걷기는 더 내려갈 곳이 없고, 멈춘 단계는 이어 갈 것이 없다.
+    private func lowerBound(of state: CatState) -> Double? {
+        switch state {
+        case .running: return run
+        case .dashing: return dash
+        case .rainbow: return rainbow
+        case .sleeping, .standing, .looking, .waiting, .walking: return nil
+        }
+    }
 }

@@ -11,7 +11,7 @@ final class AppSettings: ObservableObject {
     private enum Key: String {
         case officialEnabled, sensitivity, pollInterval, newSessionAlertEnabled, weeklyResetAlertEnabled, claudeDoneAlertEnabled, weeklySummaryEnabled, spriteTheme, typingRunnerEnabled
         case menuBarLabel, menuBarLabelLast, runner, smoothness, tricksEnabled, customRunner, runnerSize, desktopPet
-        case desktopPetSize, desktopPetEdges, desktopPetMode, desktopPetSpot
+        case desktopPetSize, desktopPetEdges, desktopPetMode, desktopPetSpot, runnerSpeed
     }
 
     private let defaults = UserDefaults.standard
@@ -22,6 +22,10 @@ final class AppSettings: ObservableObject {
     @Published var sensitivity: Thresholds.Sensitivity { didSet { save(sensitivity.rawValue, .sensitivity) } }
 
     @Published var pollInterval: Double { didSet { save(pollInterval, .pollInterval) } }
+
+    /// 자동으로 정해진 러너 속도에 곱하는 배율 (기본 1배). 달리는 동안에만 적용된다.
+    @Published var runnerSpeed: Double { didSet { save(runnerSpeed, .runnerSpeed) } }
+    static let runnerSpeedOptions: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
     /// 키보드·마우스 입력에 반응한다 (기본 켬). 타자 빠르기로 움직이고, 마우스만 쓰면 둘러본다.
     @Published var typingRunnerEnabled: Bool { didSet { save(typingRunnerEnabled, .typingRunnerEnabled) } }
@@ -160,6 +164,8 @@ final class AppSettings: ObservableObject {
         sensitivity = Thresholds.Sensitivity(rawValue: string(.sensitivity)) ?? .normal
         let poll = d.double(forKey: Key.pollInterval.rawValue)
         pollInterval = poll > 0 ? poll : 3.0
+        let speed = d.double(forKey: Key.runnerSpeed.rawValue)
+        runnerSpeed = Self.runnerSpeedOptions.contains(speed) ? speed : 1
         typingRunnerEnabled = bool(.typingRunnerEnabled, true)
         newSessionAlertEnabled = bool(.newSessionAlertEnabled, false)
         weeklyResetAlertEnabled = bool(.weeklyResetAlertEnabled, false)

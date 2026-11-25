@@ -311,9 +311,12 @@ struct SettingsView: View {
                 }
             }
 
-            GroupedSection("러너 속도", footer: "민감도가 높을수록 적은 사용량에도 빨리 달리고, 확인 주기가 짧을수록 빨리 반응합니다. Claude가 답을 마치면 멈추고 5분 넘게 자리를 비우면 잠듭니다.") {
+            GroupedSection("러너 속도", footer: "민감도가 높을수록 적은 사용량에도 빨리 달리고, 달리기 속도는 자동으로 정해진 속도에 곱해집니다. 확인 주기가 짧을수록 빨리 반응합니다. Claude가 답을 마치면 멈추고 5분 넘게 자리를 비우면 잠듭니다.") {
                 GroupedRow("민감도", icon: "speedometer") {
                     segmented("민감도", $settings.sensitivity, Thresholds.Sensitivity.allCases) { $0.displayName }
+                }
+                GroupedRow("달리기 속도", icon: "hare") {
+                    menu("달리기 속도", $settings.runnerSpeed, AppSettings.runnerSpeedOptions) { Self.speedName($0) }
                 }
                 GroupedRow("기록 확인 주기", icon: "timer") {
                     menu("기록 확인 주기", $settings.pollInterval, AppSettings.pollIntervalOptions) { String(format: "%.0f초", $0) }
@@ -404,6 +407,10 @@ struct SettingsView: View {
         .pickerStyle(.menu)
         .labelsHidden()
         .fixedSize()
+    }
+
+    private static func speedName(_ value: Double) -> String {
+        value == 1 ? "보통 (1배)" : String(format: "%g배", value)
     }
 
     private func devOnlyNote(_ feature: String) -> some View {

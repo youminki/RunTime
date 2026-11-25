@@ -73,13 +73,17 @@ final class UsageEngine: ObservableObject {
     private let store = UsageStore()
     private let meter = BurnRateMeter()
     /// 최근 몇 초의 키 누름 누계. 키 내용은 읽지 않고 횟수만 본다 (권한이 필요 없다).
-    private var keySamples: [(at: Date, count: UInt32)] = []
+    private var typingMeter = TypingMeter()
+    /// workQueue 전용. 손을 뗀 지 멈출 때가 되는 순간에 단계를 다시 보도록 걸어 둔 확인이 있다.
+    private var stopCheckScheduled = false
     /// 타자를 멈추면 바로 서도록 기록 확인 주기와 따로 1초마다 본다. 타자 반응을 끄거나 화면이 꺼지면 쉰다.
     private var typingTimer: DispatchSourceTimer?
     /// 직전 틱에서 본 Claude 쪽 사정. 타자 타이머가 이것과 합쳐 단계를 정한다.
     private var claudePace: (rate: Double, working: Bool, lastEvent: Date?, limited: Bool, waiting: Bool)?
     private let permissionWaits = PermissionWaitWatcher(directory: PermissionHookFile.markDirectory)
     private var publishedPace: (state: CatState, tempo: Double)?
+    /// workQueue 전용. Claude와 타자가 각각 마지막으로 정한 단계. 단계 내림 여유를 출처마다 따로 본다.
+    private var paceSources = Pace.Input.Sources()
     private let provider = OAuthUsageProvider()
     private let workQueue = DispatchQueue(label: "runtime.engine", qos: .utility)
     private var jsonlTimer: DispatchSourceTimer?
@@ -142,6 +146,19 @@ final class UsageEngine: ObservableObject {
         self.config = Config(settings)
     }
 
+    /// 키보드·마우스 입력을 읽는 곳. 점검(`--pace-check`)이 흉내 낸 입력으로 바꿔 끼운다. `start()` 전에만 바꾼다.
+    struct InputSource {
+        var keyDownCount: () -> UInt32
+        var secondsSince: (CGEventType) -> TimeInterval
+
+        static let system = InputSource(
+            keyDownCount: { CGEventSource.counterForEventType(.hidSystemState, eventType: .keyDown) },
+            secondsSince: { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) })
+    }
+    var input = InputSource.system
+    /// 틱마다 workQueue에서 불린다. 점검이 틱 간격을 잰다. `start()` 전에만 바꾼다.
+    var onTick: ((Date) -> Void)?
+
     func start() {
         let interval = settings.pollInterval
         log.info("엔진 시작: 폴링 \(interval)s, 공식 폴링 \(Self.officialPollInterval)s")
@@ -186,6 +203,12 @@ final class UsageEngine: ObservableObject {
             .sink { [weak self] _ in self?.pushConfig() }
             .store(in: &cancellables)
     }
+
+    /// 계정을 바꾸기 전에 못 써 넣은 새 로그인을 저장소에 쓴다. 잠금을 쥔 채 메인이 아닌 스레드에서 부른다.
+    func flushUnsavedLogin() -> Bool { provider.flushUnsavedLogin() }
+
+    /// 다른 계정으로 바뀌어 저장소에 쓸 수 없게 된 새 로그인을 넘겨받을 곳 (Claude 로그인 부분, 주인 계정).
+    func setDroppedLoginHandler(_ handler: @escaping (Data, String) -> Void) { provider.setDroppedLoginHandler(handler) }
 
     /// JSONL 즉시 재스캔 + 공식 재조회.
     /// 팝오버 열림: 30초 스로틀(§F3). 새로고침 버튼: forceOfficial=true로 우회
@@ -258,7 +281,7 @@ final class UsageEngine: ObservableObject {
             typingTimer?.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(200))
         } else {
             typingTimer?.schedule(deadline: .distantFuture, repeating: .never)
-            keySamples = []
+            typingMeter.reset()
         }
     }
 
@@ -273,6 +296,7 @@ final class UsageEngine: ObservableObject {
         let weeklySummaryEnabled: Bool
         let pollInterval: TimeInterval
         let typingRunner: Bool
+        let runnerSpeed: Double
 
         init(_ settings: AppSettings) {
             officialEnabled = settings.officialEnabled
@@ -282,6 +306,7 @@ final class UsageEngine: ObservableObject {
             weeklySummaryEnabled = settings.weeklySummaryEnabled
             pollInterval = settings.pollInterval
             typingRunner = settings.typingRunnerEnabled
+            runnerSpeed = settings.runnerSpeed
         }
     }
 
@@ -295,6 +320,8 @@ final class UsageEngine: ObservableObject {
         // 테마·메뉴바 표시처럼 틱과 무관한 설정은 건너뛴다. BurnRateMeter가 틱 단위 EMA라 틱이 늘면 속도가 달라진다.
         guard new != old else { return }
         config = new
+        // 앞 민감도의 경계로 정한 단계를 새 경계에서 붙잡지 않는다
+        if new.sensitivity != old.sensitivity { paceSources = .init() }
         if new.officialEnabled != old.officialEnabled {
             if new.officialEnabled {
                 // 토글 연타로 요청이 몰려 429를 맞지 않게 5초 스로틀은 유지하고, 걸리면 풀린 뒤 다시 조회한다.
@@ -337,6 +364,7 @@ final class UsageEngine: ObservableObject {
             log.warning("tick 지연: \(Int(now.timeIntervalSince(last)))초 만에 재개")
         }
         lastTickAt = now
+        onTick?(now)
         syncAccount()
 
         // 유예 시간을 넘긴 공식 값은 버린다 (조회가 계속 실패하거나 잠자기에서 깬 경우).
@@ -447,16 +475,29 @@ final class UsageEngine: ObservableObject {
         var pointerIdle = TimeInterval.infinity
         if config.typingRunner {
             // 한도에 가까우면 쉬는 자세가 경고라 타자로 덮지 않는다. 자리에 있는 동안은 잠들지 않는다
-            if claude.limited { keySamples = [] } else { typing = typingRate(now: now) }
-            keyIdle = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
-            away = min(away, CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: Self.anyInput))
-            pointerIdle = Self.pointerEvents.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }
+            if claude.limited { typingMeter.reset() } else { typing = typingRate(now: now) }
+            keyIdle = input.secondsSince(.keyDown)
+            away = min(away, input.secondsSince(Self.anyInput))
+            pointerIdle = Self.pointerEvents.map { input.secondsSince($0) }
                 .min() ?? .infinity
         }
-        let pace = Pace.decide(.init(claudeRate: claude.rate, claudeWorking: claude.working, typingRate: typing,
+        let keys = Thresholds.typing(sensitivity: config.sensitivity)
+        // 타자 타이머는 1초마다 돌아 손을 뗀 뒤 2~3초 만에 선다. 멈출 때가 되는 순간에 한 번 더 본다
+        if typing != nil, keyIdle < keys.stopAfter, !stopCheckScheduled {
+            stopCheckScheduled = true
+            workQueue.asyncAfter(deadline: .now() + keys.stopAfter - keyIdle + 0.05) { [weak self] in
+                guard let self else { return }
+                self.stopCheckScheduled = false
+                self.updatePace(now: Date())
+            }
+        }
+        let decided = Pace.decide(.init(claudeRate: claude.rate, claudeWorking: claude.working, typingRate: typing,
                                      keyIdle: keyIdle, away: away, pointerIdle: pointerIdle, night: Pace.isNight(now),
-                                     waiting: claude.waiting),
-                               claude: thresholds, keys: .typing(sensitivity: config.sensitivity))
+                                     waiting: claude.waiting, previous: paceSources),
+                               claude: thresholds, keys: keys)
+        paceSources = decided.sources
+        let pace = (state: decided.state,
+                    tempo: Pace.scaledTempo(decided.tempo, state: decided.state, speed: config.runnerSpeed))
         if let last = publishedPace, last.state == pace.state, abs(last.tempo - pace.tempo) <= 0.02 { return }
         publishedPace = pace
         DispatchQueue.main.async {
@@ -468,19 +509,9 @@ final class UsageEngine: ObservableObject {
     private static let anyInput = CGEventType(rawValue: ~0)!
     private static let pointerEvents: [CGEventType] = [.mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown,
                                                        .leftMouseDragged, .scrollWheel]
-    /// 타자 속도를 재는 구간. 짧을수록 빨리 반응하고 길수록 덜 출렁인다.
-    private static let typingWindow: TimeInterval = 3
-
     /// 최근 몇 초 키 누름 수를 타/분으로. 키보드에서 온 입력만 센다 (앱이 보내는 붙여넣기 키는 타자가 아니다).
     private func typingRate(now: Date) -> Double {
-        let count = CGEventSource.counterForEventType(.hidSystemState, eventType: .keyDown)
-        if let last = keySamples.last, count < last.count { keySamples = [] }
-        keySamples.append((now, count))
-        if let cut = keySamples.lastIndex(where: { now.timeIntervalSince($0.at) >= Self.typingWindow }) {
-            keySamples.removeFirst(cut)
-        }
-        guard let first = keySamples.first, keySamples.count > 1 else { return 0 }
-        return Double(count - first.count) / max(now.timeIntervalSince(first.at), 1) * 60
+        typingMeter.rate(count: input.keyDownCount(), now: now)
     }
 
     /// 공식 세션 창이 끝나는 시각이 지나면 "세션 초기화" (옵션, 기본 off).

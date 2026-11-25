@@ -213,7 +213,7 @@ public enum ClaudeLogin {
     }
 
     /// 쓰지 않는 계정의 리프레시 토큰으로 새 토큰을 받는다. 리프레시 토큰도 바뀌므로 받은 값은 꼭 저장해야 한다.
-    /// 지금 Claude Code가 쓰는 계정에는 부르지 않는다 (Claude Code가 가진 리프레시 토큰이 무효가 된다).
+    /// 지금 쓰는 계정에 부를 때는 받은 값을 반드시 Claude Code 저장소에 써 넣어야 한다 (안 그러면 Claude Code가 가진 리프레시 토큰이 무효가 된다).
     /// - throughGate: 사용자가 계정을 고른 때. 관문이 닫혀 있어도 한 번은 보낸다
     public static func refresh(_ part: Data, clientVersion: String? = nil, now: Date = Date(),
                                gate: RateLimitGate = .token, throughGate: Bool = false) async -> RefreshResult {

@@ -101,6 +101,23 @@ public final class OAuthUsageProvider {
     /// credentialQueue 전용. 지금 계정 토큰을 마지막으로 새로 받은 때와 그때 받은 액세스 토큰.
     private var liveRefreshedAt: Date?
     private var liveRefreshedToken: String?
+    /// 서버가 새로 내줬지만 저장소에 써 넣지 못한 로그인.
+    private struct UnsavedLogin {
+        /// 저장소에 써 넣을 자격증명 전체.
+        let credentials: Data
+        /// 서버가 이미 무효로 한 리프레시 토큰. 저장소가 아직 이 값일 때만 덮어쓴다.
+        let stale: String?
+        /// 토큰 응답이 알려 준 주인 계정.
+        let owner: String?
+    }
+    /// credentialQueue 전용. 이 값을 잃으면 Claude Code 로그인이 풀리므로, 서버를 다시 부르지 않고 써 넣을 때까지 쥐고 있는다.
+    private var unsavedLogin: UnsavedLogin?
+    /// credentialQueue 전용. 못 쓴 로그인을 다시 써 보는 예약이 걸려 있다.
+    private var unsavedRetryScheduled = false
+    /// 쓰기에 실패한 뒤 다시 써 보는 간격. 폴링을 기다리는 사이 Claude Code가 죽은 리프레시 토큰을 보내지 않게 짧게 잡는다.
+    var unsavedRetryDelays: [TimeInterval] = [2, 5, 15, 30, 60]
+    /// credentialQueue 전용. 저장소가 다른 계정으로 바뀌어 쓸 수 없는 새 로그인을 넘길 곳 (Claude 로그인 부분, 주인 계정).
+    private var onDroppedLogin: ((Data, String) -> Void)?
     /// credentialQueue 전용. 토큰 서버가 거절한 리프레시 토큰. 저장소 값이 이대로면 다시 보내지 않는다.
     private var rejectedRefreshToken: String?
     /// credentialQueue 전용. 새로 받았더니 `~/.claude.json`과 다른 계정 것이던 액세스 토큰과 그 주인.
@@ -261,48 +278,123 @@ public final class OAuthUsageProvider {
         return token
     }
 
+    // MARK: - 지금 계정 토큰 새로 받기
+
+    /// credentialQueue 전용. 새 토큰을 지금 로그인으로 삼는다.
+    private func adopt(_ saved: (token: String, expiresAt: Date), at now: Date) {
+        liveRefreshFailedAt = nil
+        liveRefreshedAt = now
+        liveRefreshedToken = saved.token
+        loginRequired = false
+        cachedToken = CachedToken(token: saved.token, expiresAt: saved.expiresAt)
+    }
+
+    /// credentialQueue 전용. 토큰 주인이 `~/.claude.json` 계정과 다르면 그 값을 이 계정 사용률로 보이지 않는다.
+    private func usable(_ token: String, owner: String?) -> String? {
+        if let owner, let current = currentAccountID(), owner != current {
+            foreignToken = (token, owner)
+            return nil
+        }
+        return token
+    }
+
+    /// credentialQueue 전용. 저장소가 바뀌어 쓸 수 없는 새 로그인을 그 계정 저장본에라도 남기게 넘긴다.
+    /// 서버는 그 계정의 앞 리프레시 토큰을 이미 무효로 했으므로 버리면 그 계정으로 돌아갈 때 로그인이 풀린다.
+    /// `/login`은 자격증명을 `~/.claude.json`보다 먼저 쓰므로 지금 계정과 같아 보여도 넘긴다. 받는 쪽이 더 새것일 때만 남긴다.
+    private func handOff(_ credentials: Data, owner: String?) {
+        guard let owner, let part = ClaudeLogin.oauthPart(of: credentials) else { return }
+        Self.log.info("저장소에 쓸 수 없는 새 로그인을 그 계정 저장본으로 넘김")
+        onDroppedLogin?(part, owner)
+    }
+
+    private enum UnsavedWrite {
+        case written(Data, (token: String, expiresAt: Date))
+        case failed
+        /// 저장소가 다른 로그인이다 (/login, 계정 바꾸기). 쥐고 있던 값은 주인 계정 저장본 쪽으로 넘기고 내려놓는다.
+        case superseded
+    }
+
+    /// credentialQueue 전용. 쥐고 있던 새 로그인을 저장소에 써 넣는다. 저장소의 리프레시 토큰이 아직 죽은 옛 값일 때만 쓴다.
+    private func writeUnsaved(_ pending: UnsavedLogin, over live: Data, now: Date) -> UnsavedWrite {
+        guard ClaudeLogin.refreshToken(in: live) == pending.stale else {
+            unsavedLogin = nil
+            handOff(pending.credentials, owner: pending.owner)
+            return .superseded
+        }
+        guard let part = ClaudeLogin.oauthPart(of: pending.credentials),
+              let merged = ClaudeLogin.merging(oauthPart: part, into: live),
+              let saved = Self.parseCredentials(merged, now: now),
+              writeCredentials(merged) || writeCredentials(merged)
+        else {
+            liveRefreshFailedAt = now
+            return .failed
+        }
+        Self.log.info("못 쓴 새 로그인을 저장소에 써 넣음")
+        unsavedLogin = nil
+        adopt(saved, at: now)
+        // 다른 계정 토큰이면 어느 경로로 써 넣었든 이 계정 사용률로 보이지 않게 표시한다
+        _ = usable(saved.token, owner: pending.owner)
+        return .written(merged, saved)
+    }
+
+    /// credentialQueue 전용. 못 쓴 로그인을 폴링을 기다리지 않고 잠시 뒤 다시 써 본다.
+    private func scheduleUnsavedRetry(attempt: Int = 0) {
+        guard !unsavedRetryScheduled, unsavedLogin != nil, attempt < unsavedRetryDelays.count else { return }
+        unsavedRetryScheduled = true
+        credentialQueue.asyncAfter(deadline: .now() + unsavedRetryDelays[attempt]) { [weak self] in
+            guard let self else { return }
+            self.unsavedRetryScheduled = false
+            guard let pending = self.unsavedLogin else { return }
+            let now = self.clock()
+            guard let lock = ClaudeRefreshLock.acquire(paths: self.lockPaths(), now: now) else {
+                self.scheduleUnsavedRetry(attempt: attempt + 1)
+                return
+            }
+            defer { lock.release() }
+            // 쓰기를 막은 까닭(키체인 잠김 등)이 읽기도 막을 수 있어, 읽지 못해도 다음 예약을 건다
+            if let live = self.readCredentials(), case .written = self.writeUnsaved(pending, over: live, now: now) { return }
+            if self.unsavedLogin != nil { self.scheduleUnsavedRetry(attempt: attempt + 1) }
+        }
+    }
+
+    /// 쓸 수 없는 새 로그인을 받을 곳. 처리기는 credentialQueue에서 동기로 불린다.
+    /// 계정 전환 직전 `flushUnsavedLogin` 안에서도 불리므로, 돌아오기 전에 저장을 마쳐야 전환이 옛 저장본을 읽지 않는다.
+    public func setDroppedLoginHandler(_ handler: @escaping (Data, String) -> Void) {
+        credentialQueue.async { self.onDroppedLogin = handler }
+    }
+
+    /// 계정을 바꾸기 전에 부른다. 쥐고 있던 새 로그인을 저장소에 써 넣고, 못 쓰면 false.
+    /// 호출한 쪽이 이미 Claude Code와 같은 잠금을 쥐고 있어야 한다.
+    public func flushUnsavedLogin() -> Bool {
+        dispatchPrecondition(condition: .notOnQueue(credentialQueue))
+        return credentialQueue.sync {
+            guard let pending = unsavedLogin else { return true }
+            guard let live = readCredentials() else { return false }
+            switch writeUnsaved(pending, over: live, now: clock()) {
+            case .written, .superseded: return true
+            case .failed: return false
+            }
+        }
+    }
+
+    private enum RefreshPlan {
+        case use(String)
+        /// 이 자격증명의 리프레시 토큰으로 새로 받는다. 잠금은 받은 값을 처리할 때까지 쥔다.
+        case refresh(Data, ClaudeRefreshLock, account: String?)
+        case skip
+    }
+
     /// 지금 Claude Code 계정의 토큰을 새로 받아 Claude Code 저장소에 써 넣고 새 액세스 토큰을 돌려준다.
     /// Claude Code와 같은 잠금을 잡고, 잡은 뒤 저장소를 다시 읽어 그새 다른 쪽이 받아 두었으면 그 토큰을 쓴다.
     /// 열려 있는 Claude Code 세션은 갱신 전에 저장소를 다시 읽어 바뀐 토큰을 이어 쓴다 (claude-code 2.1.318 확인).
     /// - rejectedToken: 만료돼 쓸 수 없던 토큰. nil이면 서버가 401로 거절한 지금 토큰.
     private func refreshLiveToken(rejectedToken: String?, clientVersion: String?) async -> String? {
-        // credentialQueue에서 잠금을 잡고 저장소를 읽는다. 네트워크는 큐 밖에서 기다린다
-        enum Plan { case use(String), refresh(Data, ClaudeRefreshLock), skip }
-        let plan: Plan = await onCredentialQueue {
-            let now = self.clock()
-            if let failed = self.liveRefreshFailedAt, now.timeIntervalSince(failed) < Self.liveRefreshRetryDelay { return .skip }
-            if self.tokenGate.blockedUntil(now: now) != nil { return .skip }
-            guard let lock = ClaudeRefreshLock.acquire(paths: self.lockPaths(), now: now) else {
-                Self.log.info("지금 계정 토큰 새로 받기 건너뜀: 다른 곳이 받는 중")
-                return .skip
-            }
-            guard let live = self.readCredentials(),
-                  let parsed = Self.parseCredentials(live, now: now)
-            else { lock.release(); return .skip }
-            // 죽은 리프레시 토큰을 폴링마다 다시 보내지 않는다. /login으로 바뀌면 다시 해 본다
-            if let dead = self.rejectedRefreshToken, ClaudeLogin.refreshToken(in: live) == dead {
-                self.loginRequired = true
-                lock.release()
-                return .skip
-            }
-            // 방금 받은 토큰도 401이면 토큰 문제가 아니라 리프레시 토큰을 또 돌리지 않는다
-            if rejectedToken == nil, parsed.token == self.liveRefreshedToken, let last = self.liveRefreshedAt,
-               now.timeIntervalSince(last) < Self.refreshOn401Cooldown {
-                lock.release()
-                return .skip
-            }
-            let stillRejected = rejectedToken.map { $0 == parsed.token } ?? (self.cachedToken?.token == parsed.token)
-            if !stillRejected, parsed.expiresAt > now.addingTimeInterval(60) {
-                self.cachedToken = CachedToken(token: parsed.token, expiresAt: parsed.expiresAt)
-                lock.release()
-                return .use(parsed.token)
-            }
-            return .refresh(live, lock)
-        }
+        // 잠금과 저장소는 credentialQueue에서 만지고, 네트워크는 큐 밖에서 기다린다
+        let plan = await onCredentialQueue { self.planRefresh(rejectedToken: rejectedToken) }
         switch plan {
         case .skip: return nil
         case .use(let token): return token
-        case .refresh(let live, let lock):
+        case .refresh(let live, let lock, let account):
             guard let part = ClaudeLogin.oauthPart(of: live) else {
                 lock.release()
                 return nil
@@ -311,41 +403,117 @@ public final class OAuthUsageProvider {
             Self.log.info("지금 계정 토큰 새로 받기: \(Self.describe(result), privacy: .public)")
             return await onCredentialQueue {
                 defer { lock.release() }
-                switch result {
-                case .refreshed(let updated, let owner):
-                    // 서버는 이미 리프레시 토큰을 돌렸다. 써 넣지 못하면 Claude Code도 로그인이 풀리니 한 번 더 써 본다
-                    guard let merged = ClaudeLogin.merging(oauthPart: updated, into: live),
-                          self.writeCredentials(merged) || self.writeCredentials(merged),
-                          let parsed = Self.parseCredentials(merged)
-                    else {
-                        self.liveRefreshFailedAt = self.clock()
-                        return nil
-                    }
-                    self.liveRefreshFailedAt = nil
-                    self.liveRefreshedAt = self.clock()
-                    self.liveRefreshedToken = parsed.token
-                    self.loginRequired = false
-                    self.cachedToken = CachedToken(token: parsed.token, expiresAt: parsed.expiresAt)
-                    // 키체인 토큰이 `~/.claude.json`과 다른 계정 것이면 그 값을 이 계정 사용률로 보이지 않는다
-                    if let owner, let current = self.currentAccountID(), owner != current {
-                        self.foreignToken = (parsed.token, owner)
-                        return nil
-                    }
-                    return parsed.token
-                case .rejected:
-                    self.rejectedRefreshToken = ClaudeLogin.refreshToken(in: part)
-                    self.loginRequired = true
-                    return nil
-                case .rateLimited:
-                    if self.tokenGate.blockedUntil(now: self.clock()) == nil { self.tokenGate.hit(now: self.clock()) }
-                    self.liveRefreshFailedAt = self.clock()
-                    return nil
-                case .unknown:
-                    self.liveRefreshFailedAt = self.clock()
-                    return nil
-                }
+                return self.handle(result, refreshing: live, part: part, account: account)
             }
         }
+    }
+
+    /// credentialQueue 전용. 잠금을 잡고 저장소를 읽어 할 일을 정한다. `.refresh`가 아니면 잠금을 풀고 돌아온다.
+    private func planRefresh(rejectedToken: String?) -> RefreshPlan {
+        let now = clock()
+        // 못 쓴 로그인을 써 넣는 일은 서버를 부르지 않으므로 재시도 대기와 요청 관문에 막히지 않는다
+        if unsavedLogin == nil {
+            if let failed = liveRefreshFailedAt, now.timeIntervalSince(failed) < Self.liveRefreshRetryDelay { return .skip }
+            if tokenGate.blockedUntil(now: now) != nil { return .skip }
+        }
+        guard let lock = ClaudeRefreshLock.acquire(paths: lockPaths(), now: now) else {
+            Self.log.info("지금 계정 토큰 새로 받기 건너뜀: 다른 곳이 받는 중")
+            return .skip
+        }
+        guard let live = readCredentials(), let parsed = Self.parseCredentials(live, now: now) else {
+            lock.release()
+            return .skip
+        }
+        if let pending = unsavedLogin {
+            switch writeUnsaved(pending, over: live, now: now) {
+            case .written(let merged, let saved):
+                // 오래 쥐고 있어 액세스 토큰이 이미 만료됐으면 이제 저장소에 있는 새 리프레시 토큰으로 바로 새로 받는다
+                if saved.expiresAt <= now.addingTimeInterval(60) { return .refresh(merged, lock, account: currentAccountID()) }
+                lock.release()
+                // 다른 계정 토큰이면 writeUnsaved가 이미 표시했다
+                return isForeign(saved.token) ? .skip : .use(saved.token)
+            case .failed:
+                lock.release()
+                scheduleUnsavedRetry()
+                return .skip
+            case .superseded:
+                break
+            }
+        }
+        // 죽은 리프레시 토큰을 폴링마다 다시 보내지 않는다. /login으로 바뀌면 다시 해 본다
+        if let dead = rejectedRefreshToken, ClaudeLogin.refreshToken(in: live) == dead {
+            loginRequired = true
+            lock.release()
+            return .skip
+        }
+        // 방금 받은 토큰도 401이면 토큰 문제가 아니라 리프레시 토큰을 또 돌리지 않는다
+        if rejectedToken == nil, parsed.token == liveRefreshedToken, let last = liveRefreshedAt,
+           now.timeIntervalSince(last) < Self.refreshOn401Cooldown {
+            lock.release()
+            return .skip
+        }
+        let stillRejected = rejectedToken.map { $0 == parsed.token } ?? (cachedToken?.token == parsed.token)
+        if !stillRejected, parsed.expiresAt > now.addingTimeInterval(60) {
+            cachedToken = CachedToken(token: parsed.token, expiresAt: parsed.expiresAt)
+            lock.release()
+            return .use(parsed.token)
+        }
+        return .refresh(live, lock, account: currentAccountID())
+    }
+
+    /// credentialQueue 전용. 토큰 서버의 답을 처리한다. 잠금은 부른 쪽이 푼다.
+    /// - live: 새로 받기 전에 읽은 자격증명. - account: 그때의 `~/.claude.json` 계정.
+    private func handle(_ result: ClaudeLogin.RefreshResult, refreshing live: Data, part: Data, account: String?) -> String? {
+        let now = clock()
+        switch result {
+        case .refreshed(let updated, let owner):
+            return save(updated, owner: owner, replacing: live, account: account, now: now)
+        case .rejected:
+            rejectedRefreshToken = ClaudeLogin.refreshToken(in: part)
+            loginRequired = true
+            return nil
+        case .rateLimited:
+            if tokenGate.blockedUntil(now: now) == nil { tokenGate.hit(now: now) }
+            liveRefreshFailedAt = now
+            return nil
+        case .unknown:
+            liveRefreshFailedAt = now
+            return nil
+        }
+    }
+
+    /// credentialQueue 전용. 서버는 이미 리프레시 토큰을 돌렸으므로 받은 값은 어떻게든 저장소에 남겨야 한다.
+    private func save(_ updated: Data, owner: String?, replacing live: Data, account: String?, now: Date) -> String? {
+        // 기다리는 사이 저장소가 바뀌었을 수 있어 다시 읽어 그 위에 합친다
+        let stale = ClaudeLogin.refreshToken(in: live)
+        let latest = readCredentials() ?? live
+        guard ClaudeLogin.refreshToken(in: latest) == stale else {
+            // 그새 다른 쪽이 새 로그인을 써 넣었다. 덮어쓰지 않고, 같은 계정일 때만 그 토큰을 쓴다.
+            // 다른 계정으로 /login했다면 방금 받은 앞 계정 로그인은 그 계정 저장본에 남긴다
+            handOff(updated, owner: owner ?? account)
+            liveRefreshFailedAt = nil
+            guard currentAccountID() == account, let current = Self.parseCredentials(latest, now: now),
+                  current.expiresAt > now.addingTimeInterval(60)
+            else { return nil }
+            cachedToken = CachedToken(token: current.token, expiresAt: current.expiresAt)
+            return current.token
+        }
+        guard let merged = ClaudeLogin.merging(oauthPart: updated, into: latest),
+              let parsed = Self.parseCredentials(merged, now: now)
+        else {
+            liveRefreshFailedAt = now
+            return nil
+        }
+        guard writeCredentials(merged) || writeCredentials(merged) else {
+            Self.log.error("새 로그인을 저장소에 쓰지 못함, 다시 써 보려고 보관")
+            unsavedLogin = UnsavedLogin(credentials: merged, stale: stale, owner: owner)
+            liveRefreshFailedAt = now
+            scheduleUnsavedRetry()
+            return nil
+        }
+        unsavedLogin = nil
+        adopt(parsed, at: now)
+        return usable(parsed.token, owner: owner)
     }
 
     private static let log = Logger(subsystem: "dev.runtime.RunTime", category: "token")
@@ -376,6 +544,9 @@ public final class OAuthUsageProvider {
             self.liveRefreshedToken = nil
             self.rejectedAccessToken = nil
             self.loginRequired = false
+            // 쥐고 있던 로그인은 버리지 않는다. 새 계정 토큰이 살아 있으면 갱신 경로가 한동안 돌지 않으므로,
+            // 곧바로 저장소와 맞춰 보아 쓰거나 그 계정 저장본으로 넘기게 예약한다
+            self.scheduleUnsavedRetry()
         }
     }
 

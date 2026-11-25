@@ -326,6 +326,35 @@ if let index = CommandLine.arguments.firstIndex(of: "--clip-shots") {
     exit(0)
 }
 
+// 점검은 실제 설정을 바꾸므로 설치된 앱(번들)에서는 돌리지 않는다. 개발 빌드(`swift run`)는 따로 저장소를 쓴다
+if CommandLine.arguments.contains("--pace-check") || CommandLine.arguments.contains("--typing-count-check"),
+   Bundle.main.bundleIdentifier != nil {
+    print("설치된 앱에서는 돌리지 않습니다. 개발 빌드(.build/debug/RunTime)로 돌려 주세요.")
+    exit(2)
+}
+
+// 엔진이 세는 타수를 직접 쳐 보며 확인
+if CommandLine.arguments.contains("--typing-count-check") {
+    Task { @MainActor in
+        await PaceCheck.typingCount()
+        exit(0)
+    }
+    dispatchMain()
+}
+
+// 러너 속도 설정 점검. Claude 폴더를 빈 임시 폴더로 바꿔 이 Mac의 Claude 기록과 로그인을 읽지 않는다
+if CommandLine.arguments.contains("--pace-check") {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-pace-check-\(getpid())")
+    try? FileManager.default.createDirectory(at: folder.appendingPathComponent("projects"), withIntermediateDirectories: true)
+    setenv("CLAUDE_CONFIG_DIR", folder.path, 1)
+    Task { @MainActor in
+        let ok = await PaceCheck.run()
+        try? FileManager.default.removeItem(at: folder)
+        exit(ok ? 0 : 1)
+    }
+    dispatchMain()
+}
+
 // README용: 고스트와 겨루는 게임 장면을 이어 찍어 PNG로 저장하고 종료.
 if CommandLine.arguments.contains("--stage-check") {
     Task { @MainActor in exit(StageCheck.run(character: Runner.cat.character) ? 0 : 1) }

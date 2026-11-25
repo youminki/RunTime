@@ -96,7 +96,7 @@ final class SpriteAnimator {
     /// 같은 단계 안에서 빠르기를 바꾼다. 레이어 재생 속도만 바꿔 프레임을 다시 굽지 않고,
     /// 지금 재생 위치를 이어 받아 바꾸는 순간 동작이 튀지 않게 한다.
     func setTempo(_ tempo: Double) {
-        let speed = Float(min(max(tempo, 0.5), 2))
+        let speed = Float(min(max(tempo, 0.25), 3))
         guard abs(layer.speed - speed) > 0.01 else { return }
         let now = CACurrentMediaTime()
         let local = layer.convertTime(now, from: nil)

@@ -684,6 +684,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { hit in switcher.limitReached(hit) }
             .store(in: &cancellables)
         switcher.willActivate = { [engine] in engine.accountChanged() }
+        switcher.flushLogin = { [engine] in engine.flushUnsavedLogin() }
+        engine.setDroppedLoginHandler { part, owner in switcher.keepDroppedLogin(part, for: owner) }
         // /login으로 바뀐 계정을 엔진이 먼저 알아채면 계정 목록도 바로 맞춘다
         engine.accountSwitched
             .sink { switcher.captureCurrent() }

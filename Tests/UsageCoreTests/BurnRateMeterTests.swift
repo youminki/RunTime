@@ -80,6 +80,96 @@ struct PaceTests {
                             claude: claude, keys: keys).state == .running)
     }
 
+    @Test func typingRateCatchesUpRightAfterAPause() {
+        var meter = TypingMeter()
+        let start = Date()
+        // 3초 넘게 쉬다가 1초에 4타씩(240타/분) 치기 시작한다
+        for second in 0...4 { _ = meter.rate(count: 100, now: start.addingTimeInterval(Double(second))) }
+        let first = meter.rate(count: 104, now: start.addingTimeInterval(5))
+        let second = meter.rate(count: 108, now: start.addingTimeInterval(6))
+        // 쉰 시간까지 나누면 첫 초에 80타/분으로 나온다
+        #expect(first == 240)
+        #expect(second == 240)
+    }
+
+    @Test func typingRateFollowsTheWindowWhileTyping() {
+        var meter = TypingMeter(window: 3)
+        let start = Date()
+        var count: UInt32 = 0
+        for second in 0...5 {
+            count += 2   // 120타/분
+            _ = meter.rate(count: count, now: start.addingTimeInterval(Double(second)))
+        }
+        // 빨라지면 3초 안에 새 빠르기가 된다
+        var rate = 0.0
+        for second in 6...9 {
+            count += 5   // 300타/분
+            rate = meter.rate(count: count, now: start.addingTimeInterval(Double(second)))
+        }
+        #expect(rate == 300)
+        #expect(meter.rate(count: 3, now: start.addingTimeInterval(10)) == 0)   // 누적값이 줄면 다시 센다
+    }
+
+    @Test func downshiftWaitsForAClearDropButUpshiftIsImmediate() {
+        let keys = Thresholds.typing(sensitivity: .normal)   // 달리기 120, 질주 250
+        // 경계 바로 아래로 흔들려도 달리기를 이어 간다
+        #expect(keys.moving(burnRate: 115, holding: .running) == .running)
+        #expect(keys.moving(burnRate: 96, holding: .running) == .running)
+        // 경계보다 20% 넘게 느려지면 걷는다
+        #expect(keys.moving(burnRate: 94, holding: .running) == .walking)
+        // 낮은 경계에서도 최소 25는 여유를 둔다 (높음 민감도 달리기 경계 60)
+        let high = Thresholds.typing(sensitivity: .high)
+        #expect(high.moving(burnRate: 36, holding: .running) == .running)
+        #expect(high.moving(burnRate: 34, holding: .running) == .walking)
+        // 올라갈 때는 바로 올린다
+        #expect(keys.moving(burnRate: 121, holding: .walking) == .running)
+        #expect(keys.moving(burnRate: 260, holding: .walking) == .dashing)
+        // 멈췄다 다시 움직이면 이어 갈 단계가 없다
+        #expect(keys.moving(burnRate: 115, holding: .standing) == .walking)
+        #expect(keys.moving(burnRate: 115, holding: nil) == .walking)
+        // 질주에서 크게 느려지면 걷기까지 내려간다
+        #expect(keys.moving(burnRate: 90, holding: .dashing) == .walking)
+        #expect(keys.moving(burnRate: 205, holding: .dashing) == .dashing)
+        #expect(keys.moving(burnRate: 195, holding: .dashing) == .running)
+    }
+
+    @Test func paceKeepsTheStageNearABoundary() {
+        func state(_ rate: Double, after previous: CatState?) -> CatState {
+            Pace.decide(.init(claudeRate: 0, claudeWorking: false, typingRate: rate, keyIdle: 0.3, away: 0,
+                              previous: .init(typing: previous)), claude: claude, keys: keys).state
+        }
+        #expect(state(115, after: .running) == .running)
+        #expect(state(115, after: nil) == .walking)
+    }
+
+    @Test func holdingOneSourcesStageDoesNotHoldTheOther() {
+        // Claude가 질주를 이끌다 끝났다. 타자 205타/분은 달리기여야 한다 (질주 경계 250의 여유 안이라도)
+        let afterClaude = Pace.Input.Sources(claude: .dashing, typing: .running)
+        let typingOnly = Pace.decide(.init(claudeRate: 0, claudeWorking: false, typingRate: 205, keyIdle: 0.3, away: 0,
+                                           previous: afterClaude), claude: claude, keys: keys)
+        #expect(typingOnly.state == .running)
+        // 타자가 질주를 이끌다 멈췄다. Claude 8,500 tok/min은 달리기여야 한다
+        let afterTyping = Pace.Input.Sources(claude: .running, typing: .dashing)
+        let claudeOnly = Pace.decide(.init(claudeRate: 8_500, claudeWorking: true, typingRate: nil, keyIdle: 30, away: 0,
+                                           previous: afterTyping), claude: claude, keys: keys)
+        #expect(claudeOnly.state == .running)
+        // 자기 출처가 질주였으면 경계 근처에서 이어 간다
+        let own = Pace.decide(.init(claudeRate: 0, claudeWorking: false, typingRate: 205, keyIdle: 0.3, away: 0,
+                                    previous: .init(typing: .dashing)), claude: claude, keys: keys)
+        #expect(own.state == .dashing)
+        #expect(own.sources == .init(typing: .dashing))
+    }
+
+    @Test func speedScalesOnlyMovingStates() {
+        for state in [CatState.walking, .running, .dashing, .rainbow] {
+            #expect(Pace.scaledTempo(1.2, state: state, speed: 0.5) == 0.6)
+        }
+        for state in [CatState.sleeping, .standing, .looking, .waiting] {
+            #expect(Pace.scaledTempo(1, state: state, speed: 2) == 1)
+        }
+        #expect(Pace.scaledTempo(1.1, state: .running, speed: 1) == 1.1)
+    }
+
     @Test func slowerAtNight() {
         let day = Pace.decide(.init(claudeRate: 5_000, claudeWorking: true, typingRate: nil, keyIdle: 9, away: 0),
                               claude: claude, keys: keys)

@@ -19,9 +19,23 @@ public enum Pace {
         public var night: Bool
         /// Claude가 도구 승인을 기다린다.
         public var waiting: Bool
+        /// 출처별로 바로 앞에 정한 단계. 경계 근처에서 단계를 내릴지 정할 때, 그 출처 자신의 앞 단계만 본다.
+        /// 합친 단계를 쓰면 다른 출처가 올린 단계를 이 출처가 붙잡는다.
+        public var previous: Sources = .init()
+
+        /// 단계를 정한 출처별 결과. 다음에 정할 때 `previous`로 돌려준다.
+        public struct Sources: Sendable, Equatable {
+            public var claude: CatState?
+            public var typing: CatState?
+            public init(claude: CatState? = nil, typing: CatState? = nil) {
+                self.claude = claude
+                self.typing = typing
+            }
+        }
 
         public init(claudeRate: Double, claudeWorking: Bool, typingRate: Double?, keyIdle: TimeInterval, away: TimeInterval,
-                    pointerIdle: TimeInterval = .infinity, night: Bool = false, waiting: Bool = false) {
+                    pointerIdle: TimeInterval = .infinity, night: Bool = false, waiting: Bool = false,
+                    previous: Sources = .init()) {
             self.claudeRate = claudeRate
             self.claudeWorking = claudeWorking
             self.typingRate = typingRate
@@ -30,32 +44,45 @@ public enum Pace {
             self.pointerIdle = pointerIdle
             self.night = night
             self.waiting = waiting
+            self.previous = previous
         }
     }
 
     /// 단계와 그 단계 안의 빠르기. Claude와 타자가 함께 움직이면 빠른 쪽을 따른다.
-    public static func decide(_ input: Input, claude: Thresholds, keys: Thresholds) -> (state: CatState, tempo: Double) {
-        if input.waiting { return (.waiting, 1) }
+    public static func decide(_ input: Input, claude: Thresholds, keys: Thresholds)
+        -> (state: CatState, tempo: Double, sources: Input.Sources) {
+        if input.waiting { return (.waiting, 1, .init()) }
         var moves: [(CatState, Double)] = []
+        var sources = Input.Sources()
         if input.claudeWorking {
-            let state = claude.moving(burnRate: input.claudeRate)
+            let state = claude.moving(burnRate: input.claudeRate, holding: input.previous.claude)
             moves.append((state, claude.tempo(burnRate: input.claudeRate, state: state)))
+            sources.claude = state
         }
         if let rate = input.typingRate, input.keyIdle < keys.stopAfter {
-            let state = keys.moving(burnRate: rate)
+            let state = keys.moving(burnRate: rate, holding: input.previous.typing)
             moves.append((state, keys.tempo(burnRate: rate, state: state)))
+            sources.typing = state
         }
         if let fastest = moves.max(by: { rank($0.0) < rank($1.0) }) {
-            return (fastest.0, input.night ? fastest.1 * nightTempo : fastest.1)
+            return (fastest.0, input.night ? fastest.1 * nightTempo : fastest.1, sources)
         }
-        if input.away >= claude.sleepAfterIdle { return (.sleeping, 1) }
-        return (input.pointerIdle < lookAfter ? .looking : .standing, 1)
+        if input.away >= claude.sleepAfterIdle { return (.sleeping, 1, .init()) }
+        return (input.pointerIdle < lookAfter ? .looking : .standing, 1, .init())
     }
 
     /// 마우스를 이만큼 쉬면 둘러보기를 멈추고 선다. 스크롤하며 읽는 사이 잠깐씩 멈추는 동안은 이어 둘러본다.
     public static let lookAfter: TimeInterval = 8
     /// 늦은 밤의 걸음 빠르기 배율.
     public static let nightTempo = 0.8
+
+    /// 사용자가 고른 속도 배율을 움직이는 단계에만 곱한다. 서 있거나 자거나 기다리는 동안의 호흡은 그대로 둔다.
+    public static func scaledTempo(_ tempo: Double, state: CatState, speed: Double) -> Double {
+        switch state {
+        case .walking, .running, .dashing, .rainbow: return tempo * speed
+        case .sleeping, .standing, .looking, .waiting: return tempo
+        }
+    }
 
     /// 자정부터 새벽 5시까지.
     public static func isNight(_ date: Date, calendar: Calendar = .current) -> Bool {
