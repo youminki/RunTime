@@ -247,6 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         pet.characterProvider = { [weak self] in self?.engine.settings.character ?? Runner.cat.character }
         pet.themeProvider = { [weak self] in self?.engine.settings.spriteTheme ?? .auto }
         pet.companionProvider = { GameDecor.shared.companion }
+        pet.tempoProvider = { [weak self] in self?.engine.tempo ?? 1 }
         pet.sizeProvider = { [weak self] in CGFloat(self?.engine.settings.desktopPetSize ?? 1) }
         pet.modeProvider = { [weak self] in self?.engine.settings.desktopPetMode ?? .pinned }
         pet.pinnedProvider = { [weak self] in self?.engine.settings.desktopPetSpot }

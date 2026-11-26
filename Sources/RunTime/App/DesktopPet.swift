@@ -59,6 +59,8 @@ final class DesktopPet {
     var characterProvider: () -> RunnerCharacter = { Runner.cat.character }
     var themeProvider: () -> SpriteTheme = { .natural }
     var companionProvider: () -> RunnerCharacter? = { nil }
+    /// 같은 단계 안에서의 빠르기 (메뉴바 러너와 같은 값). 걷는 빠르기와 발 박자에 곱한다.
+    var tempoProvider: () -> Double = { 1 }
     /// 크기 배율 (1이 보통, 펫 키 약 70pt).
     var sizeProvider: () -> CGFloat = { 1 }
     var modeProvider: () -> Mode = { .pinned }
@@ -203,6 +205,11 @@ final class DesktopPet {
         (puffs.count, pats.count, max(buddyHop, buddyHopSpeed), buddyOnScreen, buddyGround, trail.count)
     }
     fileprivate func playForCheck(_ kind: Trick) { play(kind) }
+    /// 쉬기·돌아서기·떨어지기를 멈춘다. 빠르기를 재는 동안 끼어들면 걸음이 달라진다.
+    fileprivate func holdWhimsForCheck() {
+        nextWhim = .distantFuture
+        resting = false
+    }
     /// 점검 도구가 옵션 창의 움직임 카드를 누른 것처럼 고른다.
     fileprivate func optionsForCheck(_ mode: Mode) {
         PetOptions.shared.model?.mode = mode
@@ -753,6 +760,8 @@ final class DesktopPet {
             held.up = held.up && PetKeys.isDown(126)
         }
         let display = displayProvider()
+        // 메뉴바 러너(SpriteAnimator.setTempo)와 같은 범위로 자른다
+        let tempo = CGFloat(min(max(tempoProvider(), 0.25), 3))
         let a = area
         var velocity: CGFloat = 0   // 테두리를 따라 (반시계 +)
         if let drag {
@@ -819,7 +828,7 @@ final class DesktopPet {
             let steered = velocity != 0
             if velocity == 0, !waiting, trick == nil, !resting, now.timeIntervalSince(lastControl) > 2 {
                 // 직접 움직이지 않으면 상태 빠르기대로 테두리를 따라 걷는다
-                velocity = heading * Self.walkSpeed(display)
+                velocity = heading * Self.walkSpeed(display) * tempo
             }
             if velocity != 0 { heading = velocity > 0 ? 1 : -1 }
             if !waiting { wander(now: now, display: display) }
@@ -853,7 +862,7 @@ final class DesktopPet {
         if diff < -.pi { diff += 2 * .pi }
         angle += diff * min(1, dt * 12)
         let moving = abs(velocity) > 8 && drag == nil && free == nil
-        gait += moving ? dt * abs(velocity) / 110 : dt / CGFloat(display.cycle)
+        gait += moving ? dt * abs(velocity) / 110 : dt / CGFloat(display.cycle) * tempo
         speedNow = moving ? abs(velocity) : 0
         emitDust(moving: moving, buddyMoving: buddySpeed > 8,
                  clock: now.timeIntervalSinceReferenceDate)
@@ -883,7 +892,7 @@ final class DesktopPet {
         buddySpeed = abs(carried + (buddyLag - lagBefore) / max(dt, 0.001))
         if buddyShift != 0 { buddySpeed = max(buddySpeed, 90) }
         // 다리 박자는 펫과 같은 보폭(110pt에 한 걸음)으로 센다. 같이 걸으면 펫과 같은 박자로 걷는다
-        buddyGait += buddySpeed > 8 ? dt * buddySpeed / 110 : dt / CGFloat(display.cycle > 0 ? display.cycle : 2.4)
+        buddyGait += buddySpeed > 8 ? dt * buddySpeed / 110 : dt / CGFloat(display.cycle > 0 ? display.cycle : 2.4) * tempo
         place()
         view?.needsDisplay = true
         // 방향키를 4초 넘게 쓰지 않으면 키 입력을 돌려준다
@@ -1437,6 +1446,8 @@ enum DesktopPetCheck {
         var grabbed = CGPoint.zero, destination = CGPoint.zero
         var worn: Set<Cosmetic> = []
         pet.displayProvider = { display }
+        var tempo = 1.0
+        pet.tempoProvider = { tempo }
         pet.modeProvider = { mode }
         pet.onMode = { mode = $0 }
         // RUNTIME_PET_SHOTS 폴더를 주면 벽·천장을 걷는 모습을 화면째 찍어 펫이 가장자리에 붙어 걷는지 본다
@@ -1836,6 +1847,38 @@ enum DesktopPetCheck {
                 let main = NSScreen.screens.first?.visibleFrame ?? .zero
                 check("가운데로 누르면 주 화면 바닥 가운데로 온다 (\(Int(pet.position.x - main.midX))pt)",
                       abs(pet.position.x - main.midX) < 2 && main.contains(CGPoint(pet.position.x, main.minY + 1)))
+            }),
+            (0.1, {
+                // 달리기 속도 배율(engine.tempo)이 꺼낸 펫과 동료에도 걸려야 한다
+                // 머무는 펫은 제자리에서 발만 구른다. 그 박자도 빠르기를 따른다
+                pet.holdWhimsForCheck()
+                display = .normal(.running)
+                tempo = 2
+            }),
+            // 가운데로 부르면 동료가 돌아서 자리를 잡느라 잠깐 달린다
+            (1.2, { gaits = pet.gaitForCheck }),
+            (1.0, {
+                let now = pet.gaitForCheck
+                let petSteps = now.pet - gaits.pet, buddySteps = now.buddy - gaits.buddy
+                let expected = 2 / display.cycle
+                check(String(format: "빠르기 2배면 머무는 펫과 동료가 제자리 발도 두 배로 구른다 (1초에 펫 %.2f, 동료 %.2f, 기대 %.2f걸음)",
+                             petSteps, buddySteps, expected),
+                      abs(petSteps - expected) < expected * 0.15 && abs(buddySteps - expected) < expected * 0.15)
+                // 걷는 빠르기는 바닥 가운데서 잰다. 가운데로 부른 뒤 2초는 손으로 움직인 것으로 보고 서 있는다
+                mode = .roam
+                pet.recall()
+            }),
+            (2.6, { gaits = pet.gaitForCheck }),
+            (0.5, {
+                let now = pet.gaitForCheck
+                let base = DesktopPet.walkSpeed(display)
+                let petSteps = now.pet - gaits.pet, buddySteps = now.buddy - gaits.buddy
+                check(String(format: "빠르기 2배면 펫이 두 배로 걷고 동료도 같은 박자로 따라간다 (펫 %.0fpt/초, 기본 %.0f, 동료 %.2f걸음/펫 %.2f걸음)",
+                             now.petSpeed, base, buddySteps, petSteps),
+                      abs(now.petSpeed - base * 2) < 2 && abs(buddySteps - petSteps) <= max(0.1, petSteps * 0.25))
+                tempo = 1
+            }),
+            (0.1, {
                 // 전체 화면 판단: 창 목록만 바꿔 넣어 본다 (CG 좌표, 화면 1440×900)
                 let sample = CGRect(x: 0, y: 0, width: 1440, height: 900)
                 typealias W = DesktopPet.WindowInfo

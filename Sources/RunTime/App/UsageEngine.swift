@@ -296,7 +296,7 @@ final class UsageEngine: ObservableObject {
         let weeklySummaryEnabled: Bool
         let pollInterval: TimeInterval
         let typingRunner: Bool
-        let runnerSpeed: Double
+        var runnerSpeed: Double
 
         init(_ settings: AppSettings) {
             officialEnabled = settings.officialEnabled
@@ -320,6 +320,13 @@ final class UsageEngine: ObservableObject {
         // 테마·메뉴바 표시처럼 틱과 무관한 설정은 건너뛴다. BurnRateMeter가 틱 단위 EMA라 틱이 늘면 속도가 달라진다.
         guard new != old else { return }
         config = new
+        // 배율만 바꿨으면 단계만 다시 정한다. 틱을 더 돌리면 EMA 표본이 늘어 사용량 속도가 달라진다
+        var speedOnly = new
+        speedOnly.runnerSpeed = old.runnerSpeed
+        if speedOnly == old {
+            updatePace(now: Date())
+            return
+        }
         // 앞 민감도의 경계로 정한 단계를 새 경계에서 붙잡지 않는다
         if new.sensitivity != old.sensitivity { paceSources = .init() }
         if new.officialEnabled != old.officialEnabled {
