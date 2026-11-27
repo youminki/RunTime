@@ -13,7 +13,15 @@ import sys
 import time
 from pathlib import Path
 
-from PIL import Image, ImageOps
+
+# 앱은 표준 오류를 버리므로, main()의 try 밖(아래 꾸러미 불러오기)에서 죽어도 까닭을 한 줄로 남긴다
+def _report_crash(kind, error, _trace):
+    print(json.dumps({"step": "failed", "reason": f"{kind.__name__}: {error}"[:300]}, ensure_ascii=False), flush=True)
+
+
+sys.excepthook = _report_crash
+
+from PIL import Image, ImageOps  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))

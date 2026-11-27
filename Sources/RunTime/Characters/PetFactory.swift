@@ -473,7 +473,7 @@ final class PetFactory: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .noPython: "파이썬 3.10 이상이 필요합니다. 터미널에서 `brew install python` 으로 깔아 주세요."
+            case .noPython: "파이썬 3.11 이상이 필요합니다. 터미널에서 `brew install python` 으로 깔아 주세요."
             case .noSpace(let gigabytes): "디스크 여유가 모자랍니다. 처음 한 번 \(Int(gigabytes.rounded()))GB쯤 필요합니다."
             case .setup(let reason): "그림 도구를 준비하지 못했어요: \(reason)"
             case .failed(let reason): "펫을 그리지 못했어요: \(reason)"
@@ -602,9 +602,9 @@ final class PetFactory: ObservableObject {
         }
     }
 
-    /// mflux는 파이썬 3.10 이상이 필요하다. macOS에 딸린 /usr/bin/python3는 3.9라 Homebrew·python.org 것을 먼저 본다.
+    /// mflux 0.24는 파이썬 3.11 이상에만 깔린다(3.10이면 pip가 거부한다). macOS에 딸린 /usr/bin/python3는 3.9라 Homebrew·python.org 것을 먼저 본다.
     private static func systemPython() -> String? {
-        let versions = (10...14).reversed().map { "3.\($0)" }
+        let versions = (11...15).reversed().map { "3.\($0)" }
         let candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"]
             + versions.flatMap { ["/opt/homebrew/bin/python\($0)", "/usr/local/bin/python\($0)",
                                   "/Library/Frameworks/Python.framework/Versions/\($0)/bin/python3"] }
@@ -613,7 +613,7 @@ final class PetFactory: ObservableObject {
             guard FileManager.default.isExecutableFile(atPath: path) else { return false }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = ["-c", "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"]
+            process.arguments = ["-c", "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
             guard (try? process.run()) != nil else { return false }

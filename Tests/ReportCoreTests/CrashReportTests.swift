@@ -158,6 +158,22 @@ private let swiftFrames = #"""
         #expect(detail.contains("-l 0x100000000 0x100002000"))
     }
 
+    @Test func openPanelWaitingForUserIsNotAHang() {
+        let kernel = CrashReport.Frame(image: "libsystem_kernel.dylib", symbol: "mach_msg2_trap", location: 8, offset: 100, inApp: false)
+        let panel = CrashReport.Frame(image: "AppKit", symbol: "-[NSSavePanel runModal]", location: 360, offset: 200, inApp: false)
+        let alert = CrashReport.Frame(image: "AppKit", symbol: "-[NSApplication runModalForWindow:]", location: 20, offset: 300, inApp: false)
+        let choose = CrashReport.Frame(image: "RunTime", symbol: "static RunnerImport.choose()", location: 416, offset: 0x3000, inApp: true)
+        let work = CrashReport.Frame(image: "RunTime", symbol: "Store.load()", location: 12, offset: 0x4000, inApp: true)
+        #expect(HangReport.isWaitingForUser([kernel, panel, choose]))
+        #expect(HangReport.isWaitingForUser([kernel, alert, choose]))
+        // 창 안에서 앱 코드가 돌다 멈춘 것은 멈춤이다
+        #expect(!HangReport.isWaitingForUser([kernel, work, panel, choose]))
+        #expect(!HangReport.isWaitingForUser(frames))
+        // 창 안에서 AppKit이 바쁘게 도는 것도 기다림이 아니다
+        let layout = CrashReport.Frame(image: "AppKit", symbol: "-[NSView layoutSubtreeIfNeeded]", location: 8, offset: 400, inApp: false)
+        #expect(!HangReport.isWaitingForUser([layout, panel, choose]))
+    }
+
     @Test func unfinishedHangSaysTheAppQuit() {
         var report = HangReport(seconds: 5, ended: false, frames: frames, base: nil, uuid: "", arch: "arm64", app: "", commit: "", at: "")
         #expect(report.detail().contains("5.0초 넘게 응답하지 않은 채 앱이 꺼짐"))

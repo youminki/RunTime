@@ -55,4 +55,13 @@ public struct HangReport: Equatable, Codable {
         if let answered { return sampled ? .report(seconds: answered) : .ping }
         return waited >= threshold && !sampled ? .sample : .wait
     }
+
+    /// 열기·저장 창이나 알림 창이 사람의 선택을 기다리는 중인지. 그 창의 런루프는 메인 큐를 돌리지 않아 응답이 없어 보인다.
+    /// 맨 위가 메시지를 기다리는 줄일 때만 그렇게 본다. 그 창 위에서 앱 코드가 돌다 멈춘 것(창 줄보다 위에 앱 줄이 있음)은 진짜 멈춤으로 둔다.
+    public static func isWaitingForUser(_ frames: [CrashReport.Frame]) -> Bool {
+        guard frames.first?.symbol?.hasPrefix("mach_msg") == true, let modal = frames.firstIndex(where: { frame in
+            !frame.inApp && (frame.symbol.map { $0.contains(" runModal") || $0.contains("runModalFor") || $0.contains("runModalSession") } ?? false)
+        }) else { return false }
+        return !frames[..<modal].contains(where: \.inApp)
+    }
 }

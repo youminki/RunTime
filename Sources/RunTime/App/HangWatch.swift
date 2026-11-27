@@ -183,6 +183,7 @@ enum HangWatch {
            frames[0].symbol != nil, frames[0].symbol == frames[1].symbol {
             frames.remove(at: 1)
         }
+        guard !HangReport.isWaitingForUser(frames) else { return nil }
         let info = Bundle.main.infoDictionary ?? [:]
         return HangReport(seconds: seconds, ended: false, frames: frames, base: Int(bitPattern: image.base), uuid: image.uuid,
                           arch: AppImage.arch, app: info["CFBundleShortVersionString"] as? String ?? "",
