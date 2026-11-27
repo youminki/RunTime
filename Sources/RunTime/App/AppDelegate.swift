@@ -766,7 +766,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let anchorScreen = { NSScreen.screens.first { $0.frame.contains(anchorPoint) } ?? anchorWindow.screen }
         var reported = false
         let fix = { [weak window] in
-            guard let window, window.frame.maxY > top + 0.5 else { return }
+            guard let window else { return }
+            // 화면을 위아래로 쌓아 두면 팝오버가 단추 화면을 떠나 아래 화면에 뜰 때가 있다. 그때도 단추 아래로 데려온다
+            if let screen = anchorScreen(), !screen.frame.intersects(window.frame) {
+                Diagnostics.record("사용량 창", "단추가 없는 화면에 떠 되돌림 · 창 \(Int(window.frame.minX)),\(Int(window.frame.minY))")
+                let x = min(max(window.frame.minX, screen.visibleFrame.minX), screen.visibleFrame.maxX - window.frame.width)
+                window.setFrameOrigin(NSPoint(x: x, y: top - window.frame.height))
+                return
+            }
+            guard window.frame.maxY > top + 0.5 else { return }
             // 다른 Mac에서 다시 잘린다고 하면 어느 화면 구성에서 얼마나 넘쳤는지 볼 수 있게 한 번만 남긴다
             if !reported {
                 reported = true
@@ -788,8 +796,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let rect = { (r: NSRect) in "(\(Int(r.minX)),\(Int(r.minY))) \(Int(r.width))x\(Int(r.height))" }
             let screens = NSScreen.screens.map { "\($0.localizedName): 전체 \(rect($0.frame)) · 쓸 수 있는 곳 \(rect($0.visibleFrame))"
                 + ($0 == screen ? " · 메뉴바 단추가 있는 화면" : "") }
-            ProblemReporter.screen("사용량 창", "화면 아래로 \(Int(screen.visibleFrame.minY - window.frame.minY))pt 잘림",
-                                   detail: (["창: \(rect(window.frame))", "메뉴바 단추 아래 끝 y: \(Int(top))",
+            // 잘린 양은 매번 달라 제목에 넣으면 같은 문제가 하루에도 여러 통이 된다. 세부에 둔다
+            ProblemReporter.screen("사용량 창", "화면 아래가 잘림",
+                                   detail: (["잘린 높이: \(Int(screen.visibleFrame.minY - window.frame.minY))pt", "창: \(rect(window.frame))", "메뉴바 단추 아래 끝 y: \(Int(top))",
                                              "창이 놓인 화면: \(window.screen?.localizedName ?? "-")"] + screens).joined(separator: "\n"))
         }
         let pin = { fix(); checkFit(); DispatchQueue.main.async(execute: fix) }

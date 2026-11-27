@@ -56,6 +56,17 @@ public struct HangReport: Equatable, Codable {
         return waited >= threshold && !sampled ? .sample : .wait
     }
 
+    /// 앱 코드가 main뿐이고(앱이 하던 일이 없음) 그때 시스템이 메모리 압박이나 코어 수를 넘는 부하에 있었는지.
+    /// 이런 멈춤은 앱에서 고칠 자리가 없어 보고하지 않는다.
+    public var isSystemBusy: Bool {
+        guard frames.filter(\.inApp).allSatisfy({ $0.symbol == "main" }),
+              let system = context?.first(where: { $0.hasPrefix("시스템:") }) else { return false }
+        if system.contains("메모리 압박 경고") || system.contains("메모리 압박 위험") { return true }
+        guard let match = system.range(of: #"CPU 부하 [0-9.]+ \([0-9]+코어\)"#, options: .regularExpression) else { return false }
+        let numbers = system[match].split(whereSeparator: { !"0123456789.".contains($0) }).compactMap { Double($0) }
+        return numbers.count == 2 && numbers[0] > numbers[1]
+    }
+
     /// 열기·저장 창이나 알림 창이 사람의 선택을 기다리는 중인지. 그 창의 런루프는 메인 큐를 돌리지 않아 응답이 없어 보인다.
     /// 맨 위가 메시지를 기다리는 줄일 때만 그렇게 본다. 그 창 위에서 앱 코드가 돌다 멈춘 것(창 줄보다 위에 앱 줄이 있음)은 진짜 멈춤으로 둔다.
     public static func isWaitingForUser(_ frames: [CrashReport.Frame]) -> Bool {

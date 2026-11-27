@@ -131,6 +131,14 @@ PATCHES = [
      "        if !WindowRuntime.paused, Defaults.stackBadge.userEnabled {\n            guard timer == nil"),
     ("        guard Defaults.todo.userEnabled && Defaults.todoMode.enabled else { return }\n        moveAll(bringToFront)",
      "        guard !WindowRuntime.paused, Defaults.todo.userEnabled && Defaults.todoMode.enabled else { return }\n        moveAll(bringToFront)"),
+    # 알림을 받아 메인 스레드에서 묻는 곳이라, 앞 앱이 바쁘면 기본 AX 대기(몇 초)만큼 앱이 멈춘다. 짧게만 기다린다
+    ("    func checkFullScreen() {\n        let frontWindow = AccessibilityElement.getFrontWindowElement()",
+     "    func checkFullScreen() {\n"
+     "        // 잠에서 깨거나 공간을 바꾼 직후 앞 앱이 바쁘면 기본 AX 대기(몇 초) 동안 메인 스레드가 멈춰, 짧게만 기다린다.\n"
+     "        // 답이 늦으면 전체 화면이 아닌 것으로 보고 끌어다 붙이기를 켜 둔다\n"
+     "        AXUIElementSetMessagingTimeout(AXUIElement.systemWide, 0.25)\n"
+     "        defer { AXUIElementSetMessagingTimeout(AXUIElement.systemWide, 0) }\n"
+     "        let frontWindow = AccessibilityElement.getFrontWindowElement()"),
     # 화면 표시 주기에 맞춘 애니메이션은 macOS 14부터 있다. RunTime은 13도 지원해 13에서는 타이머로 돈다
     ("if let screen {\n            let target = WindowAnimationDisplayLinkTarget",
      "if #available(macOS 14.0, *), let screen {\n            let target = WindowAnimationDisplayLinkTarget"),

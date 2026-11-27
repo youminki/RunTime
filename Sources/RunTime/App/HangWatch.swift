@@ -147,6 +147,11 @@ enum HangWatch {
         guard !CrashReports.rejectedToday(.hang) else { return }
         // 이번 실행에서 서버가 이미 받은 자리면 같은 메일이라 보내지 않는다
         guard !sentPlaces.contains(report.summary) else { remove(report.id); return }
+        guard !report.isSystemBusy else {
+            Diagnostics.record("문제 보고", "시스템이 바빠 멈춤은 보내지 않음 (\(String(format: "%.1f", report.seconds))초)")
+            remove(report.id)
+            return
+        }
         let events = CrashReport.events((try? String(contentsOf: Diagnostics.logURL, encoding: .utf8)) ?? "", before: report.at)
         Diagnostics.record("문제 보고", "앱이 멈춤: \(report.summary) (\(String(format: "%.1f", report.seconds))초)")
         ProblemReporter.send(.hang, report.summary, detail: report.detail(), app: report.app, commit: report.commit,

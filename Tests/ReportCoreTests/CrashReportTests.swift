@@ -174,6 +174,22 @@ private let swiftFrames = #"""
         #expect(!HangReport.isWaitingForUser([layout, panel, choose]))
     }
 
+    @Test func mainOnlyHangUnderSystemLoadIsNotSent() {
+        let kernel = CrashReport.Frame(image: "libsystem_kernel.dylib", symbol: "mach_msg2_trap", location: 8, offset: 100, inApp: false)
+        let main = CrashReport.Frame(image: "RunTime", symbol: "main", location: 14592, offset: 0x9000, inApp: true)
+        let make = { (frames: [CrashReport.Frame], system: String) in
+            HangReport(seconds: 7, ended: true, frames: frames, base: nil, uuid: "", arch: "arm64", app: "", commit: "", at: "",
+                       context: ["앱: 메모리 200MB", system])
+        }
+        let calm = "시스템: 메모리 압박 정상 · 스왑 1.0GB · 실메모리 16GB · CPU 부하 3.0 (10코어) · 발열 정상"
+        #expect(make([kernel, main], "시스템: 메모리 압박 경고 · 스왑 30.8GB · 실메모리 16GB · CPU 부하 21.0 (10코어) · 발열 정상").isSystemBusy)
+        #expect(make([kernel, main], "시스템: 메모리 압박 정상 · 스왑 1.0GB · 실메모리 16GB · CPU 부하 12.5 (10코어) · 발열 정상").isSystemBusy)
+        #expect(!make([kernel, main], calm).isSystemBusy)
+        // 앱 코드가 있으면 바빠도 앱이 고칠 자리가 있다
+        #expect(!make(frames + [main], "시스템: 메모리 압박 경고 · CPU 부하 21.0 (10코어)").isSystemBusy)
+        #expect(!HangReport(seconds: 7, ended: true, frames: [kernel, main], base: nil, uuid: "", arch: "arm64", app: "", commit: "", at: "").isSystemBusy)
+    }
+
     @Test func unfinishedHangSaysTheAppQuit() {
         var report = HangReport(seconds: 5, ended: false, frames: frames, base: nil, uuid: "", arch: "arm64", app: "", commit: "", at: "")
         #expect(report.detail().contains("5.0초 넘게 응답하지 않은 채 앱이 꺼짐"))

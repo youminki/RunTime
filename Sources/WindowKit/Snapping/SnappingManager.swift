@@ -242,6 +242,10 @@ class SnappingManager {
     }
     
     func checkFullScreen() {
+        // 잠에서 깨거나 공간을 바꾼 직후 앞 앱이 바쁘면 기본 AX 대기(몇 초) 동안 메인 스레드가 멈춰, 짧게만 기다린다.
+        // 답이 늦으면 전체 화면이 아닌 것으로 보고 끌어다 붙이기를 켜 둔다
+        AXUIElementSetMessagingTimeout(AXUIElement.systemWide, 0.25)
+        defer { AXUIElementSetMessagingTimeout(AXUIElement.systemWide, 0) }
         let frontWindow = AccessibilityElement.getFrontWindowElement()
         let isFullScreen = frontWindow?.isFullScreen == true
         fullScreenGate = FullScreenSnapGate(isFullScreen: isFullScreen,
