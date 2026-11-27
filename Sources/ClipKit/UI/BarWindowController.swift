@@ -76,6 +76,8 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         // nil, which is another way to never show the bar again.
         panel.isReleasedWhenClosed = false
         let content = NSHostingView(rootView: BarView(searchBridge: searchBridge))
+        // NSGlassEffectView는 macOS 26 SDK(Swift 6.2)부터 있어, 옛 Xcode에서는 컴파일러 조건으로 뺀다
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             let glassContent = NSView()
             content.translatesAutoresizingMaskIntoConstraints = false
@@ -98,6 +100,9 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         } else {
             panel.contentView = content
         }
+        #else
+        panel.contentView = content
+        #endif
         super.init(window: panel)
         panel.delegate = self
     }
