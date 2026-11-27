@@ -155,7 +155,32 @@ export function historyLines(history, now) {
   });
 }
 
-export function promptFor(report, history = [], now = Date.now()) {
+/// `1.4.12`꼴 버전을 견준다. 숫자 꼴이 아니면 null.
+export function compareVersions(a, b) {
+  const parse = (v) => (/^\d+(\.\d+)*$/.test(v ?? "") ? v.split(".").map(Number) : null);
+  const [x, y] = [parse(a), parse(b)];
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d) return Math.sign(d);
+  }
+  return 0;
+}
+
+/// 다른 설치가 보낸 버전 가운데 가장 새 것.
+export function newestVersion(apps) {
+  return apps.filter((app) => compareVersions(app, app) === 0).reduce((best, app) => (!best || compareVersions(app, best) > 0 ? app : best), "");
+}
+
+/// 고칠 차례를 정하는 데 쓰는 줄. 같은 까닭이 여러 Mac에서 났는지, 보고한 빌드가 이미 지난 것인지.
+export function signalLines({ spread, newest } = {}, report) {
+  const lines = [];
+  if (spread && (spread.count > 1 || spread.installs > 1)) lines.push(`퍼짐: 최근 7일 같은 까닭 ${spread.count}건 · Mac ${spread.installs}대`);
+  if (newest && compareVersions(report.app, newest) < 0) lines.push(`최신 빌드: ${newest} (이 보고는 옛 빌드라 main에서 이미 고쳤을 수 있다)`);
+  return lines;
+}
+
+export function promptFor(report, history = [], now = Date.now(), signals = {}) {
   const checkout = checkoutCommand(report);
   const symbols = symbolCommand(report);
   const steps = [
@@ -174,6 +199,7 @@ export function promptFor(report, history = [], now = Date.now()) {
     `까닭: ${report.message}`,
     ...(report.source ? [`코드 위치: ${report.source}`] : []),
     `빌드: ${report.app || "버전 모름"} · 커밋 ${report.commit || "모름"} · macOS ${report.os || "모름"}`,
+    ...signalLines(signals, report),
     "",
     "할 일",
     ...steps.map((step, index) => `${index + 1}. ${step}`),
@@ -193,12 +219,12 @@ function escapeHTML(text) {
 
 /// 메일 제목과 본문(글·HTML). 머리에는 무엇이·어느 버전에서만 두고, 고치는 데 쓰는 것은 모두 붙여 넣을 글에 모은다.
 /// 메일 프로그램은 스크립트를 막아, 복사 단추는 그 보고의 복사 페이지(`page`)로 잇는다.
-export function mailFor(report, page = "", history = [], now = Date.now()) {
+export function mailFor(report, page = "", history = [], now = Date.now(), signals = {}) {
   const where = report.screen ? `${report.screen} · ` : "";
   const from = report.sender ? ` · ${report.sender}` : "";
   const subject = `[RunTime] ${KIND_NAMES[report.kind]} · ${where}${report.message.split("\n")[0].slice(0, 60)} (${report.app || "버전 모름"})${from}`;
   const link = sourceLink(report);
-  const prompt = promptFor(report, history, now);
+  const prompt = promptFor(report, history, now, signals);
   const head = `${KIND_NAMES[report.kind]} · ${where}${report.message.split("\n")[0]}`;
   const who = `${report.sender ? `${report.sender} · ` : ""}설치 ${report.install.slice(0, 8)}`;
   const build = `${who} · 버전 ${report.app || "-"} (${report.commit ? report.commit.slice(0, 7) : "-"}) · macOS ${report.os || "-"}`;
@@ -326,7 +352,19 @@ export async function submitReport(request, env, { readJSON, json, overIPLimit }
       console.error("report sender", String(error));
     }
   }
-  const { subject, text, html } = mailFor(report, page, history, now);
+  // 같은 까닭이 몇 대에서 났는지와 가장 새 빌드. 읽지 못해도 메일은 보낸다
+  const signals = {};
+  try {
+    signals.spread = await env.DB.prepare(
+      "SELECT COUNT(*) AS count, COUNT(DISTINCT install) AS installs FROM reports WHERE kind = ? AND message = ? AND created_at > ?",
+    ).bind(report.kind, report.message, now - 7 * 86_400_000).first();
+    const apps = await env.DB.prepare("SELECT DISTINCT app FROM reports WHERE created_at > ? AND app != ''")
+      .bind(now - 30 * 86_400_000).all();
+    signals.newest = newestVersion((apps?.results ?? []).map((row) => row.app));
+  } catch (error) {
+    console.error("report signals", String(error));
+  }
+  const { subject, text, html } = mailFor(report, page, history, now, signals);
   let response = null;
   try {
     response = await fetch("https://api.resend.com/emails", {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkoutCommand, cleanReport, mailFor, mailKey, promptFor, reportKey, reportPage, sourceLink, squeezeLog, submitReport, symbolCommand, USER_SCREEN, viewReport, historyLines } from "../src/reports.js";
+import { compareVersions, newestVersion, signalLines, checkoutCommand, cleanReport, mailFor, mailKey, promptFor, reportKey, reportPage, sourceLink, squeezeLog, submitReport, symbolCommand, USER_SCREEN, viewReport, historyLines } from "../src/reports.js";
 
 const install = "3f2c1a4e-1b2c-4d5e-8f90-1234567890ab";
 
@@ -201,18 +201,19 @@ test("copy page needs the matching token", async () => {
 });
 
 /// 보고 표 하나와 Resend 응답만 흉내 낸다. 하루 메일 수와 이 Mac의 보고 수는 `counts`로 정한다.
-function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false, history = [], knownSender = "" } = {}) {
+function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false, history = [], knownSender = "", spread = null, apps = [] } = {}) {
   const rows = new Map();
   const db = {
     prepare: (sql) => ({
       bind: (...args) => ({
         first: async () => {
+          if (sql.includes("COUNT(DISTINCT install)")) return spread;
           if (sql.startsWith("SELECT COUNT")) return { stored: rows.size, mailed: 0, mine };
           if (sql.startsWith("INSERT")) return rows.has(args[0]) ? null : (rows.set(args[0], { mailed: 0, sender: args[2] }), { key: args[0] });
           if (sql.startsWith("SELECT sender")) return knownSender ? { sender: knownSender } : null;
           return null;
         },
-        all: async () => ({ results: history }),
+        all: async () => ({ results: sql.includes("DISTINCT app") ? apps.map((app) => ({ app })) : history }),
         run: async () => {
           if (sql.startsWith("DELETE")) rows.delete(args[0]);
           if (sql.startsWith("UPDATE")) rows.get(args[0]).mailed = 1;
@@ -326,4 +327,31 @@ test("a failed history query does not stop the mail", async () => {
     assert.equal(response.status, 200);
     assert.equal(fake.mails.length, 1);
   } finally { fake.restore(); }
+});
+
+test("versions compare by number and odd ones are skipped", () => {
+  assert.equal(compareVersions("0.8.133", "0.8.172"), -1);
+  assert.equal(compareVersions("0.8.10", "0.8.9"), 1);
+  assert.equal(compareVersions("1.0", "1.0.0"), 0);
+  assert.equal(compareVersions("test", "0.8.1"), null);
+  assert.equal(newestVersion(["0.8.133", "test", "0.8.172", "e2e", "0.8.28"]), "0.8.172");
+  assert.equal(newestVersion([]), "");
+});
+
+test("mail says when the same cause hit several Macs and when the build is old", async () => {
+  const report = cleanReport({ install, kind: "update-failed", message: "빌드 실패", app: "0.8.133" });
+  assert.deepEqual(signalLines({ spread: { count: 3, installs: 2 }, newest: "0.8.172" }, report), [
+    "퍼짐: 최근 7일 같은 까닭 3건 · Mac 2대",
+    "최신 빌드: 0.8.172 (이 보고는 옛 빌드라 main에서 이미 고쳤을 수 있다)",
+  ]);
+  // 처음 나온 까닭이고 최신 빌드면 줄을 더하지 않는다
+  assert.deepEqual(signalLines({ spread: { count: 1, installs: 1 }, newest: "0.8.133" }, report), []);
+  const fake = fakeSubmit({ spread: { count: 4, installs: 3 }, apps: ["0.8.172", "0.8.133"] });
+  try {
+    await fake.submit({ install, kind: "update-failed", message: "빌드 실패", app: "0.8.133" });
+    assert.match(fake.mails[0].text, /퍼짐: 최근 7일 같은 까닭 4건 · Mac 3대/);
+    assert.match(fake.mails[0].text, /최신 빌드: 0\.8\.172/);
+  } finally {
+    fake.restore();
+  }
 });
