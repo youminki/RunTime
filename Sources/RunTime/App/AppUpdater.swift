@@ -461,7 +461,7 @@ final class AppUpdater: ObservableObject {
 
     private func fail(_ reason: String, target: String?, automatic: Bool, kind: ProblemReporter.Kind = .failed) {
         Diagnostics.record("업데이트", (automatic ? "자동 " : "") + "실패: \(reason)")
-        ProblemReporter.send(kind, reason)
+        if !Self.isLocalSigningProblem(reason) { ProblemReporter.send(kind, reason) }
         state = .failed(reason)
         installFailed = true
         stopProgress()
@@ -472,6 +472,12 @@ final class AppUpdater: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Key.installingNotes)
         // 눌러서 받다 실패한 버전도 자동으로 다시 빌드하지 않는다. 말풍선을 눌러 다시 할 수 있다
         if let target { UserDefaults.standard.set(target, forKey: Key.failedTarget) }
+    }
+
+    /// 키체인이 잠겼거나 서명 키 허용 창에 답하지 않은 것, 같은 이름 인증서가 여럿인 것은 그 Mac의 키체인 사정이라 보고하지 않는다.
+    /// 안내는 scripts/build-app.sh가 남긴 문구 그대로다.
+    static func isLocalSigningProblem(_ reason: String) -> Bool {
+        reason.contains("키체인이 잠겼거나") || reason.contains("인증서가 여러 개입니다")
     }
 
     private enum CloneProblem {

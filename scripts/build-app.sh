@@ -91,7 +91,7 @@ if ! SIGN_OUT=$(codesign --force --deep -s "$CODESIGN_IDENTITY" "$APP" 2>&1); th
   echo "✗ 서명 실패: ${REASON#*.app: }" >&2
   case "$SIGN_OUT" in
     *errSecInternalComponent*|*"User interaction is not allowed"*|*"user canceled"*)
-      echo "✗ 키체인이 잠겼거나 codesign의 키 사용을 허용하지 않았습니다. 키체인 창이 뜨면 [항상 허용]을 누르고 다시 업데이트하세요." >&2 ;;
+      echo "✗ 키체인이 잠겼거나 codesign의 키 사용을 허용하지 않았습니다. 업데이트를 직접 다시 누르고 키체인 창에서 [항상 허용]을 누르세요. 한 번 누르면 다음부터 묻지 않습니다." >&2 ;;
     *ambiguous*)
       echo "✗ 키체인에 \"$CODESIGN_IDENTITY\" 인증서가 여러 개입니다. 키체인 접근에서 하나만 남기고 다시 업데이트하세요." >&2 ;;
   esac
