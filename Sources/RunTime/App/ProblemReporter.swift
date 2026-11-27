@@ -2,7 +2,7 @@ import DesignSyncCore
 import Foundation
 
 /// 업데이트가 실패하거나 멈추거나 화면에서 일이 실패하거나 앱이 죽거나 멈추면 만든 사람에게 알린다. 보고 서버의 `/v1/reports`로 보내고, 서버가 메일로 넘긴다.
-/// 무작위 설치 ID, 앱 버전, macOS 버전, 까닭, 사용자 폴더·이름을 가린 기록 끝부분만 보낸다. 설정 > 일반 > 문제 기록에서 끈다.
+/// 무작위 설치 ID, 보낸 사람 이름(설정에서 비우면 빠짐), 앱 버전, macOS 버전, 까닭, 사용자 폴더·이름을 가린 기록 끝부분만 보낸다. 설정 > 일반 > 문제 기록에서 끈다.
 /// 같은 까닭은 서버가 하루 한 번만 메일로 보낸다. 메인 스레드에서만 쓴다.
 enum ProblemReporter {
     enum Kind: String {
@@ -30,6 +30,15 @@ enum ProblemReporter {
         set { UserDefaults.standard.set(newValue, forKey: key) }
     }
 
+    static let senderKey = "reportSender"
+
+    /// 메일에서 누구 Mac인지 알게 붙이는 이름. 적은 적이 없으면 macOS 사용자 전체 이름을 쓰고, 비워 두면 붙이지 않는다.
+    static var sender: String {
+        get { UserDefaults.standard.string(forKey: senderKey) ?? NSFullUserName() }
+        set { UserDefaults.standard.set(String(newValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(senderLimit)), forKey: senderKey) }
+    }
+    static let senderLimit = 40
+
     /// 이 Mac의 무작위 ID. 같은 Mac의 보고를 묶을 때만 쓴다.
     private static var installID: String {
         if let saved = UserDefaults.standard.string(forKey: installKey), UUID(uuidString: saved) != nil { return saved }
@@ -56,6 +65,7 @@ enum ProblemReporter {
             ? (["[환경 (보낸 실행)]"] + Diagnostics.environment(thisRun: false) + ["", $0]).joined(separator: "\n") : $0 }
         return [
             "install": installID,
+            "sender": String(sender.trimmingCharacters(in: .whitespacesAndNewlines).prefix(senderLimit)),
             "kind": kind.rawValue,
             "message": redact(message),
             "app": app ?? info["CFBundleShortVersionString"] as? String ?? "",

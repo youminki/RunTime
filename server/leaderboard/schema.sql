@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS ghosts (
 CREATE TABLE IF NOT EXISTS reports (
   key TEXT PRIMARY KEY,
   install TEXT NOT NULL,
+  -- 앱 설정의 보낸 사람 이름. 비워 두었거나 옛 앱이면 ''
+  sender TEXT,
   kind TEXT NOT NULL,
   message TEXT NOT NULL,
   app TEXT,

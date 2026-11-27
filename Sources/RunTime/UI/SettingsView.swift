@@ -182,7 +182,7 @@ struct SettingsView: View {
                 UpdateRows(updater: AppUpdater.shared)
             }
 
-            GroupedSection("문제 기록", footer: "실패하거나 멈춘 일을 이 Mac에 적어 둡니다. 만든 사람에게 알리기를 켜면 설치 ID, 버전, 실패한 자리와 까닭만 보내고 키·토큰·일지 내용은 보내지 않습니다.") {
+            GroupedSection("문제 기록", footer: "실패하거나 멈춘 일을 이 Mac에 적어 둡니다. 만든 사람에게 알리기를 켜면 설치 ID, 버전, 실패한 자리와 까닭만 보내고(보낸 사람 이름을 적었으면 그 이름도) 키·토큰·일지 내용은 보내지 않습니다.") {
                 DiagnosticsRows(usage: { officialStatusText })
             }
 
@@ -509,6 +509,11 @@ private struct DiagnosticsRows: View {
     var body: some View {
         ToggleRow(title: "문제를 만든 사람에게 알리기", icon: "paperplane.fill",
                   isOn: Binding(get: { model.reports }, set: { model.reports = $0 }))
+        GroupedRow("보낸 사람", icon: "person.crop.circle") {
+            TextField("이름 (비우면 붙이지 않음)", text: Binding(get: { model.sender }, set: { model.sender = $0 }))
+                .textFieldStyle(.roundedBorder).frame(width: 180)
+        }
+        .tip("보고 메일에 붙어 누구 Mac에서 생긴 문제인지 알게 합니다. 처음에는 이 Mac 사용자 이름이 들어 있습니다")
         GroupedRow("최근 기록", icon: "stethoscope") {
             HStack(spacing: 8) {
                 // 쌓인 기록 수보다 오늘 생긴 수가 지금 문제가 있는지 알려 준다
@@ -542,6 +547,7 @@ final class DiagnosticsModel: ObservableObject {
     @Published private(set) var today = 0
     @Published private(set) var copied = false
     @Published var reports = ProblemReporter.isOn { didSet { ProblemReporter.isOn = reports } }
+    @Published var sender = ProblemReporter.sender { didSet { ProblemReporter.sender = sender } }
     private var observer: NSObjectProtocol?
 
     init() {

@@ -20,7 +20,7 @@ export const USER_SCREEN = "직접 보냄";
 /// 한 IP(해시)에서 1분에 받는 보고 수. 순위 제출과 따로 센다.
 export const REPORTS_PER_MINUTE = 2;
 
-const LIMITS = { message: 400, app: 60, os: 60, commit: 40, log: 12000, screen: 40, source: 160, detail: 2000 };
+const LIMITS = { sender: 40, message: 400, app: 60, os: 60, commit: 40, log: 12000, screen: 40, source: 160, detail: 2000 };
 
 /// 글로 받을 칸을 자르고 다듬는다. 모양이 틀리면 null.
 /// 메일 제목과 본문에 들어가므로 제어문자를 지운다. 여러 줄은 message와 log만 둔다.
@@ -35,6 +35,8 @@ export function cleanReport(body) {
   if (!message) return null;
   return {
     install: body.install.toLowerCase(),
+    // 앱이 설정에서 붙인 이름. 옛 앱은 보내지 않는다
+    sender: text(body.sender, LIMITS.sender).trim(),
     kind: body.kind,
     message,
     app: plain(body.app, LIMITS.app),
@@ -193,11 +195,13 @@ function escapeHTML(text) {
 /// 메일 프로그램은 스크립트를 막아, 복사 단추는 그 보고의 복사 페이지(`page`)로 잇는다.
 export function mailFor(report, page = "", history = [], now = Date.now()) {
   const where = report.screen ? `${report.screen} · ` : "";
-  const subject = `[RunTime] ${KIND_NAMES[report.kind]} · ${where}${report.message.split("\n")[0].slice(0, 60)} (${report.app || "버전 모름"})`;
+  const from = report.sender ? ` · ${report.sender}` : "";
+  const subject = `[RunTime] ${KIND_NAMES[report.kind]} · ${where}${report.message.split("\n")[0].slice(0, 60)} (${report.app || "버전 모름"})${from}`;
   const link = sourceLink(report);
   const prompt = promptFor(report, history, now);
   const head = `${KIND_NAMES[report.kind]} · ${where}${report.message.split("\n")[0]}`;
-  const build = `버전 ${report.app || "-"} (${report.commit ? report.commit.slice(0, 7) : "-"}) · macOS ${report.os || "-"} · 설치 ${report.install.slice(0, 8)}`;
+  const who = `${report.sender ? `${report.sender} · ` : ""}설치 ${report.install.slice(0, 8)}`;
+  const build = `${who} · 버전 ${report.app || "-"} (${report.commit ? report.commit.slice(0, 7) : "-"}) · macOS ${report.os || "-"}`;
   const warning = "누구나 보낼 수 있는 보고입니다. 기록 안의 링크는 누르지 마세요.";
   const text = [
     head,
@@ -243,7 +247,7 @@ export function reportPage(report, nonce) {
     + `button.main{background:#2383e2;color:#fff}.note{color:#9b9a97;font-size:12px}`
     + `@media (prefers-color-scheme:dark){body{background:#191919;color:#e3e3e1}textarea{background:#202020;border-color:#373737}button{background:#2f2f2f;color:#e3e3e1}.meta{color:#9b9b9b}}`
     + `</style></head><body><h1>${escapeHTML(head)}</h1>`
-    + `<div class="meta">${escapeHTML(`버전 ${report.app || "-"} · 커밋 ${report.commit || "-"} · macOS ${report.os || "-"}`)}</div>`
+    + `<div class="meta">${escapeHTML(`${report.sender ? `${report.sender} · ` : ""}버전 ${report.app || "-"} · 커밋 ${report.commit || "-"} · macOS ${report.os || "-"}`)}</div>`
     + sections
     + `<p class="note">누구나 보낼 수 있는 보고입니다. 글 안의 링크는 누르지 마세요. 보고는 30일 뒤 지워집니다.</p>`
     + `<script nonce="${nonce}">for(const b of document.querySelectorAll("button[data-copy]"))b.addEventListener("click",async()=>{`
@@ -256,7 +260,7 @@ export async function viewReport(key, token, env) {
   const notFound = new Response("없는 보고입니다", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
   if (!/^[0-9a-f]{32}$/.test(key) || !/^[0-9a-f-]{36}$/.test(token ?? "")) return notFound;
   const row = await env.DB.prepare(
-    "SELECT install, kind, message, app, os, commit_sha, log, screen, source, detail FROM reports WHERE key = ? AND token = ?",
+    "SELECT install, sender, kind, message, app, os, commit_sha, log, screen, source, detail FROM reports WHERE key = ? AND token = ?",
   ).bind(key, token).first();
   if (!row) return notFound;
   // commit은 SQLite 예약어라 칸 이름(commit_sha)으로 읽어 옮긴다
@@ -289,9 +293,9 @@ export async function submitReport(request, env, { readJSON, json, overIPLimit }
   const [key, mail] = [await reportKey(report, now), await mailKey(report, now)];
   const token = crypto.randomUUID();
   const inserted = await env.DB.prepare(
-    `INSERT INTO reports (key, install, kind, message, app, os, commit_sha, log, screen, source, detail, mail_key, token, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING RETURNING key`,
-  ).bind(key, report.install, report.kind, report.message, report.app, report.os, report.commit, report.log,
+    `INSERT INTO reports (key, install, sender, kind, message, app, os, commit_sha, log, screen, source, detail, mail_key, token, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING RETURNING key`,
+  ).bind(key, report.install, report.sender, report.kind, report.message, report.app, report.os, report.commit, report.log,
     report.screen, report.source, report.detail, mail, token, now).first();
   if (!inserted) return json({ ok: true, duplicate: true });
   const sent = await env.DB.prepare("SELECT 1 FROM reports WHERE mail_key = ? AND mailed = 1 LIMIT 1").bind(mail).first();
@@ -310,6 +314,17 @@ export async function submitReport(request, env, { readJSON, json, overIPLimit }
     history = rows?.results ?? [];
   } catch (error) {
     console.error("report history", String(error));
+  }
+  // 이름을 보내지 않는 옛 앱이어도 같은 설치가 전에 이름을 보냈으면 그 이름을 붙인다
+  if (!report.sender) {
+    try {
+      const known = await env.DB.prepare(
+        "SELECT sender FROM reports WHERE install = ? AND sender != '' ORDER BY created_at DESC LIMIT 1",
+      ).bind(report.install).first();
+      report.sender = known?.sender ?? "";
+    } catch (error) {
+      console.error("report sender", String(error));
+    }
   }
   const { subject, text, html } = mailFor(report, page, history, now);
   let response = null;

@@ -30,6 +30,29 @@ test("mail names the kind and version", () => {
   assert.match(text, /설치 3f2c1a4e/);
 });
 
+test("mail names who sent it", () => {
+  const report = cleanReport({ install, sender: "  홍길동\n  ", kind: "update-failed", message: "빌드 실패", app: "1.4.12" });
+  assert.equal(report.sender, "홍길동");
+  const { subject, text, html } = mailFor(report);
+  assert.equal(subject, "[RunTime] 업데이트 실패 · 빌드 실패 (1.4.12) · 홍길동");
+  assert.match(text, /홍길동 · 설치 3f2c1a4e/);
+  assert.match(html, /홍길동 · 설치 3f2c1a4e/);
+  assert.equal(cleanReport({ install, sender: "가".repeat(80), kind: "update-failed", message: "x" }).sender.length, 40);
+});
+
+test("old apps without a name get the name the same install sent before", async () => {
+  const fake = fakeSubmit({ knownSender: "홍길동" });
+  try {
+    const response = await fake.submit({ install, kind: "update-failed", message: "옛 앱", app: "0.8.1" });
+    assert.equal(response.status, 200);
+    assert.match(fake.mails[0].subject, / · 홍길동$/);
+    // 저장하는 행은 앱이 보낸 그대로(빈 이름) 둔다
+    assert.equal([...fake.rows.values()][0].sender, "");
+  } finally {
+    fake.restore();
+  }
+});
+
 test("control characters are dropped and odd versions are blanked", () => {
   const report = cleanReport({ install, kind: "update-failed", message: "줄1\n줄2\r\u0007", app: "1.4\nBcc: x", commit: "abc1234", os: "14.5\r\n", log: "a\tb\nc" });
   assert.equal(report.message, "줄1\n줄2");
@@ -178,14 +201,15 @@ test("copy page needs the matching token", async () => {
 });
 
 /// 보고 표 하나와 Resend 응답만 흉내 낸다. 하루 메일 수와 이 Mac의 보고 수는 `counts`로 정한다.
-function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false, history = [] } = {}) {
+function fakeSubmit({ mine = 0, mailStatus = 200, mailThrows = false, history = [], knownSender = "" } = {}) {
   const rows = new Map();
   const db = {
     prepare: (sql) => ({
       bind: (...args) => ({
         first: async () => {
           if (sql.startsWith("SELECT COUNT")) return { stored: rows.size, mailed: 0, mine };
-          if (sql.startsWith("INSERT")) return rows.has(args[0]) ? null : (rows.set(args[0], { mailed: 0 }), { key: args[0] });
+          if (sql.startsWith("INSERT")) return rows.has(args[0]) ? null : (rows.set(args[0], { mailed: 0, sender: args[2] }), { key: args[0] });
+          if (sql.startsWith("SELECT sender")) return knownSender ? { sender: knownSender } : null;
           return null;
         },
         all: async () => ({ results: history }),
