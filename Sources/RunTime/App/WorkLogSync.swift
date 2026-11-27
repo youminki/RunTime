@@ -721,6 +721,8 @@ final class WorkLogSync: ObservableObject {
         environment["GIT_TERMINAL_PROMPT"] = "0"
         environment["GLAB_NO_PROMPT"] = "1"
         environment["NO_PROMPT"] = "1"
+        // 앱을 MallocStackLogging을 켠 채 띄웠으면 자식마다 경고 줄을 남겨 진짜 오류 문구가 밀려난다
+        for key in environment.keys where key.hasPrefix("MallocStackLogging") || key == "MallocNanoZone" { environment[key] = nil }
         process.environment = environment
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -750,7 +752,7 @@ final class WorkLogSync: ObservableObject {
                 .replacingOccurrences(of: #"\u{1B}\[[0-9;]*[A-Za-z]"#, with: "", options: .regularExpression)
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty && $0 != "ERROR" && !$0.hasPrefix("DEPRECATION WARNING") }
+                .filter { !$0.isEmpty && $0 != "ERROR" && !$0.hasPrefix("DEPRECATION WARNING") && !$0.contains("MallocStackLogging") }
                 .joined(separator: " ")
             throw SyncError(message.isEmpty ? "\(URL(fileURLWithPath: tool).lastPathComponent) 실패" : String(message.prefix(200)))
         }

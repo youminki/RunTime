@@ -317,7 +317,11 @@ enum ProblemReporter {
     static func redact(_ text: String, lineLimit: Int? = 200) -> String {
         let user = NSUserName()
         var result = text.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-        if user.count >= 3 { result = result.replacingOccurrences(of: user, with: "(사용자)") }
+        // 낱말로 쓰인 이름만 가린다. 이름이 든 회사 도메인(git.이름info.com) 같은 것까지 바꾸면 보고를 읽을 수 없다
+        if user.count >= 3 {
+            let name = NSRegularExpression.escapedPattern(for: user)
+            result = result.replacingOccurrences(of: "(?<![A-Za-z0-9])\(name)(?![A-Za-z0-9])", with: "(사용자)", options: .regularExpression)
+        }
         for (pattern, template) in secrets {
             result = result.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
         }
